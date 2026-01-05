@@ -221,6 +221,18 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_prod_settings(self) -> "Settings":
+        def _basic_auth_creds_configured() -> bool:
+            return any(
+                username and password
+                for username, password in (
+                    (self.owner_basic_username, self.owner_basic_password),
+                    (self.admin_basic_username, self.admin_basic_password),
+                    (self.dispatcher_basic_username, self.dispatcher_basic_password),
+                    (self.accountant_basic_username, self.accountant_basic_password),
+                    (self.viewer_basic_username, self.viewer_basic_password),
+                )
+            )
+
         if self.app_env != "prod":
             if self.legacy_basic_auth_enabled is None:
                 self.legacy_basic_auth_enabled = True
@@ -267,7 +279,7 @@ class Settings(BaseSettings):
             raise ValueError("APP_ENV=prod disables testing mode and X-Test-Org overrides")
 
         if self.legacy_basic_auth_enabled is None:
-            self.legacy_basic_auth_enabled = False
+            self.legacy_basic_auth_enabled = _basic_auth_creds_configured()
 
         return self
 
