@@ -62,13 +62,6 @@ class _ConfiguredUser:
 security = HTTPBasic(auto_error=False)
 
 
-def _basic_auth_enabled(configured_users: list[_ConfiguredUser] | None = None) -> bool:
-    configured = configured_users if configured_users is not None else _configured_users()
-    if settings.legacy_basic_auth_enabled is None:
-        return bool(configured)
-    return bool(settings.legacy_basic_auth_enabled)
-
-
 def _configured_users() -> list[_ConfiguredUser]:
     configured: list[_ConfiguredUser] = []
     if settings.owner_basic_username and settings.owner_basic_password:
@@ -124,17 +117,18 @@ def _build_auth_exception(detail: str = "Invalid authentication") -> HTTPExcepti
 
 def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> AdminIdentity:
     configured = _configured_users()
+    legacy_basic_auth_enabled = bool(settings.legacy_basic_auth_enabled)
     logger.debug(
         "admin_basic_auth_attempt",
         extra={
             "extra": {
-                "legacy_basic_auth_enabled": _basic_auth_enabled(configured),
+                "legacy_basic_auth_enabled": legacy_basic_auth_enabled,
                 "configured_user_count": len(configured),
                 "credentials_provided": credentials is not None,
             }
         },
     )
-    if not _basic_auth_enabled(configured):
+    if not legacy_basic_auth_enabled:
         raise _build_auth_exception()
     if not configured:
         logger.warning(
@@ -275,7 +269,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             return await http_exception_handler(request, unauthorized)
 
         configured_users = _configured_users()
-        basic_auth_enabled = _basic_auth_enabled(configured_users)
+        basic_auth_enabled = bool(settings.legacy_basic_auth_enabled)
 
         if not basic_auth_enabled:
             logger.debug(

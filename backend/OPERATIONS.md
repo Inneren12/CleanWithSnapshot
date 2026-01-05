@@ -56,10 +56,11 @@
 - **Retention/export:** `RETENTION_*` settings, `EXPORT_MODE`, webhook URL/allowlist/backoff toggles.
 
 ## Admin Basic Auth verification
-- Configure `ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD` (and other role pairs as needed). When unset, `LEGACY_BASIC_AUTH_ENABLED` defaults to `true` in non-prod and to `true` in prod when any Basic Auth credentials are provided.
+- Configure `ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD` (and other role pairs as needed). In production, `LEGACY_BASIC_AUTH_ENABLED` defaults to `false` even when credentials exist; set it to `true` explicitly only for break-glass. Passwords must be strong (at least 12 characters and not placeholder defaults such as `change-me`, `secret`, `password`, `admin`, `123456`, `qwerty`).
 - To confirm access locally, run the API and call:
   - `curl -i -u "admin:PutStrongAdminPasswordHere" http://localhost:8000/v1/admin/profile`
 - Missing credentials should return `401` with `WWW-Authenticate: Basic`; valid credentials should return `200`.
+- Basic Auth does not support MFA. Prefer SaaS identities with `ADMIN_MFA_REQUIRED=true` during normal operations and use legacy Basic Auth only when SaaS auth is unavailable.
 
 ## Health, readiness, and metrics
 - `GET /healthz` – liveness.
