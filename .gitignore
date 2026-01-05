@@ -1,11 +1,28 @@
+# secrets
 .env
 .env.*
+*.pem
+*.key
+
+# node/next
 web/node_modules/
 web/.next/
+web/.env.local
+*.tsbuildinfo
+
+# logs (храним на сервере)
 logs/
+*.log
+
+# docker volumes/runtime
 caddy_data/
 caddy_config/
 pg_data/
+var/
+tmp/
+
+# python
 __pycache__/
 *.pyc
 .venv/
+venv/
