@@ -1,0 +1,225 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  sanity:
+    runs-on: ubuntu-latest
+
+    env:
+      APP_ENV: dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (sanity)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt
+
+      - name: Run sanity marker
+        run: pytest -q -m sanity tests/test_sanity_async_dependencies.py
+
+  backend:
+    runs-on: ubuntu-latest
+    needs: sanity
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: cleaning
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd="pg_isready -U postgres -d cleaning"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+
+    env:
+      PRICING_CONFIG_PATH: pricing/economy_v1.json
+      APP_ENV: dev
+      STRICT_CORS: "true"
+      CORS_ORIGINS: https://example.com
+      EXPORT_MODE: off
+      RATE_LIMIT_PER_MINUTE: "30"
+      TRUST_PROXY_HEADERS: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt
+
+      - name: Set DATABASE_URL from Postgres service port
+        run: |
+          PORT="${{ job.services.postgres.ports[5432] }}"
+          echo "PGPORT=$PORT" >> "$GITHUB_ENV"
+          # SQLAlchemy URL (psycopg driver), but no password needed because CI uses trust auth
+          echo "DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:$PORT/cleaning" >> "$GITHUB_ENV"
+          echo "Using PGPORT=$PORT"
+
+      - name: Wait for Postgres (psycopg DSN)
+        run: |
+          python - <<'PY'
+          import os, time
+          import psycopg
+
+          sa_url = os.environ["DATABASE_URL"]
+          # psycopg expects postgresql:// (no +psycopg)
+          dsn = sa_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+          for i in range(120):
+              try:
+                  with psycopg.connect(dsn, connect_timeout=3) as conn:
+                      with conn.cursor() as cur:
+                          cur.execute("select 1;")
+                  print("Postgres is ready")
+                  break
+              except Exception as e:
+                  if i % 10 == 0:
+                      print("Waiting for Postgres...", type(e).__name__)
+                  time.sleep(1)
+          else:
+              raise SystemExit("Postgres not ready in time")
+          PY
+
+      - name: Verify single Alembic head
+        run: |
+          python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+
+          config = Config("alembic.ini")
+          script = ScriptDirectory.from_config(config)
+          heads = script.get_heads()
+
+          if len(heads) != 1:
+              raise SystemExit(f"Expected 1 Alembic head, found {heads}")
+
+          print(f"Single Alembic head: {heads[0]}")
+          PY
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: pytest -q -m "not smoke and not migrations"
+
+      - name: Run smoke marker
+        run: pytest -m smoke -vv
+
+  migrations:
+    runs-on: ubuntu-latest
+    needs: sanity
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: cleaning
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd="pg_isready -U postgres -d cleaning"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+
+    env:
+      APP_ENV: dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (migrations)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt
+
+      - name: Set DATABASE_URL from Postgres service port
+        run: |
+          PORT="${{ job.services.postgres.ports[5432] }}"
+          echo "DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:$PORT/cleaning" >> "$GITHUB_ENV"
+          echo "Using PGPORT=$PORT"
+
+      - name: Wait for Postgres (psycopg DSN)
+        run: |
+          python - <<'PY'
+          import os, time
+          import psycopg
+
+          sa_url = os.environ["DATABASE_URL"]
+          dsn = sa_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+          for i in range(120):
+              try:
+                  with psycopg.connect(dsn, connect_timeout=3) as conn:
+                      with conn.cursor() as cur:
+                          cur.execute("select 1;")
+                  print("Postgres is ready")
+                  break
+              except Exception as e:
+                  if i % 10 == 0:
+                      print("Waiting for Postgres...", type(e).__name__)
+                  time.sleep(1)
+          else:
+              raise SystemExit("Postgres not ready in time")
+          PY
+
+      - name: Verify single Alembic head
+        run: |
+          python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+
+          config = Config("alembic.ini")
+          script = ScriptDirectory.from_config(config)
+          heads = script.get_heads()
+
+          if len(heads) != 1:
+              raise SystemExit(f"Expected 1 Alembic head, found {heads}")
+
+          print(f"Single Alembic head: {heads[0]}")
+          PY
+
+      - name: Run migration invariants
+        run: pytest -q -m migrations tests/test_postgres_migrations.py
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install & build
+        run: |
+          npm ci
+          npm run build

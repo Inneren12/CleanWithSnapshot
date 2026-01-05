@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+.pytest_cache/
+.env.*
+!.env.example
+!.env.production.example
+node_modules/
+.next/
+out/
+web/.env.local
+*.tsbuildinfo
+*.db
+var/

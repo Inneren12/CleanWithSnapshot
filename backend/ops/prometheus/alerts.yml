@@ -1,0 +1,141 @@
+# Prometheus alerting rules for the Clean API.
+# Replace job/service labels to match your scrape configuration before deploying.
+groups:
+  - name: clean-availability
+    rules:
+      - alert: ReadyzFailures
+        expr: increase(http_5xx_total{path="/readyz"}[5m]) >= 1
+          and increase(http_request_latency_seconds_count{path="/readyz"}[5m]) >= 1
+        for: 5m
+        labels:
+          severity: page
+          service: clean
+        annotations:
+          summary: "Clean API readiness probe failing"
+          description: |
+            /readyz has returned 5xx for 5 minutes. Check database connectivity,
+            migration status, and job heartbeat. See /v1/admin/jobs/status for job liveness.
+
+      - alert: HighErrorRate
+        expr: |
+          (sum(rate(http_5xx_total{path!="/healthz",path!="/readyz"}[5m])) /
+            clamp_min(sum(rate(http_request_latency_seconds_count{path!="/healthz",path!="/readyz"}[5m])), 1)) > 0.02
+          and sum(rate(http_request_latency_seconds_count{path!="/healthz",path!="/readyz"}[5m])) > 0.2
+        for: 10m
+        labels:
+          severity: page
+          service: clean
+        annotations:
+          summary: "Clean API 5xx rate above 2%"
+          description: |
+            More than 2% of requests are returning 5xx over the last 10 minutes.
+            Slice http_5xx_total and http_request_latency_seconds by path to isolate
+            offenders; correlate with recent deploys.
+
+      - alert: HighLatencyP99
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le)(rate(http_request_latency_seconds_bucket{path!="/healthz",path!="/readyz"}[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: ticket
+          service: clean
+        annotations:
+          summary: "P99 latency above 2s"
+          description: |
+            The 99th percentile HTTP latency is above 2s for 10 minutes.
+            Check slow endpoints and database performance.
+
+  - name: clean-jobs
+    rules:
+      - alert: JobsRunnerStale
+        expr: time() - job_last_heartbeat_timestamp{job="jobs-runner"} > 300
+        for: 5m
+        labels:
+          severity: page
+          service: clean
+        annotations:
+          summary: "Jobs runner heartbeat missing"
+          description: |
+            The jobs runner heartbeat is older than 5 minutes.
+            Restart the runner and verify /v1/admin/jobs/status updates.
+
+      - alert: JobLoopFailures
+        expr: increase(job_errors_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          service: clean
+        annotations:
+          summary: "Background job errors detected"
+          description: |
+            Background jobs have reported errors in the last 10 minutes.
+            Use /v1/admin/jobs/status to see failing jobs and replay DLQ items if needed.
+
+      - alert: JobSuccessStalled
+        expr: time() - job_last_success_timestamp{job!=""} > 900
+        for: 10m
+        labels:
+          severity: ticket
+          service: clean
+        annotations:
+          summary: "Job last success timestamp stale"
+          description: |
+            A job has not reported success in 15 minutes. Check job logs
+            and rerun with python -m app.jobs.run --job <name> --once after fixes.
+
+  - name: clean-integrations
+    rules:
+      - alert: EmailDLQBacklog
+        expr: increase(email_dlq_messages{status="dead"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          service: clean
+        annotations:
+          summary: "Email dead-letter backlog detected"
+          description: |
+            email_dlq_messages{status="dead"} is non-zero. Investigate email
+            provider credentials and replay DLQ items once fixed.
+
+      - alert: OutboxDLQGrowing
+        expr: increase(outbox_queue_messages{status="dead"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          service: clean
+        annotations:
+          summary: "Outbox dead-letter queue growing"
+          description: |
+            outbox_queue_messages{status="dead"} increased over the last 15 minutes.
+            Inspect /v1/admin/outbox/dead-letter and resolve upstream failures before replaying.
+
+      - alert: StripeCircuitOpen
+        expr: max_over_time(circuit_state{circuit="stripe"}[5m]) == 1
+        for: 5m
+        labels:
+          severity: ticket
+          service: clean
+        annotations:
+          summary: "Stripe circuit breaker held open"
+          description: |
+            Stripe circuit breaker has been open for 5+ minutes. Inspect upstream
+            errors and retry once the dependency recovers.
+
+      - alert: StripeWebhookErrorsSpiking
+        expr: |
+          (sum(rate(stripe_webhook_events_total{outcome="error"}[5m])) /
+            clamp_min(sum(rate(stripe_webhook_events_total[5m])), 1)) > 0.1
+          and sum(rate(stripe_webhook_events_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: page
+          service: clean
+        annotations:
+          summary: "Stripe webhook errors above 10%"
+          description: |
+            More than 10% of Stripe webhooks are failing over the last 10 minutes.
+            Check /stripe/webhook logs, Stripe dashboard for incident notices,
+            and verify signature secrets and processing jobs.
