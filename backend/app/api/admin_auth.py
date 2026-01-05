@@ -62,6 +62,13 @@ class _ConfiguredUser:
 security = HTTPBasic(auto_error=False)
 
 
+def _basic_auth_enabled(configured_users: list[_ConfiguredUser] | None = None) -> bool:
+    configured = configured_users if configured_users is not None else _configured_users()
+    if settings.legacy_basic_auth_enabled is None:
+        return bool(configured)
+    return bool(settings.legacy_basic_auth_enabled)
+
+
 def _configured_users() -> list[_ConfiguredUser]:
     configured: list[_ConfiguredUser] = []
     if settings.owner_basic_username and settings.owner_basic_password:
@@ -117,6 +124,18 @@ def _build_auth_exception(detail: str = "Invalid authentication") -> HTTPExcepti
 
 def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> AdminIdentity:
     configured = _configured_users()
+    logger.debug(
+        "admin_basic_auth_attempt",
+        extra={
+            "extra": {
+                "legacy_basic_auth_enabled": _basic_auth_enabled(configured),
+                "configured_user_count": len(configured),
+                "credentials_provided": credentials is not None,
+            }
+        },
+    )
+    if not _basic_auth_enabled(configured):
+        raise _build_auth_exception()
     if not configured:
         logger.warning(
             "admin_auth_unconfigured",
@@ -255,7 +274,19 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
             return await http_exception_handler(request, unauthorized)
 
-        if not settings.legacy_basic_auth_enabled:
+        configured_users = _configured_users()
+        basic_auth_enabled = _basic_auth_enabled(configured_users)
+
+        if not basic_auth_enabled:
+            logger.debug(
+                "admin_basic_auth_disabled",
+                extra={
+                    "extra": {
+                        "configured_user_count": len(configured_users),
+                        "legacy_basic_auth_enabled": settings.legacy_basic_auth_enabled,
+                    }
+                },
+            )
             return await http_exception_handler(request, _build_auth_exception())
 
         try:

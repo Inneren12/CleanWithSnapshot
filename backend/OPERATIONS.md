@@ -55,6 +55,12 @@
 - **Metrics/observability:** `METRICS_ENABLED`, `METRICS_TOKEN`, `JOB_HEARTBEAT_REQUIRED`, `JOB_HEARTBEAT_TTL_SECONDS`.
 - **Retention/export:** `RETENTION_*` settings, `EXPORT_MODE`, webhook URL/allowlist/backoff toggles.
 
+## Admin Basic Auth verification
+- Configure `ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD` (and other role pairs as needed). When unset, `LEGACY_BASIC_AUTH_ENABLED` defaults to `true` in non-prod and to `true` in prod when any Basic Auth credentials are provided.
+- To confirm access locally, run the API and call:
+  - `curl -i -u "admin:PutStrongAdminPasswordHere" http://localhost:8000/v1/admin/profile`
+- Missing credentials should return `401` with `WWW-Authenticate: Basic`; valid credentials should return `200`.
+
 ## Health, readiness, and metrics
 - `GET /healthz` – liveness.
 - `GET /readyz` – checks DB connectivity, migration head vs `alembic/`, and job heartbeat when enabled (`app/api/routes_health.py`). Returns 503 on failure.
