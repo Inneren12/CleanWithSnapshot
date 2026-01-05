@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  api:
+    name: API - Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Display Python version
+        run: python --version
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt', 'backend/constraints.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: |
+          # Run tests excluding smoke and postgres markers (unit tests that work with SQLite)
+          # Also ignore smoke folder entirely as belt-and-suspenders
+          pytest -v -m "not smoke and not postgres" --ignore=tests/smoke --tb=short
+        env:
+          # CI-safe environment variables (no secrets)
+          APP_ENV: "dev"
+          TESTING: "true"
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+
+  web:
+    name: Web - Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Display Node version
+        run: node --version
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+        env:
+          # CI-safe environment variable for Next.js build
+          NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000"
+
+  api-prod-config:
+    name: API - Prod Config Validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt', 'backend/constraints.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate prod config requirements
+        run: |
+          python -c "from app.settings import Settings; s = Settings(); print(f'✓ Prod config validation passed: APP_ENV={s.app_env}')"
+        env:
+          # Prod mode with CI-safe dummy secrets (validates prod enforcement still works)
+          APP_ENV: "prod"
+          TESTING: "false"
+          AUTH_SECRET_KEY: "ci-auth-secret-not-default-12345678"
+          CLIENT_PORTAL_SECRET: "ci-client-secret-not-default-12345678"
+          WORKER_PORTAL_SECRET: "ci-worker-secret-not-default-12345678"
+          METRICS_ENABLED: "false"
+          STRICT_CORS: "false"
+
+  infra:
+    name: Infrastructure - Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create ephemeral .env for compose validation
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres
+          POSTGRES_DB=cleaning
+          EOF
+
+      - name: Validate docker-compose.yml
+        run: |
+          echo "Validating docker-compose configuration..."
+          docker compose config > /dev/null
+          echo "✓ docker-compose.yml is valid"
+
+      - name: Cleanup ephemeral .env
+        run: rm -f .env
+
+      - name: Check for shell scripts
+        run: |
+          if [ -d "ops" ]; then
+            echo "Checking bash scripts in ops/..."
+            find ops -name "*.sh" -type f -exec bash -n {} \; -print
+            echo "✓ All bash scripts have valid syntax"
+          else
+            echo "ℹ No ops/ directory found, skipping bash validation"
+          fi

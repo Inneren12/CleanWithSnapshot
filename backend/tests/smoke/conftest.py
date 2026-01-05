@@ -1,3 +1,10 @@
+import os
+
+# CRITICAL: Force test environment BEFORE any app.* imports
+# This prevents Settings() validation from failing when APP_ENV=prod is set externally
+os.environ["APP_ENV"] = "dev"
+os.environ["TESTING"] = "true"
+
 import asyncio
 from datetime import time
 import uuid

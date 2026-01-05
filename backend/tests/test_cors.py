@@ -6,7 +6,8 @@ from app.main import create_app
 from app.settings import Settings
 
 
-def test_cors_strict_blocks_when_empty():
+def test_cors_strict_blocks_when_empty(monkeypatch):
+    monkeypatch.setenv("TESTING", "false")  # Prod mode requires TESTING=false
     with pytest.raises(ValidationError, match="CORS_ORIGINS"):
         create_app(
             Settings(
@@ -21,7 +22,8 @@ def test_cors_strict_blocks_when_empty():
         )
 
 
-def test_cors_allows_configured_origin():
+def test_cors_allows_configured_origin(monkeypatch):
+    monkeypatch.setenv("TESTING", "false")  # Prod mode requires TESTING=false
     app = create_app(
         Settings(
             app_env="prod",

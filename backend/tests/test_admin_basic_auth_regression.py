@@ -10,9 +10,10 @@ def _set_admin_creds(monkeypatch: pytest.MonkeyPatch, username: str = "admin", p
 
 def test_prod_defaults_disable_basic_auth_even_if_creds_present(monkeypatch):
     monkeypatch.setenv("APP_ENV", "prod")
-    monkeypatch.setenv("AUTH_SECRET_KEY", "basic-auth-secret-prod")
-    monkeypatch.setenv("CLIENT_PORTAL_SECRET", "client-secret-prod")
-    monkeypatch.setenv("WORKER_PORTAL_SECRET", "worker-secret-prod")
+    monkeypatch.setenv("TESTING", "false")  # Prod mode requires TESTING=false
+    monkeypatch.setenv("AUTH_SECRET_KEY", "basic-auth-secret")
+    monkeypatch.setenv("CLIENT_PORTAL_SECRET", "client-secret")
+    monkeypatch.setenv("WORKER_PORTAL_SECRET", "worker-secret")
     monkeypatch.setenv("ADMIN_BASIC_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_BASIC_PASSWORD", "very-strong-admin-pass")
     monkeypatch.setenv("METRICS_ENABLED", "false")

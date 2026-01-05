@@ -1,3 +1,12 @@
+import os
+
+# CRITICAL: Force test environment BEFORE any app.* imports
+# This prevents Settings() validation from failing when APP_ENV=prod is set externally
+# (e.g., in CI runners or developer environments). The Settings class validates
+# production configs at import time, requiring secrets that aren't available in tests.
+os.environ["APP_ENV"] = "dev"
+os.environ["TESTING"] = "true"
+
 import asyncio
 import inspect
 import sys
@@ -63,6 +72,16 @@ from app.main import app
 from app.settings import settings
 
 DEFAULT_ORG_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+
+def pytest_collection_modifyitems(items):
+    """Auto-mark tests in smoke/ directory with smoke marker."""
+    for item in items:
+        # Get the test file path
+        test_path = str(item.fspath)
+        # Check if test is in smoke directory (handle both Unix and Windows paths)
+        if "/tests/smoke/" in test_path or "\\tests\\smoke\\" in test_path:
+            item.add_marker(pytest.mark.smoke)
 
 
 @pytest.fixture(scope="session")
