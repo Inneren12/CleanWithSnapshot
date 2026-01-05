@@ -1,0 +1,33 @@
+panidobro.com, www.panidobro.com {
+  encode zstd gzip
+
+  log {
+    output file /var/log/caddy/access_web.log {
+      roll_size 50MiB
+      roll_keep 10
+      roll_keep_for 168h
+    }
+    format json
+  }
+
+  reverse_proxy web:3000
+}
+
+api.panidobro.com {
+  encode zstd gzip
+
+  log {
+    output file /var/log/caddy/access_api.log {
+      roll_size 50MiB
+      roll_keep 10
+      roll_keep_for 168h
+    }
+    format json
+  }
+
+  @docs path /docs* /openapi.json
+  header @docs -Content-Security-Policy
+  header @docs Content-Security-Policy "default-src 'self'; img-src 'self' data: https://fastapi.tiangolo.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;"
+
+  reverse_proxy api:8000
+}

@@ -1,0 +1,11 @@
+.env
+.env.*
+web/node_modules/
+web/.next/
+logs/
+caddy_data/
+caddy_config/
+pg_data/
+__pycache__/
+*.pyc
+.venv/
