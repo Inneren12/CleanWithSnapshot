@@ -219,6 +219,13 @@ class Settings(BaseSettings):
             raise ValueError("time_overrun_reason_threshold must be positive")
         return value
 
+    @field_validator("legacy_basic_auth_enabled", mode="before")
+    @classmethod
+    def normalize_legacy_basic_auth_enabled(cls, value: object) -> bool | None:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def validate_prod_settings(self) -> "Settings":
         def _basic_auth_creds_configured() -> bool:
@@ -237,6 +244,34 @@ class Settings(BaseSettings):
             if self.legacy_basic_auth_enabled is None:
                 self.legacy_basic_auth_enabled = True
             return self
+
+        if self.legacy_basic_auth_enabled is None:
+            self.legacy_basic_auth_enabled = False
+
+        if self.app_env == "prod" and self.legacy_basic_auth_enabled:
+            if not _basic_auth_creds_configured():
+                raise ValueError(
+                    "APP_ENV=prod with LEGACY_BASIC_AUTH_ENABLED=true requires at least one Basic Auth username/password"
+                )
+            weak_passwords = {"change-me", "secret", "password", "admin", "123456", "qwerty"}
+
+            def _is_weak(password: str) -> bool:
+                normalized = password.strip()
+                if len(normalized) < 12:
+                    return True
+                return normalized.lower() in weak_passwords
+
+            for password in (
+                self.owner_basic_password,
+                self.admin_basic_password,
+                self.dispatcher_basic_password,
+                self.accountant_basic_password,
+                self.viewer_basic_password,
+            ):
+                if password and _is_weak(password):
+                    raise ValueError(
+                        "APP_ENV=prod requires strong legacy Basic Auth passwords (min 12 chars, not a default placeholder)"
+                    )
 
         def _require_secret(value: str | None, field_name: str, placeholders: set[str]) -> None:
             if value is None:
@@ -277,9 +312,6 @@ class Settings(BaseSettings):
 
         if self.testing:
             raise ValueError("APP_ENV=prod disables testing mode and X-Test-Org overrides")
-
-        if self.legacy_basic_auth_enabled is None:
-            self.legacy_basic_auth_enabled = _basic_auth_creds_configured()
 
         return self
 
