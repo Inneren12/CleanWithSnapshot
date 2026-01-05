@@ -42,7 +42,8 @@ jobs:
       - name: Run unit tests
         run: |
           # Run tests excluding smoke and postgres markers (unit tests that work with SQLite)
-          pytest -v -m "not smoke and not postgres" --tb=short
+          # Also ignore smoke folder entirely as belt-and-suspenders
+          pytest -v -m "not smoke and not postgres" --ignore=tests/smoke --tb=short
         env:
           # CI-safe environment variables (no secrets)
           APP_ENV: "dev"
@@ -135,11 +136,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Create ephemeral .env for compose validation
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres
+          POSTGRES_DB=cleaning
+          EOF
+
       - name: Validate docker-compose.yml
         run: |
           echo "Validating docker-compose configuration..."
           docker compose config > /dev/null
           echo "✓ docker-compose.yml is valid"
+
+      - name: Cleanup ephemeral .env
+        run: rm -f .env
 
       - name: Check for shell scripts
         run: |

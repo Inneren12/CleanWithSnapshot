@@ -41,6 +41,7 @@ def test_dev_defaults_allow_placeholders():
 
 def test_defaults_to_prod_when_env_missing(monkeypatch):
     monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
 
     settings = Settings(
         auth_secret_key="super-secret",
@@ -53,12 +54,14 @@ def test_defaults_to_prod_when_env_missing(monkeypatch):
     assert settings.app_env == "prod"
 
 
-def test_prod_requires_non_default_secrets():
+def test_prod_requires_non_default_secrets(monkeypatch):
+    monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
     with pytest.raises(ValidationError, match="AUTH_SECRET_KEY"):
         Settings(app_env="prod", _env_file=None)
 
 
-def test_prod_requires_metrics_token_when_enabled():
+def test_prod_requires_metrics_token_when_enabled(monkeypatch):
+    monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
     with pytest.raises(ValidationError, match="METRICS_TOKEN"):
         Settings(
             app_env="prod",
@@ -71,7 +74,8 @@ def test_prod_requires_metrics_token_when_enabled():
         )
 
 
-def test_prod_rejects_wildcard_cors_with_strict_mode():
+def test_prod_rejects_wildcard_cors_with_strict_mode(monkeypatch):
+    monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
     with pytest.raises(ValidationError, match="CORS_ORIGINS"):
         Settings(
             app_env="prod",
@@ -84,7 +88,8 @@ def test_prod_rejects_wildcard_cors_with_strict_mode():
         )
 
 
-def test_prod_validates_admin_allowlist_cidrs():
+def test_prod_validates_admin_allowlist_cidrs(monkeypatch):
+    monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
     with pytest.raises(ValidationError, match="ADMIN_IP_ALLOWLIST_CIDRS"):
         Settings(
             app_env="prod",
@@ -110,7 +115,8 @@ def test_prod_rejects_testing_mode_override():
         )
 
 
-def test_prod_accepts_valid_configuration():
+def test_prod_accepts_valid_configuration(monkeypatch):
+    monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
     settings = Settings(
         app_env="prod",
         auth_secret_key="super-secret",
@@ -127,7 +133,8 @@ def test_prod_accepts_valid_configuration():
     assert settings.admin_ip_allowlist_cidrs == ["10.0.0.0/8"]
 
 
-def test_legacy_basic_auth_defaults_disabled_in_prod():
+def test_legacy_basic_auth_defaults_disabled_in_prod(monkeypatch):
+    monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
     settings = Settings(
         app_env="prod",
         auth_secret_key="super-secret",

@@ -10,6 +10,7 @@ def _set_admin_creds(username: str = "admin", password: str = "secret") -> None:
 
 def test_prod_defaults_enable_basic_auth_when_creds_present(monkeypatch):
     monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("TESTING", "false")  # Prod mode requires TESTING=false
     monkeypatch.setenv("AUTH_SECRET_KEY", "basic-auth-secret")
     monkeypatch.setenv("CLIENT_PORTAL_SECRET", "client-secret")
     monkeypatch.setenv("WORKER_PORTAL_SECRET", "worker-secret")

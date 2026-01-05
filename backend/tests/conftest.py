@@ -74,6 +74,16 @@ from app.settings import settings
 DEFAULT_ORG_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
+def pytest_collection_modifyitems(items):
+    """Auto-mark tests in smoke/ directory with smoke marker."""
+    for item in items:
+        # Get the test file path
+        test_path = str(item.fspath)
+        # Check if test is in smoke directory (handle both Unix and Windows paths)
+        if "/tests/smoke/" in test_path or "\\tests\\smoke\\" in test_path:
+            item.add_marker(pytest.mark.smoke)
+
+
 @pytest.fixture(scope="session")
 def test_engine():
     db_path = Path("test.db")
