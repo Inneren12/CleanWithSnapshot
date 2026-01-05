@@ -1,3 +1,12 @@
+import os
+
+# CRITICAL: Force test environment BEFORE any app.* imports
+# This prevents Settings() validation from failing when APP_ENV=prod is set externally
+# (e.g., in CI runners or developer environments). The Settings class validates
+# production configs at import time, requiring secrets that aren't available in tests.
+os.environ["APP_ENV"] = "dev"
+os.environ["TESTING"] = "true"
+
 import asyncio
 import inspect
 import sys

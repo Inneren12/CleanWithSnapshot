@@ -45,6 +45,7 @@ jobs:
           pytest -v -m "not smoke and not postgres" --tb=short
         env:
           # CI-safe environment variables (no secrets)
+          APP_ENV: "dev"
           TESTING: "true"
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
 
@@ -83,6 +84,48 @@ jobs:
         env:
           # CI-safe environment variable for Next.js build
           NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000"
+
+  api-prod-config:
+    name: API - Prod Config Validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt', 'backend/constraints.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate prod config requirements
+        run: |
+          python -c "from app.settings import Settings; s = Settings(); print(f'✓ Prod config validation passed: APP_ENV={s.app_env}')"
+        env:
+          # Prod mode with CI-safe dummy secrets (validates prod enforcement still works)
+          APP_ENV: "prod"
+          TESTING: "false"
+          AUTH_SECRET_KEY: "ci-auth-secret-not-default-12345678"
+          CLIENT_PORTAL_SECRET: "ci-client-secret-not-default-12345678"
+          WORKER_PORTAL_SECRET: "ci-worker-secret-not-default-12345678"
+          METRICS_ENABLED: "false"
+          STRICT_CORS: "false"
 
   infra:
     name: Infrastructure - Validation
