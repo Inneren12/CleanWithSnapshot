@@ -758,37 +758,63 @@ async def list_invoice_reconcile_items(
     return cases, total
 
 
+def _planned_reconciled_status(invoice: Invoice, paid_cents: int) -> str:
+    if paid_cents >= invoice.total_cents:
+        return statuses.INVOICE_STATUS_PAID
+    if paid_cents > 0:
+        return statuses.INVOICE_STATUS_PARTIAL
+    if invoice.status == statuses.INVOICE_STATUS_PAID:
+        today = date.today()
+        return (
+            statuses.INVOICE_STATUS_OVERDUE
+            if invoice.due_date and invoice.due_date < today
+            else statuses.INVOICE_STATUS_SENT
+        )
+    return invoice.status
+
+
 async def reconcile_invoice(
-    session: AsyncSession, org_id: uuid.UUID, invoice_id: str
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    invoice_id: str,
+    *,
+    dry_run: bool = False,
 ) -> tuple[Invoice | None, dict | None, dict | None]:
     stmt = (
         select(Invoice)
         .options(selectinload(Invoice.payments))
         .where(Invoice.invoice_id == invoice_id, Invoice.org_id == org_id)
-        .with_for_update(of=Invoice)
     )
+    if not dry_run:
+        stmt = stmt.with_for_update(of=Invoice)
+
     invoice = await session.scalar(stmt)
     if not invoice:
         return None, None, None
 
     before = _reconcile_snapshot(invoice)
-    paid_cents = before["paid_cents"]
+    planned_status = _planned_reconciled_status(invoice, before["paid_cents"])
+    after = {**before, "status": planned_status}
 
-    if paid_cents >= invoice.total_cents:
-        invoice.status = statuses.INVOICE_STATUS_PAID
-    elif paid_cents > 0:
-        invoice.status = statuses.INVOICE_STATUS_PARTIAL
-    elif invoice.status == statuses.INVOICE_STATUS_PAID:
-        today = date.today()
-        invoice.status = (
-            statuses.INVOICE_STATUS_OVERDUE
-            if invoice.due_date and invoice.due_date < today
-            else statuses.INVOICE_STATUS_SENT
-        )
+    if dry_run:
+        return invoice, before, after
 
+    invoice.status = planned_status
     await session.flush()
     after = _reconcile_snapshot(invoice)
     return invoice, before, after
+
+
+def describe_reconcile_operations(before: dict, after: dict) -> list[str]:
+    operations: list[str] = []
+    if before["status"] != after["status"]:
+        operations.append(
+            f"Update invoice status from {before['status']} to {after['status']}"
+        )
+    else:
+        operations.append("Status already matches payment state")
+
+    return operations
 
 
 async def list_stripe_events(

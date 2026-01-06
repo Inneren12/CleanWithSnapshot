@@ -293,12 +293,12 @@ async def _seed_reconcile_targets(async_session_maker):
     }
 
 
-def test_finance_reconcile_requires_finance_role(client, async_session_maker):
+def test_finance_reconcile_requires_admin_role(client, async_session_maker):
     seeded = asyncio.run(_seed_invoice_mismatches(async_session_maker))
-    finance_headers = _auth_headers("finance", "secret", seeded["org_a"])
+    admin_headers = _auth_headers("finance", "secret", seeded["org_a"])
 
     response = client.get(
-        "/v1/admin/finance/reconcile/invoices", headers=finance_headers
+        "/v1/admin/finance/reconcile/invoices", headers=admin_headers
     )
     assert response.status_code == 200
 
@@ -310,7 +310,7 @@ def test_finance_reconcile_requires_finance_role(client, async_session_maker):
         assert forbidden.status_code == 403
 
 
-def test_finance_reconcile_post_requires_finance_role(client, async_session_maker):
+def test_finance_reconcile_post_requires_admin_role(client, async_session_maker):
     seeded = asyncio.run(_seed_reconcile_targets(async_session_maker))
     org_id = seeded["org_id"]
     invoice = seeded["invoices"]["paid_mismatch"]
@@ -507,3 +507,34 @@ def test_finance_reconcile_blocks_cross_org(client, async_session_maker):
     )
 
     assert response.status_code == 404
+
+
+def test_finance_reconcile_supports_dry_run(client, async_session_maker):
+    seeded = asyncio.run(_seed_reconcile_targets(async_session_maker))
+    org_id = seeded["org_id"]
+    invoice = seeded["invoices"]["paid_mismatch"]
+    headers = _auth_headers("finance", "secret", org_id)
+
+    response = client.post(
+        f"/v1/admin/finance/invoices/{invoice.invoice_id}/reconcile?dry_run=1",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dry_run"] is True
+    assert payload["before"]["status"] == statuses.INVOICE_STATUS_SENT
+    assert payload["after"]["status"] == statuses.INVOICE_STATUS_PAID
+    assert any("Update invoice status" in op for op in payload["planned_operations"])
+
+    async def _fetch_state():
+        async with async_session_maker() as session:
+            refreshed = await session.get(Invoice, invoice.invoice_id)
+            audit_logs = await session.scalars(
+                sa.select(AdminAuditLog).where(AdminAuditLog.resource_id == invoice.invoice_id)
+            )
+            return refreshed.status, list(audit_logs)
+
+    status_after, audit_logs = asyncio.run(_fetch_state())
+    assert status_after == statuses.INVOICE_STATUS_SENT
+    assert audit_logs == []

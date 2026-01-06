@@ -233,6 +233,13 @@ class InvoiceReconcileResponse(BaseModel):
     succeeded_payments_count: int
 
 
+class InvoiceReconcilePlan(BaseModel):
+    dry_run: bool = True
+    before: InvoiceReconcileResponse
+    after: InvoiceReconcileResponse
+    planned_operations: list[str]
+
+
 class StripeEventView(BaseModel):
     event_id: str
     type: str | None = None

@@ -86,7 +86,7 @@ async def test_stripe_events_org_scoped(client, async_session_maker):
 
 
 @pytest.mark.anyio
-async def test_stripe_events_require_finance_role(client, async_session_maker):
+async def test_stripe_events_require_admin_role(client, async_session_maker):
     org_id = uuid.uuid4()
     async with async_session_maker() as session:
         session.add(Organization(org_id=org_id, name="Org C"))
