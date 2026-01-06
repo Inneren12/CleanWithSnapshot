@@ -134,10 +134,80 @@
 - Rate limits apply to client portal endpoints using the shared rate limiter; keep Redis available in production to avoid abuse and monitor `429` spikes for scraping attempts.
 
 ## Backups and restores
-- Postgres backups should capture tenant-scoped tables (`org_id` columns). Use `scripts/backup_pg.sh` (custom format, no `--create`) and `scripts/restore_pg.sh` (supports `ALLOW_CREATE_IN_DUMP=1` when the dump was made with `--create`). Validate restore before releases; ensure `alembic_version` matches after restore.
-- Run the quarterly/local drill described in `docs/runbook_backup_restore_drill.md` to practice backup → restore → verification on a fresh database.
 
-- Storage backends: verify bucket access and signed URL keys; for local storage, include `order_upload_root` volume in backups.
+### Backup strategy and retention
+- **Script location:** `scripts/backup_pg.sh` creates compressed pg_dump files in custom format (includes schema + data, supports parallel restore).
+- **Default retention:** 7 days (configurable via `RETENTION_DAYS` environment variable). The script automatically prunes backups older than the retention window on each run.
+- **Backup location:** Defaults to `./backups` directory (configurable via `BACKUP_DIR` environment variable). In production, ensure backups are written to durable storage mounted at `/opt/backups/postgres` (already mounted read-only in the API container for restore verification).
+- **Backup frequency:** Schedule daily via cron or Cloudflare Scheduler. Example crontab:
+  ```bash
+  0 2 * * * cd /path/to/app && POSTGRES_HOST=db POSTGRES_DB=cleaning POSTGRES_USER=postgres POSTGRES_PASSWORD=$DB_PASSWORD BACKUP_DIR=/opt/backups/postgres RETENTION_DAYS=7 ./backend/scripts/backup_pg.sh >> /var/log/backup.log 2>&1
+  ```
+- **Integrity verification:** Each backup generates a SHA256 checksum file (`.sha256` suffix). Verify checksums before restore:
+  ```bash
+  sha256sum -c /opt/backups/postgres/pg_cleaning_20260106T020000Z.dump.sha256
+  ```
+
+### Encryption recommendations
+- **At-rest encryption:**
+  - For production, store backups on encrypted volumes (LUKS on Linux, dm-crypt, or cloud provider encryption).
+  - For S3/R2 storage: enable server-side encryption (SSE-S3 or SSE-KMS) on the backup bucket.
+  - For local storage: use encrypted filesystems or encrypted block devices for the backup directory.
+- **In-transit encryption:**
+  - When transmitting backups off-site, use `gpg` or `age` for file-level encryption before transfer:
+    ```bash
+    gpg --symmetric --cipher-algo AES256 --output backup.dump.gpg backup.dump
+    ```
+  - Store encryption keys in a separate secure location (not on the same host).
+- **Key management:** Rotate encryption keys quarterly and maintain a key escrow procedure for disaster recovery.
+
+### Backup testing and validation
+- **Checksum verification:** Always verify SHA256 checksums before attempting a restore.
+- **Automated restore testing:** Run `scripts/backup_restore_drill.sh` monthly (minimum) to validate backup integrity. The drill script performs:
+  1. Full backup of the production database
+  2. Restore to a temporary database (default: `<dbname>_drill`)
+  3. Alembic version verification (must match current head)
+  4. Core table presence checks (orgs, leads, bookings, invoices, workers)
+- **Manual restore procedure:** See `scripts/restore_pg.sh` usage. Key steps:
+  1. Set environment variables: `POSTGRES_HOST`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
+  2. Verify backup integrity: `sha256sum -c <dump_file>.sha256`
+  3. Run restore: `./scripts/restore_pg.sh <dump_file> <target_db>`
+  4. Verify Alembic version: `psql -d <target_db> -c "SELECT version_num FROM alembic_version;"`
+  5. Spot-check row counts: `psql -d <target_db> -c "SELECT COUNT(*) FROM orgs;"`
+
+### Quarterly restore drill checklist
+Perform this drill **every quarter** to ensure backup/restore procedures remain operational:
+
+- [ ] **Week before drill:** Announce drill window to team (non-production hours recommended)
+- [ ] **Preparation:**
+  - [ ] Verify cron/scheduler is running daily backups
+  - [ ] Confirm at least 7 days of recent backups exist in `/opt/backups/postgres`
+  - [ ] Check backup sizes are reasonable (not empty, not suspiciously small)
+  - [ ] Verify all backup `.sha256` checksums are present
+- [ ] **Execute drill:**
+  - [ ] Select a recent backup (1-3 days old) for the drill
+  - [ ] Verify backup checksum: `sha256sum -c <backup>.sha256`
+  - [ ] Run drill script: `POSTGRES_HOST=... POSTGRES_DB=... POSTGRES_USER=... POSTGRES_PASSWORD=... ./backend/scripts/backup_restore_drill.sh`
+  - [ ] Confirm drill script exits with success (code 0)
+  - [ ] Review drill output: Alembic head matches, core tables present
+- [ ] **Validation:**
+  - [ ] Connect to drill database: `psql -h <host> -U <user> -d <dbname>_drill`
+  - [ ] Verify row counts match expectations (compare with production counts)
+  - [ ] Spot-check recent data: `SELECT * FROM bookings ORDER BY created_at DESC LIMIT 5;`
+  - [ ] Verify RLS policies are enabled: `SELECT * FROM pg_policies WHERE polname LIKE '%org_isolation%';`
+- [ ] **Cleanup:**
+  - [ ] Drop drill database: `psql -h <host> -U <user> -d postgres -c "DROP DATABASE <dbname>_drill;"`
+  - [ ] Document drill results in team wiki/runbook
+  - [ ] Note any issues or deviations for follow-up
+- [ ] **Follow-up:**
+  - [ ] If drill failed, investigate and fix backup/restore scripts immediately
+  - [ ] Schedule next quarterly drill (3 months from completion date)
+  - [ ] Update this checklist if procedures change
+
+### Storage backend backups
+- **Local storage:** If using `ORDER_STORAGE_BACKEND=local`, ensure the `ORDER_UPLOAD_ROOT` directory is included in filesystem backups. The API stores photos at `orders/{org_id}/{booking_id}/{photo_id}[.ext]` under this root.
+- **S3/R2/Cloudflare Images:** Cloud storage backends handle redundancy automatically. Verify bucket access and signing keys are backed up securely (store in secrets manager, not in git).
+- **Photo recovery:** For local storage, restore the `ORDER_UPLOAD_ROOT` volume from filesystem backups alongside the database restore. For cloud storage, no additional restore is needed (object storage is durable by design).
 
 ## Operator productivity queues (release-grade hardened)
 - **Photos queue** (`GET /v1/admin/queue/photos`): requires dispatcher credentials or higher; lists photos awaiting review or retake. Filter by `status=pending|needs_retake|all`.
