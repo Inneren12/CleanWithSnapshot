@@ -189,12 +189,19 @@ async def funnel_summary(
         Booking.updated_at >= start,
         Booking.updated_at <= end,
     )
-    paid_stmt = select(func.count()).select_from(Payment).where(
-        Payment.org_id == org_id,
-        Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
-        Payment.received_at.isnot(None),
-        Payment.received_at >= start,
-        Payment.received_at <= end,
+    paid_stmt = (
+        select(func.count(sa.distinct(Booking.booking_id)))
+        .select_from(Payment)
+        .join(Booking, Booking.booking_id == Payment.booking_id)
+        .where(
+            Booking.org_id == org_id,
+            Payment.org_id == org_id,
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            Payment.booking_id.isnot(None),
+            Payment.received_at.isnot(None),
+            Payment.received_at >= start,
+            Payment.received_at <= end,
+        )
     )
 
     lead_count = int((await session.execute(lead_stmt)).scalar_one())

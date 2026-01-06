@@ -19,6 +19,52 @@ def _auth() -> tuple[str, str]:
     return (settings.admin_basic_username, settings.admin_basic_password)
 
 
+async def _seed_booking(
+    session,
+    *,
+    org_id: uuid.UUID,
+    now: datetime,
+    lead_label: str,
+    booking_status: str = "DONE",
+) -> Booking:
+    team = Team(org_id=org_id, name=f"Team {lead_label}")
+    org = Organization(org_id=org_id, name=f"Org {lead_label}")
+    session.add_all([org, team])
+    await session.flush()
+
+    lead = Lead(
+        org_id=org_id,
+        name=f"Lead {lead_label}",
+        phone="780-000-0000",
+        email=f"{lead_label.lower()}@example.com",
+        preferred_dates=["Mon"],
+        structured_inputs={"beds": 1, "baths": 1, "cleaning_type": "standard"},
+        estimate_snapshot={"total_before_tax": 120.0},
+        pricing_config_version="v1",
+        config_hash="hash",
+        status="NEW",
+        created_at=now - timedelta(days=5),
+    )
+    session.add(lead)
+    await session.flush()
+
+    booking = Booking(
+        org_id=org_id,
+        team_id=team.team_id,
+        lead_id=lead.lead_id,
+        starts_at=now,
+        duration_minutes=90,
+        status=booking_status,
+        deposit_required=False,
+        deposit_policy=[],
+        created_at=now - timedelta(days=2),
+        updated_at=now - timedelta(days=1),
+    )
+    session.add(booking)
+    await session.flush()
+    return booking
+
+
 def test_funnel_analytics_are_org_scoped_and_private(client, async_session_maker):
     auth = _auth()
     org_a, org_b = uuid.uuid4(), uuid.uuid4()
@@ -141,6 +187,133 @@ def test_funnel_analytics_are_org_scoped_and_private(client, async_session_maker
     serialized = json.dumps(body)
     assert "Lead A" not in serialized
     assert "a@example.com" not in serialized
+
+
+def test_funnel_paid_counts_only_settled_payments(client, async_session_maker):
+    auth = _auth()
+    org_id = uuid.uuid4()
+    now = datetime.now(tz=timezone.utc)
+    start = now - timedelta(days=30)
+
+    async def _seed() -> None:
+        async with async_session_maker() as session:
+            booking = await _seed_booking(
+                session, org_id=org_id, now=now, lead_label="Settled"
+            )
+            payment = Payment(
+                booking_id=booking.booking_id,
+                provider="test",
+                method="card",
+                amount_cents=1500,
+                currency="USD",
+                status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                received_at=now - timedelta(hours=1),
+                org_id=org_id,
+            )
+            session.add(payment)
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    response = client.get(
+        "/v1/admin/analytics/funnel",
+        auth=auth,
+        headers={"X-Test-Org": str(org_id)},
+        params={"from": start.isoformat()},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["counts"]["paid"] == 1
+    assert body["counts"]["completed"] == 1
+
+
+def test_funnel_paid_counts_excludes_failed_and_refunded(client, async_session_maker):
+    auth = _auth()
+    org_id = uuid.uuid4()
+    now = datetime.now(tz=timezone.utc)
+    start = now - timedelta(days=30)
+
+    async def _seed() -> None:
+        async with async_session_maker() as session:
+            booking = await _seed_booking(
+                session, org_id=org_id, now=now, lead_label="Failed"
+            )
+            failed_payment = Payment(
+                booking_id=booking.booking_id,
+                provider="test",
+                method="card",
+                amount_cents=2000,
+                currency="USD",
+                status=invoice_statuses.PAYMENT_STATUS_FAILED,
+                received_at=now - timedelta(hours=2),
+                org_id=org_id,
+            )
+            session.add(failed_payment)
+            booking.refund_total_cents = 500
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    response = client.get(
+        "/v1/admin/analytics/funnel",
+        auth=auth,
+        headers={"X-Test-Org": str(org_id)},
+        params={"from": start.isoformat()},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["counts"]["paid"] == 0
+    assert body["counts"]["completed"] == 1
+
+
+def test_funnel_paid_counts_multiple_payments_single_booking(client, async_session_maker):
+    auth = _auth()
+    org_id = uuid.uuid4()
+    now = datetime.now(tz=timezone.utc)
+    start = now - timedelta(days=30)
+
+    async def _seed() -> None:
+        async with async_session_maker() as session:
+            booking = await _seed_booking(
+                session, org_id=org_id, now=now, lead_label="Multi"
+            )
+            payments = [
+                Payment(
+                    booking_id=booking.booking_id,
+                    provider="test",
+                    method="card",
+                    amount_cents=2500,
+                    currency="USD",
+                    status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                    received_at=now - timedelta(hours=3),
+                    org_id=org_id,
+                ),
+                Payment(
+                    booking_id=booking.booking_id,
+                    provider="test",
+                    method="card",
+                    amount_cents=500,
+                    currency="USD",
+                    status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                    received_at=now - timedelta(hours=1),
+                    org_id=org_id,
+                ),
+            ]
+            session.add_all(payments)
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    response = client.get(
+        "/v1/admin/analytics/funnel",
+        auth=auth,
+        headers={"X-Test-Org": str(org_id)},
+        params={"from": start.isoformat()},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["counts"]["paid"] == 1
+    assert body["counts"]["completed"] == 1
 
 
 def test_nps_analytics_distribution_and_trends(client, async_session_maker):
