@@ -10,6 +10,7 @@ Use this runbook to configure recurring maintenance calls (cron or Cloudflare Sc
 - `JOBS_ENABLED=true` in production so `/readyz` enforces a fresh heartbeat when the runner should be online. Keep `JOB_HEARTBEAT_REQUIRED=true` for explicit gating in non-prod.
 - `JOB_HEARTBEAT_TTL_SECONDS` defaults to 180 seconds (3 minutes). Tune lower only if the runner loop interval is also lower.
 - Set `JOB_RUNNER_ID` (hostname/pod name) to make heartbeats traceable in logs/metrics.
+- Optional: set `BETTER_STACK_HEARTBEAT_URL` to let the runner post to a Better Stack monitor after each loop.
 
 ## Enabling the jobs runner in production
 - In `.env.production`, set `JOBS_ENABLED=true`, `JOB_HEARTBEAT_REQUIRED=true`, and keep `JOB_HEARTBEAT_TTL_SECONDS` at 180s unless you intentionally shorten the loop cadence.
@@ -62,6 +63,6 @@ Add `--interval <n>` if you want the runner to loop instead of a single executio
 
 ## Optional Better Stack heartbeat integration
 - Create a Better Stack Heartbeat monitor and copy its unique URL (e.g., `https://uptime.betterstack.com/heartbeat/<token>`).
-- Wrap the runner invocation in your scheduler to ping Better Stack after a successful loop:
-  - Cron example: `* * * * * . /etc/profile && python -m app.jobs.run --interval 60 --once && curl -fsS https://uptime.betterstack.com/heartbeat/<token> >/dev/null`
+- Easiest: export `BETTER_STACK_HEARTBEAT_URL` in the jobs container so `app.jobs.run` posts to it after each loop (the post happens after heartbeats are written to Postgres and metrics are updated).
+- Cron fallback: `* * * * * . /etc/profile && python -m app.jobs.run --interval 60 --once && curl -fsS https://uptime.betterstack.com/heartbeat/<token> >/dev/null`
 - For long-running containers, sidecar a lightweight cron or Kubernetes `CronJob` that hits the Better Stack URL every minute. Keep the cadence aligned with `JOB_HEARTBEAT_TTL_SECONDS` so alerts fire before `/readyz` degrades.

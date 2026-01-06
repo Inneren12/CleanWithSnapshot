@@ -164,6 +164,7 @@ class Settings(BaseSettings):
     job_heartbeat_required: bool = Field(False)
     job_heartbeat_ttl_seconds: int = Field(180)
     job_outbox_batch_size: int = Field(50)
+    better_stack_heartbeat_url: str | None = Field(None)
     email_max_retries: int = Field(3)
     email_retry_backoff_seconds: float = Field(60.0)
     email_http_max_attempts: int = Field(3)
