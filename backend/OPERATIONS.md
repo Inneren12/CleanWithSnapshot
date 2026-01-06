@@ -8,6 +8,15 @@
 5. Start scheduled jobs (cron/Scheduler) calling: `/v1/admin/cleanup`, `/v1/admin/email-scan`, `/v1/admin/retention/cleanup`, `/v1/admin/export-dead-letter`, `/v1/admin/outbox-dead-letter`, optional `storage_janitor` and `outbox-delivery` from `app/jobs/run.py`. In production set `JOBS_ENABLED=true` (and `JOB_HEARTBEAT_REQUIRED=true`) so `/readyz` enforces a fresh heartbeat; run the `jobs` container from `docker-compose.yml` or an equivalent long-lived process with DB access.
 6. Verify health endpoints and Stripe webhook secret. With jobs enabled, `/readyz` will fail within ~3 minutes if the runner heartbeat stalls; use `/v1/admin/jobs/status` for detail.
 
+## Caddy logging, rotation, and permissions
+- **Log location:** `/var/log/caddy` (mounted from `./logs` in `docker-compose.yml`) holds `caddy.log`, `access_web.log`, and `access_api.log`. The files are created by the `caddy` user inside the container; keep the directory owned by that UID (check with `docker compose exec caddy id -u caddy`) so writes continue after rotation.
+- **Group readability:** operators on the host should be able to read logs via the `docker` group. Apply a default ACL so new files inherit `g:docker:rX` without changing ownership:
+  ```bash
+  ./scripts/logs_acl_apply.sh
+  ```
+  Override with `LOG_DIR=/path/to/logs LOGS_ACL_GROUP=<group> ./scripts/logs_acl_apply.sh` if the logs live elsewhere. Install `acl` if `setfacl` is missing.
+- **Rotation:** Caddy handles rotation internally via the `roll_*` options in `Caddyfile`; filenames stay stable. If the host runs `logrotate` for compression, install `ops/logrotate_caddy.conf` to `/etc/logrotate.d/caddy` (or include its contents) so rotation uses `copytruncate` and does not force a file descriptor reopen mid-request.
+
 ## Scheduler templates
 - Cron and Cloudflare Scheduler examples live in `scripts/cron_examples/` with a runbook in `docs/runbook_scheduler.md`.
 
