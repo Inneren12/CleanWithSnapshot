@@ -36,9 +36,9 @@ web_status=0
 check_endpoint "API /healthz" "$API_BASE_URL/healthz" || api_status=$?
 check_endpoint "Web root" "$WEB_BASE_URL/" || web_status=$?
 
-printf '\nSmoke summary:\n'
+printf '%s\n' "" "Smoke summary:"
 for line in "${report[@]}"; do
-  printf "- %s\n" "$line"
+  printf -- '- %s\n' "$line"
 done
 
 if [[ $api_status -ne 0 || $web_status -ne 0 ]]; then
