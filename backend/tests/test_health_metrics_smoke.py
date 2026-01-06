@@ -38,23 +38,24 @@ def test_readyz_endpoint_database_healthy(client):
     data = response.json()
 
     # Overall status
-    assert data["status"] in ["ok", "unhealthy"]
+    assert data["ok"] in [True, False]
+
+    checks = {check["name"]: check for check in data["checks"]}
 
     # Database checks
-    assert "database" in data
-    db = data["database"]
+    db = checks["db"]
     assert "ok" in db
-    assert "message" in db
+    assert "detail" in db
 
     # Migration checks (may be "ok" or "skipped_no_alembic_files" in test environment)
-    assert "migrations_check" in db
-    assert db["migrations_check"] in ["ok", "skipped_no_alembic_files", "not_run"]
+    migrations = checks["migrations"]
+    assert migrations["detail"]["migrations_check"] in ["ok", "skipped_no_alembic_files", "not_run", "timeout", "error"]
 
     # Jobs checks (optional, depends on configuration)
-    if "jobs" in data:
-        jobs = data["jobs"]
+    if "jobs" in checks:
+        jobs = checks["jobs"]
         assert "ok" in jobs
-        assert "enabled" in jobs
+        assert "detail" in jobs
 
 
 def test_readyz_endpoint_database_unhealthy(client, monkeypatch):
@@ -66,25 +67,20 @@ def test_readyz_endpoint_database_unhealthy(client, monkeypatch):
     from app.api import routes_health
 
     async def mock_db_health(request):
-        return {
-            "ok": False,
+        return False, {
             "message": "Database connection failed",
             "error": "Connection timeout",
-            "migrations_current": False,
-            "current_version": None,
-            "expected_head": None,
-            "expected_heads": [],
-            "migrations_check": "error",
         }
 
-    monkeypatch.setattr(routes_health, "_database_status", mock_db_health)
+    monkeypatch.setattr(routes_health, "_db_check", mock_db_health)
 
     response = client.get("/readyz")
 
     assert response.status_code == 503
     data = response.json()
-    assert data["status"] == "unhealthy"
-    assert data["database"]["ok"] is False
+    assert data["ok"] is False
+    checks = {check["name"]: check for check in data["checks"]}
+    assert checks["db"]["ok"] is False or checks["migrations"]["ok"] is False
 
 
 def test_metrics_endpoint_disabled_by_default(client):

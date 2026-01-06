@@ -46,17 +46,15 @@ Tests database connectivity, migration status, and job heartbeat.
 curl -fsS "$API_BASE_URL/readyz" | jq .
 ```
 
-**Expected:** HTTP 200 with:
+**Expected:** HTTP 200 with structured checks:
 ```json
 {
-  "status": "ok",
-  "database": {
-    "ok": true,
-    "migrations_current": true
-  },
-  "jobs": {
-    "ok": true
-  }
+  "ok": true,
+  "checks": [
+    {"name": "db", "ok": true, "ms": 5.1},
+    {"name": "migrations", "ok": true, "detail": {"migrations_current": true}},
+    {"name": "jobs", "ok": true, "detail": {"enabled": true}}
+  ]
 }
 ```
 
