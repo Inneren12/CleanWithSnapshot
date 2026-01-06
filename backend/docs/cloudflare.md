@@ -17,6 +17,10 @@ Notes:
 - SSR-only features require Cloudflare Workers (use `@cloudflare/next-on-pages` or a full Workers deployment); Pages alone is for static output.
 - Create the Pages project with the **root directory** set to `web/`.
 - Production branch targets your production Pages domain; previews use the auto-generated preview URL.
+- Caching guidance:
+  - Keep HTML responses uncached/bypassed so SSR remains fresh.
+  - `/_next/static` may be cached normally (default Next.js headers already include long-lived `Cache-Control`).
+  - Only enable caching for `/_next/image` if you key on the full URL (including query params) and respect the response `Content-Type`; otherwise, let it pass through to avoid stale or incorrectly formatted optimized images.
 - Environment variables:
   - `NEXT_PUBLIC_API_BASE_URL=https://<api-domain>`
   - `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (only when `CAPTCHA_MODE=turnstile` on the API)

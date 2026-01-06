@@ -149,6 +149,33 @@ curl -fsS -I "$WEB_BASE_URL/_next/static" | head -1
 
 **Expected:** HTTP 200 or HTTP 404 (acceptable if no specific asset)
 
+### 2.3 Web robots.txt
+Tests crawler directives.
+
+```bash
+curl -fsS "$WEB_BASE_URL/robots.txt"
+```
+
+**Expected:** HTTP 200 with `Sitemap` pointing to the web origin.
+
+### 2.4 Web sitemap.xml
+Tests sitemap availability for search engines.
+
+```bash
+curl -fsS "$WEB_BASE_URL/sitemap.xml"
+```
+
+**Expected:** HTTP 200 with URLs for the landing page and admin UI.
+
+### 2.5 Web healthz
+Tests web container responsiveness without hitting the API.
+
+```bash
+curl -fsS "$WEB_BASE_URL/healthz"
+```
+
+**Expected:** HTTP 200 with `{ "status": "ok" }` and `Cache-Control: no-store`.
+
 ## 3. API Core Endpoints
 
 ### 3.1 Estimate Pricing
