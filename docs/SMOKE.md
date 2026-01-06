@@ -49,18 +49,53 @@ curl -fsS "$API_BASE_URL/readyz" | jq .
 **Expected:** HTTP 200 with:
 ```json
 {
-  "status": "ok",
-  "database": {
-    "ok": true,
-    "migrations_current": true
-  },
-  "jobs": {
-    "ok": true
-  }
+  "ok": true,
+  "checks": [
+    {
+      "name": "db",
+      "ok": true,
+      "ms": 5.2,
+      "detail": "database reachable"
+    },
+    {
+      "name": "migrations",
+      "ok": true,
+      "ms": 3.1,
+      "detail": "migrations current: abc123"
+    },
+    {
+      "name": "jobs",
+      "ok": true,
+      "ms": 2.5,
+      "detail": "job heartbeat healthy (age: 15.0s, threshold: 300s)"
+    }
+  ]
 }
 ```
 
-**Note:** Returns HTTP 503 if unhealthy.
+**Response Format:**
+- `ok` (boolean): Overall readiness status (true if all checks pass)
+- `checks` (array): List of individual health checks
+  - `name` (string): Check identifier (db, migrations, jobs)
+  - `ok` (boolean): Check result
+  - `ms` (number): Check duration in milliseconds
+  - `detail` (string): Human-readable status message
+
+**Failure Conditions:**
+- Returns HTTP 503 when `ok: false`
+- Database unreachable → `db.ok: false`
+- Migrations not applied → `migrations.ok: false`
+- Job heartbeat stale (when enabled) → `jobs.ok: false`
+
+**Note:** Job heartbeat check is skipped when `JOB_HEARTBEAT_REQUIRED=false` (still returns `ok: true` with detail noting it's disabled).
+
+**Automated Check Script:**
+Use the dedicated readiness check script for CI/CD:
+```bash
+./scripts/check_readyz.sh "$API_BASE_URL"
+```
+
+The script exits with status 0 on success, non-zero on failure. Use `READYZ_VERBOSE=true` for detailed output.
 
 ### 1.4 Backup Health Check
 Tests backup freshness (last successful backup within 26 hours).

@@ -78,74 +78,124 @@ async def _get_current_revision(session) -> str | None:
     return row[0] if row else None
 
 
-async def _database_status(request: Request) -> dict[str, Any]:
+async def _check_database(request: Request) -> dict[str, Any]:
+    """Check database connectivity with timing."""
+    start = time.monotonic()
+    session_factory = getattr(request.app.state, "db_session_factory", None)
+
+    if session_factory is None:
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+        return {
+            "name": "db",
+            "ok": False,
+            "ms": elapsed_ms,
+            "detail": "database session factory unavailable",
+        }
+
+    try:
+        async with session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+        return {
+            "name": "db",
+            "ok": True,
+            "ms": elapsed_ms,
+            "detail": "database reachable",
+        }
+    except Exception as exc:  # noqa: BLE001
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+        logger.debug("database_check_failed", exc_info=exc)
+        return {
+            "name": "db",
+            "ok": False,
+            "ms": elapsed_ms,
+            "detail": f"database check failed: {exc.__class__.__name__}",
+        }
+
+
+async def _check_migrations(request: Request) -> dict[str, Any]:
+    """Check migration status with timing."""
+    start = time.monotonic()
     session_factory = getattr(request.app.state, "db_session_factory", None)
     expected_heads, skip_reason = _load_expected_heads()
     expected_head = expected_heads[0] if expected_heads and len(expected_heads) == 1 else None
     expected_heads = expected_heads or []
 
     if session_factory is None:
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         return {
+            "name": "migrations",
             "ok": False,
-            "message": "database session factory unavailable",
-            "hint": "app.state.db_session_factory is not configured; ensure startup wiring is complete.",
-            "migrations_current": False,
-            "current_version": None,
-            "expected_head": expected_head,
-            "expected_heads": expected_heads,
-            "migrations_check": skip_reason or "not_run",
+            "ms": elapsed_ms,
+            "detail": "database session factory unavailable",
         }
 
     try:
         async with session_factory() as session:
-            await session.execute(text("SELECT 1"))
             current_version = await _get_current_revision(session)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("database_check_failed", exc_info=exc)
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+        logger.debug("migrations_check_failed", exc_info=exc)
         return {
+            "name": "migrations",
             "ok": False,
-            "message": "database check failed",
-            "migrations_current": False,
-            "current_version": None,
-            "expected_head": expected_head,
-            "expected_heads": expected_heads,
-            "migrations_check": skip_reason or "not_run",
-            "error": exc.__class__.__name__,
+            "ms": elapsed_ms,
+            "detail": f"failed to check migrations: {exc.__class__.__name__}",
         }
 
     migrations_current: bool
+    detail: str
     if skip_reason:
         migrations_current = True
+        detail = f"migrations check skipped: {skip_reason}"
     elif not expected_heads:
         migrations_current = False
+        detail = "no expected migration heads found"
     elif len(expected_heads) == 1:
         migrations_current = current_version == expected_head
+        if migrations_current:
+            detail = f"migrations current: {current_version}"
+        else:
+            detail = f"migration mismatch: current={current_version}, expected={expected_head}"
     else:
         migrations_current = current_version in expected_heads
+        if migrations_current:
+            detail = f"migrations current: {current_version}"
+        else:
+            detail = f"migration mismatch: current={current_version}, expected one of {expected_heads}"
 
+    elapsed_ms = round((time.monotonic() - start) * 1000, 1)
     return {
-        "ok": True,
-        "message": "database reachable",
-        "migrations_current": migrations_current,
-        "current_version": current_version,
-        "expected_head": expected_head,
-        "expected_heads": expected_heads,
-        "migrations_check": skip_reason or "ok",
+        "name": "migrations",
+        "ok": migrations_current,
+        "ms": elapsed_ms,
+        "detail": detail,
     }
 
 
-async def _jobs_status(request: Request) -> dict[str, Any]:
+async def _check_jobs(request: Request) -> dict[str, Any]:
+    """Check job heartbeat status with timing."""
+    start = time.monotonic()
     app_settings = getattr(request.app.state, "app_settings", None)
     heartbeat_required = bool(getattr(app_settings, "job_heartbeat_required", False)) if app_settings else False
+
     if not heartbeat_required:
-        return {"ok": True, "enabled": False, "message": "job heartbeat check disabled"}
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+        return {
+            "name": "jobs",
+            "ok": True,
+            "ms": elapsed_ms,
+            "detail": "job heartbeat check disabled",
+        }
 
     session_factory = getattr(request.app.state, "db_session_factory", None)
     if session_factory is None:
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         return {
+            "name": "jobs",
             "ok": False,
-            "enabled": True,
-            "message": "database session factory unavailable",
+            "ms": elapsed_ms,
+            "detail": "database session factory unavailable",
         }
 
     ttl_seconds = int(getattr(app_settings, "job_heartbeat_ttl_seconds", 300)) if app_settings else 300
@@ -153,20 +203,22 @@ async def _jobs_status(request: Request) -> dict[str, Any]:
         async with session_factory() as session:
             record = await session.get(JobHeartbeat, "jobs-runner")
     except Exception as exc:  # noqa: BLE001
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         logger.debug("jobs_check_failed", exc_info=exc)
         return {
+            "name": "jobs",
             "ok": False,
-            "enabled": True,
-            "message": "job heartbeat check failed",
-            "error": type(exc).__name__,
+            "ms": elapsed_ms,
+            "detail": f"job heartbeat check failed: {type(exc).__name__}",
         }
 
     if record is None:
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         return {
+            "name": "jobs",
             "ok": False,
-            "enabled": True,
-            "message": "job heartbeat missing",
-            "threshold_seconds": ttl_seconds,
+            "ms": elapsed_ms,
+            "detail": f"job heartbeat missing (threshold: {ttl_seconds}s)",
         }
 
     last_seen = record.last_heartbeat
@@ -174,26 +226,39 @@ async def _jobs_status(request: Request) -> dict[str, Any]:
         last_seen = last_seen.replace(tzinfo=timezone.utc)
 
     age_seconds = (datetime.now(tz=timezone.utc) - last_seen).total_seconds()
+    elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+
+    is_ok = age_seconds <= ttl_seconds
+    if is_ok:
+        detail = f"job heartbeat healthy (age: {round(age_seconds, 1)}s, threshold: {ttl_seconds}s)"
+    else:
+        detail = f"job heartbeat stale (age: {round(age_seconds, 1)}s, threshold: {ttl_seconds}s)"
+
     return {
-        "ok": age_seconds <= ttl_seconds,
-        "enabled": True,
-        "last_heartbeat": last_seen.isoformat(),
-        "age_seconds": age_seconds,
-        "threshold_seconds": ttl_seconds,
+        "name": "jobs",
+        "ok": is_ok,
+        "ms": elapsed_ms,
+        "detail": detail,
     }
 
 
 @router.get("/readyz")
 async def readyz(request: Request) -> JSONResponse:
-    database = await _database_status(request)
-    jobs = await _jobs_status(request)
+    """Readiness endpoint with structured checks and timing.
 
-    overall_ok = bool(database.get("ok")) and bool(database.get("migrations_current")) and bool(jobs.get("ok"))
+    Returns HTTP 200 when all checks pass, HTTP 503 otherwise.
+    Response includes per-check status, timing, and details.
+    """
+    db_check = await _check_database(request)
+    migrations_check = await _check_migrations(request)
+    jobs_check = await _check_jobs(request)
+
+    checks = [db_check, migrations_check, jobs_check]
+    overall_ok = all(check["ok"] for check in checks)
     status_code = 200 if overall_ok else 503
 
     payload = {
-        "status": "ok" if overall_ok else "unhealthy",
-        "database": database,
-        "jobs": jobs,
+        "ok": overall_ok,
+        "checks": checks,
     }
     return JSONResponse(status_code=status_code, content=payload)

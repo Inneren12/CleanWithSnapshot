@@ -323,7 +323,19 @@ main() {
   if command -v jq >/dev/null 2>&1; then
     log_section "7. Response Validation"
     check_json_field "Health status field" "$API_BASE_URL/healthz" '.status' 'ok'
-    check_json_field "Readiness database.ok" "$API_BASE_URL/readyz" '.database.ok' 'true'
+    check_json_field "Readiness overall ok" "$API_BASE_URL/readyz" '.ok' 'true'
+    check_json_field "Readiness checks array exists" "$API_BASE_URL/readyz" '.checks | type' 'array'
+
+    # Validate individual checks have required fields
+    log_test "Readiness checks structure"
+    checks_valid=$(curl -fsS --max-time 5 "$API_BASE_URL/readyz" 2>/dev/null | \
+      jq -r '.checks | all(has("name") and has("ok") and has("ms") and has("detail"))' 2>/dev/null) || checks_valid="false"
+
+    if [[ "$checks_valid" == "true" ]]; then
+      log_pass "Readiness checks structure"
+    else
+      log_fail "Readiness checks structure" "missing required fields (name, ok, ms, detail)"
+    fi
   else
     log_section "7. Response Validation"
     log_skip "JSON validation tests" "jq not installed"
