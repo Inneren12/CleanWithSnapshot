@@ -1176,6 +1176,7 @@ def _job_status_response(record: JobHeartbeat) -> JobStatusResponse:
     return JobStatusResponse(
         name=record.name,
         last_heartbeat=record.last_heartbeat,
+        runner_id=record.runner_id,
         last_success_at=record.last_success_at,
         last_error=record.last_error,
         last_error_at=record.last_error_at,

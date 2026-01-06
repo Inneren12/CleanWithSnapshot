@@ -10,6 +10,7 @@ class JobHeartbeat(Base):
     __tablename__ = "job_heartbeats"
 
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    runner_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     last_heartbeat: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

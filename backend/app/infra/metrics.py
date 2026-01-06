@@ -36,6 +36,7 @@ class Metrics:
             self.http_5xx = None
             self.http_latency = None
             self.job_heartbeat = None
+            self.job_heartbeat_age = None
             self.job_last_success = None
             self.job_runner_up = None
             self.job_errors = None
@@ -132,6 +133,12 @@ class Metrics:
             ["job"],
             registry=self.registry,
         )
+        self.job_heartbeat_age = Gauge(
+            "job_heartbeat_age_seconds",
+            "Age of the latest job heartbeat in seconds.",
+            ["job"],
+            registry=self.registry,
+        )
         self.job_last_success = Gauge(
             "job_last_success_timestamp",
             "Unix timestamp for the latest successful job loop.",
@@ -219,6 +226,20 @@ class Metrics:
         ts = timestamp if timestamp is not None else time.time()
         self.job_heartbeat.labels(job=job).set(ts)
         self.job_runner_up.labels(job=job).set(1)
+
+    def record_job_heartbeat_age(
+        self, job: str, age_seconds: float, *, threshold_seconds: float | None = None
+    ) -> None:
+        if (
+            not self.enabled
+            or self.job_heartbeat_age is None
+            or self.job_runner_up is None
+        ):
+            return
+        safe_age = max(0.0, float(age_seconds))
+        self.job_heartbeat_age.labels(job=job).set(safe_age)
+        if threshold_seconds is not None:
+            self.job_runner_up.labels(job=job).set(1 if safe_age <= threshold_seconds else 0)
 
     def record_job_success(self, job: str, timestamp: float | None = None) -> None:
         if not self.enabled or self.job_last_success is None:

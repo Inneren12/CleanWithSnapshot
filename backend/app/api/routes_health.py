@@ -168,7 +168,9 @@ async def _migrations_check(request: Request) -> tuple[bool, dict[str, Any]]:
 
 async def _jobs_status(request: Request) -> tuple[bool, dict[str, Any]]:
     app_settings = getattr(request.app.state, "app_settings", None)
+    jobs_enabled = bool(getattr(app_settings, "jobs_enabled", False)) if app_settings else False
     heartbeat_required = bool(getattr(app_settings, "job_heartbeat_required", False)) if app_settings else False
+    heartbeat_required = bool(jobs_enabled or heartbeat_required)
     if not heartbeat_required:
         return True, {"enabled": False, "message": "job heartbeat check disabled"}
 
@@ -176,7 +178,8 @@ async def _jobs_status(request: Request) -> tuple[bool, dict[str, Any]]:
     if session_factory is None:
         return False, {"enabled": True, "message": "database session factory unavailable"}
 
-    ttl_seconds = int(getattr(app_settings, "job_heartbeat_ttl_seconds", 300)) if app_settings else 300
+    ttl_seconds = int(getattr(app_settings, "job_heartbeat_ttl_seconds", 180)) if app_settings else 180
+    metrics_client = getattr(request.app.state, "metrics", None)
 
     async def _fetch_heartbeat():
         async with session_factory() as session:
@@ -191,10 +194,13 @@ async def _jobs_status(request: Request) -> tuple[bool, dict[str, Any]]:
         return False, {"enabled": True, "message": "job heartbeat check failed", "error": type(exc).__name__}
 
     if record is None:
+        if metrics_client is not None:
+            metrics_client.record_job_heartbeat_age("jobs-runner", ttl_seconds + 1, threshold_seconds=ttl_seconds)
         return False, {
             "enabled": True,
             "message": "job heartbeat missing",
             "threshold_seconds": ttl_seconds,
+            "jobs_enabled": jobs_enabled,
         }
 
     last_seen = record.last_heartbeat
@@ -203,11 +209,27 @@ async def _jobs_status(request: Request) -> tuple[bool, dict[str, Any]]:
 
     age_seconds = (datetime.now(tz=timezone.utc) - last_seen).total_seconds()
     ok = age_seconds <= ttl_seconds
+    if metrics_client is not None:
+        metrics_client.record_job_heartbeat_age("jobs-runner", age_seconds, threshold_seconds=ttl_seconds)
+    if not ok:
+        logger.warning(
+            "job_heartbeat_stale",
+            extra={
+                "extra": {
+                    "age_seconds": age_seconds,
+                    "threshold_seconds": ttl_seconds,
+                    "runner_id": record.runner_id,
+                    "jobs_enabled": jobs_enabled,
+                }
+            },
+        )
     return ok, {
         "enabled": True,
         "last_heartbeat": last_seen.isoformat(),
+        "runner_id": record.runner_id,
         "age_seconds": age_seconds,
         "threshold_seconds": ttl_seconds,
+        "jobs_enabled": jobs_enabled,
     }
 
 
