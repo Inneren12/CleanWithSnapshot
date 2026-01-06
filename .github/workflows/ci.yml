@@ -39,6 +39,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Lint (syntax guard)
+        run: |
+          python -m pip install ruff==0.6.5
+          ruff check app tests --select E9
+
       - name: Run unit tests
         run: |
           # Run tests excluding smoke and postgres markers (unit tests that work with SQLite)
@@ -79,6 +84,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint (if available)
+        run: npm run lint --if-present
 
       - name: Build application
         run: npm run build
