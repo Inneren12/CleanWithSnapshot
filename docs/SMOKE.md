@@ -413,6 +413,40 @@ echo ""
 echo "=== Smoke Test Complete ==="
 ```
 
+## 6. Finance Reconciliation (Admin-only)
+
+Safely identify and repair invoice/payment mismatches without mutating production data:
+
+1. **List mismatches (read-only):**
+
+   ```bash
+   export ORG_ID="$(uuidgen)" # set to the target org when running in multi-tenant environments
+
+   curl -fsS -u "$ADMIN_USER:$ADMIN_PASS" \
+     -H "X-Test-Org: $ORG_ID" \
+     "$API_BASE_URL/v1/admin/finance/reconcile/invoices?status=mismatch&limit=10" | jq .
+   ```
+
+2. **Dry-run a reconcile (no writes):**
+
+   ```bash
+   INVOICE_ID="<invoice-id-from-step-1>"
+
+   curl -fsS -u "$ADMIN_USER:$ADMIN_PASS" \
+     -H "X-Test-Org: $ORG_ID" \
+     "$API_BASE_URL/v1/admin/finance/invoices/$INVOICE_ID/reconcile?dry_run=1" | jq .
+   ```
+
+   **Expected:** `dry_run: true`, `before`/`after` snapshots, and `planned_operations` describing the status change. No audit logs or DB writes occur during a dry-run.
+
+3. **Apply the reconcile (only after verifying the dry-run):**
+
+   ```bash
+   curl -fsS -u "$ADMIN_USER:$ADMIN_PASS" \
+     -H "X-Test-Org: $ORG_ID" \
+     -X POST "$API_BASE_URL/v1/admin/finance/invoices/$INVOICE_ID/reconcile" | jq .
+   ```
+
 ## Troubleshooting
 
 ### Health Check Fails
