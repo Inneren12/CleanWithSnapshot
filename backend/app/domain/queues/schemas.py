@@ -111,3 +111,13 @@ class DLQResponse(BaseModel):
     total: int
     outbox_dead_count: int
     export_dead_count: int
+
+
+class DLQBatchReplayResponse(BaseModel):
+    """Batch replay summary for DLQ items."""
+
+    processed: int
+    sent: int
+    failed: int
+    skipped: int
+    correlation_id: str | None = None
