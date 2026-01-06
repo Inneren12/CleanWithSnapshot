@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 class JobStatusResponse(BaseModel):
     name: str
     last_heartbeat: Optional[datetime] = None
+    runner_id: Optional[str] = None
     last_success_at: Optional[datetime] = None
     last_error: Optional[str] = None
     last_error_at: Optional[datetime] = None

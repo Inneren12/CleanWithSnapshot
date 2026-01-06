@@ -10,7 +10,7 @@ from app.infra.db import get_session_factory
 from app.infra.email import EmailAdapter, resolve_email_adapter
 from app.infra.logging import clear_log_context
 from app.infra.metrics import configure_metrics, metrics
-from app.jobs.heartbeat import record_heartbeat
+from app.jobs.heartbeat import _resolve_runner_id, record_heartbeat
 from app.jobs import accounting_export, dlq_auto_replay, email_jobs, outbox, storage_janitor
 from app.infra.storage import new_storage_backend
 from app.domain.ops.db_models import JobHeartbeat
@@ -27,13 +27,15 @@ async def _run_job(
     name: str,
     session_factory: async_sessionmaker,
     runner: Callable[[object], Awaitable[dict[str, int]]],
+    *,
+    runner_id: str | None = None,
 ) -> None:
     try:
         async with session_factory() as session:
             result = await runner(session)
         logger.info("job_complete", extra={"extra": {"job": name, **result}})
         _record_email_job_metrics(name, result)
-        await _record_job_result(session_factory, name, success=True)
+        await _record_job_result(session_factory, name, success=True, runner_id=runner_id)
     finally:
         clear_log_context()
 
@@ -48,9 +50,15 @@ def _record_email_job_metrics(job: str, result: dict[str, int]) -> None:
 
 
 async def _record_job_result(
-    session_factory: async_sessionmaker, job: str, *, success: bool, error_reason: str | None = None
+    session_factory: async_sessionmaker,
+    job: str,
+    *,
+    success: bool,
+    error_reason: str | None = None,
+    runner_id: str | None = None,
 ) -> None:
     now = datetime.now(tz=timezone.utc)
+    resolved_runner_id = _resolve_runner_id(runner_id)
     async with session_factory() as session:
         record = await session.get(JobHeartbeat, job)
         if record is None:
@@ -58,6 +66,7 @@ async def _record_job_result(
                 name=job,
                 last_heartbeat=now,
                 last_success_at=now if success else None,
+                runner_id=resolved_runner_id,
                 consecutive_failures=0,
                 last_error=None,
                 last_error_at=None,
@@ -66,6 +75,7 @@ async def _record_job_result(
             session.add(record)
         else:
             record.last_heartbeat = now
+            record.runner_id = resolved_runner_id
             if success:
                 record.last_success_at = now
                 record.consecutive_failures = 0
@@ -135,17 +145,23 @@ async def main(argv: list[str] | None = None) -> None:
     ]
     runners = [_job_runner(name, base_url=args.base_url) for name in job_names]
 
+    runner_id = _resolve_runner_id(settings.job_runner_id)
+
     while True:
         for name, runner in zip(job_names, runners):
             try:
-                await _run_job(name, session_factory, runner)
+                await _run_job(name, session_factory, runner, runner_id=runner_id)
             except Exception as exc:  # noqa: BLE001
                 metrics.record_email_job(name, "error")
                 logger.warning("job_failed", extra={"extra": {"job": name, "reason": type(exc).__name__}})
                 await _record_job_result(
-                    session_factory, name, success=False, error_reason=type(exc).__name__
+                    session_factory,
+                    name,
+                    success=False,
+                    error_reason=type(exc).__name__,
+                    runner_id=runner_id,
                 )
-        await record_heartbeat(session_factory, name="jobs-runner")
+        await record_heartbeat(session_factory, name="jobs-runner", runner_id=runner_id)
         if args.once:
             break
         await asyncio.sleep(max(args.interval, 1))

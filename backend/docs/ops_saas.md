@@ -5,7 +5,7 @@ Operate the Cleaning Economy API as a production SaaS with reproducible deploys,
 ## Topology
 
 - **API**: stateless FastAPI service. Horizontal scaling is safe when a shared Redis cache is available for rate limiting (set `REDIS_URL`). Without Redis the in-memory limiter is node-local.
-- **Jobs runner**: run `python -m app.jobs.run` as a separate process or container. A heartbeat is written to the `job_heartbeats` table so readiness probes can ensure jobs are alive.
+- **Jobs runner**: run `python -m app.jobs.run` as a separate process or container. A heartbeat (with `runner_id`) is written to the `job_heartbeats` table so readiness probes can ensure jobs are alive when `JOBS_ENABLED=true`.
 - **Redis**: optional but recommended for distributed rate limiting.
 - **Postgres**: primary database. `/readyz` checks connectivity and migration head drift.
 
@@ -48,7 +48,7 @@ services:
 ## Deploy steps
 
 1. **Build**: `docker build -t registry.example.com/clean/api:$GIT_SHA .` (repeat for jobs runner if separate).
-2. **Config**: populate `.env.production` from `.env.production.example` and store in your secret manager; inject at deploy time.
+2. **Config**: populate `.env.production` from `.env.production.example` and store in your secret manager; inject at deploy time. Set `JOBS_ENABLED=true`, keep `JOB_HEARTBEAT_REQUIRED=true`, and optionally set `JOB_RUNNER_ID` (defaults to hostname/pod name) for traceable heartbeats.
 3. **Migrations**: run `alembic upgrade head` against the target database (see rollback below). Prefer running migrations before traffic shift.
 4. **Release**:
    - Apply new containers (Kubernetes `Deployment` rollout or Compose `up -d --no-deps api jobs`).
@@ -81,7 +81,7 @@ services:
 ## Jobs runner expectations
 
 - Run continuously (systemd, container, or cloud task). Use `--interval` to control loop frequency or `--once` for ad-hoc invocations.
-- Heartbeats are written each loop iteration to `job_heartbeats` under the name `jobs-runner`.
+- Heartbeats are written each loop iteration to `job_heartbeats` under the name `jobs-runner` with `runner_id`; `/readyz` will drop to 503 after ~3 minutes (default `JOB_HEARTBEAT_TTL_SECONDS=180`) if they stop.
 - Email adapters are resolved at startup; ensure SMTP/SendGrid credentials are configured in the environment.
 
 ## Validation checklists
