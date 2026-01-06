@@ -129,6 +129,21 @@ class AdminProfileResponse(BaseModel):
     permissions: list[str]
 
 
+class AdminWhoamiResponse(BaseModel):
+    username: str
+    role: str
+    org_id: uuid.UUID | None = None
+
+
+@router.get("/v1/admin/whoami", response_model=AdminWhoamiResponse)
+async def admin_whoami(identity: AdminIdentity = Depends(require_viewer)) -> AdminWhoamiResponse:
+    return AdminWhoamiResponse(
+        username=identity.username,
+        role=getattr(identity.role, "value", str(identity.role)),
+        org_id=identity.org_id,
+    )
+
+
 @router.get("/v1/admin/profile", response_model=AdminProfileResponse)
 async def get_admin_profile(identity: AdminIdentity = Depends(require_viewer)) -> AdminProfileResponse:
     return AdminProfileResponse(

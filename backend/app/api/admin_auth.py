@@ -19,6 +19,18 @@ from app.infra.org_context import set_current_org_id
 logger = logging.getLogger(__name__)
 
 
+class AdminAuthException(HTTPException):
+    def __init__(
+        self, *, reason: str, detail: str = "Invalid authentication"
+    ) -> None:
+        super().__init__(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=detail,
+            headers={"WWW-Authenticate": "Basic"},
+        )
+        self.reason = reason
+
+
 class AdminRole(str, Enum):
     OWNER = "owner"
     ADMIN = "admin"
@@ -107,12 +119,41 @@ def _configured_users() -> list[_ConfiguredUser]:
     return configured
 
 
-def _build_auth_exception(detail: str = "Invalid authentication") -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=detail,
-        headers={"WWW-Authenticate": "Basic"},
-    )
+def _build_auth_exception(
+    *, detail: str = "Invalid authentication", reason: str = "invalid_authentication"
+) -> AdminAuthException:
+    return AdminAuthException(detail=detail, reason=reason)
+
+
+def _resolve_request_id(request: Request) -> str | None:
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        return str(request_id)
+    return request.headers.get("X-Request-ID")
+
+
+def _log_admin_auth_failure(
+    request: Request,
+    *,
+    reason: str,
+    credentials: HTTPBasicCredentials | None,
+    extra_detail: dict | None = None,
+) -> None:
+    authorization_header = request.headers.get("Authorization")
+    scheme, _ = get_authorization_scheme_param(authorization_header)
+    payload = {
+        "reason": reason,
+        "path": request.url.path,
+        "method": request.method,
+        "request_id": _resolve_request_id(request),
+        "has_authorization_header": authorization_header is not None,
+        "auth_scheme": scheme.lower() if scheme else None,
+    }
+    if credentials and credentials.username:
+        payload["presented_username"] = credentials.username
+    if extra_detail:
+        payload.update(extra_detail)
+    logger.warning("admin_auth_failed", extra={"extra": payload})
 
 
 def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> AdminIdentity:
@@ -129,7 +170,7 @@ def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> Admin
         },
     )
     if not legacy_basic_auth_enabled:
-        raise _build_auth_exception()
+        raise _build_auth_exception(reason="basic_auth_disabled")
     if not configured:
         logger.warning(
             "admin_auth_unconfigured",
@@ -147,10 +188,10 @@ def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> Admin
                 }
             },
         )
-        raise _build_auth_exception()
+        raise _build_auth_exception(reason="unconfigured_credentials")
 
     if not credentials:
-        raise _build_auth_exception()
+        raise _build_auth_exception(reason="missing_credentials")
 
     for user in configured:
         if secrets.compare_digest(credentials.username, user.username) and secrets.compare_digest(
@@ -160,7 +201,7 @@ def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> Admin
                 username=user.username, role=user.role, org_id=settings.default_org_id
             )
 
-    raise _build_auth_exception()
+    raise _build_auth_exception(reason="invalid_credentials")
 
 
 def _assert_permissions(identity: AdminIdentity, required: Iterable[AdminPermission]) -> None:
@@ -178,10 +219,10 @@ def _credentials_from_header(request: Request) -> HTTPBasicCredentials | None:
     try:
         decoded = base64.b64decode(param).decode("latin1")
     except Exception:  # noqa: BLE001
-        raise _build_auth_exception()
+        raise _build_auth_exception(reason="malformed_authorization_header")
     username, _, password = decoded.partition(":")
     if not username:
-        raise _build_auth_exception()
+        raise _build_auth_exception(reason="missing_username")
     return HTTPBasicCredentials(username=username, password=password)
 
 
@@ -265,6 +306,11 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             return await http_exception_handler(request, saas_identity_error)
 
         if has_bearer:
+            _log_admin_auth_failure(
+                request,
+                reason="bearer_token_present_for_admin",
+                credentials=None,
+            )
             unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
             return await http_exception_handler(request, unauthorized)
 
@@ -272,6 +318,12 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
         basic_auth_enabled = bool(settings.legacy_basic_auth_enabled)
 
         if not basic_auth_enabled:
+            _log_admin_auth_failure(
+                request,
+                reason="basic_auth_disabled",
+                credentials=None,
+                extra_detail={"configured_user_count": len(configured_users)},
+            )
             logger.debug(
                 "admin_basic_auth_disabled",
                 extra={
@@ -283,6 +335,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             )
             return await http_exception_handler(request, _build_auth_exception())
 
+        credentials: HTTPBasicCredentials | None = None
         try:
             credentials = _credentials_from_header(request)
             identity = _authenticate_credentials(credentials)
@@ -292,6 +345,10 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             set_current_org_id(request.state.current_org_id)
             return await call_next(request)
         except HTTPException as exc:
+            reason = getattr(exc, "reason", None) or "unauthorized"
+            if credentials is None:
+                reason = reason or "missing_credentials"
+            _log_admin_auth_failure(request, reason=reason, credentials=credentials)
             return await http_exception_handler(request, exc)
 
 
