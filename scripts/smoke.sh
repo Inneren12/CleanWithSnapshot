@@ -323,7 +323,7 @@ main() {
   if command -v jq >/dev/null 2>&1; then
     log_section "7. Response Validation"
     check_json_field "Health status field" "$API_BASE_URL/healthz" '.status' 'ok'
-    check_json_field "Readiness database.ok" "$API_BASE_URL/readyz" '.database.ok' 'true'
+    check_json_field "Readiness ok flag" "$API_BASE_URL/readyz" '.ok' 'true'
   else
     log_section "7. Response Validation"
     log_skip "JSON validation tests" "jq not installed"

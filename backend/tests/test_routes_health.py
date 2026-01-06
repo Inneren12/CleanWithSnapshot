@@ -54,11 +54,16 @@ def test_readyz_single_head_current(monkeypatch, client, async_session_maker):
     response = client.get("/readyz")
 
     assert response.status_code == 200
-    payload = response.json()["database"]
-    assert payload["migrations_current"] is True
-    assert payload["expected_head"] == "head1"
-    assert payload["expected_heads"] == ["head1"]
-    assert payload["migrations_check"] == "ok"
+    payload = response.json()
+    assert payload["ok"] is True
+
+    migrations = next(check for check in payload["checks"] if check["name"] == "migrations")
+    assert migrations["ok"] is True
+    detail = migrations["detail"]
+    assert detail["migrations_current"] is True
+    assert detail["expected_head"] == "head1"
+    assert detail["expected_heads"] == ["head1"]
+    assert detail["migrations_check"] == "ok"
 
 
 def test_readyz_single_head_behind(monkeypatch, client, async_session_maker):
@@ -68,10 +73,15 @@ def test_readyz_single_head_behind(monkeypatch, client, async_session_maker):
     response = client.get("/readyz")
 
     assert response.status_code == 503
-    payload = response.json()["database"]
-    assert payload["migrations_current"] is False
-    assert payload["expected_head"] == "head2"
-    assert payload["expected_heads"] == ["head2"]
+    payload = response.json()
+    assert payload["ok"] is False
+
+    migrations = next(check for check in payload["checks"] if check["name"] == "migrations")
+    assert migrations["ok"] is False
+    detail = migrations["detail"]
+    assert detail["migrations_current"] is False
+    assert detail["expected_head"] == "head2"
+    assert detail["expected_heads"] == ["head2"]
 
 
 def test_readyz_multi_head_current(monkeypatch, client, async_session_maker):
@@ -81,10 +91,15 @@ def test_readyz_multi_head_current(monkeypatch, client, async_session_maker):
     response = client.get("/readyz")
 
     assert response.status_code == 200
-    payload = response.json()["database"]
-    assert payload["migrations_current"] is True
-    assert payload["expected_head"] is None
-    assert set(payload["expected_heads"]) == {"h1", "h2"}
+    payload = response.json()
+    assert payload["ok"] is True
+
+    migrations = next(check for check in payload["checks"] if check["name"] == "migrations")
+    assert migrations["ok"] is True
+    detail = migrations["detail"]
+    assert detail["migrations_current"] is True
+    assert detail["expected_head"] is None
+    assert set(detail["expected_heads"]) == {"h1", "h2"}
 
 
 def test_readyz_alembic_unavailable(monkeypatch, client, async_session_maker):
@@ -96,12 +111,16 @@ def test_readyz_alembic_unavailable(monkeypatch, client, async_session_maker):
     response = client.get("/readyz")
 
     assert response.status_code == 200
-    payload = response.json()["database"]
+    payload = response.json()
     assert payload["ok"] is True
-    assert payload["migrations_current"] is True
-    assert payload["expected_head"] is None
-    assert payload["expected_heads"] == []
-    assert payload["migrations_check"] == "skipped_no_alembic_files"
+
+    migrations = next(check for check in payload["checks"] if check["name"] == "migrations")
+    assert migrations["ok"] is True
+    detail = migrations["detail"]
+    assert detail["migrations_current"] is True
+    assert detail["expected_head"] is None
+    assert detail["expected_heads"] == []
+    assert detail["migrations_check"] == "skipped_no_alembic_files"
 
 
 def test_readyz_jobs_heartbeat_missing(monkeypatch, client, async_session_maker):
@@ -111,9 +130,10 @@ def test_readyz_jobs_heartbeat_missing(monkeypatch, client, async_session_maker)
     response = client.get("/readyz")
 
     assert response.status_code == 503
-    jobs = response.json()["jobs"]
-    assert jobs["enabled"] is True
+    payload = response.json()
+    jobs = next(check for check in payload["checks"] if check["name"] == "jobs")
     assert jobs["ok"] is False
+    assert jobs["detail"]["enabled"] is True
 
 
 def test_readyz_jobs_heartbeat_recent(monkeypatch, client, async_session_maker):
@@ -125,6 +145,7 @@ def test_readyz_jobs_heartbeat_recent(monkeypatch, client, async_session_maker):
     response = client.get("/readyz")
 
     assert response.status_code == 200
-    jobs = response.json()["jobs"]
-    assert jobs["enabled"] is True
+    payload = response.json()
+    jobs = next(check for check in payload["checks"] if check["name"] == "jobs")
     assert jobs["ok"] is True
+    assert jobs["detail"]["enabled"] is True
