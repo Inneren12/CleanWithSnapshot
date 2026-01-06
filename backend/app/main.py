@@ -182,8 +182,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.limiter = limiter
         self.app_settings = app_settings
+        self.exempt_paths = {
+            "/v1/payments/stripe/webhook",
+            "/stripe/webhook",
+        }
 
     async def dispatch(self, request: Request, call_next: Callable):
+        path = request.url.path
+        normalized = path.rstrip("/") or "/"
+        if path in self.exempt_paths or normalized in self.exempt_paths:
+            return await call_next(request)
+
         client = resolve_client_key(
             request,
             trust_proxy_headers=self.app_settings.trust_proxy_headers,
