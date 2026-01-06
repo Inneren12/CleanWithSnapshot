@@ -193,6 +193,18 @@ curl -fsS "$API_BASE_URL/openapi.json" | jq '.info.title'
 
 **Expected:** HTTP 200 with `"Cleaning Economy Bot"`
 
+### 3.4 Analytics Funnel
+Validates conversion counts and payment rollups.
+
+```bash
+curl -fsS \
+  -u "$ADMIN_USER:$ADMIN_PASS" \
+  -H "X-Test-Org: ${ORG_ID:-$DEFAULT_ORG_ID}" \
+  "$API_BASE_URL/v1/admin/analytics/funnel?from=$(date -Idate)" | jq .counts
+```
+
+**Expected:** HTTP 200 with counts containing `leads`, `bookings`, `completed`, and `paid`.
+
 ## 4. Authentication & Authorization
 
 ### 4.1 Admin Auth (Basic)
