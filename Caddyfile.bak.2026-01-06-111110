@@ -20,15 +20,12 @@ panidobro.com, www.panidobro.com {
     format json
   }
 
- reverse_proxy web:3000 {
-  transport http {
+  reverse_proxy web:3000 {
+    timeout 60s
     dial_timeout 10s
-    response_header_timeout 60s
     read_timeout 60s
     write_timeout 60s
   }
-}
-
 }
 
 api.panidobro.com {
@@ -48,12 +45,10 @@ api.panidobro.com {
   header @docs Content-Security-Policy "default-src 'self'; img-src 'self' data: https://fastapi.tiangolo.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;"
 
   reverse_proxy api:8000 {
-  transport http {
+    header_up Authorization {header.Authorization}
+    timeout 90s
     dial_timeout 10s
-    response_header_timeout 60s
-    read_timeout 60s
-    write_timeout 60s
+    read_timeout 90s
+    write_timeout 90s
   }
-}
-
 }

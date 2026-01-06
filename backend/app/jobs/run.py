@@ -16,6 +16,7 @@ from app.jobs import accounting_export, dlq_auto_replay, email_jobs, outbox, sto
 from app.infra.storage import new_storage_backend
 from app.domain.ops.db_models import JobHeartbeat
 from app.settings import settings
+from app.domain.addons import db_models as addon_db_models  # noqa: F401
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
