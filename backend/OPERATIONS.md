@@ -8,6 +8,33 @@
 5. Start scheduled jobs (cron/Scheduler) calling: `/v1/admin/cleanup`, `/v1/admin/email-scan`, `/v1/admin/retention/cleanup`, `/v1/admin/export-dead-letter`, `/v1/admin/outbox-dead-letter`, optional `storage_janitor` and `outbox-delivery` from `app/jobs/run.py`. In production set `JOBS_ENABLED=true` (and `JOB_HEARTBEAT_REQUIRED=true`) so `/readyz` enforces a fresh heartbeat; run the `jobs` container from `docker-compose.yml` (or an equivalent long-lived process with DB access) and set `JOB_RUNNER_ID` plus optional `BETTER_STACK_HEARTBEAT_URL` for observability.
 6. Verify health endpoints and Stripe webhook secret. With jobs enabled, `/readyz` will fail within ~3 minutes if the runner heartbeat stalls; use `/v1/admin/jobs/status` for detail.
 
+## Automated deployment (recommended)
+For production deployments, use the automated deploy script which handles all steps:
+
+```bash
+# Standard production deploy
+./ops/deploy.sh
+```
+
+The script performs:
+1. Fetches latest code from `origin/main`
+2. Builds Docker images
+3. Starts services (with healthcheck dependency on database)
+4. Waits for database to be ready
+5. **Runs migrations automatically** (`alembic upgrade head`)
+6. Executes smoke tests against `/healthz` and other endpoints
+7. Reports success or failure
+
+**Migration automation:** Migrations are executed automatically as part of the deploy process. The deploy will fail if migrations fail, preventing broken deployments. The `/readyz` endpoint validates that migrations are current before the deployment is considered successful.
+
+**Rollback procedures:** See `docs/runbook_rollback.md` for rollback instructions. **Forward-fix migrations are strongly preferred** over database downgrades.
+
+**Migration details:** See `docs/runbook_migrations.md` for comprehensive migration documentation including:
+- Creating new migrations
+- Migration best practices (additive vs breaking changes)
+- Troubleshooting migration failures
+- Emergency rollback procedures
+
 ## Caddy logging, rotation, and permissions
 - **Log location:** `/var/log/caddy` (mounted from `./logs` in `docker-compose.yml`) holds `caddy.log`, `access_web.log`, and `access_api.log`. The files are created by the `caddy` user inside the container; keep the directory owned by that UID (check with `docker compose exec caddy id -u caddy`) so writes continue after rotation.
 - **Group readability:** operators on the host should be able to read logs via the `docker` group. Apply a default ACL so new files inherit `g:docker:rX` without changing ownership:
@@ -73,8 +100,45 @@
 
 ## Health, readiness, and metrics
 - `GET /healthz` – liveness.
-- `GET /readyz` – checks DB connectivity, migration head vs `alembic/`, and job heartbeat when `JOBS_ENABLED` or `JOB_HEARTBEAT_REQUIRED` is true (`app/api/routes_health.py`). Returns 503 on failure and includes runner ID + heartbeat age in the `jobs` check.
-- Heartbeat verification: `curl -s "$API_BASE/readyz" | jq '.checks[] | select(.name=="jobs")'` or query Postgres directly with `SELECT name, runner_id, last_heartbeat FROM job_heartbeats ORDER BY last_heartbeat DESC LIMIT 5;`. Expect age below `JOB_HEARTBEAT_TTL_SECONDS` when the runner is healthy.
+- `GET /readyz` – **comprehensive readiness check** that validates:
+  - **Database connectivity** – verifies DB is reachable and responding (2s timeout)
+  - **Migrations status** – confirms database migration version matches expected Alembic head; **returns 503 if migrations are pending** (preflight check for migrations)
+  - **Job heartbeat** – when `JOBS_ENABLED` or `JOB_HEARTBEAT_REQUIRED` is true, ensures scheduler heartbeat is fresh (default 180s TTL; configurable via `JOB_HEARTBEAT_TTL_SECONDS` / `JOB_HEARTBEAT_STALE_SECONDS` depending on implementation)
+  - Implementation in `app/api/routes_health.py`; returns **HTTP 503** on any check failure
+  - Response shape:
+    - For backward compatibility, `/readyz` may include legacy top-level keys (`status`, `database`, `jobs`) expected by tests/clients.
+    - It may also include a richer `checks[]` array for operators/monitoring.
+  - Example response (rich form):
+    ```json
+    {
+      "ok": true,
+      "checks": [
+        {"name": "db", "ok": true, "ms": 12.34, "detail": {"message": "database reachable"}},
+        {"name": "migrations", "ok": true, "ms": 23.45, "detail": {
+          "message": "migrations in sync",
+          "migrations_current": true,
+          "current_version": "0052_stripe_events_processed",
+          "expected_head": "0052_stripe_events_processed"
+        }},
+        {"name": "jobs", "ok": true, "ms": 8.90, "detail": {
+          "enabled": true,
+          "runner_id": "scheduler-1",
+          "last_heartbeat": "2026-01-06T12:34:56Z",
+          "age_seconds": 45.2
+        }}
+      ]
+    }
+    ```
+
+- **Migration preflight check:** The `/readyz` migrations check acts as a preflight check, preventing traffic from reaching services with outdated database schemas. Load balancers and orchestrators should use `/readyz` (not `/healthz`) for readiness probes. If migrations fail during deployment, `/readyz` will return 503 until migrations succeed (or the deployment is rolled back).
+
+- **Heartbeat verification:**
+  - Quick operator check:
+    - `curl -s "$API_BASE/readyz" | jq '.checks[] | select(.name=="jobs")'`
+    - If you rely on legacy fields instead of `checks[]`: `curl -s "$API_BASE/readyz" | jq '.jobs'`
+  - Postgres direct check (if heartbeat is stored in DB):
+    - `SELECT name, runner_id, last_heartbeat FROM job_heartbeats ORDER BY last_heartbeat DESC LIMIT 5;`
+  - Expect heartbeat age below TTL (e.g., `< 180s`) when the runner is healthy.
 - Metrics middleware records HTTP latency/5xx counts (`app/main.py`, `app/infra/metrics.py`). When metrics are enabled, `/v1/metrics` router exposes admin-protected metrics export.
 - Job metrics: `job_last_heartbeat_timestamp`, `job_heartbeat_age_seconds`, `job_runner_up`, `job_last_success_timestamp`, and `job_errors_total` track scheduler health. View aggregated status via `/v1/admin/jobs/status`.
 
