@@ -74,6 +74,7 @@ from app.infra.email import resolve_app_email_adapter
 from app.domain.outbox.db_models import OutboxEvent
 from app.domain.outbox.schemas import OutboxEventResponse, OutboxReplayResponse
 from app.domain.outbox.service import replay_outbox_event
+from app.domain.queues.schemas import DLQBatchReplayResponse
 from app.domain.nps import schemas as nps_schemas, service as nps_service
 from app.domain.pricing.config_loader import load_pricing_config
 from app.domain.reason_logs import schemas as reason_schemas
@@ -107,10 +108,12 @@ from app.domain.subscriptions.db_models import Subscription
 from app.domain.admin_audit import service as audit_service
 from app.domain.workers.db_models import Worker
 from app.infra.export import send_export_with_retry, validate_webhook_url
+from app.infra.logging import update_log_context
 from app.infra.storage import new_storage_backend
 from app.infra.csrf import get_csrf_token, issue_csrf_token, render_csrf_input, require_csrf
 from app.infra.bot_store import BotStore
 from app.infra.i18n import render_lang_toggle, resolve_lang, tr
+from app.jobs.dlq_auto_replay import run_dlq_auto_replay
 from app.settings import settings
 
 router = APIRouter(dependencies=[Depends(require_viewer)])
@@ -1261,6 +1264,82 @@ async def list_export_dead_letter(
 
 
 @router.post(
+    "/v1/admin/queue/dlq/replay",
+    response_model=DLQBatchReplayResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def replay_dlq_batch(
+    request: Request,
+    confirm: bool = Query(
+        False,
+        description="Explicit confirmation flag; must be true to replay DLQ items in batch.",
+    ),
+    limit: int = Query(10, ge=1, le=100, description="Maximum DLQ items to replay in one batch"),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> DLQBatchReplayResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    org_uuid = uuid.UUID(str(org_id)) if org_id else settings.default_org_id
+    correlation_id = request.headers.get("X-Correlation-ID") or getattr(request.state, "request_id", None)
+    update_log_context(correlation_id=correlation_id, org_id=str(org_uuid), replay_kind="dlq_batch")
+
+    if not confirm:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="confirm_batch_replay_required")
+
+    rate_limited = await enforce_org_action_rate_limit(request, org_uuid, "dlq_batch_replay")
+    if rate_limited:
+        return rate_limited
+
+    idempotency = await require_idempotency(request, session, org_uuid, "dlq_batch_replay")
+    if isinstance(idempotency, Response):
+        return idempotency
+    if idempotency.existing_response:
+        return idempotency.existing_response
+
+    adapter = _email_adapter(request)
+    result = await run_dlq_auto_replay(
+        session,
+        adapter,
+        org_id=org_uuid,
+        export_transport=getattr(request.app.state, "export_transport", None),
+        export_resolver=getattr(request.app.state, "export_resolver", None),
+        max_per_org=limit,
+        correlation_id=correlation_id,
+    )
+    response_body = DLQBatchReplayResponse(**result, correlation_id=correlation_id)
+    request.state.explicit_admin_audit = True
+    logger.info(
+        "dlq_batch_replay",
+        extra={
+            "extra": {
+                "org_id": str(org_uuid),
+                "limit": limit,
+                "correlation_id": correlation_id,
+                "processed": result.get("processed", 0),
+                "sent": result.get("sent", 0),
+                "failed": result.get("failed", 0),
+            }
+        },
+    )
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="dlq_batch_replay",
+        resource_type="dlq",
+        resource_id=str(org_uuid),
+        before=None,
+        after=response_body.model_dump(mode="json"),
+    )
+    await idempotency.save_response(
+        session,
+        status_code=status.HTTP_202_ACCEPTED,
+        body=response_body.model_dump(mode="json"),
+    )
+    await session.commit()
+    return response_body
+
+
+@router.post(
     "/v1/admin/export-dead-letter/{event_id}/replay",
     response_model=ExportReplayResponse,
     status_code=status.HTTP_202_ACCEPTED,
@@ -1272,6 +1351,8 @@ async def replay_export_dead_letter(
     identity: AdminIdentity = Depends(require_admin),
 ) -> ExportReplayResponse:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    correlation_id = request.headers.get("X-Correlation-ID") or getattr(request.state, "request_id", None)
+    update_log_context(correlation_id=correlation_id, replay_event_id=event_id, replay_kind="export_dlq")
     rate_limited = await enforce_org_action_rate_limit(request, org_id, "export_replay")
     if rate_limited:
         return rate_limited
@@ -1287,6 +1368,17 @@ async def replay_export_dead_letter(
     event = result.scalar_one_or_none()
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export event not found")
+
+    logger.info(
+        "dlq_export_replay_request",
+        extra={
+            "extra": {
+                "event_id": event_id,
+                "org_id": str(org_uuid) if org_uuid else None,
+                "correlation_id": correlation_id,
+            }
+        },
+    )
 
     payload = await _resolve_export_payload(session, event, org_uuid)
     target_url = event.target_url or settings.export_webhook_url
@@ -1383,6 +1475,8 @@ async def replay_outbox_dead_letter(
     admin: AdminIdentity = Depends(require_admin),
 ) -> OutboxReplayResponse:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    correlation_id = request.headers.get("X-Correlation-ID") or getattr(request.state, "request_id", None)
+    update_log_context(correlation_id=correlation_id, replay_event_id=event_id, replay_kind="outbox_dlq")
     rate_limited = await enforce_org_action_rate_limit(request, org_id, "outbox_replay")
     if rate_limited:
         return rate_limited
@@ -1398,6 +1492,16 @@ async def replay_outbox_dead_letter(
     event = result.scalar_one_or_none()
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outbox event not found")
+    logger.info(
+        "dlq_outbox_replay_request",
+        extra={
+            "extra": {
+                "event_id": event_id,
+                "org_id": str(org_uuid) if org_uuid else None,
+                "correlation_id": correlation_id,
+            }
+        },
+    )
     await replay_outbox_event(session, event)
     response_body = OutboxReplayResponse(
         event_id=event.event_id,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -19,12 +20,14 @@ from app.domain.outbox.service import (
     outbox_counts_by_status,
 )
 from app.infra.export import send_export_with_retry, validate_webhook_url
+from app.infra.logging import update_log_context
 from app.infra.metrics import metrics
 from app.infra.org_context import org_id_context
 from app.settings import settings
 
 
 AUTO_REPLAY_ACTOR = "dlq-auto-replay"
+logger = logging.getLogger(__name__)
 
 
 async def _export_payload_for_event(session: AsyncSession, event: ExportEvent, org_id: uuid.UUID) -> dict:
@@ -45,6 +48,8 @@ async def run_dlq_auto_replay(
     org_id: uuid.UUID | None = None,
     export_transport=None,
     export_resolver=None,
+    max_per_org: int | None = None,
+    correlation_id: str | None = None,
 ) -> dict[str, int]:
     if not settings.dlq_auto_replay_enabled:
         return {"skipped": 1, "processed": 0, "sent": 0, "failed": 0}
@@ -55,6 +60,7 @@ async def run_dlq_auto_replay(
         return {"skipped": 1, "processed": 0, "sent": 0, "failed": 0}
 
     org_uuid = org_id or settings.default_org_id
+    update_log_context(correlation_id=correlation_id, org_id=str(org_uuid))
     cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=settings.dlq_auto_replay_min_age_minutes)
     adapters = OutboxAdapters(
         email_adapter=adapter, export_transport=export_transport, export_resolver=export_resolver
@@ -78,7 +84,11 @@ async def run_dlq_auto_replay(
         failed = 0
         processed = 0
         failure_streak = 0
-        limit = max(0, settings.dlq_auto_replay_max_per_org)
+        limit = max(0, max_per_org if max_per_org is not None else settings.dlq_auto_replay_max_per_org)
+        logger.info(
+            "dlq_auto_replay_start",
+            extra={"extra": {"org_id": str(org_uuid), "limit": limit, "correlation_id": correlation_id}},
+        )
 
         outbox_stmt = (
             select(OutboxEvent)
@@ -126,6 +136,7 @@ async def run_dlq_auto_replay(
                 "attempts": event.attempts,
                 "last_error": event.last_error,
             }
+            update_log_context(dlq_event_id=str(event.event_id), dlq_kind="outbox")
             delivered, error = await deliver_outbox_event(session, event, adapters)
             metrics.record_dlq_replay("outbox", "success" if delivered else "failure", str(org_uuid))
             await audit_service.record_action(
@@ -143,6 +154,18 @@ async def run_dlq_auto_replay(
                 },
             )
             processed += 1
+            logger.info(
+                "dlq_outbox_replay",
+                extra={
+                    "extra": {
+                        "org_id": str(org_uuid),
+                        "event_id": str(event.event_id),
+                        "delivered": delivered,
+                        "error": error,
+                        "correlation_id": correlation_id,
+                    }
+                },
+            )
             if delivered:
                 sent += 1
                 failure_streak = 0
@@ -155,6 +178,7 @@ async def run_dlq_auto_replay(
         for event in export_events:
             if processed >= limit or failure_streak >= settings.dlq_auto_replay_failure_streak_limit:
                 break
+            update_log_context(dlq_event_id=str(event.event_id), dlq_kind="export")
             payload = await _export_payload_for_event(session, event, org_uuid)
             if not payload:
                 failed += 1
@@ -202,6 +226,18 @@ async def run_dlq_auto_replay(
             )
             metrics.record_dlq_replay("export", "success" if success else "failure", str(org_uuid))
             processed += 1
+            logger.info(
+                "dlq_export_replay",
+                extra={
+                    "extra": {
+                        "org_id": str(org_uuid),
+                        "event_id": str(event.event_id),
+                        "success": success,
+                        "last_error_code": last_error_code,
+                        "correlation_id": correlation_id,
+                    }
+                },
+            )
             if success:
                 sent += 1
                 failure_streak = 0

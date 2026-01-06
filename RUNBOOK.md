@@ -30,6 +30,7 @@ If migrations alter long-lived connections, restart the affected services with `
 - API: `https://api.panidobro.com/healthz`
 - Web: `https://panidobro.com/`
 - Override with `API_BASE_URL` or `WEB_BASE_URL` when running `ops/smoke.sh` directly.
+- DLQ (admin-only): `curl -u "$ADMIN_BASIC_USERNAME:$ADMIN_BASIC_PASSWORD" "$API_BASE_URL/v1/admin/queue/dlq?kind=all&limit=1"` should return `outbox_dead_count` and `export_dead_count` as `0`. Any non-zero value requires investigation before proceeding.
 
 ## Logs and health
 - Check: `curl -fsS https://api.panidobro.com/healthz`
