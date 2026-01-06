@@ -4,6 +4,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
+import httpx
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.infra.db import get_session_factory
@@ -92,6 +93,17 @@ async def _record_job_result(
         metrics.record_job_error(job, error_reason or "unknown")
 
 
+async def _notify_external_heartbeat(url: str | None) -> None:
+    if not url:
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(url)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("external_heartbeat_failed", extra={"extra": {"error": type(exc).__name__}})
+
+
 def _job_runner(name: str, base_url: str | None = None) -> Callable:
     if name == "booking-reminders":
         return lambda session: email_jobs.run_booking_reminders(session, _ADAPTER)
@@ -162,6 +174,7 @@ async def main(argv: list[str] | None = None) -> None:
                     runner_id=runner_id,
                 )
         await record_heartbeat(session_factory, name="jobs-runner", runner_id=runner_id)
+        await _notify_external_heartbeat(settings.better_stack_heartbeat_url)
         if args.once:
             break
         await asyncio.sleep(max(args.interval, 1))

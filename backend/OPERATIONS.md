@@ -5,7 +5,7 @@
 2. Configure environment (`.env`) with DB URL, auth/portal secrets, Stripe/email keys, storage backend config, CORS/proxy settings.
 3. Build and start API (`docker-compose up -d` or `make up`); ensure volumes for uploads (`order_upload_root`).
 4. Run migrations inside the API container: `make migrate` (uses `alembic/` and `alembic.ini`).
-5. Start scheduled jobs (cron/Scheduler) calling: `/v1/admin/cleanup`, `/v1/admin/email-scan`, `/v1/admin/retention/cleanup`, `/v1/admin/export-dead-letter`, `/v1/admin/outbox-dead-letter`, optional `storage_janitor` and `outbox-delivery` from `app/jobs/run.py`. In production set `JOBS_ENABLED=true` (and `JOB_HEARTBEAT_REQUIRED=true`) so `/readyz` enforces a fresh heartbeat; run the `jobs` container from `docker-compose.yml` or an equivalent long-lived process with DB access.
+5. Start scheduled jobs (cron/Scheduler) calling: `/v1/admin/cleanup`, `/v1/admin/email-scan`, `/v1/admin/retention/cleanup`, `/v1/admin/export-dead-letter`, `/v1/admin/outbox-dead-letter`, optional `storage_janitor` and `outbox-delivery` from `app/jobs/run.py`. In production set `JOBS_ENABLED=true` (and `JOB_HEARTBEAT_REQUIRED=true`) so `/readyz` enforces a fresh heartbeat; run the `jobs` container from `docker-compose.yml` (or an equivalent long-lived process with DB access) and set `JOB_RUNNER_ID` plus optional `BETTER_STACK_HEARTBEAT_URL` for observability.
 6. Verify health endpoints and Stripe webhook secret. With jobs enabled, `/readyz` will fail within ~3 minutes if the runner heartbeat stalls; use `/v1/admin/jobs/status` for detail.
 
 ## Automated deployment (recommended)
@@ -88,7 +88,7 @@ The script performs:
 - **Storage/photos:** `ORDER_STORAGE_BACKEND`, `ORDER_UPLOAD_ROOT`, `ORDER_PHOTO_MAX_BYTES`, MIME allowlist, S3/R2/Cloudflare credentials, signing secrets/TTLs. Canonical storage keys follow `orders/{org_id}/{booking_id}/{photo_id}[.ext]` (legacy aliases still resolve for reads).
 - **Feature flags:** `DEPOSITS_ENABLED`, `EXPORT_MODE` (`off`/`webhook`/`sheets`), and `STRICT_POLICY_MODE` for stricter portal/config behaviors. Operators can inspect runtime flags via `GET /v1/admin/feature-flags` (Basic Auth protected).
 - **Captcha/abuse:** `CAPTCHA_MODE`, `TURNSTILE_SECRET_KEY`.
-- **Metrics/observability:** `METRICS_ENABLED`, `METRICS_TOKEN`, `JOBS_ENABLED`, `JOB_HEARTBEAT_REQUIRED`, `JOB_HEARTBEAT_TTL_SECONDS` (default 180s), `JOB_RUNNER_ID` (defaults to hostname).
+- **Metrics/observability:** `METRICS_ENABLED`, `METRICS_TOKEN`, `JOBS_ENABLED`, `JOB_HEARTBEAT_REQUIRED`, `JOB_HEARTBEAT_TTL_SECONDS` (default 180s), `JOB_RUNNER_ID` (defaults to hostname), optional `BETTER_STACK_HEARTBEAT_URL` for external uptime monitors.
 - **Retention/export:** `RETENTION_*` settings, `EXPORT_MODE`, webhook URL/allowlist/backoff toggles.
 
 ## Admin Basic Auth verification
@@ -103,9 +103,12 @@ The script performs:
 - `GET /readyz` – **comprehensive readiness check** that validates:
   - **Database connectivity** – verifies DB is reachable and responding (2s timeout)
   - **Migrations status** – confirms database migration version matches expected Alembic head; **returns 503 if migrations are pending** (preflight check for migrations)
-  - **Job heartbeat** – when `JOBS_ENABLED` or `JOB_HEARTBEAT_REQUIRED` is true, ensures scheduler heartbeat is fresh (default 180s TTL)
-  - Implementation in `app/api/routes_health.py`; returns 503 on any check failure
-  - Example response:
+  - **Job heartbeat** – when `JOBS_ENABLED` or `JOB_HEARTBEAT_REQUIRED` is true, ensures scheduler heartbeat is fresh (default 180s TTL; configurable via `JOB_HEARTBEAT_TTL_SECONDS` / `JOB_HEARTBEAT_STALE_SECONDS` depending on implementation)
+  - Implementation in `app/api/routes_health.py`; returns **HTTP 503** on any check failure
+  - Response shape:
+    - For backward compatibility, `/readyz` may include legacy top-level keys (`status`, `database`, `jobs`) expected by tests/clients.
+    - It may also include a richer `checks[]` array for operators/monitoring.
+  - Example response (rich form):
     ```json
     {
       "ok": true,
@@ -119,13 +122,23 @@ The script performs:
         }},
         {"name": "jobs", "ok": true, "ms": 8.90, "detail": {
           "enabled": true,
+          "runner_id": "scheduler-1",
           "last_heartbeat": "2026-01-06T12:34:56Z",
           "age_seconds": 45.2
         }}
       ]
     }
     ```
-- **Migration preflight check:** The `/readyz` migrations check acts as a preflight check, preventing traffic from reaching services with outdated database schemas. Load balancers and orchestrators should use `/readyz` (not `/healthz`) for readiness probes. If migrations fail during deployment, `/readyz` will return 503 until migrations succeed or are rolled back.
+
+- **Migration preflight check:** The `/readyz` migrations check acts as a preflight check, preventing traffic from reaching services with outdated database schemas. Load balancers and orchestrators should use `/readyz` (not `/healthz`) for readiness probes. If migrations fail during deployment, `/readyz` will return 503 until migrations succeed (or the deployment is rolled back).
+
+- **Heartbeat verification:**
+  - Quick operator check:
+    - `curl -s "$API_BASE/readyz" | jq '.checks[] | select(.name=="jobs")'`
+    - If you rely on legacy fields instead of `checks[]`: `curl -s "$API_BASE/readyz" | jq '.jobs'`
+  - Postgres direct check (if heartbeat is stored in DB):
+    - `SELECT name, runner_id, last_heartbeat FROM job_heartbeats ORDER BY last_heartbeat DESC LIMIT 5;`
+  - Expect heartbeat age below TTL (e.g., `< 180s`) when the runner is healthy.
 - Metrics middleware records HTTP latency/5xx counts (`app/main.py`, `app/infra/metrics.py`). When metrics are enabled, `/v1/metrics` router exposes admin-protected metrics export.
 - Job metrics: `job_last_heartbeat_timestamp`, `job_heartbeat_age_seconds`, `job_runner_up`, `job_last_success_timestamp`, and `job_errors_total` track scheduler health. View aggregated status via `/v1/admin/jobs/status`.
 

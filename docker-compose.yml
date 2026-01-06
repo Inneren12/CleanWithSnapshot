@@ -40,6 +40,17 @@ services:
           cpus: '0.5'
           memory: 512M
 
+  jobs:
+    build: ./backend
+    command: ["python", "-m", "app.jobs.run", "--interval", "60"]
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8001"
+
   web:
     build: ./web
     restart: unless-stopped
