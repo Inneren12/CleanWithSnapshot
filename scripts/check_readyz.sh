@@ -65,20 +65,20 @@ if [[ "$HTTP_CODE" == "200" ]]; then
   if [[ "$HAS_JQ" == "true" ]]; then
     RESPONSE_BODY=$(cat "$HTTP_RESPONSE")
 
-    # Check if overall ok is true
-    OK_VALUE=$(echo "$RESPONSE_BODY" | jq -r '.ok // false' 2>/dev/null)
-    if [[ "$OK_VALUE" != "true" ]]; then
-      echo -e "${RED}✗ FAIL: Readiness check returned ok: false${NC}" >&2
+    # Check if overall status is "ok"
+    STATUS_VALUE=$(echo "$RESPONSE_BODY" | jq -r '.status // "unknown"' 2>/dev/null)
+    if [[ "$STATUS_VALUE" != "ok" ]]; then
+      echo -e "${RED}✗ FAIL: Readiness check returned status: ${STATUS_VALUE}${NC}" >&2
       if [[ "$READYZ_VERBOSE" == "true" ]]; then
         echo "$RESPONSE_BODY" | jq . >&2
       fi
       exit 1
     fi
 
-    # Check if checks array exists
-    CHECKS_COUNT=$(echo "$RESPONSE_BODY" | jq -r '.checks | length' 2>/dev/null)
-    if [[ "$CHECKS_COUNT" -eq 0 ]]; then
-      echo -e "${RED}✗ FAIL: No health checks found in response${NC}" >&2
+    # Check database status
+    DB_OK=$(echo "$RESPONSE_BODY" | jq -r '.database.ok // false' 2>/dev/null)
+    if [[ "$DB_OK" != "true" ]]; then
+      echo -e "${RED}✗ FAIL: Database check failed${NC}" >&2
       if [[ "$READYZ_VERBOSE" == "true" ]]; then
         echo "$RESPONSE_BODY" | jq . >&2
       fi
@@ -86,11 +86,14 @@ if [[ "$HTTP_CODE" == "200" ]]; then
     fi
 
     if [[ "$READYZ_VERBOSE" == "true" ]]; then
-      echo -e "${GRAY}Checks:${NC}"
-      echo "$RESPONSE_BODY" | jq -r '.checks[] | "  [\(.ok | if . then "✓" else "✗" end)] \(.name): \(.detail) (\(.ms)ms)"'
+      echo -e "${GRAY}Status: ${STATUS_VALUE}${NC}"
+      echo -e "${GRAY}Database:${NC}"
+      echo "$RESPONSE_BODY" | jq -r '.database | "  ok: \(.ok)\n  message: \(.message)\n  migrations_current: \(.migrations_current)"'
+      echo -e "${GRAY}Jobs:${NC}"
+      echo "$RESPONSE_BODY" | jq -r '.jobs | "  ok: \(.ok)\n  enabled: \(.enabled)\n  message: \(.message // "N/A")"'
     else
       # Compact output: just show we're healthy
-      echo -e "${GREEN}✓ PASS${NC}: All checks healthy (${CHECKS_COUNT} checks, HTTP ${HTTP_CODE})"
+      echo -e "${GREEN}✓ PASS${NC}: Readiness checks passed (HTTP ${HTTP_CODE})"
     fi
   fi
 
@@ -102,10 +105,26 @@ elif [[ "$HTTP_CODE" == "503" ]]; then
     RESPONSE_BODY=$(cat "$HTTP_RESPONSE")
 
     # Show which checks failed
-    FAILED_CHECKS=$(echo "$RESPONSE_BODY" | jq -r '.checks[] | select(.ok == false) | "  [\(.name)] \(.detail)"' 2>/dev/null || echo "")
-    if [[ -n "$FAILED_CHECKS" ]]; then
-      echo -e "${YELLOW}Failed checks:${NC}" >&2
-      echo "$FAILED_CHECKS" >&2
+    echo -e "${YELLOW}Failed checks:${NC}" >&2
+
+    # Check database
+    DB_OK=$(echo "$RESPONSE_BODY" | jq -r '.database.ok // false' 2>/dev/null)
+    if [[ "$DB_OK" != "true" ]]; then
+      DB_MSG=$(echo "$RESPONSE_BODY" | jq -r '.database.message // "unknown error"' 2>/dev/null)
+      echo "  [database] $DB_MSG" >&2
+    fi
+
+    # Check migrations
+    MIGRATIONS_OK=$(echo "$RESPONSE_BODY" | jq -r '.database.migrations_current // false' 2>/dev/null)
+    if [[ "$MIGRATIONS_OK" != "true" ]]; then
+      echo "  [migrations] migrations not current" >&2
+    fi
+
+    # Check jobs
+    JOBS_OK=$(echo "$RESPONSE_BODY" | jq -r '.jobs.ok // false' 2>/dev/null)
+    if [[ "$JOBS_OK" != "true" ]]; then
+      JOBS_MSG=$(echo "$RESPONSE_BODY" | jq -r '.jobs.message // "unknown error"' 2>/dev/null)
+      echo "  [jobs] $JOBS_MSG" >&2
     fi
 
     if [[ "$READYZ_VERBOSE" == "true" ]]; then

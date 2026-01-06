@@ -49,45 +49,47 @@ curl -fsS "$API_BASE_URL/readyz" | jq .
 **Expected:** HTTP 200 with:
 ```json
 {
-  "ok": true,
-  "checks": [
-    {
-      "name": "db",
-      "ok": true,
-      "ms": 5.2,
-      "detail": "database reachable"
-    },
-    {
-      "name": "migrations",
-      "ok": true,
-      "ms": 3.1,
-      "detail": "migrations current: abc123"
-    },
-    {
-      "name": "jobs",
-      "ok": true,
-      "ms": 2.5,
-      "detail": "job heartbeat healthy (age: 15.0s, threshold: 300s)"
-    }
-  ]
+  "status": "ok",
+  "database": {
+    "ok": true,
+    "message": "database reachable",
+    "migrations_current": true,
+    "current_version": "abc123",
+    "expected_head": "abc123",
+    "expected_heads": ["abc123"],
+    "migrations_check": "ok"
+  },
+  "jobs": {
+    "ok": true,
+    "enabled": false,
+    "message": "job heartbeat check disabled"
+  }
 }
 ```
 
 **Response Format:**
-- `ok` (boolean): Overall readiness status (true if all checks pass)
-- `checks` (array): List of individual health checks
-  - `name` (string): Check identifier (db, migrations, jobs)
-  - `ok` (boolean): Check result
-  - `ms` (number): Check duration in milliseconds
-  - `detail` (string): Human-readable status message
+- `status` (string): Overall readiness status ("ok" or "unhealthy")
+- `database` (object): Database and migration checks
+  - `ok` (boolean): Database connectivity result
+  - `message` (string): Human-readable status message
+  - `migrations_current` (boolean): Whether DB is at expected migration version
+  - `current_version` (string | null): Current migration version in DB
+  - `expected_head` (string | null): Expected single head (null if multi-head)
+  - `expected_heads` (array): List of expected migration heads
+  - `migrations_check` (string): Migration check status ("ok", "skipped_no_alembic_files", "not_run")
+- `jobs` (object): Background job health checks
+  - `ok` (boolean): Job heartbeat health result
+  - `enabled` (boolean): Whether job heartbeat monitoring is enabled
+  - `message` (string): Human-readable status message
+  - Additional fields when enabled: `last_heartbeat`, `age_seconds`, `threshold_seconds`
 
 **Failure Conditions:**
-- Returns HTTP 503 when `ok: false`
-- Database unreachable → `db.ok: false`
-- Migrations not applied → `migrations.ok: false`
+- Returns HTTP 503 when `status: "unhealthy"`
+- Database unreachable → `database.ok: false`
+- Migrations not applied → `database.migrations_current: false`
 - Job heartbeat stale (when enabled) → `jobs.ok: false`
 
-**Note:** Job heartbeat check is skipped when `JOB_HEARTBEAT_REQUIRED=false` (still returns `ok: true` with detail noting it's disabled).
+**Note:** Job heartbeat check is skipped when `JOB_HEARTBEAT_REQUIRED=false` (still returns `jobs.ok: true` with `enabled: false`).
 
 **Automated Check Script:**
 Use the dedicated readiness check script for CI/CD:
