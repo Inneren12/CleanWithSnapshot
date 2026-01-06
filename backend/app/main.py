@@ -171,6 +171,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             path_label = getattr(route, "path", path_label)
             duration = time.perf_counter() - start
             self.metrics.record_http_latency(request.method, path_label, status_code, duration)
+            self.metrics.record_http_request(request.method, path_label, status_code)
         if status_code >= 500:
             self.metrics.record_http_5xx(request.method, path_label)
         return response

@@ -34,6 +34,7 @@ class Metrics:
             self.dlq_depth_snapshot = None
             self.bookings = None
             self.http_5xx = None
+            self.http_requests = None
             self.http_latency = None
             self.job_heartbeat = None
             self.job_heartbeat_age = None
@@ -118,6 +119,12 @@ class Metrics:
             "http_5xx_total",
             "HTTP responses with status >= 500.",
             ["method", "path"],
+            registry=self.registry,
+        )
+        self.http_requests = Counter(
+            "http_requests_total",
+            "HTTP requests by method, path, and status class.",
+            ["method", "path", "status_class"],
             registry=self.registry,
         )
         self.http_latency = Histogram(
@@ -219,6 +226,12 @@ class Metrics:
         self.http_latency.labels(method=method, path=path, status_class=status_class).observe(
             duration_seconds
         )
+
+    def record_http_request(self, method: str, path: str, status_code: int) -> None:
+        if not self.enabled or self.http_requests is None:
+            return
+        status_class = f"{status_code // 100}xx" if status_code else "unknown"
+        self.http_requests.labels(method=method, path=path, status_class=status_class).inc()
 
     def record_job_heartbeat(self, job: str, timestamp: float | None = None) -> None:
         if not self.enabled or self.job_heartbeat is None or self.job_runner_up is None:
