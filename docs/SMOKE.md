@@ -46,19 +46,70 @@ Tests database connectivity, migration status, and job heartbeat.
 curl -fsS "$API_BASE_URL/readyz" | jq .
 ```
 
-**Expected:** HTTP 200 with structured checks:
+**Expected:** HTTP 200 with structured checks when all systems are healthy:
 ```json
 {
   "ok": true,
   "checks": [
-    {"name": "db", "ok": true, "ms": 5.1},
-    {"name": "migrations", "ok": true, "detail": {"migrations_current": true}},
-    {"name": "jobs", "ok": true, "detail": {"enabled": true}}
+    {
+      "name": "db",
+      "ok": true,
+      "ms": 5.1,
+      "detail": {"message": "database reachable"}
+    },
+    {
+      "name": "migrations",
+      "ok": true,
+      "ms": 12.3,
+      "detail": {
+        "message": "migrations in sync",
+        "migrations_current": true,
+        "current_version": "abc123",
+        "expected_head": "abc123",
+        "migrations_check": "ok"
+      }
+    },
+    {
+      "name": "jobs",
+      "ok": true,
+      "ms": 8.5,
+      "detail": {
+        "enabled": true,
+        "last_heartbeat": "2026-01-06T12:00:00Z",
+        "runner_id": "jobs-runner",
+        "age_seconds": 45.2,
+        "threshold_seconds": 180
+      }
+    }
   ]
 }
 ```
 
-**Note:** Returns HTTP 503 if unhealthy.
+**Failure Scenarios:**
+
+The endpoint returns **HTTP 503** when any check fails:
+
+- **DB check fails** when:
+  - Database is unreachable or connection times out (>2s)
+  - Database session factory not configured
+  - Example: `{"name": "db", "ok": false, "detail": {"message": "database check timed out", "timeout_seconds": 2.0}}`
+
+- **Migrations check fails** when:
+  - Current database revision doesn't match expected alembic head
+  - Migration files not found (returns ok with skip_reason in packaged deployments)
+  - Example: `{"name": "migrations", "ok": false, "detail": {"message": "migrations pending", "current_version": "abc123", "expected_head": "def456"}}`
+
+- **Jobs check fails** when:
+  - Jobs enabled but no heartbeat record exists
+  - Heartbeat is stale (age > threshold, default 180s)
+  - Jobs runner hasn't updated heartbeat recently
+  - Example: `{"name": "jobs", "ok": false, "detail": {"enabled": true, "message": "job heartbeat stale", "age_seconds": 195.5, "threshold_seconds": 180}}`
+
+**Notes:**
+- Each check includes timing in milliseconds (`ms` field) for performance monitoring
+- The `detail` object provides diagnostic information for each check
+- Jobs check is only enforced when `JOBS_ENABLED=true` or `JOB_HEARTBEAT_REQUIRED=true`
+- Migrations check gracefully skips when alembic files are unavailable (packaged deployments)
 
 ### 1.4 Backup Health Check
 Tests backup freshness (last successful backup within 26 hours).
@@ -370,9 +421,20 @@ echo "=== Smoke Test Complete ==="
 - Verify `.env` configuration
 
 ### Readiness Check Fails
-- Check database migrations: `docker compose exec api alembic current`
-- Check job heartbeat: May need to start job runner
-- Review readiness details: `curl $API_BASE_URL/readyz | jq .`
+- **View detailed check results:** `curl $API_BASE_URL/readyz | jq .`
+- **DB check failure:**
+  - Verify database is running: `docker compose ps db`
+  - Check database logs: `docker compose logs db`
+  - Test connection: `docker compose exec api python -c "from app.infra.db import get_session_factory; import asyncio; asyncio.run(get_session_factory().__anext__())"`
+- **Migrations check failure:**
+  - Check current revision: `docker compose exec api alembic current`
+  - Check expected heads: `docker compose exec api alembic heads`
+  - Apply pending migrations: `docker compose exec api alembic upgrade head`
+- **Jobs check failure:**
+  - Verify jobs are enabled: check `JOBS_ENABLED` in `.env`
+  - Check job heartbeat freshness: `curl -u "$ADMIN_USER:$ADMIN_PASS" $API_BASE_URL/v1/admin/jobs/status | jq .`
+  - Start job runner if not running: `docker compose up -d jobs` or run `python -m app.jobs.run`
+  - Check job runner logs: `docker compose logs jobs`
 
 ### Backup Health Fails
 - Ensure backup directory exists: `/opt/backups/postgres/`
