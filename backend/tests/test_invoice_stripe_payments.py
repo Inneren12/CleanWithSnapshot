@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import sqlalchemy as sa
 
 from app.domain.invoices import service as invoice_service, statuses as invoice_statuses
-from app.domain.invoices.db_models import Invoice, Payment, StripeEvent
+from app.domain.invoices.db_models import Invoice, Payment, StripeEvent, StripeProcessedEvent
 from app.domain.leads.db_models import Lead
 from app.infra import stripe_client as stripe_infra
 from app.main import app
@@ -103,12 +103,16 @@ def test_webhook_marks_invoice_paid_and_idempotent(client, async_session_maker, 
             paid = await session.scalar(
                 sa.select(sa.func.count()).select_from(Payment).where(Payment.invoice_id == invoice_id)
             )
+            processed_events = await session.scalar(
+                sa.select(sa.func.count()).select_from(StripeProcessedEvent)
+            )
             assert invoice is not None
-            return invoice.status, int(paid or 0)
+            return invoice.status, int(paid or 0), int(processed_events or 0)
 
-    status_value, payment_count = asyncio.run(_fetch_invoice_status())
+    status_value, payment_count, processed_events = asyncio.run(_fetch_invoice_status())
     assert status_value == invoice_statuses.INVOICE_STATUS_PAID
     assert payment_count == 1
+    assert processed_events == 1
 
 
 def test_webhook_signature_verification(client, monkeypatch):
@@ -118,6 +122,52 @@ def test_webhook_signature_verification(client, monkeypatch):
 
     response = client.post("/v1/payments/stripe/webhook", content=b"{}", headers={"Stripe-Signature": "invalid"})
     assert response.status_code == 400
+
+
+def test_webhook_bypasses_rate_limit(client, async_session_maker, monkeypatch):
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_test")
+    invoice_id, _ = asyncio.run(_seed_invoice(async_session_maker, total_cents=1500))
+
+    event = {
+        "id": "evt_rate_limit_exempt",
+        "type": "payment_intent.succeeded",
+        "livemode": False,
+        "request": {"id": "req_test"},
+        "created": int(datetime.now(tz=timezone.utc).timestamp()),
+        "data": {
+            "object": {
+                "id": "pi_rate_limit",
+                "amount_received": 1500,
+                "currency": "CAD",
+                "metadata": {"invoice_id": invoice_id},
+            }
+        },
+    }
+
+    limiter = getattr(app.state, "rate_limiter", None)
+    original_limit = getattr(limiter, "requests_per_minute", None)
+    if limiter is not None:
+        limiter.requests_per_minute = 0
+
+    try:
+        app.state.stripe_client = SimpleNamespace(verify_webhook=lambda payload, signature: event)
+        response = client.post("/v1/payments/stripe/webhook", content=b"{}", headers={"Stripe-Signature": "t=test"})
+        assert response.status_code == 200, response.text
+        assert response.json()["processed"] is True
+        async def _fetch_state() -> tuple[str | None, int]:
+            async with async_session_maker() as session:
+                invoice = await session.get(Invoice, invoice_id)
+                payment_count = await session.scalar(
+                    sa.select(sa.func.count()).select_from(Payment).where(Payment.invoice_id == invoice_id)
+                )
+                return (invoice.status if invoice else None, int(payment_count or 0))
+
+        invoice_status, payment_count = asyncio.run(_fetch_state())
+        assert invoice_status == invoice_statuses.INVOICE_STATUS_PAID
+        assert payment_count == 1
+    finally:
+        if limiter is not None and original_limit is not None:
+            limiter.requests_per_minute = original_limit
 
 
 def test_webhook_retries_after_processing_error(client, async_session_maker, monkeypatch):

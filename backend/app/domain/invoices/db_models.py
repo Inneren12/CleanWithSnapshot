@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
+import sqlalchemy as sa
 from sqlalchemy import (
     Date,
     DateTime,
@@ -192,6 +193,22 @@ class StripeEvent(Base):
         Index("ix_stripe_events_invoice_id", "invoice_id"),
         Index("ix_stripe_events_booking_id", "booking_id"),
     )
+
+
+class StripeProcessedEvent(Base):
+    __tablename__ = "stripe_events_processed"
+
+    event_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    event_type: Mapped[str | None] = mapped_column(String(128))
+    livemode: Mapped[bool | None] = mapped_column(sa.Boolean)
+    request_id: Mapped[str | None] = mapped_column(String(255))
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (Index("ix_stripe_events_processed_request_id", "request_id"),)
 
 
 class InvoicePublicToken(Base):

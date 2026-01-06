@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,7 +19,7 @@ from app.api import entitlements
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.db_models import Booking
 from app.domain.invoices import schemas as invoice_schemas, service as invoice_service, statuses as invoice_statuses
-from app.domain.invoices.db_models import Invoice, StripeEvent
+from app.domain.invoices.db_models import Invoice, StripeEvent, StripeProcessedEvent
 from app.domain.saas import billing_service
 from app.domain.saas.plans import get_plan
 from app.infra.email import resolve_app_email_adapter
@@ -75,6 +77,14 @@ def _coerce_event_created_at(event: Any) -> datetime | None:
     if isinstance(created_raw, datetime):
         return created_raw.astimezone(timezone.utc)
     return None
+
+
+def _processed_event_insert(session: AsyncSession):
+    bind = session.get_bind()
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
+    if dialect_name == "sqlite":
+        return sqlite_insert(StripeProcessedEvent)
+    return pg_insert(StripeProcessedEvent)
 
 
 async def _lock_invoice(session: AsyncSession, invoice_id: str) -> Invoice | None:
@@ -657,6 +667,9 @@ async def _stripe_webhook_handler(http_request: Request, session: AsyncSession) 
     sig_header = http_request.headers.get("Stripe-Signature")
     if not settings.stripe_webhook_secret:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stripe webhook disabled")
+    if not sig_header:
+        metrics.record_webhook_error("missing_signature")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Stripe signature")
 
     outcome = "error"
     try:
@@ -686,11 +699,33 @@ async def _stripe_webhook_handler(http_request: Request, session: AsyncSession) 
         payload_hash = hashlib.sha256(payload or b"").hexdigest()
         event_type = _safe_get(event, "type")
         event_created_at = _coerce_event_created_at(event)
+        event_request_id = _safe_get(_safe_get(event, "request", {}), "id")
+        event_livemode = _safe_get(event, "livemode")
         metadata_invoice_id, metadata_booking_id = _extract_event_metadata_ids(event)
 
         processed = False
         processing_error: Exception | None = None
         async with session.begin():
+            insert_stmt = (
+                _processed_event_insert(session)
+                .values(
+                    event_id=str(event_id),
+                    event_type=event_type,
+                    livemode=event_livemode,
+                    request_id=event_request_id,
+                )
+                .on_conflict_do_nothing(index_elements=[StripeProcessedEvent.event_id])
+            )
+            insert_result = await session.execute(insert_stmt)
+            inserted_count = insert_result.rowcount or 0
+            if inserted_count == 0:
+                logger.info(
+                    "stripe_webhook_duplicate", extra={"extra": {"event_id": event_id, "reason": "processed"}}
+                )
+                metrics.record_webhook("ignored")
+                outcome = "ignored"
+                return {"received": True, "processed": False}
+
             try:
                 ctx = await _resolve_org_for_event(session, event)
             except StripeOrgResolutionError as exc:
@@ -802,6 +837,11 @@ async def _stripe_webhook_handler(http_request: Request, session: AsyncSession) 
                 metrics.record_webhook_error("processing_error")
             else:
                 record.last_error = None
+
+            if processing_error is not None:
+                await session.execute(
+                    delete(StripeProcessedEvent).where(StripeProcessedEvent.event_id == str(event_id))
+                )
 
         if processing_error is not None:
             raise HTTPException(
