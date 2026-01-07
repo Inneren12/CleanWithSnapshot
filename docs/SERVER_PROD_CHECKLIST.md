@@ -21,7 +21,7 @@ This checklist is a one-stop, actionable reference for bringing up and operating
 ### 2) Directory layout & permissions
 Create directories and ensure Docker can read/write:
 - Repo clone: `/opt/cleaning`
-- Env file: `/etc/cleaning/cleaning.env` (0600 root:root)
+- Env file: `/etc/cleaning/cleaning.env` (**recommended** `0640 root:docker` or `0660 root:docker` if the deploy user needs to edit)
 - Caddy logs: `/opt/cleaning/logs/` (owned by root, writable by Docker)
 - Uploads (local storage): `/opt/cleaning/var/uploads/` (owned by root, writable by Docker)
 - DB backup target: `/opt/backups/postgres/` (owned by root, writable by backup job, **readable** by Docker)
@@ -59,18 +59,21 @@ Create directories and ensure Docker can read/write:
 ### Env file handling
 - Containers read env via `env_file: ${ENV_FILE:-.env}`
 - **Production recommendation:**
-  - Option A (recommended):
+  - **Canonical command (recommended):**
     ```bash
     export ENV_FILE=/etc/cleaning/cleaning.env
     docker compose --env-file /etc/cleaning/cleaning.env up -d --force-recreate
     ```
-  - Option B: symlink `/opt/cleaning/.env` → `/etc/cleaning/cleaning.env`
+  - Keep `ENV_FILE` in your shell profile or systemd unit so the same env file is used everywhere.
+  - Option B: symlink `/opt/cleaning/.env` → `/etc/cleaning/cleaning.env` (avoid committing `.env`)
 
 ### Common footguns
-- Values containing spaces or JSON arrays **must be quoted** (ex: `CORS_ORIGINS` JSON)
+- Values containing spaces or JSON arrays **must be quoted** (ex: `CORS_ORIGINS='[\"https://example.com\"]'`)
 - `STRICT_CORS=true` requires **explicit** `CORS_ORIGINS` (no wildcards)
 - Ensure **uploads** are on a persistent host path if using local storage
+- Set `ORDER_UPLOAD_ROOT=/app/var/uploads/orders` to match the container path
 - Ensure `/opt/backups/postgres/LAST_SUCCESS.txt` exists for `/healthz/backup`
+- Do not commit `.env` or any secret files to the repo
 
 ---
 
@@ -113,7 +116,7 @@ Create directories and ensure Docker can read/write:
 
 ### Monitoring / metrics
 - **Required env keys**
-  - `METRICS_ENABLED=true`
+  - `METRICS_ENABLED=true` (default is **true** if omitted)
   - `METRICS_TOKEN`
 - **Metrics endpoint**
   - `GET /metrics` with `Authorization: Bearer <METRICS_TOKEN>`
@@ -137,9 +140,9 @@ Create directories and ensure Docker can read/write:
 - `WORKER_PORTAL_SECRET`
 - `TRUST_PROXY_HEADERS=true`
 - `STRICT_CORS=true`
-- `CORS_ORIGINS` (required if `STRICT_CORS=true`)
 
 ### MUST when enabled
+- `CORS_ORIGINS` (when `STRICT_CORS=true`)
 - `METRICS_TOKEN` (when `METRICS_ENABLED=true`)
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (when `DEPOSITS_ENABLED=true`)
 - `TURNSTILE_SECRET_KEY` (when `CAPTCHA_MODE=turnstile`)
@@ -169,7 +172,8 @@ Create directories and ensure Docker can read/write:
 
 ### Matching env_audit behavior
 - Use `python3 ops/env_audit.py --env /etc/cleaning/cleaning.env --check-unused` as a preflight check.
-- Ensure `METRICS_TOKEN` is treated as conditional for `METRICS_ENABLED=true`.
+- `METRICS_TOKEN` is required when `METRICS_ENABLED=true` (default true).
+- `CORS_ORIGINS` is required when `STRICT_CORS=true`.
 
 ---
 
@@ -251,7 +255,7 @@ curl -fsS -H "Authorization: Bearer <METRICS_TOKEN>" https://api.<domain>/metric
 
 ### Photo uploads (local storage)
 - **Prereqs:** `/opt/cleaning/var/uploads/` directory exists, mounted into containers
-- **Env keys:** `ORDER_STORAGE_BACKEND=local`, `ORDER_UPLOAD_ROOT=var/uploads/orders`, `ORDER_PHOTO_SIGNING_SECRET`
+- **Env keys:** `ORDER_STORAGE_BACKEND=local`, `ORDER_UPLOAD_ROOT=/app/var/uploads/orders`, `ORDER_PHOTO_SIGNING_SECRET`
 - **Verify:** Upload a photo, confirm file exists on VPS
 
 ### Rate limiting / Redis
@@ -284,13 +288,59 @@ curl -fsS -H "Authorization: Bearer <METRICS_TOKEN>" https://api.<domain>/metric
 - Optional: `/opt/cleaning/logs/` (for incident investigations)
 
 ### Example backup job (daily)
-- Run a host-level backup that writes a timestamp to `/opt/backups/postgres/LAST_SUCCESS.txt`.
-- Store backups offsite (object storage or remote server).
+Use the provided script and store artifacts offsite (object storage or remote server).
+
+**Script**: `ops/backup_now.sh`
+- Writes Postgres dump into `/opt/backups/postgres/`
+- Archives uploads from `/opt/cleaning/var/uploads/`
+- Writes `/opt/backups/postgres/LAST_SUCCESS.txt` on success (used by `/healthz/backup`)
+
+```bash
+cd /opt/cleaning
+ENV_FILE=/etc/cleaning/cleaning.env ./ops/backup_now.sh
+```
+
+### Cron example (runs at 2:15 UTC)
+```cron
+15 2 * * * root ENV_FILE=/etc/cleaning/cleaning.env /opt/cleaning/ops/backup_now.sh >> /var/log/cleaning-backup.log 2>&1
+```
+
+### Systemd timer example (optional)
+```ini
+# /etc/systemd/system/cleaning-backup.service
+[Unit]
+Description=CleanWithSnapshot backup
+
+[Service]
+Type=oneshot
+Environment=ENV_FILE=/etc/cleaning/cleaning.env
+WorkingDirectory=/opt/cleaning
+ExecStart=/opt/cleaning/ops/backup_now.sh
+```
+
+```ini
+# /etc/systemd/system/cleaning-backup.timer
+[Unit]
+Description=Run CleanWithSnapshot backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
 
 ### Restore (safe procedure)
 1) Stop services: `docker compose down`
-2) Restore Postgres from backup
-3) Restore uploads to `/opt/cleaning/var/uploads/`
+2) Restore Postgres from backup:
+   ```bash
+   gunzip -c /opt/backups/postgres/cleaning_<timestamp>.sql.gz | docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+   ```
+3) Restore uploads to `/opt/cleaning/var/uploads/`:
+   ```bash
+   tar -C /opt/cleaning -xzf /opt/backups/postgres/uploads_<timestamp>.tar.gz
+   ```
 4) Start services: `docker compose up -d`
 5) Validate `/readyz` + `/healthz/backup`
 
@@ -298,8 +348,30 @@ curl -fsS -H "Authorization: Bearer <METRICS_TOKEN>" https://api.<domain>/metric
 
 ## Logging / rotation
 
-- Caddy logs are already rotated by Caddy under `/opt/cleaning/logs/`.
-- For container logs, use `docker compose logs` and consider `logrotate` for `/var/lib/docker/containers/*/*.log` on the host.
+### Docker log rotation (host-level)
+Configure Docker's json-file driver rotation on the VPS:
+```json
+// /etc/docker/daemon.json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+```
+Restart Docker after changes: `systemctl restart docker`
+
+### Triage commands for disk pressure
+```bash
+docker system df
+docker compose logs --tail=200 api
+du -sh /var/lib/docker/containers/*/*.log | sort -h | tail -n 10
+docker system prune --volumes
+```
+
+### Caddy logs
+- Caddy logs are written under `/opt/cleaning/logs/` and can be rotated with logrotate.
 
 ---
 
@@ -308,10 +380,15 @@ curl -fsS -H "Authorization: Bearer <METRICS_TOKEN>" https://api.<domain>/metric
 - **SSH**: disable password auth, use keys, non-root user, optional port change
 - **Firewall**: allow only 22/80/443, block all else
 - **Cloudflare**:
-  - WAF rules for admin paths
-  - Allow Stripe webhook IPs or bypass rules for `/v1/payments/stripe/webhook`
-  - Rate-limit rules for public endpoints
-- **Secrets**: `/etc/cleaning/cleaning.env` permissions `0600`, never commit
+  - **Admin paths protection** (WAF + IP allowlist + rate limit)
+    - Example paths: `/v1/admin`, `/v1/admin/*`, `/v1/admin/whoami`
+    - Allow only office/VPN IPs or require additional authentication
+  - **Webhook exceptions** (Stripe)
+    - Bypass WAF/rate limiting for `/v1/payments/stripe/webhook` and legacy `/stripe/webhook`
+    - Do not apply bot fight mode to Stripe webhook paths
+  - **Metrics endpoint protection**
+    - Require Bearer token at `/metrics` and optionally add Cloudflare IP allowlist
+- **Secrets**: `/etc/cleaning/cleaning.env` permissions `0640 root:docker` (or `0660`), never commit
 - **Caddy**: ensure `Authorization` header is passed upstream (required for admin auth)
 
 ---
@@ -339,3 +416,42 @@ curl -fsS https://api.<domain>/readyz | jq .
 - `/readyz` jobs fail → jobs runner not running or heartbeat stale
 - `/healthz/backup` fail → backup marker missing or stale
 
+---
+
+## Email deliverability (SPF/DKIM/DMARC)
+
+- **SPF**: Authorize your SMTP/SendGrid sending host.
+- **DKIM**: Publish provider DKIM keys and verify alignment.
+- **DMARC**: Start with `p=none`, monitor reports, then move to `quarantine`/`reject`.
+
+**Minimal verification**
+```bash
+dig TXT <sender-domain> | rg -i 'spf|dmarc|dkim'
+```
+
+---
+
+## Post-merge VPS checklist
+
+1) **Sync code**
+```bash
+cd /opt/cleaning
+git fetch origin
+git reset --hard origin/main
+```
+
+2) **Build + run**
+```bash
+ENV_FILE=/etc/cleaning/cleaning.env docker compose --env-file /etc/cleaning/cleaning.env up -d --build --force-recreate
+```
+
+3) **Smoke + readiness**
+```bash
+./ops/smoke.sh
+curl -fsS https://api.<domain>/readyz | jq .
+```
+
+4) **Backup marker**
+```bash
+cat /opt/backups/postgres/LAST_SUCCESS.txt
+```
