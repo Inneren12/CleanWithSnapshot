@@ -21,10 +21,11 @@ panidobro.com, www.panidobro.com {
   }
 
   reverse_proxy web:3000 {
-    timeout 60s
-    dial_timeout 10s
-    read_timeout 60s
-    write_timeout 60s
+    transport http {
+      dial_timeout 10s
+      read_timeout 60s
+      write_timeout 60s
+    }
   }
 }
 
@@ -46,9 +47,10 @@ api.panidobro.com {
 
   reverse_proxy api:8000 {
     header_up Authorization {header.Authorization}
-    timeout 90s
-    dial_timeout 10s
-    read_timeout 90s
-    write_timeout 90s
+    transport http {
+      dial_timeout 10s
+      read_timeout 90s
+      write_timeout 90s
+    }
   }
 }
