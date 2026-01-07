@@ -33,7 +33,6 @@ MUST_KEYS = {
     "AUTH_SECRET_KEY": "JWT signing and session tokens (enforced non-default)",
     "CLIENT_PORTAL_SECRET": "Client portal magic link signing (enforced non-default)",
     "WORKER_PORTAL_SECRET": "Worker portal magic link signing (enforced required)",
-    "METRICS_TOKEN": "Metrics endpoint bearer token (if METRICS_ENABLED=true)",
     "TRUST_PROXY_HEADERS": "Trust X-Forwarded headers behind reverse proxy",
     "STRICT_CORS": "Enable strict CORS validation",
     "CORS_ORIGINS": "Allowed CORS origins (required if STRICT_CORS=true)",
@@ -52,6 +51,7 @@ CONDITIONAL_MUST = {
     "TURNSTILE_SECRET_KEY": ("If CAPTCHA_MODE=turnstile", ["CAPTCHA_MODE=turnstile"]),
     "SENDGRID_API_KEY": ("If EMAIL_MODE=sendgrid", ["EMAIL_MODE=sendgrid"]),
     "SMTP_PASSWORD": ("If EMAIL_MODE=smtp", ["EMAIL_MODE=smtp"]),
+    "METRICS_TOKEN": ("If METRICS_ENABLED=true", ["METRICS_ENABLED"]),
 }
 
 # SHOULD keys: Highly recommended for production
