@@ -35,7 +35,6 @@ MUST_KEYS = {
     "WORKER_PORTAL_SECRET": "Worker portal magic link signing (enforced required)",
     "TRUST_PROXY_HEADERS": "Trust X-Forwarded headers behind reverse proxy",
     "STRICT_CORS": "Enable strict CORS validation",
-    "CORS_ORIGINS": "Allowed CORS origins (required if STRICT_CORS=true)",
 }
 
 # Conditional MUST keys (required if certain features enabled)
@@ -51,7 +50,8 @@ CONDITIONAL_MUST = {
     "TURNSTILE_SECRET_KEY": ("If CAPTCHA_MODE=turnstile", ["CAPTCHA_MODE=turnstile"]),
     "SENDGRID_API_KEY": ("If EMAIL_MODE=sendgrid", ["EMAIL_MODE=sendgrid"]),
     "SMTP_PASSWORD": ("If EMAIL_MODE=smtp", ["EMAIL_MODE=smtp"]),
-    "METRICS_TOKEN": ("If METRICS_ENABLED=true", ["METRICS_ENABLED"]),
+    "METRICS_TOKEN": ("If METRICS_ENABLED=true (default true)", ["METRICS_ENABLED"]),
+    "CORS_ORIGINS": ("If STRICT_CORS=true", ["STRICT_CORS"]),
 }
 
 # SHOULD keys: Highly recommended for production
@@ -196,6 +196,9 @@ def check_conditional_requirements(env_vars: Dict[str, str], env_path: Path) -> 
                     break
             else:
                 # Check if key exists and is truthy
+                if cond == "METRICS_ENABLED" and cond not in env_vars:
+                    condition_met = True
+                    break
                 if cond in env_vars and env_vars[cond] == "SET":
                     val = get_env_value(env_path, cond)
                     if val.lower() in ("true", "1", "yes"):
