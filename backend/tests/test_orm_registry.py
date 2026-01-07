@@ -31,3 +31,18 @@ async def test_email_event_resolves_invoice_relationship():
     assert any(rel.mapper.class_.__name__ == "Invoice" for rel in EmailEvent.__mapper__.relationships)
 
     await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_booking_resolves_order_addons_relationship():
+    configure_mappers()
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    assert any(
+        rel.mapper.class_.__name__ == "OrderAddon" for rel in Booking.__mapper__.relationships
+    )
+
+    await engine.dispose()
