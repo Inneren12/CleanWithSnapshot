@@ -4,7 +4,7 @@ from html import escape
 import logging
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Booking
@@ -20,6 +20,18 @@ from app.settings import settings
 
 router = APIRouter(include_in_schema=False)
 logger = logging.getLogger(__name__)
+
+
+@router.get("/", include_in_schema=False)
+async def public_root() -> JSONResponse:
+    return JSONResponse(
+        {
+            "service": "cleaning-api",
+            "healthz": "/healthz",
+            "readyz": "/readyz",
+            "admin": "/v1/admin",
+        }
+    )
 
 
 def _stripe_client(request: Request):

@@ -120,6 +120,12 @@ router = APIRouter(dependencies=[Depends(require_viewer)])
 logger = logging.getLogger(__name__)
 
 
+@router.get("/v1/admin", include_in_schema=False)
+@router.get("/v1/admin/", include_in_schema=False)
+async def admin_entrypoint() -> RedirectResponse:
+    return RedirectResponse(url="/v1/admin/observability", status_code=status.HTTP_302_FOUND)
+
+
 def _email_adapter(request: Request | None):
     if request is None:
         return None
