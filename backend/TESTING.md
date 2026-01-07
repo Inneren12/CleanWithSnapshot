@@ -18,7 +18,7 @@ Defined in `pytest.ini`:
 
 ## Database requirements
 - Tests expect Postgres reachable via `DATABASE_URL` (Docker compose uses host `postgres`). Alembic migrations create schema before tests.
-- Many tests rely on async SQLAlchemy sessions; keep models in sync with `app/infra/models.py` and migrations.
+- Many tests rely on async SQLAlchemy sessions; keep models in sync with `app/infra/models.py` and migrations, and ensure modules with string-based relationships (for example `app/domain/addons/db_models.py`) are imported there before mapper configuration.
 
 ## Fixtures and patterns
 - Factories/fixtures live under `tests/` aligning with domain modules; reuse existing helper functions rather than recreating data setup.
