@@ -51,6 +51,18 @@ services:
     expose:
       - "8001"
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+
   web:
     build: ./web
     restart: unless-stopped
@@ -93,3 +105,4 @@ volumes:
   pg_data:
   caddy_data:
   caddy_config:
+  redis_data:

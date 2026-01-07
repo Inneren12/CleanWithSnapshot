@@ -23,6 +23,20 @@ logging.basicConfig(level=logging.INFO)
 _ADAPTER: EmailAdapter | None = None
 _STORAGE: object | None = None
 
+import importlib
+import pkgutil
+
+def _import_all_domain_db_models() -> None:
+    """
+    Ensure all SQLAlchemy models are imported before ORM usage.
+    Prevents mapper init failures for string-based relationship() targets
+    (e.g. Booking -> "OrderAddon").
+    """
+    import app.domain
+    for m in pkgutil.walk_packages(app.domain.__path__, prefix=app.domain.__name__ + "."):
+        if m.name.endswith(".db_models"):
+            importlib.import_module(m.name)
+
 
 async def _run_job(
     name: str,
@@ -145,6 +159,9 @@ async def main(argv: list[str] | None = None) -> None:
     _STORAGE = new_storage_backend()
     configure_metrics(settings.metrics_enabled)
     session_factory = get_session_factory()
+
+    _import_all_domain_db_models()
+
 
     job_names = args.jobs or [
         "booking-reminders",
