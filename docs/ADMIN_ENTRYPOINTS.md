@@ -7,7 +7,7 @@ These URLs are intended for operators and support staff. All routes require admi
 - `https://<domain>/admin` redirects to the API admin entrypoint (`https://api.<domain>/v1/admin`).
 - `https://api.<domain>/v1/admin` redirects to the admin UI landing page (`/v1/admin/observability`).
 
-When `NEXT_PUBLIC_SHOW_ADMIN_LINK=true` is set for the web app, the public site header shows an “Admin” link pointing at `/admin`.
+When `NEXT_PUBLIC_SHOW_ADMIN_LINK=true` is set for the web app, the public site header shows an “Admin” link pointing at `/admin`. In docker-compose deployments, set `NEXT_PUBLIC_SHOW_ADMIN_LINK` so the web build arg is available at compile time.
 
 ## Common UI pages
 

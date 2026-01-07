@@ -80,7 +80,7 @@
 .chip.chip-selected {
   background: var(--primary);
   border-color: var(--primary);
-  color: white;
+  color: var(--color-brand-white);
 }
 
 .chip:disabled {
@@ -99,7 +99,7 @@
    ============================================================================ */
 .summary-card {
   background: var(--surface);
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--card-padding);
   box-shadow: var(--shadow);
@@ -111,7 +111,7 @@
   justify-content: space-between;
   margin-bottom: var(--space-lg);
   padding-bottom: var(--space-md);
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border);
 }
 
 .summary-card-title {
@@ -147,7 +147,7 @@
 
 .summary-field-input {
   padding: var(--space-sm) var(--space-md);
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: var(--text-base);
   font-family: var(--font-body);
@@ -164,7 +164,7 @@
   gap: var(--space-md);
   margin-top: var(--space-lg);
   padding-top: var(--space-md);
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border);
 }
 
 /* ============================================================================
@@ -188,7 +188,7 @@
 .step-progress-bar {
   width: 100%;
   height: 6px;
-  background: white;
+  background: var(--surface);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -215,19 +215,19 @@
   gap: var(--space-sm);
   padding: var(--space-lg) var(--space-2xl);
   background: var(--primary);
-  color: white;
+  color: var(--color-brand-white);
   font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
   border: none;
   border-radius: var(--radius);
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 4px 12px rgba(15, 185, 177, 0.2);
 }
 
 .btn-primary-cta:hover:not(:disabled) {
-  background: var(--primary-strong);
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.3);
+  background: var(--primary);
+  box-shadow: 0 6px 16px rgba(15, 185, 177, 0.3);
   transform: translateY(-1px);
 }
 
@@ -255,7 +255,7 @@
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-md) var(--space-xl);
-  background: white;
+  background: var(--surface);
   color: var(--text);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
@@ -268,8 +268,8 @@
 
 .handoff-button:hover {
   background: var(--primary);
-  color: white;
-  box-shadow: 0 6px 20px rgba(37, 99, 235, 0.3);
+  color: var(--color-brand-white);
+  box-shadow: 0 6px 20px rgba(15, 185, 177, 0.3);
   transform: translateY(-2px);
 }
 
