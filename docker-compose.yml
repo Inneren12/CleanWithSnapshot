@@ -23,9 +23,11 @@ services:
   api:
     volumes:
       - /opt/backups/postgres:/opt/backups/postgres:ro
+      - ./var/uploads:/app/var/uploads
     build: ./backend
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - ${ENV_FILE:-.env}
     depends_on:
       db:
         condition: service_healthy
@@ -44,7 +46,10 @@ services:
     build: ./backend
     command: ["python", "-m", "app.jobs.run", "--interval", "60"]
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - ${ENV_FILE:-.env}
+    volumes:
+      - ./var/uploads:/app/var/uploads
     depends_on:
       db:
         condition: service_healthy
