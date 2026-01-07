@@ -4,7 +4,10 @@ These URLs are intended for operators and support staff. All routes require admi
 
 ## Primary UI
 
+- `https://<domain>/admin` redirects to the API admin entrypoint (`https://api.<domain>/v1/admin`).
 - `https://api.<domain>/v1/admin` redirects to the admin UI landing page (`/v1/admin/observability`).
+
+When `NEXT_PUBLIC_SHOW_ADMIN_LINK=true` is set for the web app, the public site header shows an “Admin” link pointing at `/admin`.
 
 ## Common UI pages
 

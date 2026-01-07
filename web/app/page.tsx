@@ -193,6 +193,7 @@ function formatSummaryValue(value: string | number | boolean | null): string {
 }
 
 export default function HomePage() {
+  const showAdminLink = process.env.NEXT_PUBLIC_SHOW_ADMIN_LINK === 'true';
   const [sessionId, setSessionId] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
@@ -540,9 +541,16 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-        <a className="btn btn-primary" href="#chat">
-          Start chat
-        </a>
+        <div className="header-actions">
+          {showAdminLink ? (
+            <a className="btn btn-ghost" href="/admin">
+              Admin
+            </a>
+          ) : null}
+          <a className="btn btn-primary" href="#chat">
+            Start chat
+          </a>
+        </div>
       </header>
 
       <main className="content">

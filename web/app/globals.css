@@ -79,6 +79,12 @@ pre {
   gap: 16px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .brand {
   display: flex;
   flex-direction: column;
