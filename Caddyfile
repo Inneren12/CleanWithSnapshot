@@ -20,10 +20,14 @@ panidobro.com, www.panidobro.com {
     format json
   }
 
-  handle /admin* {
+  handle_path /admin {
     header Cache-Control "no-store"
-    uri replace /admin /v1/admin
-    redir https://api.panidobro.com{uri} 302
+    redir https://api.panidobro.com/v1/admin 302
+  }
+
+  handle_path /admin/* {
+    header Cache-Control "no-store"
+    redir https://api.panidobro.com/v1/admin{path} 302
   }
 
   reverse_proxy web:3000 {

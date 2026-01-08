@@ -26,3 +26,11 @@ Validate the Caddyfile configuration from the repo:
 ```bash
 ./ops/validate_caddyfile.sh
 ```
+
+## Design tokens
+
+If `design/tokens.json` changes, run the token build helper before opening a PR:
+
+```bash
+./ops/build_tokens.sh
+```
