@@ -95,4 +95,5 @@ def _configure_org_context(engine, is_postgres: bool) -> None:
         if org_id is None:
             return
 
-        conn.exec_driver_sql("SET LOCAL app.current_org_id = %s", (str(org_id),))
+        conn.exec_driver_sql("SELECT set_config('app.current_org_id', %s, true)", (str(org_id),),)
+
