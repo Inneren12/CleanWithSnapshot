@@ -346,6 +346,10 @@ async def _refresh_invoice_payment_status(session: AsyncSession, invoice: Invoic
     return paid_amount
 
 
+async def refresh_invoice_payment_status(session: AsyncSession, invoice: Invoice) -> int:
+    return await _refresh_invoice_payment_status(session, invoice)
+
+
 async def register_payment(
     session: AsyncSession,
     invoice: Invoice,
@@ -867,4 +871,3 @@ async def list_stripe_events(
         )
 
     return items, total
-
