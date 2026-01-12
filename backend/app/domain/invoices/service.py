@@ -339,10 +339,20 @@ async def _refresh_invoice_payment_status(session: AsyncSession, invoice: Invoic
         )
     )
     paid_amount = int(paid or 0)
+    if invoice.status == statuses.INVOICE_STATUS_VOID:
+        return paid_amount
     if paid_amount >= invoice.total_cents:
         invoice.status = statuses.INVOICE_STATUS_PAID
     elif paid_amount > 0:
         invoice.status = statuses.INVOICE_STATUS_PARTIAL
+    elif invoice.status != statuses.INVOICE_STATUS_DRAFT:
+        # Refunds can zero out the net paid amount; ensure we downgrade paid invoices.
+        today = date.today()
+        invoice.status = (
+            statuses.INVOICE_STATUS_OVERDUE
+            if invoice.due_date and invoice.due_date < today
+            else statuses.INVOICE_STATUS_SENT
+        )
     return paid_amount
 
 

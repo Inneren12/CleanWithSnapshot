@@ -170,6 +170,202 @@ def test_charge_refund_adjusts_invoice_payment(client, async_session_maker, monk
     assert invoice_status == invoice_statuses.INVOICE_STATUS_PARTIAL
 
 
+def test_charge_refund_downgrades_paid_invoice_on_full_refund(
+    client, async_session_maker, monkeypatch
+):
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_test")
+    invoice_id = asyncio.run(
+        _seed_invoice(async_session_maker, status=invoice_statuses.INVOICE_STATUS_PAID)
+    )
+
+    async def _seed_payment() -> None:
+        async with async_session_maker() as session:
+            payment = Payment(
+                invoice_id=invoice_id,
+                provider="stripe",
+                provider_ref="pi_full_refund",
+                payment_intent_id="pi_full_refund",
+                method=invoice_statuses.PAYMENT_METHOD_CARD,
+                amount_cents=5000,
+                currency="CAD",
+                status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                reference="ch_full_refund",
+            )
+            session.add(payment)
+            await session.commit()
+
+    asyncio.run(_seed_payment())
+
+    event = {
+        "id": "evt_charge_full_refund",
+        "type": "charge.refunded",
+        "created": int(datetime.now(tz=timezone.utc).timestamp()),
+        "data": {
+            "object": {
+                "id": "ch_full_refund",
+                "payment_intent": "pi_full_refund",
+                "amount": 5000,
+                "amount_refunded": 5000,
+            }
+        },
+    }
+    app.state.stripe_client = SimpleNamespace(verify_webhook=lambda payload, signature: event)
+
+    response = client.post("/v1/payments/stripe/webhook", content=b"{}", headers={"Stripe-Signature": "t=1"})
+    assert response.status_code == 200
+    assert response.json()["processed"] is True
+
+    async def _fetch_payment() -> tuple[int, str, str]:
+        async with async_session_maker() as session:
+            payment = await session.scalar(
+                sa.select(Payment).where(Payment.invoice_id == invoice_id)
+            )
+            invoice = await session.get(Invoice, invoice_id)
+            assert payment is not None
+            assert invoice is not None
+            return payment.amount_cents, payment.status, invoice.status
+
+    amount_cents, payment_status, invoice_status = asyncio.run(_fetch_payment())
+    assert amount_cents == 0
+    assert payment_status == invoice_statuses.PAYMENT_STATUS_FAILED
+    assert invoice_status == invoice_statuses.INVOICE_STATUS_SENT
+
+
+def test_charge_refund_keeps_invoice_paid_when_overpaid(
+    client, async_session_maker, monkeypatch
+):
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_test")
+    invoice_id = asyncio.run(
+        _seed_invoice(async_session_maker, status=invoice_statuses.INVOICE_STATUS_PAID)
+    )
+
+    async def _seed_payment() -> None:
+        async with async_session_maker() as session:
+            payment = Payment(
+                invoice_id=invoice_id,
+                provider="stripe",
+                provider_ref="pi_overpay",
+                payment_intent_id="pi_overpay",
+                method=invoice_statuses.PAYMENT_METHOD_CARD,
+                amount_cents=7000,
+                currency="CAD",
+                status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                reference="ch_overpay",
+            )
+            session.add(payment)
+            await session.commit()
+
+    asyncio.run(_seed_payment())
+
+    event = {
+        "id": "evt_charge_partial_refund",
+        "type": "charge.refunded",
+        "created": int(datetime.now(tz=timezone.utc).timestamp()),
+        "data": {
+            "object": {
+                "id": "ch_overpay",
+                "payment_intent": "pi_overpay",
+                "amount": 7000,
+                "amount_refunded": 1000,
+            }
+        },
+    }
+    app.state.stripe_client = SimpleNamespace(verify_webhook=lambda payload, signature: event)
+
+    response = client.post("/v1/payments/stripe/webhook", content=b"{}", headers={"Stripe-Signature": "t=1"})
+    assert response.status_code == 200
+    assert response.json()["processed"] is True
+
+    async def _fetch_payment() -> tuple[int, str]:
+        async with async_session_maker() as session:
+            payment = await session.scalar(
+                sa.select(Payment).where(Payment.invoice_id == invoice_id)
+            )
+            invoice = await session.get(Invoice, invoice_id)
+            assert payment is not None
+            assert invoice is not None
+            return payment.amount_cents, invoice.status
+
+    amount_cents, invoice_status = asyncio.run(_fetch_payment())
+    assert amount_cents == 6000
+    assert invoice_status == invoice_statuses.INVOICE_STATUS_PAID
+
+
+def test_charge_refund_recalculates_invoice_with_multiple_payments(
+    client, async_session_maker, monkeypatch
+):
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_test")
+    invoice_id = asyncio.run(
+        _seed_invoice(async_session_maker, status=invoice_statuses.INVOICE_STATUS_PAID)
+    )
+
+    async def _seed_payments() -> None:
+        async with async_session_maker() as session:
+            payments = [
+                Payment(
+                    invoice_id=invoice_id,
+                    provider="stripe",
+                    provider_ref="pi_partial_cover",
+                    payment_intent_id="pi_partial_cover",
+                    method=invoice_statuses.PAYMENT_METHOD_CARD,
+                    amount_cents=3000,
+                    currency="CAD",
+                    status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                    reference="ch_partial_cover",
+                ),
+                Payment(
+                    invoice_id=invoice_id,
+                    provider="stripe",
+                    provider_ref="pi_multi_refund",
+                    payment_intent_id="pi_multi_refund",
+                    method=invoice_statuses.PAYMENT_METHOD_CARD,
+                    amount_cents=2000,
+                    currency="CAD",
+                    status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                    reference="ch_multi_refund",
+                ),
+            ]
+            session.add_all(payments)
+            await session.commit()
+
+    asyncio.run(_seed_payments())
+
+    event = {
+        "id": "evt_charge_multi_refund",
+        "type": "charge.refunded",
+        "created": int(datetime.now(tz=timezone.utc).timestamp()),
+        "data": {
+            "object": {
+                "id": "ch_multi_refund",
+                "payment_intent": "pi_multi_refund",
+                "amount": 2000,
+                "amount_refunded": 2000,
+            }
+        },
+    }
+    app.state.stripe_client = SimpleNamespace(verify_webhook=lambda payload, signature: event)
+
+    response = client.post("/v1/payments/stripe/webhook", content=b"{}", headers={"Stripe-Signature": "t=1"})
+    assert response.status_code == 200
+    assert response.json()["processed"] is True
+
+    async def _fetch_payment_state() -> tuple[int, str]:
+        async with async_session_maker() as session:
+            amount_cents = await session.scalar(
+                sa.select(sa.func.coalesce(sa.func.sum(Payment.amount_cents), 0)).where(
+                    Payment.invoice_id == invoice_id,
+                    Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                )
+            )
+            invoice = await session.get(Invoice, invoice_id)
+            assert invoice is not None
+            return int(amount_cents or 0), invoice.status
+
+    paid_cents, invoice_status = asyncio.run(_fetch_payment_state())
+    assert paid_cents == 3000
+    assert invoice_status == invoice_statuses.INVOICE_STATUS_PARTIAL
+
+
 def test_charge_dispute_creates_and_closes_dispute(client, async_session_maker, monkeypatch):
     monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_test")
     booking_id = asyncio.run(_seed_booking(async_session_maker))
