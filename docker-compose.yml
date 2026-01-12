@@ -61,9 +61,13 @@ services:
       context: ./web
       args:
         NEXT_PUBLIC_SHOW_ADMIN_LINK: ${NEXT_PUBLIC_SHOW_ADMIN_LINK:-false}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api.panidobro.com}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-https://panidobro.com}
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_BASE_URL: "https://api.panidobro.com"
+       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api.panidobro.com}
+       NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-https://panidobro.com}
+       NEXT_PUBLIC_SHOW_ADMIN_LINK: ${NEXT_PUBLIC_SHOW_ADMIN_LINK:-false}
     expose:
       - "3000"
     deploy:
