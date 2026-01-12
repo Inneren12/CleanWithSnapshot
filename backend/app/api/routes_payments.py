@@ -19,9 +19,11 @@ from app.api import entitlements
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.db_models import Booking
 from app.domain.invoices import schemas as invoice_schemas, service as invoice_service, statuses as invoice_statuses
-from app.domain.invoices.db_models import Invoice, StripeEvent, StripeProcessedEvent
+from app.domain.invoices.db_models import Invoice, Payment, StripeEvent, StripeProcessedEvent
 from app.domain.saas import billing_service
 from app.domain.saas.plans import get_plan
+from app.domain.disputes import schemas as dispute_schemas
+from app.domain.disputes.db_models import Dispute
 from app.infra.email import resolve_app_email_adapter
 from app.infra import stripe_client as stripe_infra
 from app.infra.db import get_db_session
@@ -87,6 +89,12 @@ def _processed_event_insert(session: AsyncSession):
     return pg_insert(StripeProcessedEvent)
 
 
+@dataclass
+class StripeWebhookHandlingResult:
+    processed: bool
+    reason: str
+
+
 async def _lock_invoice(session: AsyncSession, invoice_id: str) -> Invoice | None:
     stmt = select(Invoice).where(Invoice.invoice_id == invoice_id).with_for_update()
     result = await session.execute(stmt)
@@ -114,6 +122,34 @@ async def _lock_booking_by_checkout_or_intent(
     stmt = select(Booking).where(or_(*conditions)).with_for_update()
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def _find_payment_for_charge(
+    session: AsyncSession, *, payment_intent_id: str | None, charge_id: str | None
+) -> Payment | None:
+    conditions = []
+    if payment_intent_id:
+        conditions.append(Payment.payment_intent_id == payment_intent_id)
+        conditions.append(Payment.provider_ref == payment_intent_id)
+    if charge_id:
+        conditions.append(Payment.reference == charge_id)
+
+    if not conditions:
+        return None
+
+    stmt = select(Payment).where(Payment.provider == "stripe", or_(*conditions)).with_for_update()
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def _resolve_context_from_payment(session: AsyncSession, payment: Payment) -> StripeOrgContext:
+    invoice = None
+    booking = None
+    if payment.invoice_id:
+        invoice = await _lock_invoice(session, payment.invoice_id)
+    if payment.booking_id:
+        booking = await _lock_booking(session, payment.booking_id)
+    return StripeOrgContext(org_id=payment.org_id, invoice=invoice, booking=booking)
 
 
 async def _resolve_org_for_event(session: AsyncSession, event: Any) -> StripeOrgContext:
@@ -177,6 +213,26 @@ async def _resolve_org_for_event(session: AsyncSession, event: Any) -> StripeOrg
             raise StripeOrgResolutionError("org_not_found")
         return StripeOrgContext(org_id=org_id)
 
+    charge_id = None
+    payment_intent_id = None
+    event_type = _safe_get(event, "type", "") or ""
+    if event_type.startswith("charge.dispute"):
+        charge_id = _safe_get(payload_object, "charge")
+        payment_intent_id = _safe_get(payload_object, "payment_intent")
+    elif event_type.startswith("charge."):
+        charge_id = _safe_get(payload_object, "id")
+        payment_intent_id = _safe_get(payload_object, "payment_intent")
+    elif event_type.startswith("invoice."):
+        payment_intent_id = _safe_get(payload_object, "payment_intent")
+
+    payment = await _find_payment_for_charge(
+        session,
+        payment_intent_id=str(payment_intent_id) if payment_intent_id else None,
+        charge_id=str(charge_id) if charge_id else None,
+    )
+    if payment:
+        return await _resolve_context_from_payment(session, payment)
+
     raise StripeOrgResolutionError("missing_org")
 
 
@@ -209,6 +265,12 @@ async def _handle_invoice_event(session: AsyncSession, event: Any, ctx: StripeOr
         )
         return False
 
+    if event_type == "invoice.finalized":
+        if invoice.status == invoice_statuses.INVOICE_STATUS_DRAFT:
+            invoice.status = invoice_statuses.INVOICE_STATUS_SENT
+            await session.flush()
+        return True
+
     payment_status = None
     provider_ref = None
     checkout_session_id = None
@@ -232,6 +294,12 @@ async def _handle_invoice_event(session: AsyncSession, event: Any, ctx: StripeOr
     elif event_type == "payment_intent.payment_failed":
         provider_ref = _safe_get(payload_object, "id")
         payment_status = invoice_statuses.PAYMENT_STATUS_FAILED
+    elif event_type == "invoice.payment_succeeded":
+        provider_ref = _safe_get(payload_object, "payment_intent")
+        payment_status = invoice_statuses.PAYMENT_STATUS_SUCCEEDED
+    elif event_type == "invoice.payment_failed":
+        provider_ref = _safe_get(payload_object, "payment_intent")
+        payment_status = invoice_statuses.PAYMENT_STATUS_FAILED
 
     if payment_status is None:
         logger.info(
@@ -241,7 +309,9 @@ async def _handle_invoice_event(session: AsyncSession, event: Any, ctx: StripeOr
         return False
 
     amount_cents = (
-        _safe_get(payload_object, "amount_received")
+        _safe_get(payload_object, "amount_paid")
+        or _safe_get(payload_object, "amount_received")
+        or _safe_get(payload_object, "amount_due")
         or _safe_get(payload_object, "amount_total")
         or _safe_get(payload_object, "amount")
         or 0
@@ -454,18 +524,224 @@ async def _handle_subscription_event(session: AsyncSession, event: Any, ctx: Str
     return True
 
 
+async def _handle_refund_event(session: AsyncSession, event: Any, ctx: StripeOrgContext) -> bool:
+    data = _safe_get(event, "data", {}) or {}
+    payload_object = _safe_get(data, "object", {}) or {}
+    charge_id = _safe_get(payload_object, "id")
+    payment_intent_id = _safe_get(payload_object, "payment_intent")
+    amount = int(_safe_get(payload_object, "amount") or 0)
+    amount_refunded = int(_safe_get(payload_object, "amount_refunded") or 0)
+
+    if amount <= 0 or amount_refunded <= 0:
+        logger.info(
+            "stripe_refund_event_ignored",
+            extra={"extra": {"reason": "invalid_amount", "charge_id": charge_id}},
+        )
+        return False
+
+    payment = await _find_payment_for_charge(
+        session,
+        payment_intent_id=str(payment_intent_id) if payment_intent_id else None,
+        charge_id=str(charge_id) if charge_id else None,
+    )
+    if payment is None:
+        logger.info(
+            "stripe_refund_event_ignored",
+            extra={"extra": {"reason": "payment_not_found", "charge_id": charge_id}},
+        )
+        return False
+
+    if ctx.org_id and payment.org_id != ctx.org_id:
+        logger.info(
+            "stripe_refund_event_ignored",
+            extra={"extra": {"reason": "org_mismatch", "charge_id": charge_id}},
+        )
+        return False
+
+    net_amount = max(amount - amount_refunded, 0)
+    payment.amount_cents = net_amount
+    if amount_refunded >= amount:
+        payment.status = invoice_statuses.PAYMENT_STATUS_FAILED
+    await session.flush()
+
+    if payment.invoice_id:
+        invoice = ctx.invoice or await _lock_invoice(session, payment.invoice_id)
+        if invoice:
+            await invoice_service.refresh_invoice_payment_status(session, invoice)
+            await session.flush()
+
+    if payment.booking_id:
+        booking = ctx.booking or await _lock_booking(session, payment.booking_id)
+        if booking:
+            booking.refund_total_cents = max(booking.refund_total_cents, amount_refunded)
+            await session.flush()
+
+    logger.info(
+        "stripe_refund_applied",
+        extra={
+            "extra": {
+                "charge_id": charge_id,
+                "payment_id": payment.payment_id,
+                "amount_refunded": amount_refunded,
+            }
+        },
+    )
+    return True
+
+
+async def _handle_dispute_event(session: AsyncSession, event: Any, ctx: StripeOrgContext) -> bool:
+    event_type = _safe_get(event, "type") or ""
+    data = _safe_get(event, "data", {}) or {}
+    payload_object = _safe_get(data, "object", {}) or {}
+    dispute_id = _safe_get(payload_object, "id")
+    charge_id = _safe_get(payload_object, "charge")
+    reason = _safe_get(payload_object, "reason")
+    status = _safe_get(payload_object, "status")
+
+    payment = await _find_payment_for_charge(
+        session,
+        payment_intent_id=str(_safe_get(payload_object, "payment_intent")) if _safe_get(payload_object, "payment_intent") else None,
+        charge_id=str(charge_id) if charge_id else None,
+    )
+    if payment is None:
+        logger.info(
+            "stripe_dispute_event_ignored",
+            extra={"extra": {"reason": "payment_not_found", "dispute_id": dispute_id}},
+        )
+        return False
+
+    if ctx.org_id and payment.org_id != ctx.org_id:
+        logger.info(
+            "stripe_dispute_event_ignored",
+            extra={"extra": {"reason": "org_mismatch", "dispute_id": dispute_id}},
+        )
+        return False
+
+    booking_id = payment.booking_id
+    if not booking_id:
+        logger.info(
+            "stripe_dispute_event_ignored",
+            extra={"extra": {"reason": "booking_not_found", "dispute_id": dispute_id}},
+        )
+        return False
+
+    dispute_key = f"stripe:{dispute_id}"
+    dispute = await session.scalar(
+        select(Dispute).where(Dispute.booking_id == booking_id, Dispute.opened_by == dispute_key).with_for_update()
+    )
+
+    if event_type == "charge.dispute.created":
+        if dispute is None:
+            dispute = Dispute(
+                booking_id=booking_id,
+                org_id=payment.org_id,
+                state=dispute_schemas.DisputeState.OPEN.value,
+                reason=str(reason) if reason else None,
+                opened_by=dispute_key,
+                facts_snapshot={
+                    "stripe_dispute_id": str(dispute_id),
+                    "status": str(status) if status else None,
+                    "charge_id": str(charge_id) if charge_id else None,
+                },
+            )
+            session.add(dispute)
+        else:
+            dispute.state = dispute_schemas.DisputeState.OPEN.value
+            dispute.reason = str(reason) if reason else dispute.reason
+            dispute.facts_snapshot = {
+                **(dispute.facts_snapshot or {}),
+                "stripe_dispute_id": str(dispute_id),
+                "status": str(status) if status else None,
+                "charge_id": str(charge_id) if charge_id else None,
+            }
+    elif event_type == "charge.dispute.closed":
+        if dispute is None:
+            dispute = Dispute(
+                booking_id=booking_id,
+                org_id=payment.org_id,
+                state=dispute_schemas.DisputeState.CLOSED.value,
+                reason=str(reason) if reason else None,
+                opened_by=dispute_key,
+                facts_snapshot={
+                    "stripe_dispute_id": str(dispute_id),
+                    "status": str(status) if status else None,
+                    "charge_id": str(charge_id) if charge_id else None,
+                },
+                resolution_note=f"stripe_dispute_closed:{status}" if status else "stripe_dispute_closed",
+                closed_at=datetime.now(tz=timezone.utc),
+            )
+            session.add(dispute)
+        else:
+            dispute.state = dispute_schemas.DisputeState.CLOSED.value
+            dispute.resolution_note = (
+                f"stripe_dispute_closed:{status}" if status else "stripe_dispute_closed"
+            )
+            dispute.closed_at = datetime.now(tz=timezone.utc)
+            dispute.facts_snapshot = {
+                **(dispute.facts_snapshot or {}),
+                "stripe_dispute_id": str(dispute_id),
+                "status": str(status) if status else None,
+                "charge_id": str(charge_id) if charge_id else None,
+            }
+    else:
+        logger.info(
+            "stripe_dispute_event_ignored",
+            extra={"extra": {"reason": "unsupported_event", "event_type": event_type}},
+        )
+        return False
+
+    await session.flush()
+    logger.info(
+        "stripe_dispute_recorded",
+        extra={
+            "extra": {
+                "dispute_id": dispute_id,
+                "booking_id": booking_id,
+                "status": status,
+            }
+        },
+    )
+    return True
+
+
 async def _handle_webhook_event(
     session: AsyncSession, event: Any, email_adapter: Any, ctx: StripeOrgContext
-) -> bool:
+) -> StripeWebhookHandlingResult:
     event_type = _safe_get(event, "type")
     data = _safe_get(event, "data", {}) or {}
     payload_object = _safe_get(data, "object", {}) or {}
     metadata = _safe_get(payload_object, "metadata", {}) or {}
+    if (
+        str(event_type or "").startswith("customer.subscription")
+        or _safe_get(payload_object, "mode") == "subscription"
+        or _safe_get(payload_object, "object") == "subscription"
+    ):
+        processed = await _handle_subscription_event(session, event, ctx)
+        reason = "processed" if processed else "unresolvable_mapping"
+        return StripeWebhookHandlingResult(processed=processed, reason=reason)
+
     if isinstance(metadata, dict) and metadata.get("invoice_id"):
-        return await _handle_invoice_event(session, event, ctx)
+        processed = await _handle_invoice_event(session, event, ctx)
+        reason = "processed" if processed else "unresolvable_mapping"
+        return StripeWebhookHandlingResult(processed=processed, reason=reason)
     if isinstance(metadata, dict) and metadata.get("booking_id"):
-        return await _handle_deposit_event(session, event, email_adapter, ctx)
-    event_type = _safe_get(event, "type")
+        processed = await _handle_deposit_event(session, event, email_adapter, ctx)
+        reason = "processed" if processed else "unresolvable_mapping"
+        return StripeWebhookHandlingResult(processed=processed, reason=reason)
+
+    if event_type == "charge.refunded":
+        processed = await _handle_refund_event(session, event, ctx)
+        reason = "processed" if processed else "unresolvable_mapping"
+        return StripeWebhookHandlingResult(processed=processed, reason=reason)
+    if event_type in {"charge.dispute.created", "charge.dispute.closed"}:
+        processed = await _handle_dispute_event(session, event, ctx)
+        reason = "processed" if processed else "unresolvable_mapping"
+        return StripeWebhookHandlingResult(processed=processed, reason=reason)
+    if event_type in {"invoice.finalized", "invoice.payment_succeeded", "invoice.payment_failed"}:
+        processed = await _handle_invoice_event(session, event, ctx)
+        reason = "processed" if processed else "unresolvable_mapping"
+        return StripeWebhookHandlingResult(processed=processed, reason=reason)
+
     session_id = _safe_get(payload_object, "id")
     payment_intent_id = _safe_get(payload_object, "payment_intent") or _safe_get(payload_object, "id")
     payment_status = _safe_get(payload_object, "payment_status")
@@ -477,7 +753,7 @@ async def _handle_webhook_event(
             email_adapter=email_adapter,
             commit=False,
         )
-        return True
+        return StripeWebhookHandlingResult(processed=True, reason="processed")
     if event_type in {"checkout.session.expired", "payment_intent.payment_failed"}:
         await booking_service.mark_deposit_failed(
             session=session,
@@ -486,18 +762,14 @@ async def _handle_webhook_event(
             failure_status="expired" if event_type == "checkout.session.expired" else "failed",
             commit=False,
         )
-        return True
-    if (
-        str(event_type or "").startswith("customer.subscription")
-        or _safe_get(payload_object, "mode") == "subscription"
-        or _safe_get(payload_object, "object") == "subscription"
-    ):
-        return await _handle_subscription_event(session, event, ctx)
+        return StripeWebhookHandlingResult(processed=True, reason="processed")
+
+    event_type_value = _safe_get(event, "type")
     logger.info(
         "stripe_webhook_ignored",
-        extra={"extra": {"reason": "missing_metadata", "event_type": _safe_get(event, "type")}},
+        extra={"extra": {"reason": "unsupported_event", "event_type": event_type_value}},
     )
-    return False
+    return StripeWebhookHandlingResult(processed=False, reason="unsupported_event")
 
 
 @router.post(
@@ -820,9 +1092,10 @@ async def _stripe_webhook_handler(http_request: Request, session: AsyncSession) 
                 session.add(record)
 
             try:
-                processed = await _handle_webhook_event(
+                handling_result = await _handle_webhook_event(
                     session, event, resolve_app_email_adapter(http_request), ctx
                 )
+                processed = handling_result.processed
                 record.status = "succeeded" if processed else "ignored"
             except Exception as exc:  # noqa: BLE001
                 processed = False
@@ -849,6 +1122,30 @@ async def _stripe_webhook_handler(http_request: Request, session: AsyncSession) 
                 detail="Stripe webhook processing error",
             ) from processing_error
 
+        if processed:
+            logger.info(
+                "stripe_webhook_processed",
+                extra={
+                    "extra": {
+                        "event_id": event_id,
+                        "event_type": event_type,
+                        "org_id": str(ctx.org_id) if ctx.org_id else None,
+                        "invoice_id": getattr(ctx.invoice, "invoice_id", None),
+                        "booking_id": getattr(ctx.booking, "booking_id", None),
+                    }
+                },
+            )
+        else:
+            logger.info(
+                "stripe_webhook_ignored",
+                extra={
+                    "extra": {
+                        "event_id": event_id,
+                        "event_type": event_type,
+                        "reason": handling_result.reason,
+                    }
+                },
+            )
         metrics.record_webhook("processed" if processed else "ignored")
         outcome = "processed" if processed else "ignored"
         return {"received": True, "processed": processed}
@@ -868,4 +1165,3 @@ async def legacy_stripe_webhook(
     http_request: Request, session: AsyncSession = Depends(get_db_session)
 ) -> dict[str, bool]:
     return await _stripe_webhook_handler(http_request, session)
-

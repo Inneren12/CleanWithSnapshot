@@ -97,6 +97,20 @@ Create directories and ensure Docker can read/write:
   - `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, invoice/billing URLs
 - **Webhook URL**
   - `/v1/payments/stripe/webhook` (legacy `/stripe/webhook` also exists)
+- **Recommended event subscriptions**
+  - **Minimal** (deposit + invoice payments):
+    - `checkout.session.completed`
+    - `checkout.session.expired`
+    - `payment_intent.succeeded`
+    - `payment_intent.payment_failed`
+    - `invoice.finalized`
+    - `invoice.payment_succeeded`
+    - `invoice.payment_failed`
+  - **Production recommended** (adds post-payment adjustments):
+    - `charge.refunded`
+    - `charge.dispute.created`
+    - `charge.dispute.closed`
+  - Extra events are safe to send; unsupported types are ignored with a 200 response.
 - **Verification**
   - Use Stripe CLI to send a test event
   - Confirm webhook returns 200 and logs show processed/ignored
