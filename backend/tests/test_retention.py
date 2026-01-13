@@ -32,7 +32,8 @@ def test_retention_cleanup_counts_and_skips_leads_by_default(client, async_sessi
     lead_payload = {
         "name": "Retention Test",
         "phone": "555-555-0101",
-        "preferred_dates": [],
+        "address": "909 Retention Road",
+        "preferred_dates": ["Sat morning"],
         "structured_inputs": {"beds": 1, "baths": 1, "cleaning_type": "standard"},
         "estimate_snapshot": estimate_response.json(),
     }

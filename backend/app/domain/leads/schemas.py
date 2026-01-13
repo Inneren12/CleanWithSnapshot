@@ -61,8 +61,8 @@ class LeadCreateRequest(BaseModel):
     phone: str = Field(..., min_length=1)
     email: Optional[EmailStr] = None
     postal_code: Optional[str] = None
-    address: Optional[str] = None
-    preferred_dates: List[str] = Field(default_factory=list)
+    address: str = Field(..., min_length=1)
+    preferred_dates: List[str] = Field(default_factory=list, min_length=1)
     access_notes: Optional[str] = None
     parking: Optional[str] = None
     pets: Optional[str] = None
@@ -85,6 +85,24 @@ class LeadCreateRequest(BaseModel):
         description="Captcha token when CAPTCHA_MODE is enabled",
         min_length=1,
     )
+
+    @field_validator("name", "phone", "address", mode="before")
+    @classmethod
+    def strip_required_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                raise ValueError("field cannot be empty")
+            return trimmed
+        return value
+
+    @field_validator("preferred_dates")
+    @classmethod
+    def ensure_preferred_dates(cls, value: List[str]) -> List[str]:
+        cleaned = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        if not cleaned:
+            raise ValueError("preferred_dates must include at least one time option")
+        return cleaned
 
 
 class LeadResponse(BaseModel):

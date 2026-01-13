@@ -38,7 +38,8 @@ def _lead_payload(client, *, name: str = "Lead") -> dict:
     return {
         "name": name,
         "phone": "780-555-0101",
-        "preferred_dates": [],
+        "address": "123 Org Street",
+        "preferred_dates": ["Mon morning"],
         "structured_inputs": {"beds": 1, "baths": 1, "cleaning_type": "standard"},
         "estimate_snapshot": estimate_response.json(),
     }

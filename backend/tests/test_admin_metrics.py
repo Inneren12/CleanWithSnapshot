@@ -46,6 +46,7 @@ def test_admin_metrics_reports_conversions_and_accuracy(client, async_session_ma
             "name": "Metrics User",
             "phone": "780-555-1212",
             "email": "metrics@example.com",
+            "address": "55 Metrics Way",
             "preferred_dates": ["Fri"],
             "structured_inputs": {"beds": 2, "baths": 1, "cleaning_type": "standard"},
             "estimate_snapshot": estimate,

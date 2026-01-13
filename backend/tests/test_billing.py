@@ -16,6 +16,34 @@ from app.settings import settings
 from tests.conftest import DEFAULT_ORG_ID
 
 
+def _create_lead(client, org_id: str | None = None) -> str:
+    estimate_response = client.post(
+        "/v1/estimate",
+        json={
+            "beds": 1,
+            "baths": 1,
+            "cleaning_type": "standard",
+            "heavy_grease": False,
+            "multi_floor": False,
+            "frequency": "one_time",
+            "add_ons": {},
+        },
+    )
+    assert estimate_response.status_code == 200
+    payload = {
+        "name": "Billing Lead",
+        "phone": "780-555-9999",
+        "address": "88 Billing Blvd",
+        "preferred_dates": ["Thu morning"],
+        "structured_inputs": {"beds": 1, "baths": 1, "cleaning_type": "standard"},
+        "estimate_snapshot": estimate_response.json(),
+    }
+    headers = {"X-Test-Org": org_id} if org_id else None
+    response = client.post("/v1/leads", json=payload, headers=headers)
+    assert response.status_code == 201
+    return response.json()["lead_id"]
+
+
 @pytest.mark.anyio
 async def test_subscription_webhook_idempotent(async_session_maker, client):
     settings.stripe_webhook_secret = "whsec_test"
@@ -54,7 +82,11 @@ async def test_subscription_webhook_idempotent(async_session_maker, client):
 @pytest.mark.anyio
 async def test_legacy_booking_skips_entitlements(async_session_maker, client):
     starts_at = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
-    response = client.post("/v1/bookings", json={"starts_at": starts_at, "time_on_site_hours": 2})
+    lead_id = _create_lead(client)
+    response = client.post(
+        "/v1/bookings",
+        json={"starts_at": starts_at, "time_on_site_hours": 2, "lead_id": lead_id},
+    )
     assert response.status_code != 402
 
     async with async_session_maker() as session:
@@ -84,9 +116,10 @@ async def test_free_plan_booking_limit_enforced(async_session_maker, client):
     assert login.status_code == 200
     token = login.json()["access_token"]
 
+    lead_id = _create_lead(client, str(org.org_id))
     response = client.post(
         "/v1/bookings",
-        json={"starts_at": "2030-01-01T10:00:00Z", "time_on_site_hours": 2},
+        json={"starts_at": "2030-01-01T10:00:00Z", "time_on_site_hours": 2, "lead_id": lead_id},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 402
