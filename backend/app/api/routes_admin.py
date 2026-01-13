@@ -5113,10 +5113,11 @@ def _render_booking_form(
     *,
     action: str,
     booking: Booking | None = None,
+    selected_worker_ids: list[int] | None = None,
 ) -> str:
     selected_team_id = getattr(booking, "team_id", None)
     selected_client_id = getattr(booking, "client_id", None)
-    selected_worker_id = getattr(booking, "assigned_worker_id", None)
+    selected_worker_ids = list(dict.fromkeys(selected_worker_ids or []))
     starts_at_value = ""
     if getattr(booking, "starts_at", None):
         starts_at_dt = booking.starts_at
@@ -5139,8 +5140,9 @@ def _render_booking_form(
         for client in clients
     )
 
-    worker_options = '<option value="">—</option>' + "".join(
-        f'<option value="{worker.worker_id}" {"selected" if worker.worker_id == selected_worker_id else ""}>'
+    selected_worker_set = set(selected_worker_ids)
+    worker_options = "".join(
+        f'<option value="{worker.worker_id}" {"selected" if worker.worker_id in selected_worker_set else ""}>'
         f"{html.escape(worker.name)}</option>"
         for worker in workers
     )
@@ -5164,8 +5166,9 @@ def _render_booking_form(
           <div class="muted">{html.escape(tr(lang, 'admin.bookings.select_client'))}</div>
         </div>
         <div class="form-group">
-          <label>{html.escape(tr(lang, 'admin.bookings.worker'))}</label>
-          <select class="input" name="assigned_worker_id">{worker_options}</select>
+          <label>{html.escape(tr(lang, 'admin.bookings.worker'))} (crew)</label>
+          <select class="input" name="worker_ids" multiple size="5">{worker_options}</select>
+          <div class="muted">Select one or more workers.</div>
         </div>
         <div class="form-group">
           <label>{html.escape(tr(lang, 'admin.bookings.starts_at'))}</label>
@@ -5194,6 +5197,55 @@ def _parse_admin_booking_datetime(value: str) -> datetime:
         except ValueError:
             continue
     raise ValueError("Invalid datetime format")
+
+
+def _normalize_worker_ids(worker_ids_raw: Iterable[str | None]) -> list[int]:
+    worker_ids: list[int] = []
+    for raw in worker_ids_raw:
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if not value:
+            continue
+        try:
+            worker_ids.append(int(value))
+        except (TypeError, ValueError) as exc:  # noqa: BLE001
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid worker ID") from exc
+    return list(dict.fromkeys(worker_ids))
+
+
+def _resolve_primary_worker_id(worker_ids: list[int], current_worker_id: int | None) -> int | None:
+    if not worker_ids:
+        return None
+    if current_worker_id in worker_ids:
+        return current_worker_id
+    return worker_ids[0]
+
+
+async def _validate_booking_worker_ids(
+    session: AsyncSession,
+    worker_ids: list[int],
+    *,
+    org_id: uuid.UUID,
+    team_id: int,
+) -> None:
+    if not worker_ids:
+        return
+    unique_ids = set(worker_ids)
+    workers = (
+        await session.execute(
+            select(Worker).where(
+                Worker.worker_id.in_(unique_ids),
+                Worker.org_id == org_id,
+                Worker.is_active == True,  # noqa: E712
+            )
+        )
+    ).scalars().all()
+    if len(workers) != len(unique_ids):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker not found or inactive")
+    for worker in workers:
+        if worker.team_id != team_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
 
 
 async def _sync_booking_workers(
@@ -5291,6 +5343,9 @@ async def admin_bookings_create(
     team_id_raw = form.get("team_id")
     client_id = (form.get("client_id") or "").strip() or None
     assigned_worker_id_raw = form.get("assigned_worker_id")
+    worker_ids = _normalize_worker_ids(form.getlist("worker_ids"))
+    if not worker_ids and assigned_worker_id_raw:
+        worker_ids = _normalize_worker_ids([assigned_worker_id_raw])
     starts_at_raw = form.get("starts_at")
     duration_minutes_raw = form.get("duration_minutes")
 
@@ -5301,7 +5356,7 @@ async def admin_bookings_create(
 
     team_id = int(team_id_raw)
     duration_minutes = int(duration_minutes_raw)
-    assigned_worker_id = int(assigned_worker_id_raw) if assigned_worker_id_raw else None
+    assigned_worker_id = _resolve_primary_worker_id(worker_ids, None)
 
     # Validate team exists
     team = (
@@ -5312,17 +5367,7 @@ async def admin_bookings_create(
     if team is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
-    # Validate worker if assigned
-    if assigned_worker_id:
-        worker = (
-            await session.execute(
-                select(Worker).where(Worker.worker_id == assigned_worker_id, Worker.org_id == org_id)
-            )
-        ).scalar_one_or_none()
-        if worker is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
-        if worker.team_id != team_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
+    await _validate_booking_worker_ids(session, worker_ids, org_id=org_id, team_id=team_id)
 
     # Validate client if specified (org-scoped)
     client = (
@@ -5370,8 +5415,8 @@ async def admin_bookings_create(
         credit_note_total_cents=0,
     )
     session.add(booking)
-    if assigned_worker_id:
-        await _sync_booking_workers(session, booking.booking_id, [assigned_worker_id], replace=True)
+    if worker_ids:
+        await _sync_booking_workers(session, booking.booking_id, worker_ids, replace=True)
     await session.flush()
 
     await audit_service.record_action(
@@ -5429,6 +5474,15 @@ async def admin_bookings_edit_form(
             select(Worker).where(Worker.org_id == org_id, Worker.is_active == True).order_by(Worker.name)  # noqa: E712
         )
     ).scalars().all()
+    assigned_worker_ids = (
+        await session.execute(
+            select(BookingWorker.worker_id)
+            .where(BookingWorker.booking_id == booking_id)
+            .order_by(BookingWorker.created_at)
+        )
+    ).scalars().all()
+    if booking.assigned_worker_id and booking.assigned_worker_id not in assigned_worker_ids:
+        assigned_worker_ids = [booking.assigned_worker_id, *assigned_worker_ids]
 
     csrf_token = get_csrf_token(request)
     form_html = _render_booking_form(
@@ -5439,6 +5493,7 @@ async def admin_bookings_edit_form(
         render_csrf_input(csrf_token),
         action=f"/v1/admin/ui/bookings/{booking_id}/update",
         booking=booking,
+        selected_worker_ids=assigned_worker_ids,
     )
     delete_html = f"""
     <div class="card">
@@ -5483,6 +5538,9 @@ async def admin_bookings_update(
     team_id_raw = form.get("team_id")
     client_id = (form.get("client_id") or "").strip() or None
     assigned_worker_id_raw = form.get("assigned_worker_id")
+    worker_ids = _normalize_worker_ids(form.getlist("worker_ids"))
+    if not worker_ids and assigned_worker_id_raw:
+        worker_ids = _normalize_worker_ids([assigned_worker_id_raw])
     starts_at_raw = form.get("starts_at")
     duration_minutes_raw = form.get("duration_minutes")
 
@@ -5491,7 +5549,7 @@ async def admin_bookings_update(
 
     team_id = int(team_id_raw)
     duration_minutes = int(duration_minutes_raw)
-    assigned_worker_id = int(assigned_worker_id_raw) if assigned_worker_id_raw else None
+    assigned_worker_id = _resolve_primary_worker_id(worker_ids, booking.assigned_worker_id)
 
     team = (
         await session.execute(
@@ -5501,16 +5559,7 @@ async def admin_bookings_update(
     if team is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
-    if assigned_worker_id:
-        worker = (
-            await session.execute(
-                select(Worker).where(Worker.worker_id == assigned_worker_id, Worker.org_id == org_id)
-            )
-        ).scalar_one_or_none()
-        if worker is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
-        if worker.team_id != team_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
+    await _validate_booking_worker_ids(session, worker_ids, org_id=org_id, team_id=team_id)
 
     if client_id:
         client = (
@@ -5538,7 +5587,6 @@ async def admin_bookings_update(
     booking.assigned_worker_id = assigned_worker_id
     booking.starts_at = starts_at
     booking.duration_minutes = duration_minutes
-    worker_ids = [assigned_worker_id] if assigned_worker_id else []
     await _sync_booking_workers(session, booking.booking_id, worker_ids, replace=True)
 
     await audit_service.record_action(
