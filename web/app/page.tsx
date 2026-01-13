@@ -540,8 +540,9 @@ export default function HomePage() {
         setSelectedChoices([]); // Reset selections on new message
 
         if (data.estimate) {
-          setShowLeadForm(false);
+          setLeadId(null);
           setLeadSuccess(false);
+          setShowLeadForm(true);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unexpected error';
