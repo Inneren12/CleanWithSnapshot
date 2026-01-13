@@ -50,7 +50,7 @@ from app.domain.analytics.service import (
     log_event,
 )
 from app.dependencies import get_db_session
-from app.domain.bookings.db_models import Booking, BookingWorker, Team
+from app.domain.bookings.db_models import Booking, BookingWorker, Team, TeamBlackout, TeamWorkingHours
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
@@ -4353,59 +4353,44 @@ def _render_team_edit_page(
         </div>
         """
 
-    delete_section = ""
-    if workers_count == 0 and bookings_count == 0:
-        delete_section = f"""
-        <div class="card" id="delete">
-          <div class="card-row">
-            <div>
-              <div class="title">{html.escape(tr(lang, 'admin.teams.delete_title'))}</div>
-              <div class="muted">{html.escape(tr(lang, 'admin.teams.delete_hint'))}</div>
-            </div>
-          </div>
-          <form class="stack" method="post" action="/v1/admin/ui/teams/{team.team_id}/delete">
-            <input class="input" type="text" name="confirm" placeholder="DELETE" required />
-            {csrf_input}
-            <button class="btn danger" type="submit">{html.escape(tr(lang, 'admin.teams.delete_action'))}</button>
-          </form>
+    archive_action = (
+        f"/v1/admin/ui/teams/{team.team_id}/unarchive"
+        if team.archived_at
+        else f"/v1/admin/ui/teams/{team.team_id}/archive"
+    )
+    archive_label = tr(lang, "admin.teams.unarchive" if team.archived_at else "admin.teams.archive")
+    archive_hint = tr(lang, "admin.teams.unarchive_hint" if team.archived_at else "admin.teams.archive_hint")
+    archive_section = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.teams.archive_title"))}</div>
+          <div class="muted">{html.escape(archive_hint)}</div>
         </div>
-        """
-    else:
-        target_options = "".join(
-            f'<option value="{candidate.team_id}">{html.escape(candidate.name)}</option>'
-            for candidate in teams
-            if candidate.team_id != team.team_id
-        )
-        if target_options:
-            delete_section = f"""
-            <div class="card" id="delete">
-              <div class="card-row">
-                <div>
-                  <div class="title">{html.escape(tr(lang, 'admin.teams.reassign_title'))}</div>
-                  <div class="muted">{html.escape(tr(lang, 'admin.teams.reassign_hint'))}</div>
-                </div>
-              </div>
-              <form class="stack" method="post" action="/v1/admin/ui/teams/{team.team_id}/reassign_and_delete">
-                <div class="form-group">
-                  <label>{html.escape(tr(lang, 'admin.teams.reassign_target'))}</label>
-                  <select class="input" name="target_team_id" required>{target_options}</select>
-                </div>
-                {csrf_input}
-                <button class="btn danger" type="submit">{html.escape(tr(lang, 'admin.teams.reassign_action'))}</button>
-              </form>
-            </div>
-            """
-        else:
-            delete_section = f"""
-            <div class="card" id="delete">
-              <div class="card-row">
-                <div>
-                  <div class="title">{html.escape(tr(lang, 'admin.teams.reassign_title'))}</div>
-                  <div class="muted">{html.escape(tr(lang, 'admin.teams.reassign_missing'))}</div>
-                </div>
-              </div>
-            </div>
-            """
+      </div>
+      <form class="stack" method="post" action="{archive_action}">
+        {csrf_input}
+        <button class="btn danger" type="submit">{html.escape(archive_label)}</button>
+      </form>
+    </div>
+    """
+
+    delete_section = f"""
+    <div class="card" id="delete">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.teams.delete_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.teams.delete_hint"))}</div>
+        </div>
+        <div class="actions">
+          <a class="btn danger" href="/v1/admin/ui/teams/{team.team_id}/delete">
+            {html.escape(tr(lang, "admin.teams.delete_action"))}
+          </a>
+        </div>
+      </div>
+      <div class="muted small">{html.escape(tr(lang, "admin.teams.delete_confirm_hint"))}</div>
+    </div>
+    """
 
     details = f"""
     <div class="card">
@@ -4429,19 +4414,148 @@ def _render_team_edit_page(
                 submit_label=tr(lang, "admin.teams.save"),
             ),
             details,
+            archive_section,
             delete_section,
         ]
     )
 
 
+def _render_team_delete_confirm_page(
+    team: Team,
+    *,
+    workers_count: int,
+    bookings_count: int,
+    teams: list[Team],
+    lang: str | None,
+    csrf_input: str,
+    message: str | None = None,
+) -> str:
+    message_html = ""
+    if message:
+        message_html = f"""
+        <div class="card">
+          <div class="card-row">
+            <div class="muted">{html.escape(message)}</div>
+          </div>
+        </div>
+        """
+
+    details = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.teams.delete_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.teams.delete_description"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.teams.details_workers"))}: {workers_count}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.teams.details_bookings"))}: {bookings_count}</div>
+        </div>
+      </div>
+    </div>
+    """
+
+    confirm_input = """
+      <div class="form-group">
+        <label>{label}</label>
+        <input class="input" type="text" name="confirm" placeholder="DELETE" required />
+      </div>
+    """.format(label=html.escape(tr(lang, "admin.teams.delete_confirm_label")))
+
+    delete_forms: list[str] = []
+    if workers_count == 0 and bookings_count == 0:
+        delete_forms.append(
+            f"""
+            <div class="card">
+              <div class="card-row">
+                <div>
+                  <div class="title">{html.escape(tr(lang, "admin.teams.delete_empty_title"))}</div>
+                  <div class="muted">{html.escape(tr(lang, "admin.teams.delete_empty_hint"))}</div>
+                </div>
+              </div>
+              <form class="stack" method="post" action="/v1/admin/ui/teams/{team.team_id}/delete">
+                <input type="hidden" name="strategy" value="delete" />
+                {confirm_input}
+                {csrf_input}
+                <button class="btn danger" type="submit">{html.escape(tr(lang, "admin.teams.delete_action"))}</button>
+              </form>
+            </div>
+            """
+        )
+    else:
+        target_options = "".join(
+            f'<option value="{candidate.team_id}">{html.escape(candidate.name)}</option>'
+            for candidate in teams
+            if candidate.team_id != team.team_id and candidate.archived_at is None
+        )
+        if target_options:
+            delete_forms.append(
+                f"""
+                <div class="card">
+                  <div class="card-row">
+                    <div>
+                      <div class="title">{html.escape(tr(lang, "admin.teams.reassign_title"))}</div>
+                      <div class="muted">{html.escape(tr(lang, "admin.teams.reassign_hint"))}</div>
+                    </div>
+                  </div>
+                  <form class="stack" method="post" action="/v1/admin/ui/teams/{team.team_id}/delete">
+                    <input type="hidden" name="strategy" value="reassign" />
+                    <div class="form-group">
+                      <label>{html.escape(tr(lang, "admin.teams.reassign_target"))}</label>
+                      <select class="input" name="target_team_id" required>{target_options}</select>
+                    </div>
+                    {confirm_input}
+                    {csrf_input}
+                    <button class="btn danger" type="submit">{html.escape(tr(lang, "admin.teams.reassign_action"))}</button>
+                  </form>
+                </div>
+                """
+            )
+        else:
+            delete_forms.append(
+                f"""
+                <div class="card">
+                  <div class="card-row">
+                    <div>
+                      <div class="title">{html.escape(tr(lang, "admin.teams.reassign_title"))}</div>
+                      <div class="muted">{html.escape(tr(lang, "admin.teams.reassign_missing"))}</div>
+                    </div>
+                  </div>
+                </div>
+                """
+            )
+        delete_forms.append(
+            f"""
+            <div class="card">
+              <div class="card-row">
+                <div>
+                  <div class="title">{html.escape(tr(lang, "admin.teams.cascade_title"))}</div>
+                  <div class="muted">{html.escape(tr(lang, "admin.teams.cascade_hint"))}</div>
+                </div>
+              </div>
+              <form class="stack" method="post" action="/v1/admin/ui/teams/{team.team_id}/delete">
+                <input type="hidden" name="strategy" value="cascade" />
+                {confirm_input}
+                {csrf_input}
+                <button class="btn danger" type="submit">{html.escape(tr(lang, "admin.teams.cascade_action"))}</button>
+              </form>
+            </div>
+            """
+        )
+
+    return "".join([message_html, details, *delete_forms])
+
+
 @router.get("/v1/admin/teams", response_model=list[booking_schemas.TeamResponse])
 async def list_teams(
     request: Request,
+    include_archived: bool = Query(default=False),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_dispatch),
 ) -> list[Team]:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    result = await session.execute(select(Team).where(Team.org_id == org_id).order_by(Team.name))
+    filters = [Team.org_id == org_id]
+    if not include_archived:
+        filters.append(Team.archived_at.is_(None))
+    result = await session.execute(select(Team).where(*filters).order_by(Team.name))
     return result.scalars().all()
 
 
@@ -4483,19 +4597,28 @@ async def create_team(
 @router.get("/v1/admin/ui/teams", response_class=HTMLResponse)
 async def admin_teams_list(
     request: Request,
+    show: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
     lang = resolve_lang(request)
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     workers_count, bookings_count = _team_counts_subqueries(org_id)
+    show_value = show or ""
+    filters = [Team.org_id == org_id]
+    if show_value == "archived":
+        filters.append(Team.archived_at.is_not(None))
+    else:
+        filters.append(Team.archived_at.is_(None))
     team_rows = (
         await session.execute(
             select(Team, workers_count.label("workers_count"), bookings_count.label("bookings_count"))
-            .where(Team.org_id == org_id)
+            .where(*filters)
             .order_by(Team.name)
         )
     ).all()
+    csrf_token = get_csrf_token(request)
+    csrf_input = render_csrf_input(csrf_token)
     rows = "".join(
         """
         <tr>
@@ -4506,7 +4629,11 @@ async def admin_teams_list(
           <td>
             <div class="actions">
               <a class="btn secondary small" href="/v1/admin/ui/teams/{team_id}/edit">{edit_label}</a>
-              <a class="btn danger small" href="/v1/admin/ui/teams/{team_id}/edit#delete">{delete_label}</a>
+              <form method="post" action="{archive_action}">
+                {csrf_input}
+                <button class="btn secondary small" type="submit">{archive_label}</button>
+              </form>
+              <a class="btn danger small" href="/v1/admin/ui/teams/{team_id}/delete">{delete_label}</a>
             </div>
           </td>
         </tr>
@@ -4518,6 +4645,15 @@ async def admin_teams_list(
             team_id=team.team_id,
             edit_label=html.escape(tr(lang, "admin.teams.edit")),
             delete_label=html.escape(tr(lang, "admin.teams.delete_action")),
+            archive_action=(
+                f"/v1/admin/ui/teams/{team.team_id}/unarchive"
+                if team.archived_at
+                else f"/v1/admin/ui/teams/{team.team_id}/archive"
+            ),
+            archive_label=html.escape(
+                tr(lang, "admin.teams.unarchive" if team.archived_at else "admin.teams.archive")
+            ),
+            csrf_input=csrf_input,
         )
         for team, workers_count_value, bookings_count_value in team_rows
     )
@@ -4526,6 +4662,23 @@ async def admin_teams_list(
         if team_rows
         else _render_empty(tr(lang, "admin.teams.none"))
     )
+    filter_form = f"""
+    <form class="filters" method="get">
+      <div class="form-group">
+        <label>{html.escape(tr(lang, "admin.teams.status_label"))}</label>
+        <select class="input" name="show">
+          <option value="" {"selected" if show_value == "" else ""}>{html.escape(tr(lang, "admin.teams.status_active"))}</option>
+          <option value="archived" {"selected" if show_value == "archived" else ""}>{html.escape(tr(lang, "admin.teams.status_archived"))}</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>&nbsp;</label>
+        <div class="actions">
+          <button class="btn" type="submit">Apply</button>
+        </div>
+      </div>
+    </form>
+    """
     content = "".join(
         [
             "<div class='card'>",
@@ -4536,11 +4689,14 @@ async def admin_teams_list(
             f"<a class='btn' href='/v1/admin/ui/teams/new'>{_icon('plus')}{html.escape(tr(lang, 'admin.teams.create'))}</a>",
             "</div>",
             "</div>",
+            filter_form,
             table,
             "</div>",
         ]
     )
-    return HTMLResponse(_wrap_page(request, content, title="Admin — Teams", active="teams", page_lang=lang))
+    response = HTMLResponse(_wrap_page(request, content, title="Admin — Teams", active="teams", page_lang=lang))
+    issue_csrf_token(request, response, csrf_token)
+    return response
 
 
 @router.get("/v1/admin/ui/teams/new", response_class=HTMLResponse)
@@ -4626,7 +4782,12 @@ async def admin_teams_edit_form(
     team, workers_count_value, bookings_count_value = row
     teams = (
         await session.execute(
-            select(Team).where(Team.org_id == org_id).order_by(Team.name)
+            select(Team)
+            .where(
+                Team.org_id == org_id,
+                or_(Team.archived_at.is_(None), Team.team_id == team.team_id),
+            )
+            .order_by(Team.name)
         )
     ).scalars().all()
     csrf_token = get_csrf_token(request)
@@ -4687,6 +4848,116 @@ async def admin_teams_update(
     return RedirectResponse("/v1/admin/ui/teams", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/v1/admin/ui/teams/{team_id}/archive", response_class=HTMLResponse)
+async def admin_teams_archive(
+    team_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    team = (
+        await session.execute(
+            select(Team).where(Team.team_id == team_id, Team.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if team is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+    before = {"archived_at": team.archived_at.isoformat() if team.archived_at else None}
+    team.archived_at = datetime.now(timezone.utc)
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="ARCHIVE_TEAM",
+        resource_type="team",
+        resource_id=str(team.team_id),
+        before=before,
+        after={"archived_at": team.archived_at.isoformat()},
+    )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/teams", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/teams/{team_id}/unarchive", response_class=HTMLResponse)
+async def admin_teams_unarchive(
+    team_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    team = (
+        await session.execute(
+            select(Team).where(Team.team_id == team_id, Team.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if team is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+    before = {"archived_at": team.archived_at.isoformat() if team.archived_at else None}
+    team.archived_at = None
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UNARCHIVE_TEAM",
+        resource_type="team",
+        resource_id=str(team.team_id),
+        before=before,
+        after={"archived_at": None},
+    )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/teams", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/v1/admin/ui/teams/{team_id}/delete", response_class=HTMLResponse)
+async def admin_teams_delete_confirm(
+    team_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    workers_count, bookings_count = _team_counts_subqueries(org_id)
+    row = (
+        await session.execute(
+            select(
+                Team,
+                workers_count.label("workers_count"),
+                bookings_count.label("bookings_count"),
+            ).where(Team.team_id == team_id, Team.org_id == org_id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+    team, workers_count_value, bookings_count_value = row
+    teams = (
+        await session.execute(
+            select(Team)
+            .where(
+                Team.org_id == org_id,
+                or_(Team.archived_at.is_(None), Team.team_id == team.team_id),
+            )
+            .order_by(Team.name)
+        )
+    ).scalars().all()
+    csrf_token = get_csrf_token(request)
+    content = _render_team_delete_confirm_page(
+        team,
+        workers_count=workers_count_value or 0,
+        bookings_count=bookings_count_value or 0,
+        teams=teams,
+        lang=lang,
+        csrf_input=render_csrf_input(csrf_token),
+    )
+    response = HTMLResponse(
+        _wrap_page(request, content, title="Admin — Teams", active="teams", page_lang=lang)
+    )
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
 @router.post("/v1/admin/ui/teams/{team_id}/delete", response_class=HTMLResponse)
 async def admin_teams_delete(
     team_id: int,
@@ -4697,6 +4968,7 @@ async def admin_teams_delete(
     await require_csrf(request)
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     form = await request.form()
+    strategy = (form.get("strategy") or "").strip()
     confirmation = (form.get("confirm") or "").strip().upper()
     if confirmation != "DELETE":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deletion confirmation required")
@@ -4713,28 +4985,82 @@ async def admin_teams_delete(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     team, workers_count_value, bookings_count_value = row
-    if (workers_count_value or 0) > 0 or (bookings_count_value or 0) > 0:
-        teams = (
+    workers_count_value = workers_count_value or 0
+    bookings_count_value = bookings_count_value or 0
+    if strategy == "delete":
+        if workers_count_value > 0 or bookings_count_value > 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Team not empty")
+    elif strategy == "reassign":
+        target_team_id_raw = form.get("target_team_id")
+        if not target_team_id_raw:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target team is required")
+        target_team_id = int(target_team_id_raw)
+        if target_team_id == team_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target team must be different")
+        target_team = (
             await session.execute(
-                select(Team).where(Team.org_id == org_id).order_by(Team.name)
+                select(Team).where(Team.team_id == target_team_id, Team.org_id == org_id)
+            )
+        ).scalar_one_or_none()
+        if target_team is None or target_team.archived_at is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target team not found")
+        await session.execute(
+            sa.update(Worker)
+            .where(Worker.team_id == team_id, Worker.org_id == org_id)
+            .values(team_id=target_team_id)
+        )
+        await session.execute(
+            sa.update(Booking)
+            .where(Booking.team_id == team_id, Booking.org_id == org_id)
+            .values(team_id=target_team_id)
+        )
+        before = {"team_id": team.team_id, "name": team.name, "target_team_id": target_team_id}
+        await audit_service.record_action(
+            session,
+            identity=identity,
+            action="REASSIGN_DELETE_TEAM",
+            resource_type="team",
+            resource_id=str(team.team_id),
+            before=before,
+            after={"deleted": True},
+        )
+    elif strategy == "cascade":
+        worker_ids = (
+            await session.execute(
+                select(Worker.worker_id).where(Worker.team_id == team_id, Worker.org_id == org_id)
             )
         ).scalars().all()
-        csrf_token = get_csrf_token(request)
-        content = _render_team_edit_page(
-            team,
-            workers_count=workers_count_value or 0,
-            bookings_count=bookings_count_value or 0,
-            teams=teams,
-            lang=resolve_lang(request),
-            csrf_input=render_csrf_input(csrf_token),
-            message=tr(resolve_lang(request), "admin.teams.delete_blocked"),
+        if worker_ids:
+            await session.execute(
+                sa.delete(BookingWorker).where(BookingWorker.worker_id.in_(worker_ids))
+            )
+            await session.execute(
+                sa.update(Booking)
+                .where(Booking.assigned_worker_id.in_(worker_ids), Booking.org_id == org_id)
+                .values(assigned_worker_id=None)
+            )
+        await session.execute(
+            sa.delete(Booking).where(Booking.team_id == team_id, Booking.org_id == org_id)
         )
-        response = HTMLResponse(
-            _wrap_page(request, content, title="Admin — Teams", active="teams", page_lang=resolve_lang(request)),
-            status_code=status.HTTP_400_BAD_REQUEST,
+        await session.execute(
+            sa.delete(Worker).where(Worker.team_id == team_id, Worker.org_id == org_id)
         )
-        issue_csrf_token(request, response, csrf_token)
-        return response
+        before = {"team_id": team.team_id, "name": team.name}
+        await audit_service.record_action(
+            session,
+            identity=identity,
+            action="CASCADE_DELETE_TEAM",
+            resource_type="team",
+            resource_id=str(team.team_id),
+            before=before,
+            after={"deleted": True},
+        )
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deletion strategy required")
+
+    await session.execute(sa.delete(TeamWorkingHours).where(TeamWorkingHours.team_id == team_id))
+    await session.execute(sa.delete(TeamBlackout).where(TeamBlackout.team_id == team_id))
+
     before = {"name": team.name}
     await audit_service.record_action(
         session,
@@ -4750,65 +5076,13 @@ async def admin_teams_delete(
     return RedirectResponse("/v1/admin/ui/teams", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/v1/admin/ui/teams/{team_id}/reassign_and_delete", response_class=HTMLResponse)
-async def admin_teams_reassign_and_delete(
-    team_id: int,
-    request: Request,
-    session: AsyncSession = Depends(get_db_session),
-    identity: AdminIdentity = Depends(require_dispatch),
-) -> Response:
-    await require_csrf(request)
-    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    form = await request.form()
-    target_team_id_raw = form.get("target_team_id")
-    if not target_team_id_raw:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target team is required")
-    target_team_id = int(target_team_id_raw)
-    if target_team_id == team_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target team must be different")
-    team = (
-        await session.execute(
-            select(Team).where(Team.team_id == team_id, Team.org_id == org_id)
-        )
-    ).scalar_one_or_none()
-    if team is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
-    target_team = (
-        await session.execute(
-            select(Team).where(Team.team_id == target_team_id, Team.org_id == org_id)
-        )
-    ).scalar_one_or_none()
-    if target_team is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target team not found")
-
-    await session.execute(
-        sa.update(Worker)
-        .where(Worker.team_id == team_id, Worker.org_id == org_id)
-        .values(team_id=target_team_id)
-    )
-    await session.execute(
-        sa.update(Booking)
-        .where(Booking.team_id == team_id, Booking.org_id == org_id)
-        .values(team_id=target_team_id)
-    )
-    before = {"team_id": team.team_id, "name": team.name, "target_team_id": target_team_id}
-    await audit_service.record_action(
-        session,
-        identity=identity,
-        action="REASSIGN_DELETE_TEAM",
-        resource_type="team",
-        resource_id=str(team.team_id),
-        before=before,
-        after={"deleted": True},
-    )
-    await session.delete(team)
-    await session.commit()
-    return RedirectResponse("/v1/admin/ui/teams", status_code=status.HTTP_303_SEE_OTHER)
-
-
 def _worker_status_badge(worker: Worker, lang: str | None) -> str:
-    label = tr(lang, "admin.workers.status_active") if worker.is_active else tr(lang, "admin.workers.status_inactive")
-    cls = "badge" + (" badge-active" if worker.is_active else "")
+    if worker.archived_at:
+        label = tr(lang, "admin.workers.status_archived")
+        cls = "badge"
+    else:
+        label = tr(lang, "admin.workers.status_active") if worker.is_active else tr(lang, "admin.workers.status_inactive")
+        cls = "badge" + (" badge-active" if worker.is_active else "")
     return f'<span class="{cls}">{html.escape(label)}</span>'
 
 
@@ -4870,6 +5144,79 @@ def _render_worker_form(worker: Worker | None, teams: list[Team], lang: str | No
     """
 
 
+def _render_worker_delete_confirm_page(
+    worker: Worker,
+    *,
+    crew_assignments_count: int,
+    bookings_primary_count: int,
+    lang: str | None,
+    csrf_input: str,
+    message: str | None = None,
+) -> str:
+    message_html = ""
+    if message:
+        message_html = f"""
+        <div class="card">
+          <div class="card-row">
+            <div class="muted">{html.escape(message)}</div>
+          </div>
+        </div>
+        """
+
+    details = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.workers.delete_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.workers.delete_description"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.workers.delete_primary_count"))}: {bookings_primary_count}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.workers.delete_crew_count"))}: {crew_assignments_count}</div>
+        </div>
+      </div>
+    </div>
+    """
+    confirm_input = """
+      <div class="form-group">
+        <label>{label}</label>
+        <input class="input" type="text" name="confirm" placeholder="DELETE" required />
+      </div>
+    """.format(label=html.escape(tr(lang, "admin.workers.delete_confirm_label")))
+
+    detach_form = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.workers.delete_detach_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.workers.delete_detach_hint"))}</div>
+        </div>
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/workers/{worker.worker_id}/delete">
+        <input type="hidden" name="strategy" value="detach" />
+        {confirm_input}
+        {csrf_input}
+        <button class="btn danger" type="submit">{html.escape(tr(lang, "admin.workers.delete_detach_action"))}</button>
+      </form>
+    </div>
+    """
+    cascade_form = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.workers.delete_cascade_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.workers.delete_cascade_hint"))}</div>
+        </div>
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/workers/{worker.worker_id}/delete">
+        <input type="hidden" name="strategy" value="cascade" />
+        {confirm_input}
+        {csrf_input}
+        <button class="btn danger" type="submit">{html.escape(tr(lang, "admin.workers.delete_cascade_action"))}</button>
+      </form>
+    </div>
+    """
+    return "".join([message_html, details, detach_form, cascade_form])
+
+
 async def _list_workers(
     session: AsyncSession,
     *,
@@ -4877,8 +5224,13 @@ async def _list_workers(
     q: str | None,
     active_only: bool,
     team_id: int | None,
+    show: str | None,
 ) -> list[Worker]:
     filters = [Worker.org_id == org_id]
+    if show == "archived":
+        filters.append(Worker.archived_at.is_not(None))
+    else:
+        filters.append(Worker.archived_at.is_(None))
     if active_only:
         filters.append(Worker.is_active.is_(True))
     if team_id:
@@ -4903,17 +5255,21 @@ async def admin_workers_list(
     q: str | None = Query(default=None),
     active_only: bool = Query(default=False),
     team_id: int | None = Query(default=None),
+    show: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
     lang = resolve_lang(request)
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    show_value = show or ""
     workers = await _list_workers(
-        session, org_id=org_id, q=q, active_only=active_only, team_id=team_id
+        session, org_id=org_id, q=q, active_only=active_only, team_id=team_id, show=show_value
     )
     teams = (
         await session.execute(
-            select(Team).where(Team.org_id == org_id).order_by(Team.name)
+            select(Team)
+            .where(Team.org_id == org_id, Team.archived_at.is_(None))
+            .order_by(Team.name)
         )
     ).scalars().all()
     team_filter_options = "".join(
@@ -4927,6 +5283,12 @@ async def admin_workers_list(
         contact = [worker.phone]
         if worker.email:
             contact.append(worker.email)
+        archive_action = (
+            f"/v1/admin/ui/workers/{worker.worker_id}/unarchive"
+            if worker.archived_at
+            else f"/v1/admin/ui/workers/{worker.worker_id}/archive"
+        )
+        archive_label = tr(lang, "admin.workers.unarchive" if worker.archived_at else "admin.workers.archive")
         cards.append(
             """
             <div class=\"card\">
@@ -4939,10 +5301,11 @@ async def admin_workers_list(
                 <div class=\"actions\">
                   {status}
                   <a class=\"btn secondary small\" href=\"/v1/admin/ui/workers/{worker_id}\">{edit_icon}{edit_label}</a>
-                  <form method=\"post\" action=\"/v1/admin/ui/workers/{worker_id}/delete\" onsubmit=\"return confirm('{delete_confirm}')\">
+                  <form method=\"post\" action=\"{archive_action}\">
                     {csrf_input}
-                    <button class=\"btn danger small\" type=\"submit\">{delete_label}</button>
+                    <button class=\"btn secondary small\" type=\"submit\">{archive_label}</button>
                   </form>
+                  <a class=\"btn danger small\" href=\"/v1/admin/ui/workers/{worker_id}/delete\">{delete_label}</a>
                 </div>
               </div>
               <div class=\"muted small\">{role}</div>
@@ -4958,8 +5321,9 @@ async def admin_workers_list(
                 edit_icon=_icon("edit"),
                 edit_label=html.escape(tr(lang, "admin.workers.save")),
                 role=html.escape(worker.role or tr(lang, "admin.workers.role")),
-                delete_label=html.escape(tr(lang, "admin.workers.delete")),
-                delete_confirm=html.escape(tr(lang, "admin.workers.delete_confirm")),
+                delete_label=html.escape(tr(lang, "admin.workers.delete_permanent")),
+                archive_action=archive_action,
+                archive_label=html.escape(archive_label),
                 csrf_input=csrf_input,
             )
         )
@@ -4975,6 +5339,10 @@ async def admin_workers_list(
             "<form class=\"filters\" method=\"get\">",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.search'))}</label><input class=\"input\" type=\"text\" name=\"q\" value=\"{html.escape(q or '')}\" /></div>",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.team'))}</label><select class=\"input\" name=\"team_id\"><option value=\"\"></option>{team_filter_options}</select></div>",
+            f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.status_label'))}</label><select class=\"input\" name=\"show\">"
+            f"<option value=\"\" {'selected' if show_value == '' else ''}>{html.escape(tr(lang, 'admin.workers.status_active'))}</option>"
+            f"<option value=\"archived\" {'selected' if show_value == 'archived' else ''}>{html.escape(tr(lang, 'admin.workers.status_archived'))}</option>"
+            f"</select></div>",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.active_only'))}</label><input type=\"checkbox\" name=\"active_only\" value=\"1\" { 'checked' if active_only else '' } /></div>",
             "<div class=\"form-group\"><label>&nbsp;</label><div class=\"actions\"><button class=\"btn\" type=\"submit\">Apply</button><a class=\"btn secondary\" href=\"/v1/admin/ui/workers\">Reset</a></div></div>",
             "</form>",
@@ -4997,7 +5365,9 @@ async def admin_workers_new_form(
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     teams = (
         await session.execute(
-            select(Team).where(Team.org_id == org_id).order_by(Team.name)
+            select(Team)
+            .where(Team.org_id == org_id, Team.archived_at.is_(None))
+            .order_by(Team.name)
         )
     ).scalars().all()
     csrf_token = get_csrf_token(request)
@@ -5046,7 +5416,9 @@ async def admin_workers_create(
     team_id = int(team_id_raw)
     team = (
         await session.execute(
-            select(Team).where(Team.team_id == team_id, Team.org_id == org_id)
+            select(Team).where(
+                Team.team_id == team_id, Team.org_id == org_id, Team.archived_at.is_(None)
+            )
         )
     ).scalar_one_or_none()
     if team is None:
@@ -5116,7 +5488,12 @@ async def admin_workers_edit_form(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
     teams = (
         await session.execute(
-            select(Team).where(Team.org_id == org_id).order_by(Team.name)
+            select(Team)
+            .where(
+                Team.org_id == org_id,
+                or_(Team.archived_at.is_(None), Team.team_id == worker.team_id),
+            )
+            .order_by(Team.name)
         )
     ).scalars().all()
     csrf_token = get_csrf_token(request)
@@ -5177,7 +5554,11 @@ async def admin_workers_update(
     if team_id_raw:
         team = (
             await session.execute(
-                select(Team).where(Team.team_id == int(team_id_raw), Team.org_id == org_id)
+                select(Team).where(
+                    Team.team_id == int(team_id_raw),
+                    Team.org_id == org_id,
+                    Team.archived_at.is_(None),
+                )
             )
         ).scalar_one_or_none()
         if team is None:
@@ -5218,8 +5599,8 @@ async def admin_workers_update(
     return RedirectResponse("/v1/admin/ui/workers", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/v1/admin/ui/workers/{worker_id}/delete", response_class=HTMLResponse)
-async def admin_workers_delete(
+@router.post("/v1/admin/ui/workers/{worker_id}/archive", response_class=HTMLResponse)
+async def admin_workers_archive(
     worker_id: int,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -5234,12 +5615,11 @@ async def admin_workers_delete(
     ).scalar_one_or_none()
     if worker is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
-
     before = {
-        "name": worker.name,
-        "team_id": worker.team_id,
+        "archived_at": worker.archived_at.isoformat() if worker.archived_at else None,
         "is_active": worker.is_active,
     }
+    worker.archived_at = datetime.now(timezone.utc)
     if worker.is_active:
         worker.is_active = False
         if entitlements.has_tenant_identity(request):
@@ -5250,7 +5630,6 @@ async def admin_workers_delete(
                 quantity=-1,
                 resource_id=str(worker.worker_id),
             )
-
     await session.execute(
         sa.update(Booking)
         .where(Booking.assigned_worker_id == worker.worker_id, Booking.org_id == org_id)
@@ -5259,7 +5638,6 @@ async def admin_workers_delete(
     await session.execute(
         sa.delete(BookingWorker).where(BookingWorker.worker_id == worker.worker_id)
     )
-
     await audit_service.record_action(
         session,
         identity=identity,
@@ -5267,8 +5645,174 @@ async def admin_workers_delete(
         resource_type="worker",
         resource_id=str(worker.worker_id),
         before=before,
-        after={"is_active": worker.is_active},
+        after={"archived_at": worker.archived_at.isoformat(), "is_active": worker.is_active},
     )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/workers", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/workers/{worker_id}/unarchive", response_class=HTMLResponse)
+async def admin_workers_unarchive(
+    worker_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+    before = {
+        "archived_at": worker.archived_at.isoformat() if worker.archived_at else None,
+        "is_active": worker.is_active,
+    }
+    worker.archived_at = None
+    if not worker.is_active:
+        worker.is_active = True
+        if entitlements.has_tenant_identity(request):
+            await billing_service.record_usage_event(
+                session,
+                entitlements.resolve_org_id(request),
+                metric="worker_created",
+                quantity=1,
+                resource_id=str(worker.worker_id),
+            )
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UNARCHIVE_WORKER",
+        resource_type="worker",
+        resource_id=str(worker.worker_id),
+        before=before,
+        after={"archived_at": None, "is_active": worker.is_active},
+    )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/workers", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/v1/admin/ui/workers/{worker_id}/delete", response_class=HTMLResponse)
+async def admin_workers_delete_confirm(
+    worker_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+    crew_assignments_count = await session.scalar(
+        select(func.count()).select_from(BookingWorker).where(BookingWorker.worker_id == worker.worker_id)
+    )
+    bookings_primary_count = await session.scalar(
+        select(func.count())
+        .select_from(Booking)
+        .where(Booking.assigned_worker_id == worker.worker_id, Booking.org_id == org_id)
+    )
+    csrf_token = get_csrf_token(request)
+    content = _render_worker_delete_confirm_page(
+        worker,
+        crew_assignments_count=crew_assignments_count or 0,
+        bookings_primary_count=bookings_primary_count or 0,
+        lang=lang,
+        csrf_input=render_csrf_input(csrf_token),
+    )
+    response = HTMLResponse(
+        _wrap_page(request, content, title="Admin — Workers", active="workers", page_lang=lang)
+    )
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
+@router.post("/v1/admin/ui/workers/{worker_id}/delete", response_class=HTMLResponse)
+async def admin_workers_delete(
+    worker_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    form = await request.form()
+    strategy = (form.get("strategy") or "").strip()
+    confirmation = (form.get("confirm") or "").strip().upper()
+    if confirmation != "DELETE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deletion confirmation required")
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+
+    before = {"name": worker.name, "team_id": worker.team_id}
+    if strategy == "detach":
+        await session.execute(
+            sa.update(Booking)
+            .where(Booking.assigned_worker_id == worker.worker_id, Booking.org_id == org_id)
+            .values(assigned_worker_id=None)
+        )
+        await session.execute(
+            sa.delete(BookingWorker).where(BookingWorker.worker_id == worker.worker_id)
+        )
+        await audit_service.record_action(
+            session,
+            identity=identity,
+            action="DELETE_WORKER_DETACH",
+            resource_type="worker",
+            resource_id=str(worker.worker_id),
+            before=before,
+            after={"deleted": True},
+        )
+    elif strategy == "cascade":
+        booking_ids = set(
+            (
+                await session.execute(
+                    select(Booking.booking_id).where(
+                        Booking.assigned_worker_id == worker.worker_id, Booking.org_id == org_id
+                    )
+                )
+            ).scalars().all()
+        )
+        crew_booking_ids = (
+            await session.execute(
+                select(BookingWorker.booking_id)
+                .join(Booking, Booking.booking_id == BookingWorker.booking_id)
+                .where(BookingWorker.worker_id == worker.worker_id, Booking.org_id == org_id)
+            )
+        ).scalars().all()
+        booking_ids.update(crew_booking_ids)
+        if booking_ids:
+            await session.execute(
+                sa.delete(BookingWorker).where(BookingWorker.booking_id.in_(booking_ids))
+            )
+            await session.execute(
+                sa.delete(Booking).where(Booking.booking_id.in_(booking_ids), Booking.org_id == org_id)
+            )
+        await audit_service.record_action(
+            session,
+            identity=identity,
+            action="DELETE_WORKER_CASCADE",
+            resource_type="worker",
+            resource_id=str(worker.worker_id),
+            before=before,
+            after={"deleted": True},
+        )
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deletion strategy required")
+
+    await session.delete(worker)
     await session.commit()
     return RedirectResponse("/v1/admin/ui/workers", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -5841,7 +6385,9 @@ async def admin_bookings_new_form(
     # Fetch teams
     teams = (
         await session.execute(
-            select(Team).where(Team.org_id == org_id).order_by(Team.name)
+            select(Team)
+            .where(Team.org_id == org_id, Team.archived_at.is_(None))
+            .order_by(Team.name)
         )
     ).scalars().all()
 
@@ -5906,7 +6452,9 @@ async def admin_bookings_create(
     # Validate team exists
     team = (
         await session.execute(
-            select(Team).where(Team.team_id == team_id, Team.org_id == org_id)
+            select(Team).where(
+                Team.team_id == team_id, Team.org_id == org_id, Team.archived_at.is_(None)
+            )
         )
     ).scalar_one_or_none()
     if team is None:
@@ -6010,7 +6558,9 @@ async def admin_bookings_edit_form(
 
     teams = (
         await session.execute(
-            select(Team).where(Team.org_id == org_id).order_by(Team.name)
+            select(Team)
+            .where(Team.org_id == org_id, Team.archived_at.is_(None))
+            .order_by(Team.name)
         )
     ).scalars().all()
     clients = (
@@ -6108,7 +6658,9 @@ async def admin_bookings_update(
 
     team = (
         await session.execute(
-            select(Team).where(Team.team_id == team_id, Team.org_id == org_id)
+            select(Team).where(
+                Team.team_id == team_id, Team.org_id == org_id, Team.archived_at.is_(None)
+            )
         )
     ).scalar_one_or_none()
     if team is None:
