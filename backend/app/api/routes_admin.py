@@ -33,8 +33,9 @@ from app.api.admin_auth import (
 from app.dependencies import get_bot_store
 from app.domain.addons import schemas as addon_schemas
 from app.domain.addons import service as addon_service
-from app.domain.addons.db_models import AddonDefinition
+from app.domain.addons.db_models import AddonDefinition, OrderAddon
 from app.domain.analytics import schemas as analytics_schemas
+from app.domain.analytics.db_models import EventLog
 from app.domain.analytics.service import (
     EventType,
     average_revenue_cents,
@@ -50,7 +51,16 @@ from app.domain.analytics.service import (
     log_event,
 )
 from app.dependencies import get_db_session
-from app.domain.bookings.db_models import Booking, BookingWorker, Team, TeamBlackout, TeamWorkingHours
+from app.domain.bookings.db_models import (
+    Booking,
+    BookingWorker,
+    EmailEvent,
+    OrderPhoto,
+    OrderPhotoTombstone,
+    Team,
+    TeamBlackout,
+    TeamWorkingHours,
+)
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
@@ -61,10 +71,12 @@ from app.domain.export_events.schemas import ExportEventResponse, ExportReplayRe
 from app.domain.invoices import schemas as invoice_schemas
 from app.domain.invoices import service as invoice_service
 from app.domain.invoices import statuses as invoice_statuses
-from app.domain.invoices.db_models import Invoice, Payment
+from app.domain.checklists.db_models import ChecklistRun, ChecklistRunItem
+from app.domain.disputes.db_models import Dispute, FinancialAdjustmentEvent
+from app.domain.invoices.db_models import Invoice, InvoiceItem, InvoicePublicToken, Payment
 from app.domain.leads import statuses as lead_statuses
 from app.domain.leads.db_models import Lead, ReferralCredit
-from app.domain.nps.db_models import SupportTicket
+from app.domain.nps.db_models import NpsResponse, SupportTicket
 from app.domain.leads.service import grant_referral_credit, export_payload_from_lead
 from app.domain.leads.schemas import AdminLeadResponse, AdminLeadStatusUpdateRequest, admin_lead_from_model
 from app.domain.leads.statuses import assert_valid_transition, is_valid_status
@@ -78,8 +90,11 @@ from app.domain.outbox.service import replay_outbox_event
 from app.domain.queues.schemas import DLQBatchReplayResponse
 from app.domain.nps import schemas as nps_schemas, service as nps_service
 from app.domain.pricing.config_loader import load_pricing_config
+from app.domain.notifications.db_models import EmailFailure
+from app.domain.policy_overrides.db_models import PolicyOverrideAudit
 from app.domain.reason_logs import schemas as reason_schemas
 from app.domain.reason_logs import service as reason_service
+from app.domain.reason_logs.db_models import ReasonLog
 from app.domain.saas import billing_service, service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, Organization, PasswordResetEvent, User
 from app.domain.ops import service as ops_service
@@ -106,6 +121,7 @@ from app.domain.retention import cleanup_retention
 from app.domain.subscriptions import schemas as subscription_schemas
 from app.domain.subscriptions import service as subscription_service
 from app.domain.subscriptions.db_models import Subscription
+from app.domain.time_tracking.db_models import WorkTimeEntry
 from app.domain.admin_audit import service as audit_service
 from app.domain.workers.db_models import Worker
 from app.infra.auth import hash_password
@@ -2553,6 +2569,8 @@ async def list_bookings(
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
     status_filter: str | None = Query(default=None, alias="status"),
+    include_archived: bool = Query(default=False, alias="include_archived"),
+    include_cancelled: bool = Query(default=False, alias="include_cancelled"),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_viewer),
 ):
@@ -2571,6 +2589,9 @@ async def list_bookings(
         Booking.starts_at >= start_dt,
         Booking.starts_at <= end_dt,
         Booking.org_id == org_id,
+    )
+    stmt = _apply_booking_active_filters(
+        stmt, include_archived=include_archived, include_cancelled=include_cancelled
     )
     if status_filter:
         stmt = stmt.where(Booking.status == status_filter.upper())
@@ -6373,6 +6394,225 @@ async def _sync_booking_workers(
         )
 
 
+def _apply_booking_active_filters(
+    stmt: sa.Select,
+    *,
+    include_archived: bool,
+    include_cancelled: bool,
+) -> sa.Select:
+    if not include_archived:
+        stmt = stmt.where(Booking.archived_at.is_(None))
+    if not include_cancelled:
+        stmt = stmt.where(Booking.status != "CANCELLED")
+    return stmt
+
+
+async def _booking_delete_counts(session: AsyncSession, booking_id: str) -> dict[str, int]:
+    invoice_ids = (
+        await session.execute(select(Invoice.invoice_id).where(Invoice.order_id == booking_id))
+    ).scalars().all()
+    dispute_ids = (
+        await session.execute(select(Dispute.dispute_id).where(Dispute.booking_id == booking_id))
+    ).scalars().all()
+    run_ids = (
+        await session.execute(select(ChecklistRun.run_id).where(ChecklistRun.order_id == booking_id))
+    ).scalars().all()
+    event_logs = (
+        await session.execute(
+            select(func.count()).select_from(EventLog).where(EventLog.booking_id == booking_id)
+        )
+    ).scalar_one()
+    booking_workers = (
+        await session.execute(
+            select(func.count())
+            .select_from(BookingWorker)
+            .where(BookingWorker.booking_id == booking_id)
+        )
+    ).scalar_one()
+    order_addons = (
+        await session.execute(
+            select(func.count()).select_from(OrderAddon).where(OrderAddon.order_id == booking_id)
+        )
+    ).scalar_one()
+    order_photos = (
+        await session.execute(
+            select(func.count()).select_from(OrderPhoto).where(OrderPhoto.order_id == booking_id)
+        )
+    ).scalar_one()
+    order_photo_tombstones = (
+        await session.execute(
+            select(func.count())
+            .select_from(OrderPhotoTombstone)
+            .where(OrderPhotoTombstone.order_id == booking_id)
+        )
+    ).scalar_one()
+    checklist_runs = (
+        await session.execute(
+            select(func.count()).select_from(ChecklistRun).where(ChecklistRun.order_id == booking_id)
+        )
+    ).scalar_one()
+    checklist_items = (
+        await session.execute(
+            select(func.count())
+            .select_from(ChecklistRunItem)
+            .where(ChecklistRunItem.run_id.in_(run_ids or ["-1"]))
+        )
+    ).scalar_one()
+    work_time_entries = (
+        await session.execute(
+            select(func.count())
+            .select_from(WorkTimeEntry)
+            .where(WorkTimeEntry.booking_id == booking_id)
+        )
+    ).scalar_one()
+    reason_logs = (
+        await session.execute(
+            select(func.count()).select_from(ReasonLog).where(ReasonLog.order_id == booking_id)
+        )
+    ).scalar_one()
+    email_events = (
+        await session.execute(
+            select(func.count()).select_from(EmailEvent).where(EmailEvent.booking_id == booking_id)
+        )
+    ).scalar_one()
+    email_failures = (
+        await session.execute(
+            select(func.count())
+            .select_from(EmailFailure)
+            .where(EmailFailure.booking_id == booking_id)
+        )
+    ).scalar_one()
+    policy_override_audits = (
+        await session.execute(
+            select(func.count())
+            .select_from(PolicyOverrideAudit)
+            .where(PolicyOverrideAudit.booking_id == booking_id)
+        )
+    ).scalar_one()
+    disputes = (
+        await session.execute(
+            select(func.count()).select_from(Dispute).where(Dispute.booking_id == booking_id)
+        )
+    ).scalar_one()
+    financial_adjustment_events = (
+        await session.execute(
+            select(func.count())
+            .select_from(FinancialAdjustmentEvent)
+            .where(FinancialAdjustmentEvent.dispute_id.in_(dispute_ids or ["-1"]))
+        )
+    ).scalar_one()
+    invoices = (
+        await session.execute(
+            select(func.count()).select_from(Invoice).where(Invoice.order_id == booking_id)
+        )
+    ).scalar_one()
+    invoice_items = (
+        await session.execute(
+            select(func.count())
+            .select_from(InvoiceItem)
+            .where(InvoiceItem.invoice_id.in_(invoice_ids or ["-1"]))
+        )
+    ).scalar_one()
+    invoice_public_tokens = (
+        await session.execute(
+            select(func.count())
+            .select_from(InvoicePublicToken)
+            .where(InvoicePublicToken.invoice_id.in_(invoice_ids or ["-1"]))
+        )
+    ).scalar_one()
+    payments = (
+        await session.execute(
+            select(func.count())
+            .select_from(Payment)
+            .where(
+                or_(
+                    Payment.booking_id == booking_id,
+                    Payment.invoice_id.in_(invoice_ids or ["-1"]),
+                )
+            )
+        )
+    ).scalar_one()
+    nps_responses = (
+        await session.execute(
+            select(func.count())
+            .select_from(NpsResponse)
+            .where(NpsResponse.order_id == booking_id)
+        )
+    ).scalar_one()
+    support_tickets = (
+        await session.execute(
+            select(func.count())
+            .select_from(SupportTicket)
+            .where(SupportTicket.order_id == booking_id)
+        )
+    ).scalar_one()
+
+    return {
+        "event_logs": int(event_logs or 0),
+        "booking_workers": int(booking_workers or 0),
+        "order_addons": int(order_addons or 0),
+        "order_photos": int(order_photos or 0),
+        "order_photo_tombstones": int(order_photo_tombstones or 0),
+        "checklist_runs": int(checklist_runs or 0),
+        "checklist_items": int(checklist_items or 0),
+        "work_time_entries": int(work_time_entries or 0),
+        "reason_logs": int(reason_logs or 0),
+        "email_events": int(email_events or 0),
+        "email_failures": int(email_failures or 0),
+        "policy_override_audits": int(policy_override_audits or 0),
+        "disputes": int(disputes or 0),
+        "financial_adjustment_events": int(financial_adjustment_events or 0),
+        "invoices": int(invoices or 0),
+        "invoice_items": int(invoice_items or 0),
+        "invoice_public_tokens": int(invoice_public_tokens or 0),
+        "payments": int(payments or 0),
+        "nps_responses": int(nps_responses or 0),
+        "support_tickets": int(support_tickets or 0),
+    }
+
+
+async def _delete_booking_dependencies(session: AsyncSession, booking_id: str) -> None:
+    invoice_ids = (
+        await session.execute(select(Invoice.invoice_id).where(Invoice.order_id == booking_id))
+    ).scalars().all()
+    dispute_ids = (
+        await session.execute(select(Dispute.dispute_id).where(Dispute.booking_id == booking_id))
+    ).scalars().all()
+    run_ids = (
+        await session.execute(select(ChecklistRun.run_id).where(ChecklistRun.order_id == booking_id))
+    ).scalars().all()
+
+    await session.execute(sa.delete(ReasonLog).where(ReasonLog.order_id == booking_id))
+    await session.execute(sa.delete(EmailFailure).where(EmailFailure.booking_id == booking_id))
+    await session.execute(sa.delete(EmailEvent).where(EmailEvent.booking_id == booking_id))
+    await session.execute(sa.delete(PolicyOverrideAudit).where(PolicyOverrideAudit.booking_id == booking_id))
+    await session.execute(sa.delete(WorkTimeEntry).where(WorkTimeEntry.booking_id == booking_id))
+    if run_ids:
+        await session.execute(
+            sa.delete(ChecklistRunItem).where(ChecklistRunItem.run_id.in_(run_ids))
+        )
+    await session.execute(sa.delete(ChecklistRun).where(ChecklistRun.order_id == booking_id))
+    if dispute_ids:
+        await session.execute(
+            sa.delete(FinancialAdjustmentEvent).where(
+                FinancialAdjustmentEvent.dispute_id.in_(dispute_ids)
+            )
+        )
+    await session.execute(sa.delete(Dispute).where(Dispute.booking_id == booking_id))
+    if invoice_ids:
+        await session.execute(
+            sa.delete(InvoicePublicToken).where(InvoicePublicToken.invoice_id.in_(invoice_ids))
+        )
+        await session.execute(
+            sa.delete(InvoiceItem).where(InvoiceItem.invoice_id.in_(invoice_ids))
+        )
+        await session.execute(sa.delete(Payment).where(Payment.invoice_id.in_(invoice_ids)))
+    await session.execute(sa.delete(Payment).where(Payment.booking_id == booking_id))
+    await session.execute(sa.delete(Invoice).where(Invoice.order_id == booking_id))
+    await session.execute(sa.delete(BookingWorker).where(BookingWorker.booking_id == booking_id))
+    await session.execute(sa.delete(EventLog).where(EventLog.booking_id == booking_id))
+
+
 @router.get("/v1/admin/ui/bookings/new", response_class=HTMLResponse)
 async def admin_bookings_new_form(
     request: Request,
@@ -6600,22 +6840,41 @@ async def admin_bookings_edit_form(
         booking=booking,
         selected_worker_ids=assigned_worker_ids,
     )
+    archive_action = "unarchive" if booking.archived_at else "archive"
+    archive_label = "Unarchive Booking" if booking.archived_at else "Archive Booking"
+    archive_note = (
+        f"Archived at {booking.archived_at.astimezone(timezone.utc).isoformat()}"
+        if booking.archived_at
+        else "Archived bookings are hidden from active views by default."
+    )
+    archive_html = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{archive_label}</div>
+          <div class="muted">{html.escape(archive_note)}</div>
+        </div>
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/bookings/{html.escape(booking_id)}/{archive_action}">
+        {render_csrf_input(csrf_token)}
+        <button class="btn secondary" type="submit">{archive_label}</button>
+      </form>
+    </div>
+    """
     delete_html = f"""
     <div class="card">
       <div class="card-row">
         <div>
           <div class="title">Delete Booking</div>
-          <div class="muted">Type DELETE to confirm deletion.</div>
+          <div class="muted">Delete permanently (requires confirmation).</div>
+        </div>
+        <div class="actions">
+          <a class="btn danger" href="/v1/admin/ui/bookings/{html.escape(booking_id)}/delete">Delete permanently</a>
         </div>
       </div>
-      <form class="stack" method="post" action="/v1/admin/ui/bookings/{html.escape(booking_id)}/delete">
-        <input class="input" type="text" name="confirm" placeholder="DELETE" required />
-        {render_csrf_input(csrf_token)}
-        <button class="btn danger" type="submit">Delete Booking</button>
-      </form>
     </div>
     """
-    content = form_html + delete_html
+    content = form_html + archive_html + delete_html
     response = HTMLResponse(_wrap_page(request, content, title="Admin — Edit Booking", active="dispatch", page_lang=lang))
     issue_csrf_token(request, response, csrf_token)
     return response
@@ -6723,6 +6982,130 @@ async def admin_bookings_update(
     return RedirectResponse(f"/v1/admin/ui/dispatch?date={booking_date}", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/v1/admin/ui/bookings/{booking_id}/archive", response_class=HTMLResponse)
+async def admin_bookings_archive(
+    request: Request,
+    booking_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    booking = (
+        await session.execute(
+            select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    if booking.archived_at is None:
+        booking.archived_at = datetime.now(timezone.utc)
+        await audit_service.record_action(
+            session,
+            identity=identity,
+            action="ARCHIVE_BOOKING",
+            resource_type="booking",
+            resource_id=booking.booking_id,
+            before={"archived_at": None},
+            after={"archived_at": booking.archived_at.isoformat()},
+        )
+    await session.commit()
+    return RedirectResponse(
+        f"/v1/admin/ui/bookings/{booking.booking_id}/edit", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/v1/admin/ui/bookings/{booking_id}/unarchive", response_class=HTMLResponse)
+async def admin_bookings_unarchive(
+    request: Request,
+    booking_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    booking = (
+        await session.execute(
+            select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    if booking.archived_at is not None:
+        previous = booking.archived_at
+        booking.archived_at = None
+        await audit_service.record_action(
+            session,
+            identity=identity,
+            action="UNARCHIVE_BOOKING",
+            resource_type="booking",
+            resource_id=booking.booking_id,
+            before={"archived_at": previous.isoformat()},
+            after={"archived_at": None},
+        )
+    await session.commit()
+    return RedirectResponse(
+        f"/v1/admin/ui/bookings/{booking.booking_id}/edit", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/v1/admin/ui/bookings/{booking_id}/delete", response_class=HTMLResponse)
+async def admin_bookings_delete_confirm(
+    request: Request,
+    booking_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    booking = (
+        await session.execute(
+            select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    counts = await _booking_delete_counts(session, booking_id)
+    count_rows = "".join(
+        f"<li><strong>{html.escape(label.replace('_', ' ').title())}:</strong> {count}</li>"
+        for label, count in counts.items()
+        if count
+    )
+    counts_html = count_rows or "<li>None</li>"
+    csrf_token = get_csrf_token(request)
+    content = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">Delete booking permanently</div>
+          <div class="muted">This action removes the booking and related records.</div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="muted">Dependent records found:</div>
+        <ul>{counts_html}</ul>
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/bookings/{html.escape(booking_id)}/delete">
+        <input class="input" type="text" name="confirm" placeholder="DELETE" required />
+        {render_csrf_input(csrf_token)}
+        <button class="btn danger" type="submit">Delete permanently</button>
+      </form>
+    </div>
+    """
+    response = HTMLResponse(
+        _wrap_page(
+            request,
+            content,
+            title="Admin — Delete Booking",
+            active="dispatch",
+            page_lang=lang,
+        )
+    )
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
 @router.post("/v1/admin/ui/bookings/{booking_id}/delete", response_class=HTMLResponse)
 async def admin_bookings_delete(
     request: Request,
@@ -6761,6 +7144,7 @@ async def admin_bookings_delete(
         before=before,
         after=None,
     )
+    await _delete_booking_dependencies(session, booking.booking_id)
     await session.delete(booking)
     await session.commit()
     return RedirectResponse("/v1/admin/ui/dispatch", status_code=status.HTTP_303_SEE_OTHER)
@@ -6821,6 +7205,8 @@ async def admin_bookings_purge(
 async def dispatch_board_data(
     request: Request,
     day: str | None = Query(default=None, alias="date"),
+    show_archived: bool = Query(default=False, alias="show_archived"),
+    show_cancelled: bool = Query(default=False, alias="show_cancelled"),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_dispatch),
 ) -> booking_schemas.DispatchBoardResponse:
@@ -6844,6 +7230,9 @@ async def dispatch_board_data(
             selectinload(Booking.worker_assignments).selectinload(BookingWorker.worker),
         )
         .order_by(Booking.starts_at)
+    )
+    stmt = _apply_booking_active_filters(
+        stmt, include_archived=show_archived, include_cancelled=show_cancelled
     )
     bookings = (await session.execute(stmt)).scalars().all()
     return booking_schemas.DispatchBoardResponse(
@@ -6872,6 +7261,8 @@ async def dispatch_board_data(
 async def admin_dispatch_board(
     request: Request,
     day: str | None = Query(default=None, alias="date"),
+    show_archived: bool = Query(default=False, alias="show_archived"),
+    show_cancelled: bool = Query(default=False, alias="show_cancelled"),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
@@ -6898,6 +7289,9 @@ async def admin_dispatch_board(
             selectinload(Booking.team),
         )
         .order_by(Booking.starts_at)
+    )
+    stmt = _apply_booking_active_filters(
+        stmt, include_archived=show_archived, include_cancelled=show_cancelled
     )
     bookings = (await session.execute(stmt)).scalars().all()
     team_ids = {booking.team_id for booking in bookings}
@@ -6977,6 +7371,8 @@ async def admin_dispatch_board(
         )
 
     date_value = target_date.isoformat()
+    show_archived_checked = "checked" if show_archived else ""
+    show_cancelled_checked = "checked" if show_cancelled else ""
     content = "".join(
         [
             "<div class=\"card\">",
@@ -6986,6 +7382,10 @@ async def admin_dispatch_board(
             "<form class=\"actions\" method=\"get\">",
             f"<label class=\"muted\">{html.escape(tr(lang, 'admin.dispatch.date_label'))}</label>",
             f"<input class=\"input\" type=\"date\" name=\"date\" value=\"{date_value}\" />",
+            "<label class=\"muted\"><input type=\"checkbox\" name=\"show_archived\" value=\"true\" "
+            f"{show_archived_checked} /> Show archived</label>",
+            "<label class=\"muted\"><input type=\"checkbox\" name=\"show_cancelled\" value=\"true\" "
+            f"{show_cancelled_checked} /> Show cancelled</label>",
             "<button class=\"btn secondary\" type=\"submit\">Go</button>",
             "</form>",
             "</div>",

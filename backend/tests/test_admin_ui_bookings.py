@@ -145,6 +145,14 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
 
         asyncio.run(seed_event_log())
 
+        confirm_response = client.get(
+            f"/v1/admin/ui/bookings/{booking_id}/delete",
+            headers=headers,
+        )
+        assert confirm_response.status_code == 200
+        assert "Delete booking permanently" in confirm_response.text
+        assert "Event Logs" in confirm_response.text
+
         delete_response = client.post(
             f"/v1/admin/ui/bookings/{booking_id}/delete",
             headers=headers,
@@ -172,6 +180,57 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
                     assert remaining == []
 
         asyncio.run(verify_delete())
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_can_archive_booking_and_filter_dispatch(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        booking_id, *_ = _seed_booking(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        async def get_booking_date():
+            async with async_session_maker() as session:
+                booking = await session.get(Booking, booking_id)
+                assert booking is not None
+                return booking.starts_at.date().isoformat()
+
+        booking_date = asyncio.run(get_booking_date())
+
+        visible_response = client.get(
+            f"/v1/admin/ui/dispatch?date={booking_date}",
+            headers=headers,
+        )
+        assert visible_response.status_code == 200
+        assert f"/v1/admin/ui/bookings/{booking_id}/edit" in visible_response.text
+
+        archive_response = client.post(
+            f"/v1/admin/ui/bookings/{booking_id}/archive",
+            headers=headers,
+            data={},
+            follow_redirects=False,
+        )
+        assert archive_response.status_code == 303
+
+        hidden_response = client.get(
+            f"/v1/admin/ui/dispatch?date={booking_date}",
+            headers=headers,
+        )
+        assert hidden_response.status_code == 200
+        assert f"/v1/admin/ui/bookings/{booking_id}/edit" not in hidden_response.text
+
+        show_archived_response = client.get(
+            f"/v1/admin/ui/dispatch?date={booking_date}&show_archived=true",
+            headers=headers,
+        )
+        assert show_archived_response.status_code == 200
+        assert f"/v1/admin/ui/bookings/{booking_id}/edit" in show_archived_response.text
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
