@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   QuickChips,
   type ChipOption,
@@ -109,6 +109,25 @@ type SlotAvailability = {
   slots: string[];
 };
 
+type TurnstileOptions = {
+  sitekey: string;
+  callback: (token: string) => void;
+  'expired-callback'?: () => void;
+  'error-callback'?: () => void;
+};
+
+type TurnstileApi = {
+  render: (container: HTMLElement, options: TurnstileOptions) => string;
+  reset: (widgetId?: string) => void;
+  remove: (widgetId?: string) => void;
+};
+
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi;
+  }
+}
+
 const STORAGE_KEY = 'economy_chat_session_id';
 const UTM_STORAGE_KEY = 'economy_utm_params';
 const REFERRER_STORAGE_KEY = 'economy_referrer';
@@ -192,6 +211,56 @@ function formatSummaryValue(value: string | number | boolean | null): string {
   return '—';
 }
 
+type TurnstileWidgetProps = {
+  siteKey: string;
+  ready: boolean;
+  onVerify: (token: string) => void;
+  onExpire: () => void;
+  onError: () => void;
+  onWidgetId: (widgetId: string) => void;
+};
+
+function TurnstileWidget({
+  siteKey,
+  ready,
+  onVerify,
+  onExpire,
+  onError,
+  onWidgetId,
+}: TurnstileWidgetProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const widgetIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!ready || !siteKey || !containerRef.current || !window.turnstile) {
+      return;
+    }
+
+    if (widgetIdRef.current) {
+      window.turnstile.remove(widgetIdRef.current);
+      widgetIdRef.current = null;
+    }
+
+    const widgetId = window.turnstile.render(containerRef.current, {
+      sitekey: siteKey,
+      callback: onVerify,
+      'expired-callback': onExpire,
+      'error-callback': onError,
+    });
+    widgetIdRef.current = widgetId;
+    onWidgetId(widgetId);
+
+    return () => {
+      if (widgetIdRef.current) {
+        window.turnstile?.remove(widgetIdRef.current);
+        widgetIdRef.current = null;
+      }
+    };
+  }, [onError, onExpire, onVerify, onWidgetId, ready, siteKey]);
+
+  return <div ref={containerRef} />;
+}
+
 export default function HomePage() {
   const showAdminLink = process.env.NEXT_PUBLIC_SHOW_ADMIN_LINK === 'true';
   const [sessionId, setSessionId] = useState('');
@@ -231,6 +300,10 @@ export default function HomePage() {
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState<string | null>(null);
   const [bookingError, setBookingError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileReady, setTurnstileReady] = useState(false);
+  const [turnstileError, setTurnstileError] = useState<string | null>(null);
+  const [turnstileWidgetId, setTurnstileWidgetId] = useState<string | null>(null);
 
   // UI Contract Extension State (S2-A)
   const [choices, setChoices] = useState<ChoicesConfig | null>(null);
@@ -243,8 +316,53 @@ export default function HomePage() {
     () => process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000',
     []
   );
+  const turnstileSiteKey = useMemo(
+    () => process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '',
+    []
+  );
 
   const sessionReady = sessionId.length > 0;
+
+  useEffect(() => {
+    if (!turnstileSiteKey || typeof window === 'undefined') {
+      return;
+    }
+
+    if (window.turnstile) {
+      setTurnstileReady(true);
+      return;
+    }
+
+    const existingScript = document.querySelector<HTMLScriptElement>(
+      'script[data-turnstile-script="true"]'
+    );
+
+    const handleLoad = () => setTurnstileReady(true);
+    const handleError = () => setTurnstileError('Captcha failed to load. Please try again later.');
+
+    if (existingScript) {
+      existingScript.addEventListener('load', handleLoad);
+      existingScript.addEventListener('error', handleError);
+      return () => {
+        existingScript.removeEventListener('load', handleLoad);
+        existingScript.removeEventListener('error', handleError);
+      };
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+    script.async = true;
+    script.defer = true;
+    script.dataset.turnstileScript = 'true';
+    script.addEventListener('load', handleLoad);
+    script.addEventListener('error', handleError);
+    document.head.appendChild(script);
+
+    return () => {
+      script.removeEventListener('load', handleLoad);
+      script.removeEventListener('error', handleError);
+    };
+  }, [turnstileSiteKey]);
 
   const copyReferralCode = useCallback(async () => {
     if (!issuedReferralCode || typeof navigator === 'undefined' || !navigator.clipboard) {
@@ -441,6 +559,14 @@ export default function HomePage() {
       setLeadError('Please request an estimate before booking.');
       return;
     }
+    if (!turnstileSiteKey) {
+      setLeadError('Captcha not configured. Please contact support.');
+      return;
+    }
+    if (!turnstileToken) {
+      setLeadError('Please complete the captcha to submit your request.');
+      return;
+    }
     setLeadSubmitting(true);
     setLeadError(null);
     setIssuedReferralCode(null);
@@ -462,7 +588,8 @@ export default function HomePage() {
         estimate_snapshot: estimate,
         ...utmParams,
         referrer,
-        referral_code: normalizedReferralCode || undefined
+        referral_code: normalizedReferralCode || undefined,
+        captcha_token: turnstileToken
       };
 
       const response = await fetch(`${apiBaseUrl}/v1/leads`, {
@@ -483,6 +610,10 @@ export default function HomePage() {
       setLeadSuccess(true);
       setShowLeadForm(false);
       setIssuedReferralCode(leadResponse.referral_code ?? null);
+      setTurnstileToken(null);
+      if (turnstileWidgetId && window.turnstile) {
+        window.turnstile.reset(turnstileWidgetId);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unexpected error';
       setLeadError(message);
@@ -527,6 +658,9 @@ export default function HomePage() {
       setBookingSubmitting(false);
     }
   }, [apiBaseUrl, estimate, loadSlots, selectedSlot]);
+
+  const leadSubmitDisabled =
+    leadSubmitting || !turnstileSiteKey || !turnstileToken || Boolean(turnstileError);
 
   return (
     <div className="page">
@@ -1125,8 +1259,34 @@ export default function HomePage() {
                         </label>
                       </div>
 
+                      {!turnstileSiteKey ? (
+                        <p className="alert alert-error">Captcha not configured. Please try again later.</p>
+                      ) : null}
+                      {turnstileError ? (
+                        <p className="alert alert-error">{turnstileError}</p>
+                      ) : null}
+                      {turnstileSiteKey ? (
+                        <TurnstileWidget
+                          siteKey={turnstileSiteKey}
+                          ready={turnstileReady}
+                          onVerify={(token) => {
+                            setTurnstileToken(token);
+                            setTurnstileError(null);
+                          }}
+                          onExpire={() => {
+                            setTurnstileToken(null);
+                            setTurnstileError('Captcha expired. Please retry.');
+                          }}
+                          onError={() => {
+                            setTurnstileToken(null);
+                            setTurnstileError('Captcha verification failed. Please retry.');
+                          }}
+                          onWidgetId={(widgetId) => setTurnstileWidgetId(widgetId)}
+                        />
+                      ) : null}
+
                       {leadError ? <p className="alert alert-error">{leadError}</p> : null}
-                      <button className="btn btn-primary" type="submit" disabled={leadSubmitting}>
+                      <button className="btn btn-primary" type="submit" disabled={leadSubmitDisabled}>
                         {leadSubmitting ? 'Submitting...' : 'Submit booking request'}
                       </button>
                     </form>
