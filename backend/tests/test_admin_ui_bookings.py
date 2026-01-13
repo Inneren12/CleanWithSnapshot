@@ -26,6 +26,7 @@ def _seed_booking(async_session_maker):
                 name="UI Client",
                 email=f"client-{uuid.uuid4().hex[:8]}@example.com",
                 phone="+1 555-111-2222",
+                address="123 Admin Way",
             )
             session.add(client)
             await session.flush()

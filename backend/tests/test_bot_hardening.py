@@ -20,7 +20,16 @@ def test_lead_merge_filters_extra_keys(client):
 
     response = client.post(
         "/api/leads",
-        json={"contact": {"email": "merge@test.com"}, "sourceConversationId": conversation_id},
+        json={
+            "contact": {
+                "email": "merge@test.com",
+                "name": "Merge Lead",
+                "phone": "780-555-1111",
+                "address": "1 Bot Lane",
+            },
+            "preferredTimeWindow": "Mon morning",
+            "sourceConversationId": conversation_id,
+        },
     )
 
     assert response.status_code == 201
@@ -40,7 +49,12 @@ def test_payload_overrides_conversation_fields(client):
 
     response = client.post(
         "/api/leads",
-        json={"serviceType": "premium_clean", "sourceConversationId": conversation_id},
+        json={
+            "serviceType": "premium_clean",
+            "contact": {"name": "Override Lead", "phone": "780-555-2222", "address": "2 Bot Lane"},
+            "preferredTimeWindow": "Tue afternoon",
+            "sourceConversationId": conversation_id,
+        },
     )
 
     assert response.status_code == 201
@@ -91,5 +105,13 @@ def test_rejects_unknown_request_fields(client):
     )
     assert bad_message.status_code == 422
 
-    bad_lead = client.post("/api/leads", json={"serviceType": "deep_clean", "unknown": "x"})
+    bad_lead = client.post(
+        "/api/leads",
+        json={
+            "serviceType": "deep_clean",
+            "contact": {"name": "Bad Lead", "phone": "780-555-3333", "address": "3 Bot Lane"},
+            "preferredTimeWindow": "Wed evening",
+            "unknown": "x",
+        },
+    )
     assert bad_lead.status_code == 422

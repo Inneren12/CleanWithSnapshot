@@ -9,6 +9,33 @@ from app.domain.time_tracking import service as time_service
 from app.settings import settings
 
 
+def _create_lead(client) -> str:
+    estimate_response = client.post(
+        "/v1/estimate",
+        json={
+            "beds": 1,
+            "baths": 1,
+            "cleaning_type": "standard",
+            "heavy_grease": False,
+            "multi_floor": False,
+            "frequency": "one_time",
+            "add_ons": {},
+        },
+    )
+    assert estimate_response.status_code == 200
+    payload = {
+        "name": "Time Tracking Lead",
+        "phone": "780-555-1234",
+        "address": "77 Clock Lane",
+        "preferred_dates": ["Tue morning"],
+        "structured_inputs": {"beds": 1, "baths": 1, "cleaning_type": "standard"},
+        "estimate_snapshot": estimate_response.json(),
+    }
+    response = client.post("/v1/leads", json=payload)
+    assert response.status_code == 201
+    return response.json()["lead_id"]
+
+
 def _new_booking(start: datetime) -> Booking:
     return Booking(
         team_id=1,
@@ -90,9 +117,10 @@ def test_time_tracking_endpoints(client):
     settings.admin_basic_password = "secret"
 
     start = datetime(2024, 5, 1, 15, 0, tzinfo=timezone.utc).isoformat()
+    lead_id = _create_lead(client)
     response = client.post(
         "/v1/bookings",
-        json={"starts_at": start, "time_on_site_hours": 1.5},
+        json={"starts_at": start, "time_on_site_hours": 1.5, "lead_id": lead_id},
     )
     assert response.status_code == 201
     booking_id = response.json()["booking_id"]

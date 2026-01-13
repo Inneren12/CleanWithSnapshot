@@ -3,6 +3,33 @@ from datetime import datetime, timedelta, timezone
 from app.settings import settings
 
 
+def _create_lead(client) -> str:
+    estimate_response = client.post(
+        "/v1/estimate",
+        json={
+            "beds": 1,
+            "baths": 1,
+            "cleaning_type": "standard",
+            "heavy_grease": False,
+            "multi_floor": False,
+            "frequency": "one_time",
+            "add_ons": {},
+        },
+    )
+    assert estimate_response.status_code == 200
+    payload = {
+        "name": "Failsoft Lead",
+        "phone": "780-555-0000",
+        "address": "11 Failsoft Street",
+        "preferred_dates": ["Mon morning"],
+        "structured_inputs": {"beds": 1, "baths": 1, "cleaning_type": "standard"},
+        "estimate_snapshot": estimate_response.json(),
+    }
+    response = client.post("/v1/leads", json=payload)
+    assert response.status_code == 201
+    return response.json()["lead_id"]
+
+
 def test_booking_succeeds_when_email_fails(client, monkeypatch):
     future_start = (datetime.now(tz=timezone.utc) + timedelta(days=5)).replace(
         hour=10, minute=0, second=0, microsecond=0
@@ -19,7 +46,11 @@ def test_booking_succeeds_when_email_fails(client, monkeypatch):
     assert slots.status_code == 200
     chosen = slots.json()["slots"][0]
 
-    response = client.post("/v1/bookings", json={"starts_at": chosen, "time_on_site_hours": 1.5})
+    lead_id = _create_lead(client)
+    response = client.post(
+        "/v1/bookings",
+        json={"starts_at": chosen, "time_on_site_hours": 1.5, "lead_id": lead_id},
+    )
 
     assert response.status_code == 201, response.text
 

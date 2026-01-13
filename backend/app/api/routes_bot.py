@@ -52,6 +52,9 @@ def _fsm_step_for_intent(intent: Intent) -> FsmStep:
             return FsmStep.handoff_check
         case _:
             return FsmStep.routing
+
+
+
 @router.post("/bot/session", response_model=SessionCreateResponse, status_code=201)
 async def create_session(request: SessionCreateRequest, store: BotStore = Depends(get_bot_store)) -> SessionCreateResponse:
     conversation = await store.create_conversation(

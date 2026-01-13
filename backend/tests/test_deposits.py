@@ -45,6 +45,7 @@ def _seed_lead(async_session_maker) -> str:
                 phone="780-555-9999",
                 email="deposit@example.com",
                 postal_code="T5A",
+                address="99 Deposit Drive",
                 preferred_dates=["Sat"],
                 structured_inputs={"beds": 2, "baths": 2, "cleaning_type": "deep"},
                 estimate_snapshot={
@@ -74,6 +75,7 @@ def _seed_returning_lead(async_session_maker) -> str:
                 phone="780-555-1111",
                 email="returning@example.com",
                 postal_code="T5B",
+                address="88 Returning Road",
                 preferred_dates=["Fri"],
                 structured_inputs={"beds": 1, "baths": 1, "cleaning_type": "standard"},
                 estimate_snapshot={
@@ -258,7 +260,8 @@ def test_checkout_failure_downgrades_booking(client, async_session_maker, monkey
 def test_non_deposit_booking_persists(client, async_session_maker):
     original_secret = settings.stripe_secret_key
     settings.stripe_secret_key = None
-    payload = {"starts_at": _booking_start_in_days(5), "time_on_site_hours": 1}
+    lead_id = _seed_lead(async_session_maker)
+    payload = {"starts_at": _booking_start_in_days(5), "time_on_site_hours": 1, "lead_id": lead_id}
 
     try:
         response = client.post("/v1/bookings", json=payload)

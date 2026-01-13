@@ -5,10 +5,38 @@ import pytest
 from app.settings import settings
 
 
+def _create_lead(client) -> str:
+    estimate_response = client.post(
+        "/v1/estimate",
+        json={
+            "beds": 1,
+            "baths": 1,
+            "cleaning_type": "standard",
+            "heavy_grease": False,
+            "multi_floor": False,
+            "frequency": "one_time",
+            "add_ons": {},
+        },
+    )
+    assert estimate_response.status_code == 200
+    payload = {
+        "name": "Checklist Lead",
+        "phone": "780-555-5678",
+        "address": "12 Checklist Court",
+        "preferred_dates": ["Wed morning"],
+        "structured_inputs": {"beds": 1, "baths": 1, "cleaning_type": "standard"},
+        "estimate_snapshot": estimate_response.json(),
+    }
+    response = client.post("/v1/leads", json=payload)
+    assert response.status_code == 201
+    return response.json()["lead_id"]
+
+
 def _create_booking(client, starts_at: datetime) -> str:
+    lead_id = _create_lead(client)
     response = client.post(
         "/v1/bookings",
-        json={"starts_at": starts_at.isoformat(), "time_on_site_hours": 1.0},
+        json={"starts_at": starts_at.isoformat(), "time_on_site_hours": 1.0, "lead_id": lead_id},
     )
     assert response.status_code == 201
     return response.json()["booking_id"]

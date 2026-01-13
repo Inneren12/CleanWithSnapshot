@@ -109,7 +109,8 @@ def _create_lead(client) -> str:
     payload = {
         "name": "Admin Test",
         "phone": "780-555-0101",
-        "preferred_dates": [],
+        "address": "100 Admin Road",
+        "preferred_dates": ["Tue afternoon"],
         "structured_inputs": {"beds": 1, "baths": 1, "cleaning_type": "standard"},
         "estimate_snapshot": estimate_response.json(),
     }

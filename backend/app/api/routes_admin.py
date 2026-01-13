@@ -5007,7 +5007,7 @@ def _render_booking_form(
         </div>
         <div class="form-group">
           <label>{html.escape(tr(lang, 'admin.bookings.client'))}</label>
-          <select class="input" name="client_id">{client_options}</select>
+          <select class="input" name="client_id" required>{client_options}</select>
           <div class="muted">{html.escape(tr(lang, 'admin.bookings.select_client'))}</div>
         </div>
         <div class="form-group">
@@ -5027,6 +5027,20 @@ def _render_booking_form(
       </form>
     </div>
     """
+
+
+def _parse_admin_booking_datetime(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        pass
+
+    for fmt in ("%Y-%m-%d %I:%M %p", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise ValueError("Invalid datetime format")
 
 
 @router.get("/v1/admin/ui/bookings/new", response_class=HTMLResponse)
@@ -5091,6 +5105,8 @@ async def admin_bookings_create(
 
     if not team_id_raw or not starts_at_raw or not duration_minutes_raw:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
+    if not client_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client is required")
 
     team_id = int(team_id_raw)
     duration_minutes = int(duration_minutes_raw)
@@ -5116,18 +5132,32 @@ async def admin_bookings_create(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
 
     # Validate client if specified (org-scoped)
-    if client_id:
-        client = (
-            await session.execute(
-                select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
-            )
-        ).scalar_one_or_none()
-        if client is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client not found or does not belong to your organization")
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Client not found or does not belong to your organization",
+        )
+    missing = []
+    if not client.name or not client.name.strip():
+        missing.append("name")
+    if not client.phone or not client.phone.strip():
+        missing.append("phone")
+    if not client.address or not client.address.strip():
+        missing.append("address")
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Client missing required fields: {', '.join(missing)}",
+        )
 
     # Parse datetime
     try:
-        starts_at = datetime.fromisoformat(starts_at_raw).replace(tzinfo=timezone.utc)
+        starts_at = _parse_admin_booking_datetime(starts_at_raw).replace(tzinfo=timezone.utc)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid datetime format") from exc
 
@@ -5297,7 +5327,7 @@ async def admin_bookings_update(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client not found or does not belong to your organization")
 
     try:
-        starts_at = datetime.fromisoformat(starts_at_raw).replace(tzinfo=timezone.utc)
+        starts_at = _parse_admin_booking_datetime(starts_at_raw).replace(tzinfo=timezone.utc)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid datetime format") from exc
 

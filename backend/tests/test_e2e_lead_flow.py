@@ -25,6 +25,7 @@ def test_chat_to_lead_flow(client, async_session_maker):
     lead_payload = {
         "name": "Alex Booker",
         "phone": "780-555-3333",
+        "address": "100 Booking Street",
         "preferred_dates": ["Fri evening", "Sat morning"],
         "structured_inputs": body["state"],
         "estimate_snapshot": estimate,

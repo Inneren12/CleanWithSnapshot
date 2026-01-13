@@ -245,11 +245,17 @@ class Settings(BaseSettings):
             )
 
         if self.app_env != "prod":
+            if self.testing:
+                self.captcha_enabled = False
+                self.captcha_mode = "off"
             if self.legacy_basic_auth_enabled is None:
                 self.legacy_basic_auth_enabled = True
             if not self.captcha_enabled:
                 self.captcha_mode = "off"
             return self
+
+        if self.testing:
+            raise ValueError("APP_ENV=prod disables testing mode and X-Test-Org overrides")
 
         if self.legacy_basic_auth_enabled is None:
             self.legacy_basic_auth_enabled = False
@@ -298,9 +304,6 @@ class Settings(BaseSettings):
             {"dev-worker-portal-secret"},
         )
 
-        if not self.captcha_enabled:
-            raise ValueError("APP_ENV=prod requires CAPTCHA_ENABLED=true")
-
         if self.strict_cors:
             if not self.cors_origins:
                 raise ValueError("STRICT_CORS=true in prod requires explicit CORS_ORIGINS")
@@ -318,9 +321,6 @@ class Settings(BaseSettings):
                     ip_network(cidr, strict=False)
                 except ValueError as exc:  # noqa: BLE001
                     raise ValueError(f"Invalid CIDR in ADMIN_IP_ALLOWLIST_CIDRS: {cidr}") from exc
-
-        if self.testing:
-            raise ValueError("APP_ENV=prod disables testing mode and X-Test-Org overrides")
 
         return self
 

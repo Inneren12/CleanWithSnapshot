@@ -46,7 +46,8 @@ def test_referral_credit_created_after_confirmation(client, async_session_maker)
     referrer_payload = {
         "name": "Referrer",
         "phone": "780-555-1111",
-        "preferred_dates": [],
+        "address": "1 Referral Road",
+        "preferred_dates": ["Mon morning"],
         "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
         "estimate_snapshot": estimate,
     }
@@ -57,7 +58,8 @@ def test_referral_credit_created_after_confirmation(client, async_session_maker)
     referred_payload = {
         "name": "New Client",
         "phone": "780-555-2222",
-        "preferred_dates": [],
+        "address": "2 Referral Road",
+        "preferred_dates": ["Tue morning"],
         "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
         "estimate_snapshot": estimate,
         "referral_code": referral_code,
@@ -120,7 +122,8 @@ def test_invalid_referral_code_rejected(client):
     payload = {
         "name": "Bad Code",
         "phone": "780-555-9999",
-        "preferred_dates": [],
+        "address": "3 Referral Road",
+        "preferred_dates": ["Wed morning"],
         "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
         "estimate_snapshot": estimate,
         "referral_code": "INVALID",
@@ -138,7 +141,8 @@ def test_referral_credit_created_on_deposit_paid(client, async_session_maker):
         json={
             "name": "Deposit Referrer",
             "phone": "780-555-7777",
-            "preferred_dates": [],
+            "address": "4 Referral Road",
+            "preferred_dates": ["Thu morning"],
             "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
             "estimate_snapshot": estimate,
         },
@@ -151,7 +155,8 @@ def test_referral_credit_created_on_deposit_paid(client, async_session_maker):
         json={
             "name": "Deposit Referred",
             "phone": "780-555-8888",
-            "preferred_dates": [],
+            "address": "5 Referral Road",
+            "preferred_dates": ["Fri morning"],
             "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
             "estimate_snapshot": estimate,
             "referral_code": referral_code,
@@ -221,7 +226,8 @@ def test_admin_lists_referral_metadata(client, async_session_maker):
         json={
             "name": "Admin Referrer",
             "phone": "780-555-3333",
-            "preferred_dates": [],
+            "address": "6 Referral Road",
+            "preferred_dates": ["Sat morning"],
             "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
             "estimate_snapshot": estimate,
         },
@@ -234,7 +240,8 @@ def test_admin_lists_referral_metadata(client, async_session_maker):
         json={
             "name": "Admin Referred",
             "phone": "780-555-4444",
-            "preferred_dates": [],
+            "address": "7 Referral Road",
+            "preferred_dates": ["Sun morning"],
             "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
             "estimate_snapshot": estimate,
             "referral_code": referral_code,

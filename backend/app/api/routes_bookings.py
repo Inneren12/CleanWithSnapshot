@@ -41,6 +41,23 @@ def _stripe_client(request: Request):
     return stripe_infra.resolve_client(request.app.state)
 
 
+def _validate_lead_contact(lead: Lead | None) -> None:
+    if lead is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    missing = []
+    if not lead.name or not lead.name.strip():
+        missing.append("name")
+    if not lead.phone or not lead.phone.strip():
+        missing.append("phone")
+    if not lead.address or not lead.address.strip():
+        missing.append("address")
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Lead missing required fields: {', '.join(missing)}",
+        )
+
+
 @router.get("/v1/slots", response_model=booking_schemas.SlotAvailabilityResponse)
 async def get_slots(
     query: booking_schemas.SlotQuery = Depends(),
@@ -260,9 +277,13 @@ async def create_booking(
     start = request.normalized_start()
     org_id = entitlements.resolve_org_id(http_request)
     await entitlements.require_booking_entitlement(http_request, session=session)
-    lead: Lead | None = None
-    if request.lead_id:
-        lead = await session.get(Lead, request.lead_id)
+    if not request.lead_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="lead_id is required",
+        )
+    lead = await session.get(Lead, request.lead_id)
+    _validate_lead_contact(lead)
 
     client_id: str | None = None
     if lead and lead.email:
@@ -448,4 +469,3 @@ async def cleanup_pending_bookings(
 ) -> dict[str, int]:
     deleted = await booking_service.cleanup_stale_bookings(session, timedelta(minutes=30))
     return {"deleted": deleted}
-

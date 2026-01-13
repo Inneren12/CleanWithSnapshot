@@ -286,6 +286,7 @@ export default function HomePage() {
   const [leadSubmitting, setLeadSubmitting] = useState(false);
   const [leadError, setLeadError] = useState<string | null>(null);
   const [leadSuccess, setLeadSuccess] = useState(false);
+  const [leadId, setLeadId] = useState<string | null>(null);
   const [issuedReferralCode, setIssuedReferralCode] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [leadForm, setLeadForm] = useState({
@@ -539,8 +540,9 @@ export default function HomePage() {
         setSelectedChoices([]); // Reset selections on new message
 
         if (data.estimate) {
-          setShowLeadForm(false);
+          setLeadId(null);
           setLeadSuccess(false);
+          setShowLeadForm(true);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unexpected error';
@@ -592,7 +594,7 @@ export default function HomePage() {
         phone: leadForm.phone,
         email: leadForm.email || undefined,
         postal_code: leadForm.postal_code || undefined,
-        address: leadForm.address || undefined,
+        address: leadForm.address,
         preferred_dates: leadForm.preferred_dates.filter((value) => value.trim().length > 0),
         access_notes: leadForm.access_notes || undefined,
         parking: leadForm.parking || undefined,
@@ -624,6 +626,7 @@ export default function HomePage() {
 
       setLeadSuccess(true);
       setShowLeadForm(false);
+      setLeadId(leadResponse.lead_id);
       setIssuedReferralCode(leadResponse.referral_code ?? null);
       setTurnstileToken(null);
       setLeadTurnstileError(null);
@@ -641,6 +644,10 @@ export default function HomePage() {
   const bookSelectedSlot = useCallback(async () => {
     if (!estimate || !selectedSlot) {
       setBookingError('Please select a slot to book.');
+      return;
+    }
+    if (!leadId) {
+      setBookingError('Please submit your booking request with name, phone, address, and preferred time first.');
       return;
     }
     if (!turnstileSiteKey) {
@@ -667,7 +674,7 @@ export default function HomePage() {
         body: JSON.stringify({
           starts_at: selectedSlot,
           time_on_site_hours: estimate.time_on_site_hours,
-          lead_id: undefined,
+          lead_id: leadId,
           captcha_token: bookingTurnstileToken
         })
       });
@@ -696,6 +703,7 @@ export default function HomePage() {
     bookingTurnstileToken,
     bookingTurnstileWidgetId,
     estimate,
+    leadId,
     loadSlots,
     selectedSlot,
     turnstileLoadError,
@@ -714,6 +722,7 @@ export default function HomePage() {
     slotsLoading ||
     !turnstileSiteKey ||
     !bookingTurnstileToken ||
+    !leadId ||
     Boolean(turnstileLoadError) ||
     Boolean(bookingTurnstileError);
 
@@ -1189,8 +1198,8 @@ export default function HomePage() {
                 <section className="card lead-cta">
                   <div className="card-header">
                     <div>
-                      <p className="eyebrow">Optional</p>
-                      <h3>Share details for dispatcher follow-up</h3>
+                      <p className="eyebrow">Required</p>
+                      <h3>Share details to confirm your booking</h3>
                     </div>
                     {!showLeadForm ? (
                       <button className="btn btn-secondary" type="button" onClick={() => setShowLeadForm(true)}>
@@ -1200,7 +1209,7 @@ export default function HomePage() {
                   </div>
                   {!showLeadForm && !leadSuccess ? (
                     <div className="card-body">
-                      <p className="muted">Drop your contact info so we can confirm or adjust based on your preferences.</p>
+                      <p className="muted">Add your contact details and preferred time so we can lock in your booking.</p>
                       <div className="lead-actions">
                         <button className="btn btn-primary" type="button" onClick={() => setShowLeadForm(true)}>
                           Submit booking request
@@ -1268,9 +1277,10 @@ export default function HomePage() {
                           />
                         </label>
                         <label className="full">
-                          <span>Address</span>
+                          <span>Address *</span>
                           <input
                             type="text"
+                            required
                             value={leadForm.address}
                             onChange={(event) => handleLeadFieldChange('address', event.target.value)}
                           />
@@ -1280,11 +1290,15 @@ export default function HomePage() {
                       <div className="form-grid">
                         {leadForm.preferred_dates.map((value, index) => (
                           <label key={`date-${index}`}>
-                            <span>Preferred date option {index + 1}</span>
+                            <span>
+                              Preferred date option {index + 1}
+                              {index === 0 ? ' *' : ''}
+                            </span>
                             <input
                               type="text"
                               placeholder="Sat afternoon"
                               value={value}
+                              required={index === 0}
                               onChange={(event) => handleLeadFieldChange('preferred_dates', event.target.value, index)}
                             />
                           </label>

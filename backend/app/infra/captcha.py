@@ -18,10 +18,9 @@ async def verify_turnstile(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> bool:
     if not settings.captcha_enabled:
-        if settings.app_env != "prod":
-            return True
-        logger.warning("captcha_disabled_in_prod")
-        return False
+        if settings.app_env == "prod":
+            logger.warning("captcha_disabled_in_prod")
+        return True
 
     if settings.captcha_mode == "off":
         return True
