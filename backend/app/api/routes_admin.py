@@ -5315,13 +5315,38 @@ def _render_client_form(client: ClientUser | None, lang: str | None, csrf_input:
     """
 
 
+def _render_client_danger_zone(client: ClientUser, lang: str | None, csrf_input: str) -> str:
+    archive_label = html.escape(tr(lang, "admin.clients.archive_client"))
+    confirm_text = html.escape(tr(lang, "admin.clients.archive_confirm"))
+    help_text = html.escape(tr(lang, "admin.clients.archive_help"))
+    return f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.danger_zone"))}</div>
+          <div class="muted">{help_text}</div>
+        </div>
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/archive" onsubmit="return confirm('{confirm_text}')">
+        {csrf_input}
+        <button class="btn danger" type="submit">{archive_label}</button>
+      </form>
+    </div>
+    """
+
+
 async def _list_clients(
     session: AsyncSession,
     *,
     org_id: uuid.UUID,
     q: str | None,
+    show: str | None,
 ) -> list[ClientUser]:
     filters = [ClientUser.org_id == org_id]
+    if show == "archived":
+        filters.append(ClientUser.is_active.is_(False))
+    else:
+        filters.append(ClientUser.is_active.is_(True))
     if q:
         pattern = f"%{q.lower()}%"
         filters.append(
@@ -5340,19 +5365,30 @@ async def _list_clients(
 async def admin_clients_list(
     request: Request,
     q: str | None = Query(default=None),
+    show: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     lang = resolve_lang(request)
-    clients = await _list_clients(session, org_id=org_id, q=q)
+    clients = await _list_clients(session, org_id=org_id, q=q, show=show)
 
     search_value = html.escape(q or "")
+    show_value = show or ""
+    csrf_token = get_csrf_token(request)
+    csrf_input = render_csrf_input(csrf_token)
     search_form = f"""
     <form class="stack" method="get" style="margin-bottom: var(--space-lg);">
       <div class="form-group">
         <label>{html.escape(tr(lang, 'admin.clients.search'))}</label>
         <input class="input" type="text" name="q" value="{search_value}" />
+      </div>
+      <div class="form-group">
+        <label>{html.escape(tr(lang, 'admin.clients.status_label'))}</label>
+        <select class="input" name="show">
+          <option value="" {"selected" if show_value == "" else ""}>{html.escape(tr(lang, 'admin.clients.status_active'))}</option>
+          <option value="archived" {"selected" if show_value == "archived" else ""}>{html.escape(tr(lang, 'admin.clients.status_archived'))}</option>
+        </select>
       </div>
       <button class="btn" type="submit">Search</button>
     </form>
@@ -5360,12 +5396,29 @@ async def admin_clients_list(
 
     rows = []
     for client in clients:
+        status_label = (
+            html.escape(tr(lang, "admin.clients.status_archived"))
+            if not client.is_active
+            else html.escape(tr(lang, "admin.clients.status_active"))
+        )
+        action_html = (
+            f"""
+            <form method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/archive" onsubmit="return confirm('{html.escape(tr(lang, 'admin.clients.archive_confirm'))}')">
+              {csrf_input}
+              <button class="btn danger small" type="submit">{html.escape(tr(lang, 'admin.clients.archive'))}</button>
+            </form>
+            """
+            if client.is_active
+            else f"<span class=\"badge\">{html.escape(tr(lang, 'admin.clients.status_archived'))}</span>"
+        )
         rows.append(f"""
         <tr>
           <td><a href="/v1/admin/ui/clients/{html.escape(client.client_id)}">{html.escape(client.name or '—')}</a></td>
           <td>{html.escape(client.email or '—')}</td>
           <td>{html.escape(client.phone or '—')}</td>
           <td>{html.escape(client.address or '—')}</td>
+          <td>{status_label}</td>
+          <td>{action_html}</td>
         </tr>
         """)
 
@@ -5377,10 +5430,12 @@ async def admin_clients_list(
           <th>{html.escape(tr(lang, 'admin.clients.email'))}</th>
           <th>{html.escape(tr(lang, 'admin.clients.phone'))}</th>
           <th>{html.escape(tr(lang, 'admin.clients.address'))}</th>
+          <th>{html.escape(tr(lang, 'admin.clients.status_label'))}</th>
+          <th>{html.escape(tr(lang, 'admin.clients.actions'))}</th>
         </tr>
       </thead>
       <tbody>
-        {''.join(rows) if rows else f'<tr><td colspan="4">{html.escape(tr(lang, "admin.clients.none"))}</td></tr>'}
+        {''.join(rows) if rows else f'<tr><td colspan="6">{html.escape(tr(lang, "admin.clients.none"))}</td></tr>'}
       </tbody>
     </table>
     """ if clients else f'<p class="muted">{html.escape(tr(lang, "admin.clients.none"))}</p>'
@@ -5399,7 +5454,9 @@ async def admin_clients_list(
     {table}
     """
 
-    return HTMLResponse(_wrap_page(request, content, title="Admin — Clients", active="clients", page_lang=lang))
+    response = HTMLResponse(_wrap_page(request, content, title="Admin — Clients", active="clients", page_lang=lang))
+    issue_csrf_token(request, response, csrf_token)
+    return response
 
 
 @router.get("/v1/admin/ui/clients/new", response_class=HTMLResponse)
@@ -5481,16 +5538,19 @@ async def admin_clients_edit_form(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
 
     csrf_token = get_csrf_token(request)
+    content = _render_client_form(client, lang, render_csrf_input(csrf_token)) + _render_client_danger_zone(
+        client, lang, render_csrf_input(csrf_token)
+    )
     response = HTMLResponse(
         _wrap_page(
             request,
-            _render_client_form(client, lang, render_csrf_input(csrf_token)),
+            content,
             title="Admin — Edit Client",
             active="clients",
             page_lang=lang,
         )
     )
-    response.set_cookie("csrf_token", csrf_token, httponly=True, samesite="lax", secure=settings.app_env != "dev")
+    issue_csrf_token(request, response, csrf_token)
     return response
 
 
@@ -5543,6 +5603,40 @@ async def admin_clients_update(
             "address": client.address,
             "notes": client.notes,
         },
+    )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/archive", response_class=HTMLResponse)
+async def admin_clients_archive(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    before = {"is_active": client.is_active}
+    if client.is_active:
+        client.is_active = False
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="ARCHIVE_CLIENT",
+        resource_type="client",
+        resource_id=client_id,
+        before=before,
+        after={"is_active": client.is_active},
     )
     await session.commit()
     return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
@@ -5754,7 +5848,9 @@ async def admin_bookings_new_form(
     # Fetch clients
     clients = (
         await session.execute(
-            select(ClientUser).where(ClientUser.org_id == org_id).order_by(ClientUser.created_at.desc())
+            select(ClientUser)
+            .where(ClientUser.org_id == org_id, ClientUser.is_active.is_(True))
+            .order_by(ClientUser.created_at.desc())
         )
     ).scalars().all()
 
@@ -5821,7 +5917,11 @@ async def admin_bookings_create(
     # Validate client if specified (org-scoped)
     client = (
         await session.execute(
-            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+            select(ClientUser).where(
+                ClientUser.client_id == client_id,
+                ClientUser.org_id == org_id,
+                ClientUser.is_active.is_(True),
+            )
         )
     ).scalar_one_or_none()
     if client is None:
@@ -5915,7 +6015,13 @@ async def admin_bookings_edit_form(
     ).scalars().all()
     clients = (
         await session.execute(
-            select(ClientUser).where(ClientUser.org_id == org_id).order_by(ClientUser.created_at.desc())
+            select(ClientUser).where(
+                ClientUser.org_id == org_id,
+                or_(
+                    ClientUser.is_active.is_(True),
+                    ClientUser.client_id == booking.client_id,
+                ),
+            ).order_by(ClientUser.created_at.desc())
         )
     ).scalars().all()
     workers = (
@@ -6010,14 +6116,20 @@ async def admin_bookings_update(
 
     await _validate_booking_worker_ids(session, worker_ids, org_id=org_id, team_id=team_id)
 
-    if client_id:
-        client = (
-            await session.execute(
-                select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
-            )
-        ).scalar_one_or_none()
-        if client is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client not found or does not belong to your organization")
+    if not client_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client is required")
+    client_query = select(ClientUser).where(
+        ClientUser.client_id == client_id,
+        ClientUser.org_id == org_id,
+    )
+    if client_id != booking.client_id:
+        client_query = client_query.where(ClientUser.is_active.is_(True))
+    client = (await session.execute(client_query)).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Client not found or does not belong to your organization",
+        )
 
     try:
         starts_at = _parse_admin_booking_datetime(starts_at_raw).replace(tzinfo=timezone.utc)
