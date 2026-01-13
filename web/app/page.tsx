@@ -230,6 +230,17 @@ function TurnstileWidget({
 }: TurnstileWidgetProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const widgetIdRef = useRef<string | null>(null);
+  const onVerifyRef = useRef(onVerify);
+  const onExpireRef = useRef(onExpire);
+  const onErrorRef = useRef(onError);
+  const onWidgetIdRef = useRef(onWidgetId);
+
+  useEffect(() => {
+    onVerifyRef.current = onVerify;
+    onExpireRef.current = onExpire;
+    onErrorRef.current = onError;
+    onWidgetIdRef.current = onWidgetId;
+  }, [onVerify, onExpire, onError, onWidgetId]);
 
   useEffect(() => {
     if (!ready || !siteKey || !containerRef.current || !window.turnstile) {
@@ -243,12 +254,12 @@ function TurnstileWidget({
 
     const widgetId = window.turnstile.render(containerRef.current, {
       sitekey: siteKey,
-      callback: onVerify,
-      'expired-callback': onExpire,
-      'error-callback': onError,
+      callback: (token) => onVerifyRef.current?.(token),
+      'expired-callback': () => onExpireRef.current?.(),
+      'error-callback': () => onErrorRef.current?.(),
     });
     widgetIdRef.current = widgetId;
-    onWidgetId(widgetId);
+    onWidgetIdRef.current?.(widgetId);
 
     return () => {
       if (widgetIdRef.current) {
@@ -256,7 +267,7 @@ function TurnstileWidget({
         widgetIdRef.current = null;
       }
     };
-  }, [onError, onExpire, onVerify, onWidgetId, ready, siteKey]);
+  }, [ready, siteKey]);
 
   return <div ref={containerRef} />;
 }
