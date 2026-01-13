@@ -1,0 +1,12 @@
+services:
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api.panidobro.com}
+        NEXT_PUBLIC_SHOW_ADMIN_LINK: ${NEXT_PUBLIC_SHOW_ADMIN_LINK:-false}
+    environment:
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api.panidobro.com}
+      NEXT_PUBLIC_SHOW_ADMIN_LINK: ${NEXT_PUBLIC_SHOW_ADMIN_LINK:-false}
