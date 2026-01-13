@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
 
+from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, BookingWorker, Team
 from app.domain.clients.db_models import ClientUser
 from app.domain.workers.db_models import Worker
@@ -132,6 +133,18 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
 
         asyncio.run(verify_update())
 
+        async def seed_event_log():
+            async with async_session_maker() as session:
+                session.add(
+                    EventLog(
+                        event_type="BOOKING_DELETED_TEST",
+                        booking_id=booking_id,
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(seed_event_log())
+
         delete_response = client.post(
             f"/v1/admin/ui/bookings/{booking_id}/delete",
             headers=headers,
@@ -144,6 +157,19 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
             async with async_session_maker() as session:
                 deleted = await session.get(Booking, booking_id)
                 assert deleted is None
+                is_sqlite = session.get_bind().dialect.name == "sqlite"
+                foreign_keys_enabled = (
+                    (await session.execute(sa.text("PRAGMA foreign_keys"))).scalar()
+                    if is_sqlite
+                    else True
+                )
+                remaining = (
+                    await session.execute(
+                        sa.select(EventLog).where(EventLog.booking_id == booking_id)
+                    )
+                ).scalars().all()
+                if foreign_keys_enabled:
+                    assert remaining == []
 
         asyncio.run(verify_delete())
     finally:

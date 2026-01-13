@@ -35,6 +35,7 @@ ensure_event_loop()
 import anyio
 import pytest
 import sqlalchemy as sa
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from datetime import time
 from fastapi.testclient import TestClient
@@ -94,6 +95,11 @@ def test_engine():
         connect_args={"check_same_thread": False, "timeout": 30},
         poolclass=StaticPool,
     )
+    event.listen(
+        engine.sync_engine,
+        "connect",
+        lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=OFF"),
+    )
 
     seed_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -116,6 +122,11 @@ def test_engine():
                 ],
             )
             await session.commit()
+
+        async with engine.connect() as conn:
+            result = await conn.execute(sa.text("PRAGMA foreign_keys"))
+            foreign_keys_enabled = result.scalar()
+            assert foreign_keys_enabled == 0
 
     asyncio.run(init_models())
     yield engine
