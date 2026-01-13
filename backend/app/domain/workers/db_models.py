@@ -10,7 +10,7 @@ from app.infra.db import Base
 from app.settings import settings
 
 if TYPE_CHECKING:  # pragma: no cover
-    from app.domain.bookings.db_models import Booking, Team
+    from app.domain.bookings.db_models import Booking, BookingWorker, Team
 
 
 class Worker(Base):
@@ -46,6 +46,17 @@ class Worker(Base):
     team: Mapped["Team"] = relationship("Team")
     bookings: Mapped[list["Booking"]] = relationship(
         "Booking", back_populates="assigned_worker"
+    )
+    booking_assignments: Mapped[list["BookingWorker"]] = relationship(
+        "BookingWorker",
+        back_populates="worker",
+        cascade="all, delete-orphan",
+    )
+    assigned_bookings: Mapped[list["Booking"]] = relationship(
+        "Booking",
+        secondary="booking_workers",
+        back_populates="assigned_workers",
+        viewonly=True,
     )
 
     __table_args__ = (

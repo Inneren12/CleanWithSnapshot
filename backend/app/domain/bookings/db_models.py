@@ -136,6 +136,18 @@ class Booking(Base):
     assigned_worker: Mapped["Worker | None"] = relationship(
         "Worker", back_populates="bookings"
     )
+    worker_assignments: Mapped[list["BookingWorker"]] = relationship(
+        "BookingWorker",
+        back_populates="booking",
+        cascade="all, delete-orphan",
+        order_by="BookingWorker.created_at",
+    )
+    assigned_workers: Mapped[list["Worker"]] = relationship(
+        "Worker",
+        secondary="booking_workers",
+        back_populates="assigned_bookings",
+        viewonly=True,
+    )
     lead = relationship("Lead", backref="bookings")
     subscription = relationship("Subscription", back_populates="orders")
     photos: Mapped[list["OrderPhoto"]] = relationship(
@@ -158,6 +170,33 @@ class Booking(Base):
         Index("ix_bookings_status", "status"),
         Index("ix_bookings_checkout_session", "stripe_checkout_session_id"),
         UniqueConstraint("subscription_id", "scheduled_date", name="uq_bookings_subscription_schedule"),
+    )
+
+
+class BookingWorker(Base):
+    __tablename__ = "booking_workers"
+
+    booking_id: Mapped[str] = mapped_column(
+        ForeignKey("bookings.booking_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    worker_id: Mapped[int] = mapped_column(
+        ForeignKey("workers.worker_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    role: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    booking: Mapped["Booking"] = relationship("Booking", back_populates="worker_assignments")
+    worker: Mapped["Worker"] = relationship("Worker", back_populates="booking_assignments")
+
+    __table_args__ = (
+        Index("ix_booking_workers_booking_id", "booking_id"),
+        Index("ix_booking_workers_worker_id", "worker_id"),
     )
 
 

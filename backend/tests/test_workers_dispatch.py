@@ -5,7 +5,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.domain.admin_audit.db_models import AdminAuditLog
-from app.domain.bookings.db_models import Booking, Team
+from app.domain.bookings.db_models import Booking, BookingWorker, Team
 from app.domain.bookings.service import ensure_default_team
 from app.domain.leads.db_models import Lead
 from app.domain.workers.db_models import Worker
@@ -132,8 +132,9 @@ async def test_dispatch_assigns_worker_and_writes_audit(client, async_session_ma
         await session.flush()
 
         worker = Worker(name="Assign Me", phone="+1 555-0000", team_id=team_id, email="a@example.com", is_active=True)
+        helper = Worker(name="Helper", phone="+1 555-2222", team_id=team_id, email="c@example.com", is_active=True)
         other_team = Worker(name="Other Team", phone="+1 555-1111", team_id=other_team_row.team_id, email="b@example.com", is_active=True)
-        session.add_all([worker, other_team])
+        session.add_all([worker, helper, other_team])
         await session.flush()
         booking_id, lead_name, booking_date = await _seed_booking(async_session_maker, team_id=team_id)
         await session.commit()
@@ -148,7 +149,7 @@ async def test_dispatch_assigns_worker_and_writes_audit(client, async_session_ma
     assign_resp = client.post(
         "/v1/admin/ui/dispatch/assign",
         headers=headers,
-        data={"booking_id": booking_id, "worker_id": worker.worker_id},
+        data={"booking_id": booking_id, "worker_ids": [str(worker.worker_id), str(helper.worker_id)]},
         follow_redirects=False,
     )
     assert assign_resp.status_code == 303
@@ -157,14 +158,20 @@ async def test_dispatch_assigns_worker_and_writes_audit(client, async_session_ma
         booking = await verify.get(Booking, booking_id)
         assert booking is not None
         assert booking.assigned_worker_id == worker.worker_id
+        assignments = (
+            await verify.execute(
+                sa.select(BookingWorker).where(BookingWorker.booking_id == booking_id)
+            )
+        ).scalars().all()
+        assert {assignment.worker_id for assignment in assignments} == {worker.worker_id, helper.worker_id}
 
         logs = (await verify.execute(sa.select(AdminAuditLog))).scalars().all()
-        assert any(log.action == "ASSIGN_WORKER" and log.resource_id == booking_id for log in logs)
+        assert any(log.action == "ASSIGN_WORKERS" and log.resource_id == booking_id for log in logs)
 
     cross_resp = client.post(
         "/v1/admin/ui/dispatch/assign",
         headers=headers,
-        data={"booking_id": booking_id, "worker_id": other_team.worker_id},
+        data={"booking_id": booking_id, "worker_ids": [str(other_team.worker_id)]},
         follow_redirects=False,
     )
     assert cross_resp.status_code == 400
@@ -194,7 +201,7 @@ async def test_dispatch_can_unassign_worker_with_blank_value(client, async_sessi
     assign_resp = client.post(
         "/v1/admin/ui/dispatch/assign",
         headers=headers,
-        data={"booking_id": booking_id, "worker_id": worker.worker_id},
+        data={"booking_id": booking_id, "worker_ids": [str(worker.worker_id)]},
         follow_redirects=False,
     )
     assert assign_resp.status_code == 303
@@ -203,7 +210,7 @@ async def test_dispatch_can_unassign_worker_with_blank_value(client, async_sessi
     unassign_resp = client.post(
         "/v1/admin/ui/dispatch/assign",
         headers=headers,
-        data={"booking_id": booking_id, "worker_id": ""},
+        data={"booking_id": booking_id},
         follow_redirects=False,
     )
     assert unassign_resp.status_code == 303
@@ -212,3 +219,9 @@ async def test_dispatch_can_unassign_worker_with_blank_value(client, async_sessi
         booking = await verify.get(Booking, booking_id)
         assert booking is not None
         assert booking.assigned_worker_id is None
+        assignments = (
+            await verify.execute(
+                sa.select(BookingWorker).where(BookingWorker.booking_id == booking_id)
+            )
+        ).scalars().all()
+        assert assignments == []

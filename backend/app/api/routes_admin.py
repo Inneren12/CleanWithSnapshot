@@ -50,7 +50,7 @@ from app.domain.analytics.service import (
     log_event,
 )
 from app.dependencies import get_db_session
-from app.domain.bookings.db_models import Booking, Team
+from app.domain.bookings.db_models import Booking, BookingWorker, Team
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
@@ -603,6 +603,11 @@ def _wrap_page(
             "workers",
         ),
         (
+            _icon("users") + html.escape(tr(nav_lang, "admin.nav.teams")),
+            "/v1/admin/ui/teams",
+            "teams",
+        ),
+        (
             _icon("users") + html.escape(tr(nav_lang, "admin.nav.clients")),
             "/v1/admin/ui/clients",
             "clients",
@@ -805,7 +810,9 @@ async def resend_last_email(
     if idempotency.existing_response:
         return idempotency.existing_response
     booking_result = await session.execute(
-        select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        select(Booking)
+        .where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        .options(selectinload(Booking.worker_assignments))
     )
     booking = booking_result.scalar_one_or_none()
     if booking is None:
@@ -2592,7 +2599,9 @@ async def confirm_booking(
 ):
     org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
     booking_result = await session.execute(
-        select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        select(Booking)
+        .where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        .options(selectinload(Booking.worker_assignments))
     )
     booking = booking_result.scalar_one_or_none()
     if booking is None:
@@ -2882,7 +2891,9 @@ async def cancel_booking(
 ):
     org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
     booking_result = await session.execute(
-        select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        select(Booking)
+        .where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        .options(selectinload(Booking.worker_assignments))
     )
     booking = booking_result.scalar_one_or_none()
     if booking is None:
@@ -2953,7 +2964,9 @@ async def reschedule_booking(
 ):
     org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
     booking_result = await session.execute(
-        select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        select(Booking)
+        .where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        .options(selectinload(Booking.worker_assignments))
     )
     booking = booking_result.scalar_one_or_none()
     if booking is None:
@@ -4273,6 +4286,146 @@ async def update_support_ticket(
     return _ticket_response(ticket)
 
 
+def _render_team_form(lang: str | None, csrf_input: str) -> str:
+    return f"""
+    <div class=\"card\">
+      <div class=\"card-row\">
+        <div>
+          <div class=\"title with-icon\">{_icon('users')}{html.escape(tr(lang, 'admin.teams.title'))}</div>
+          <div class=\"muted\">{html.escape(tr(lang, 'admin.teams.subtitle'))}</div>
+        </div>
+      </div>
+      <form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/teams\">
+        <div class=\"form-group\">
+          <label>{html.escape(tr(lang, 'admin.teams.name'))}</label>
+          <input class=\"input\" type=\"text\" name=\"name\" required />
+        </div>
+        {csrf_input}
+        <button class=\"btn\" type=\"submit\">{html.escape(tr(lang, 'admin.teams.create'))}</button>
+      </form>
+    </div>
+    """
+
+
+@router.get("/v1/admin/teams", response_model=list[booking_schemas.TeamResponse])
+async def list_teams(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> list[Team]:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    result = await session.execute(select(Team).where(Team.org_id == org_id).order_by(Team.name))
+    return result.scalars().all()
+
+
+@router.post("/v1/admin/teams", response_model=booking_schemas.TeamResponse)
+async def create_team(
+    request: Request,
+    payload: booking_schemas.TeamCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Team:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Team name is required")
+
+    existing = await session.scalar(
+        select(Team.team_id).where(Team.org_id == org_id, func.lower(Team.name) == name.lower())
+    )
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Team name already exists")
+
+    team = Team(org_id=org_id, name=name)
+    session.add(team)
+    await session.flush()
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="CREATE_TEAM",
+        resource_type="team",
+        resource_id=str(team.team_id),
+        before=None,
+        after={"name": team.name},
+    )
+    await session.commit()
+    await session.refresh(team)
+    return team
+
+
+@router.get("/v1/admin/ui/teams", response_class=HTMLResponse)
+async def admin_teams_list(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    teams = (
+        await session.execute(
+            select(Team).where(Team.org_id == org_id).order_by(Team.name)
+        )
+    ).scalars().all()
+    rows = "".join(
+        f"<tr><td>{html.escape(team.name)}</td><td class='muted'>{html.escape(_format_dt(team.created_at))}</td></tr>"
+        for team in teams
+    )
+    table = (
+        f"<table class='table'><thead><tr><th>{html.escape(tr(lang, 'admin.teams.name'))}</th><th>{html.escape(tr(lang, 'admin.teams.created_at'))}</th></tr></thead><tbody>{rows}</tbody></table>"
+        if teams
+        else _render_empty(tr(lang, "admin.teams.none"))
+    )
+    csrf_token = get_csrf_token(request)
+    content = "".join(
+        [
+            "<div class='card'>",
+            "<div class='card-row'>",
+            f"<div><div class='title with-icon'>{_icon('users')}{html.escape(tr(lang, 'admin.teams.title'))}</div>",
+            f"<div class='muted'>{html.escape(tr(lang, 'admin.teams.subtitle'))}</div></div>",
+            "</div>",
+            table,
+            "</div>",
+            _render_team_form(lang, render_csrf_input(csrf_token)),
+        ]
+    )
+    response = HTMLResponse(_wrap_page(request, content, title="Admin — Teams", active="teams", page_lang=lang))
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
+@router.post("/v1/admin/ui/teams", response_class=HTMLResponse)
+async def admin_teams_create(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Team name is required")
+    existing = await session.scalar(
+        select(Team.team_id).where(Team.org_id == org_id, func.lower(Team.name) == name.lower())
+    )
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Team name already exists")
+    team = Team(org_id=org_id, name=name)
+    session.add(team)
+    await session.flush()
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="CREATE_TEAM",
+        resource_type="team",
+        resource_id=str(team.team_id),
+        before=None,
+        after={"name": team.name},
+    )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/teams", status_code=status.HTTP_303_SEE_OTHER)
+
+
 def _worker_status_badge(worker: Worker, lang: str | None) -> str:
     label = tr(lang, "admin.workers.status_active") if worker.is_active else tr(lang, "admin.workers.status_inactive")
     cls = "badge" + (" badge-active" if worker.is_active else "")
@@ -5043,6 +5196,26 @@ def _parse_admin_booking_datetime(value: str) -> datetime:
     raise ValueError("Invalid datetime format")
 
 
+def _sync_booking_workers(booking: Booking, worker_ids: list[int], *, replace: bool) -> None:
+    unique_ids: list[int] = []
+    seen: set[int] = set()
+    for worker_id in worker_ids:
+        if worker_id not in seen:
+            unique_ids.append(worker_id)
+            seen.add(worker_id)
+
+    existing = {assignment.worker_id: assignment for assignment in booking.worker_assignments}
+    if replace:
+        for worker_id, assignment in list(existing.items()):
+            if worker_id not in seen:
+                booking.worker_assignments.remove(assignment)
+    for worker_id in unique_ids:
+        if worker_id not in existing:
+            booking.worker_assignments.append(
+                BookingWorker(booking_id=booking.booking_id, worker_id=worker_id)
+            )
+
+
 @router.get("/v1/admin/ui/bookings/new", response_class=HTMLResponse)
 async def admin_bookings_new_form(
     request: Request,
@@ -5130,6 +5303,8 @@ async def admin_bookings_create(
         ).scalar_one_or_none()
         if worker is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+        if worker.team_id != team_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
 
     # Validate client if specified (org-scoped)
     client = (
@@ -5177,6 +5352,8 @@ async def admin_bookings_create(
         credit_note_total_cents=0,
     )
     session.add(booking)
+    if assigned_worker_id:
+        _sync_booking_workers(booking, [assigned_worker_id], replace=True)
     await session.flush()
 
     await audit_service.record_action(
@@ -5343,6 +5520,8 @@ async def admin_bookings_update(
     booking.assigned_worker_id = assigned_worker_id
     booking.starts_at = starts_at
     booking.duration_minutes = duration_minutes
+    if assigned_worker_id:
+        _sync_booking_workers(booking, [assigned_worker_id], replace=False)
 
     await audit_service.record_action(
         session,
@@ -5459,6 +5638,57 @@ async def admin_bookings_purge(
     return RedirectResponse(f"/v1/admin/ui/dispatch?date={redirect_date.isoformat()}", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.get("/v1/admin/dispatch/board", response_model=booking_schemas.DispatchBoardResponse)
+async def dispatch_board_data(
+    request: Request,
+    day: str | None = Query(default=None, alias="date"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> booking_schemas.DispatchBoardResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        target_date = date.fromisoformat(day) if day else datetime.now(timezone.utc).date()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date") from exc
+    start_dt = datetime.combine(target_date, time.min).replace(tzinfo=timezone.utc)
+    end_dt = start_dt + timedelta(days=1)
+    stmt = (
+        select(Booking)
+        .where(
+            Booking.starts_at >= start_dt,
+            Booking.starts_at < end_dt,
+            Booking.org_id == org_id,
+        )
+        .options(
+            selectinload(Booking.lead),
+            selectinload(Booking.team),
+            selectinload(Booking.worker_assignments).selectinload(BookingWorker.worker),
+        )
+        .order_by(Booking.starts_at)
+    )
+    bookings = (await session.execute(stmt)).scalars().all()
+    return booking_schemas.DispatchBoardResponse(
+        day=target_date,
+        bookings=[
+            booking_schemas.DispatchBooking(
+                booking_id=booking.booking_id,
+                starts_at=booking.starts_at,
+                duration_minutes=booking.duration_minutes,
+                status=booking.status,
+                team_id=booking.team_id,
+                team_name=getattr(booking.team, "name", ""),
+                lead_name=getattr(getattr(booking, "lead", None), "name", None),
+                assigned_workers=[
+                    booking_schemas.DispatchWorker(worker_id=assignment.worker.worker_id, name=assignment.worker.name)
+                    for assignment in booking.worker_assignments
+                    if assignment.worker is not None
+                ],
+            )
+            for booking in bookings
+        ],
+    )
+
+
 @router.get("/v1/admin/ui/dispatch", response_class=HTMLResponse)
 async def admin_dispatch_board(
     request: Request,
@@ -5485,6 +5715,7 @@ async def admin_dispatch_board(
         .options(
             selectinload(Booking.lead),
             selectinload(Booking.assigned_worker),
+            selectinload(Booking.worker_assignments).selectinload(BookingWorker.worker),
             selectinload(Booking.team),
         )
         .order_by(Booking.starts_at)
@@ -5508,12 +5739,16 @@ async def admin_dispatch_board(
     cards: list[str] = []
     for booking in bookings:
         lead: Lead | None = getattr(booking, "lead", None)
-        assigned = getattr(booking, "assigned_worker", None)
-        worker_options = [
-            f'<option value="">{html.escape(tr(lang, "admin.dispatch.unassigned"))}</option>'
+        assigned_workers = [
+            assignment.worker
+            for assignment in booking.worker_assignments
+            if assignment.worker is not None
         ]
+        assigned_ids = {worker.worker_id for worker in assigned_workers}
+        assigned_names = [worker.name for worker in assigned_workers]
+        worker_options: list[str] = []
         for worker in workers_by_team.get(booking.team_id, []):
-            selected = "selected" if worker.worker_id == getattr(booking, "assigned_worker_id", None) else ""
+            selected = "selected" if worker.worker_id in assigned_ids else ""
             status_hint = "" if worker.is_active else " (inactive)"
             worker_options.append(
                 f'<option value="{worker.worker_id}" {selected}>{html.escape(worker.name + status_hint)}</option>'
@@ -5536,7 +5771,7 @@ async def admin_dispatch_board(
                 <input type=\"hidden\" name=\"booking_id\" value=\"{booking_id}\" />
                 {csrf_input}
                 <label class=\"muted\">{assign_label}</label>
-                <select class=\"input\" name=\"worker_id\">{options}</select>
+                <select class=\"input\" name=\"worker_ids\" multiple size=\"4\">{options}</select>
                 <button class=\"btn secondary\" type=\"submit\">{save_label}</button>
               </form>
               <div class=\"muted small\">{current}</div>
@@ -5548,11 +5783,11 @@ async def admin_dispatch_board(
                 team=html.escape(getattr(booking.team, "name", "")),
                 status=html.escape(booking.status),
                 booking_id=html.escape(booking.booking_id),
-                assign_label=html.escape(tr(lang, "admin.dispatch.assigned_worker")),
+                assign_label=html.escape(tr(lang, "admin.dispatch.assigned_workers")),
                 options="".join(worker_options),
                 save_label=html.escape(tr(lang, "admin.dispatch.save")),
                 current=html.escape(
-                    getattr(assigned, "name", tr(lang, "admin.dispatch.unassigned"))
+                    ", ".join(assigned_names) if assigned_names else tr(lang, "admin.dispatch.unassigned")
                 ),
                 csrf_input=csrf_input,
             )
@@ -5604,13 +5839,25 @@ async def admin_dispatch_board(
 @router.post("/v1/admin/ui/dispatch/assign", response_class=HTMLResponse)
 async def admin_assign_worker(
     request: Request,
-    booking_id: str = Form(...),
-    worker_id_raw: str | None = Form(default=None, alias="worker_id"),
     session: AsyncSession = Depends(get_db_session),
     identity: AdminIdentity = Depends(require_dispatch),
 ) -> Response:
     await require_csrf(request)
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    form = await request.form()
+    booking_id = (form.get("booking_id") or "").strip()
+    if not booking_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Booking ID is required")
+    worker_ids_raw = form.getlist("worker_ids")
+    worker_ids: list[int] = []
+    for raw in worker_ids_raw:
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            worker_ids.append(int(raw))
+        except (TypeError, ValueError) as exc:  # noqa: BLE001
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid worker ID") from exc
+    unique_worker_ids = list(dict.fromkeys(worker_ids))
     booking_result = await session.execute(
         select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
     )
@@ -5618,36 +5865,37 @@ async def admin_assign_worker(
     if booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
-    previous = getattr(booking, "assigned_worker_id", None)
-    new_worker_id: int | None
-    if worker_id_raw is None or str(worker_id_raw).strip() == "":
-        new_worker_id = None
-    else:
-        try:
-            new_worker_id = int(worker_id_raw)
-        except (TypeError, ValueError) as exc:  # noqa: BLE001
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid worker ID") from exc
-
-    if new_worker_id is not None:
-        worker = (
+    previous_ids = (
+        await session.execute(
+            select(BookingWorker.worker_id).where(BookingWorker.booking_id == booking_id)
+        )
+    ).scalars().all()
+    if unique_worker_ids:
+        workers = (
             await session.execute(
-                select(Worker).where(Worker.worker_id == new_worker_id, Worker.org_id == org_id)
+                select(Worker).where(
+                    Worker.worker_id.in_(set(unique_worker_ids)),
+                    Worker.org_id == org_id,
+                )
             )
-        ).scalar_one_or_none()
-        if worker is None:
+        ).scalars().all()
+        if len(workers) != len(set(unique_worker_ids)):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
-        if worker.team_id != booking.team_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
-    booking.assigned_worker_id = new_worker_id
+        for worker in workers:
+            if worker.team_id != booking.team_id:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
+    booking.assigned_worker_id = unique_worker_ids[0] if unique_worker_ids else None
+    await session.refresh(booking, attribute_names=["worker_assignments"])
+    _sync_booking_workers(booking, unique_worker_ids, replace=True)
 
     await audit_service.record_action(
         session,
         identity=identity,
-        action="ASSIGN_WORKER" if booking.assigned_worker_id else "UNASSIGN_WORKER",
+        action="ASSIGN_WORKERS" if booking.assigned_worker_id else "UNASSIGN_WORKERS",
         resource_type="booking",
         resource_id=booking.booking_id,
-        before={"assigned_worker_id": previous},
-        after={"assigned_worker_id": booking.assigned_worker_id},
+        before={"assigned_worker_ids": previous_ids},
+        after={"assigned_worker_ids": unique_worker_ids},
     )
     await session.commit()
     target_date = getattr(booking.starts_at, "date", lambda: None)() if hasattr(booking.starts_at, "date") else None
