@@ -93,6 +93,17 @@ class BookingResponse(BaseModel):
     cancellation_exception_note: str | None = None
 
 
+class TeamCreateRequest(BaseModel):
+    name: str
+
+
+class TeamResponse(BaseModel):
+    team_id: int
+    name: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
 class BookingCompletionRequest(BaseModel):
     actual_duration_minutes: int = Field(gt=0)
 
@@ -116,6 +127,27 @@ class AdminBookingListItem(BaseModel):
     status: str
     lead_name: str | None = None
     lead_email: str | None = None
+
+
+class DispatchWorker(BaseModel):
+    worker_id: int
+    name: str
+
+
+class DispatchBooking(BaseModel):
+    booking_id: str
+    starts_at: datetime
+    duration_minutes: int
+    status: str
+    team_id: int
+    team_name: str
+    lead_name: str | None = None
+    assigned_workers: list[DispatchWorker] = []
+
+
+class DispatchBoardResponse(BaseModel):
+    day: date
+    bookings: list[DispatchBooking]
 
 
 class PhotoPhase(str, Enum):
