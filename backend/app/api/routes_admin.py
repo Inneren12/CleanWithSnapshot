@@ -5029,6 +5029,20 @@ def _render_booking_form(
     """
 
 
+def _parse_admin_booking_datetime(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        pass
+
+    for fmt in ("%Y-%m-%d %I:%M %p", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise ValueError("Invalid datetime format")
+
+
 @router.get("/v1/admin/ui/bookings/new", response_class=HTMLResponse)
 async def admin_bookings_new_form(
     request: Request,
@@ -5143,7 +5157,7 @@ async def admin_bookings_create(
 
     # Parse datetime
     try:
-        starts_at = datetime.fromisoformat(starts_at_raw).replace(tzinfo=timezone.utc)
+        starts_at = _parse_admin_booking_datetime(starts_at_raw).replace(tzinfo=timezone.utc)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid datetime format") from exc
 
@@ -5313,7 +5327,7 @@ async def admin_bookings_update(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client not found or does not belong to your organization")
 
     try:
-        starts_at = datetime.fromisoformat(starts_at_raw).replace(tzinfo=timezone.utc)
+        starts_at = _parse_admin_booking_datetime(starts_at_raw).replace(tzinfo=timezone.utc)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid datetime format") from exc
 

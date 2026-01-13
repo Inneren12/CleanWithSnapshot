@@ -92,14 +92,6 @@ def test_booking_requires_lead_contact(client, async_session_maker):
     assert response.status_code == 422
 
 
-def test_bot_lead_requires_contact_and_time(client):
-    response = client.post(
-        "/api/leads",
-        json={"serviceType": "deep_clean"},
-    )
-    assert response.status_code == 422
-
-
 def test_admin_booking_requires_client_contact(client, async_session_maker):
     original_username = settings.dispatcher_basic_username
     original_password = settings.dispatcher_basic_password

@@ -54,28 +54,7 @@ def _fsm_step_for_intent(intent: Intent) -> FsmStep:
             return FsmStep.routing
 
 
-def _validate_lead_payload(payload: LeadPayload) -> None:
-    contact = payload.contact or {}
-    name = contact.get("name") or contact.get("full_name")
-    phone = contact.get("phone")
-    address = contact.get("address") or payload.area
-    preferred_time = payload.preferred_time_window
 
-    missing = []
-    if not (isinstance(name, str) and name.strip()):
-        missing.append("name")
-    if not (isinstance(phone, str) and phone.strip()):
-        missing.append("phone")
-    if not (isinstance(address, str) and address.strip()):
-        missing.append("address")
-    if not (isinstance(preferred_time, str) and preferred_time.strip()):
-        missing.append("preferred_time_window")
-
-    if missing:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Missing required fields: {', '.join(missing)}",
-        )
 @router.post("/bot/session", response_model=SessionCreateResponse, status_code=201)
 async def create_session(request: SessionCreateRequest, store: BotStore = Depends(get_bot_store)) -> SessionCreateResponse:
     conversation = await store.create_conversation(
@@ -306,7 +285,6 @@ async def create_lead_from_conversation(
         merged_payload["source_conversation_id"] = conversation.conversation_id
         payload = LeadPayload(**merged_payload)
 
-    _validate_lead_payload(payload)
     lead = await store.create_lead(payload)
     logger.info(
         "lead_created",

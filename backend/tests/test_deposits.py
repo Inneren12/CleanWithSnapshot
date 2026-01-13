@@ -260,7 +260,8 @@ def test_checkout_failure_downgrades_booking(client, async_session_maker, monkey
 def test_non_deposit_booking_persists(client, async_session_maker):
     original_secret = settings.stripe_secret_key
     settings.stripe_secret_key = None
-    payload = {"starts_at": _booking_start_in_days(5), "time_on_site_hours": 1}
+    lead_id = _seed_lead(async_session_maker)
+    payload = {"starts_at": _booking_start_in_days(5), "time_on_site_hours": 1, "lead_id": lead_id}
 
     try:
         response = client.post("/v1/bookings", json=payload)

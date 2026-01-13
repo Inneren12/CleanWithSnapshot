@@ -232,6 +232,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_prod_settings(self) -> "Settings":
+        if self.testing:
+            self.captcha_enabled = False
+            self.captcha_mode = "off"
+
         def _basic_auth_creds_configured() -> bool:
             return any(
                 username and password

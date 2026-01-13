@@ -71,9 +71,11 @@ def test_leads_captcha_turnstile_requires_token(client):
     original_mode = settings.captcha_mode
     original_secret = settings.turnstile_secret_key
     original_transport = getattr(app.state, "turnstile_transport", None)
+    original_enabled = settings.captcha_enabled
 
     settings.captcha_mode = "turnstile"
     settings.turnstile_secret_key = "secret-key"
+    settings.captcha_enabled = True
     app.state.turnstile_transport = None
 
     try:
@@ -82,6 +84,7 @@ def test_leads_captcha_turnstile_requires_token(client):
     finally:
         settings.captcha_mode = original_mode
         settings.turnstile_secret_key = original_secret
+        settings.captcha_enabled = original_enabled
         app.state.turnstile_transport = original_transport
 
 
@@ -89,9 +92,11 @@ def test_leads_captcha_turnstile_accepts_valid_token(client):
     original_mode = settings.captcha_mode
     original_secret = settings.turnstile_secret_key
     original_transport = getattr(app.state, "turnstile_transport", None)
+    original_enabled = settings.captcha_enabled
 
     settings.captcha_mode = "turnstile"
     settings.turnstile_secret_key = "secret-key"
+    settings.captcha_enabled = True
     app.state.turnstile_transport = MockTransport(
         lambda request: Response(200, request=request, json={"success": True})
     )
@@ -105,6 +110,7 @@ def test_leads_captcha_turnstile_accepts_valid_token(client):
     finally:
         settings.captcha_mode = original_mode
         settings.turnstile_secret_key = original_secret
+        settings.captcha_enabled = original_enabled
         app.state.turnstile_transport = original_transport
 
 
@@ -112,9 +118,11 @@ def test_leads_captcha_turnstile_rejects_invalid_token(client):
     original_mode = settings.captcha_mode
     original_secret = settings.turnstile_secret_key
     original_transport = getattr(app.state, "turnstile_transport", None)
+    original_enabled = settings.captcha_enabled
 
     settings.captcha_mode = "turnstile"
     settings.turnstile_secret_key = "secret-key"
+    settings.captcha_enabled = True
     app.state.turnstile_transport = MockTransport(
         lambda request: Response(200, request=request, json={"success": False})
     )
@@ -128,6 +136,7 @@ def test_leads_captcha_turnstile_rejects_invalid_token(client):
     finally:
         settings.captcha_mode = original_mode
         settings.turnstile_secret_key = original_secret
+        settings.captcha_enabled = original_enabled
         app.state.turnstile_transport = original_transport
 
 
@@ -205,6 +214,31 @@ def test_bookings_captcha_dev_bypass_allows(client):
         assert response.status_code == 201
     finally:
         settings.app_env = original_env
+        settings.captcha_enabled = original_enabled
+        settings.captcha_mode = original_mode
+        settings.turnstile_secret_key = original_secret
+        app.state.turnstile_transport = original_transport
+
+
+def test_bookings_captcha_testing_bypass_allows(client):
+    original_mode = settings.captcha_mode
+    original_secret = settings.turnstile_secret_key
+    original_transport = getattr(app.state, "turnstile_transport", None)
+    original_enabled = settings.captcha_enabled
+    original_testing = settings.testing
+    lead_id = _create_lead(client)
+
+    settings.testing = True
+    settings.captcha_enabled = False
+    settings.captcha_mode = "turnstile"
+    settings.turnstile_secret_key = None
+    app.state.turnstile_transport = None
+
+    try:
+        response = client.post("/v1/bookings", json=_booking_payload(lead_id))
+        assert response.status_code == 201
+    finally:
+        settings.testing = original_testing
         settings.captcha_enabled = original_enabled
         settings.captcha_mode = original_mode
         settings.turnstile_secret_key = original_secret
