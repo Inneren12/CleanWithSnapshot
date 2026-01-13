@@ -53,10 +53,14 @@ class Team(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     bookings: Mapped[list["Booking"]] = relationship("Booking", back_populates="team")
 
-    __table_args__ = (Index("ix_teams_org_id", "org_id"),)
+    __table_args__ = (
+        Index("ix_teams_org_id", "org_id"),
+        Index("ix_teams_archived_at", "archived_at"),
+    )
 
 
 class Booking(Base):

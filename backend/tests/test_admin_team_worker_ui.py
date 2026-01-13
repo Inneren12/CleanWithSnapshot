@@ -87,19 +87,10 @@ async def test_admin_team_reassign_and_delete(client, async_session_maker):
         await session.commit()
 
     headers = _basic_auth("dispatch", "secret")
-    blocked_resp = client.post(
+    reassign_resp = client.post(
         f"/v1/admin/ui/teams/{team.team_id}/delete",
         headers=headers,
-        data={"confirm": "DELETE"},
-        follow_redirects=False,
-    )
-    assert blocked_resp.status_code == 400
-    assert "Team not empty" in blocked_resp.text
-
-    reassign_resp = client.post(
-        f"/v1/admin/ui/teams/{team.team_id}/reassign_and_delete",
-        headers=headers,
-        data={"target_team_id": str(target.team_id)},
+        data={"strategy": "reassign", "target_team_id": str(target.team_id), "confirm": "DELETE"},
         follow_redirects=False,
     )
     assert reassign_resp.status_code == 303
@@ -116,11 +107,141 @@ async def test_admin_team_reassign_and_delete(client, async_session_maker):
 
 
 @pytest.mark.anyio
-async def test_admin_worker_delete_archives(client, async_session_maker):
+async def test_admin_team_delete_empty(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = Team(name="Delete Empty")
+        session.add(team)
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    delete_resp = client.post(
+        f"/v1/admin/ui/teams/{team.team_id}/delete",
+        headers=headers,
+        data={"strategy": "delete", "confirm": "DELETE"},
+        follow_redirects=False,
+    )
+    assert delete_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        deleted = await session.get(Team, team.team_id)
+        assert deleted is None
+
+
+@pytest.mark.anyio
+async def test_admin_team_cascade_delete(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = Team(name="Cascade Team")
+        session.add(team)
+        await session.flush()
+        worker = Worker(name="Cascade Worker", phone="+1 555-0001", team_id=team.team_id)
+        session.add(worker)
+        await session.flush()
+        booking = Booking(
+            team_id=team.team_id,
+            starts_at=dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(days=1),
+            duration_minutes=60,
+            status="PENDING",
+            assigned_worker_id=worker.worker_id,
+        )
+        session.add(booking)
+        await session.flush()
+        session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker.worker_id))
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    delete_resp = client.post(
+        f"/v1/admin/ui/teams/{team.team_id}/delete",
+        headers=headers,
+        data={"strategy": "cascade", "confirm": "DELETE"},
+        follow_redirects=False,
+    )
+    assert delete_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        deleted_team = await session.get(Team, team.team_id)
+        assert deleted_team is None
+        deleted_worker = await session.get(Worker, worker.worker_id)
+        assert deleted_worker is None
+        deleted_booking = await session.get(Booking, booking.booking_id)
+        assert deleted_booking is None
+
+
+@pytest.mark.anyio
+async def test_admin_team_archive_unarchive(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = Team(name="Archive Team")
+        session.add(team)
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    archive_resp = client.post(
+        f"/v1/admin/ui/teams/{team.team_id}/archive",
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert archive_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        archived = await session.get(Team, team.team_id)
+        assert archived is not None
+        assert archived.archived_at is not None
+
+    unarchive_resp = client.post(
+        f"/v1/admin/ui/teams/{team.team_id}/unarchive",
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert unarchive_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        unarchived = await session.get(Team, team.team_id)
+        assert unarchived is not None
+        assert unarchived.archived_at is None
+
+
+@pytest.mark.anyio
+async def test_admin_worker_archive_unarchive(client, async_session_maker):
     async with async_session_maker() as session:
         team = await ensure_default_team(session)
         await session.flush()
         worker = Worker(name="Archive Me", phone="+1 555-9999", team_id=team.team_id)
+        session.add(worker)
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    archive_resp = client.post(
+        f"/v1/admin/ui/workers/{worker.worker_id}/archive",
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert archive_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        archived = await session.get(Worker, worker.worker_id)
+        assert archived is not None
+        assert archived.archived_at is not None
+        assert archived.is_active is False
+
+    unarchive_resp = client.post(
+        f"/v1/admin/ui/workers/{worker.worker_id}/unarchive",
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert unarchive_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        unarchived = await session.get(Worker, worker.worker_id)
+        assert unarchived is not None
+        assert unarchived.archived_at is None
+        assert unarchived.is_active is True
+
+
+@pytest.mark.anyio
+async def test_admin_worker_delete_detach(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        await session.flush()
+        worker = Worker(name="Detach Me", phone="+1 555-1234", team_id=team.team_id)
         session.add(worker)
         await session.flush()
         booking = Booking(
@@ -139,28 +260,63 @@ async def test_admin_worker_delete_archives(client, async_session_maker):
     delete_resp = client.post(
         f"/v1/admin/ui/workers/{worker.worker_id}/delete",
         headers=headers,
-        data={"confirm": "ARCHIVE"},
+        data={"strategy": "detach", "confirm": "DELETE"},
         follow_redirects=False,
     )
     assert delete_resp.status_code == 303
 
     async with async_session_maker() as session:
-        archived = await session.get(Worker, worker.worker_id)
-        assert archived is not None
-        assert archived.is_active is False
-        assignments = (
-            await session.execute(
-                sa.select(BookingWorker).where(BookingWorker.worker_id == worker.worker_id)
-            )
-        ).scalars().all()
-        assert assignments == []
+        deleted_worker = await session.get(Worker, worker.worker_id)
+        assert deleted_worker is None
         updated_booking = await session.get(Booking, booking.booking_id)
         assert updated_booking is not None
         assert updated_booking.assigned_worker_id is None
+        assignments = (
+            await session.execute(
+                sa.select(BookingWorker).where(BookingWorker.booking_id == booking.booking_id)
+            )
+        ).scalars().all()
+        assert assignments == []
+
+
+@pytest.mark.anyio
+async def test_admin_worker_delete_cascade(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        await session.flush()
+        worker = Worker(name="Cascade Me", phone="+1 555-4321", team_id=team.team_id)
+        session.add(worker)
+        await session.flush()
+        booking = Booking(
+            team_id=team.team_id,
+            starts_at=dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(days=3),
+            duration_minutes=75,
+            status="PENDING",
+            assigned_worker_id=worker.worker_id,
+        )
+        session.add(booking)
+        await session.flush()
+        session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker.worker_id))
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    delete_resp = client.post(
+        f"/v1/admin/ui/workers/{worker.worker_id}/delete",
+        headers=headers,
+        data={"strategy": "cascade", "confirm": "DELETE"},
+        follow_redirects=False,
+    )
+    assert delete_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        deleted_worker = await session.get(Worker, worker.worker_id)
+        assert deleted_worker is None
+        deleted_booking = await session.get(Booking, booking.booking_id)
+        assert deleted_booking is None
 
     list_resp = client.get("/v1/admin/ui/workers?active_only=1", headers=headers)
     assert list_resp.status_code == 200
-    assert "Archive Me" not in list_resp.text
+    assert "Cascade Me" not in list_resp.text
 
 
 @pytest.mark.anyio

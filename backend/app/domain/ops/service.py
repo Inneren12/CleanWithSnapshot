@@ -460,7 +460,11 @@ async def suggest_schedule_resources(
     if normalized_end <= normalized_start:
         raise ValueError("invalid_window")
 
-    stmt = select(Team).where(Team.org_id == org_id).order_by(Team.team_id)
+    stmt = (
+        select(Team)
+        .where(Team.org_id == org_id, Team.archived_at.is_(None))
+        .order_by(Team.team_id)
+    )
     teams = (await session.execute(stmt)).scalars().all()
     if not teams:
         teams = [await ensure_default_team(session, org_id)]
@@ -731,4 +735,3 @@ async def resend_email_event(session: AsyncSession, adapter, org_id, event_id: s
     status = "delivered" if delivered else "queued"
     logger.info("email_event_resend", extra={"extra": {"event_id": event.event_id, "status": status}})
     return {"event_id": event.event_id, "status": status}
-

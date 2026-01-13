@@ -42,6 +42,7 @@ class Worker(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     team: Mapped["Team"] = relationship("Team")
     bookings: Mapped[list["Booking"]] = relationship(
@@ -63,4 +64,5 @@ class Worker(Base):
         Index("ix_workers_org_id", "org_id"),
         Index("ix_workers_org_active", "org_id", "is_active"),
         Index("ix_workers_phone", "phone"),
+        Index("ix_workers_archived_at", "archived_at"),
     )
