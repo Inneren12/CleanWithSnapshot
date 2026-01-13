@@ -4493,10 +4493,8 @@ async def admin_workers_create(
     if not name or not phone or not team_id_raw:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
 
-    # Validate password
-    if not password:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password is required")
-    if len(password) < 8:
+    # Validate password if provided
+    if password and len(password) < 8:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
     team_id = int(team_id_raw)
     team = (
@@ -4508,8 +4506,8 @@ async def admin_workers_create(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     hourly_rate_cents = int(hourly_rate_raw) if hourly_rate_raw else None
 
-    # Hash password
-    password_hash_value = hash_password(password, settings=settings)
+    # Hash password if provided
+    password_hash_value = hash_password(password, settings=settings) if password else None
 
     worker = Worker(
         name=name,
