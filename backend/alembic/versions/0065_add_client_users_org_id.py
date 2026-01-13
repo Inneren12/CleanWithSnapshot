@@ -45,18 +45,27 @@ def upgrade() -> None:
         )
     )
 
-    # Make org_id NOT NULL after backfilling
-    op.alter_column("client_users", "org_id", nullable=False)
-
-    # Add foreign key constraint to organizations
-    op.create_foreign_key(
-        "fk_client_users_org_id",
-        "client_users",
-        "organizations",
-        ["org_id"],
-        ["org_id"],
-        ondelete="CASCADE",
-    )
+    # Make org_id NOT NULL after backfilling and add foreign key constraint
+    if is_postgres:
+        op.alter_column("client_users", "org_id", nullable=False)
+        op.create_foreign_key(
+            "fk_client_users_org_id",
+            "client_users",
+            "organizations",
+            ["org_id"],
+            ["org_id"],
+            ondelete="CASCADE",
+        )
+    else:
+        with op.batch_alter_table("client_users") as batch_op:
+            batch_op.alter_column("org_id", nullable=False)
+            batch_op.create_foreign_key(
+                "fk_client_users_org_id",
+                "organizations",
+                ["org_id"],
+                ["org_id"],
+                ondelete="CASCADE",
+            )
 
     # Add index on org_id for faster queries
     op.create_index(
