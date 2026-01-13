@@ -11,8 +11,13 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.security.utils import get_authorization_scheme_param
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.domain.workers.db_models import Worker
+from app.infra.auth import verify_password
+from app.infra.db import get_db_session
 from app.settings import settings
 from app.infra.logging import update_log_context
 from app.infra.org_context import set_current_org_id
@@ -126,14 +131,13 @@ def _parse_session_token(token: str | None) -> WorkerIdentity:
 
 
 def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> WorkerIdentity:
+    """Authenticate worker using environment-configured credentials."""
     configured = _configured_workers()
-    if not configured:
-        logger.warning("worker_auth_unconfigured")
-        raise _build_auth_exception()
 
     if not credentials:
         raise _build_auth_exception()
 
+    # Try environment-based auth first (for backward compatibility)
     for worker in configured:
         if secrets.compare_digest(credentials.username, worker.username) and secrets.compare_digest(
             credentials.password, worker.password
@@ -145,7 +149,52 @@ def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> Worke
                 org_id=worker.org_id,
             )
 
+    # If env-based auth fails and no configured workers, raise error
+    if not configured:
+        logger.warning("worker_auth_unconfigured")
+
     raise _build_auth_exception()
+
+
+async def _authenticate_worker_db(
+    session: AsyncSession, credentials: HTTPBasicCredentials | None
+) -> WorkerIdentity:
+    """Authenticate worker using database phone + password."""
+    if not credentials:
+        raise _build_auth_exception()
+
+    phone = credentials.username
+    password = credentials.password
+
+    # Look up worker by phone
+    stmt = select(Worker).where(Worker.phone == phone, Worker.is_active == True)  # noqa: E712
+    result = await session.execute(stmt)
+    worker = result.scalar_one_or_none()
+
+    if not worker:
+        raise _build_auth_exception("Invalid phone or password")
+
+    # Check if worker has password set
+    if not worker.password_hash:
+        raise _build_auth_exception("Worker authentication not configured. Please contact your administrator.")
+
+    # Verify password
+    is_valid, upgraded_hash = verify_password(password, worker.password_hash, settings=settings)
+    if not is_valid:
+        raise _build_auth_exception("Invalid phone or password")
+
+    # Auto-upgrade password hash if needed
+    if upgraded_hash:
+        worker.password_hash = upgraded_hash
+        session.add(worker)
+        await session.flush()
+
+    return WorkerIdentity(
+        username=worker.name,
+        role=WorkerRole.WORKER,
+        team_id=worker.team_id,
+        org_id=worker.org_id,
+    )
 
 
 def _credentials_from_header(request: Request) -> HTTPBasicCredentials | None:
@@ -164,16 +213,25 @@ def _credentials_from_header(request: Request) -> HTTPBasicCredentials | None:
 
 
 async def get_worker_identity(
-    request: Request, credentials: HTTPBasicCredentials | None = Depends(security)
+    request: Request,
+    credentials: HTTPBasicCredentials | None = Depends(security),
+    session: AsyncSession = Depends(get_db_session),
 ) -> WorkerIdentity:
     cached: WorkerIdentity | None = getattr(request.state, "worker_identity", None)
     if cached:
         return cached
+
     if credentials:
-        identity = _authenticate_credentials(credentials)
+        # Try environment-based auth first
+        try:
+            identity = _authenticate_credentials(credentials)
+        except HTTPException:
+            # If env-based auth fails, try database auth
+            identity = await _authenticate_worker_db(session, credentials)
     else:
         token = request.cookies.get(SESSION_COOKIE_NAME)
         identity = _parse_session_token(token)
+
     request.state.worker_identity = identity
     request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
     set_current_org_id(request.state.current_org_id)
