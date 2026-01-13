@@ -313,8 +313,12 @@ export default function HomePage() {
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileReady, setTurnstileReady] = useState(false);
-  const [turnstileError, setTurnstileError] = useState<string | null>(null);
+  const [turnstileLoadError, setTurnstileLoadError] = useState<string | null>(null);
+  const [leadTurnstileError, setLeadTurnstileError] = useState<string | null>(null);
   const [turnstileWidgetId, setTurnstileWidgetId] = useState<string | null>(null);
+  const [bookingTurnstileToken, setBookingTurnstileToken] = useState<string | null>(null);
+  const [bookingTurnstileError, setBookingTurnstileError] = useState<string | null>(null);
+  const [bookingTurnstileWidgetId, setBookingTurnstileWidgetId] = useState<string | null>(null);
 
   // UI Contract Extension State (S2-A)
   const [choices, setChoices] = useState<ChoicesConfig | null>(null);
@@ -349,7 +353,7 @@ export default function HomePage() {
     );
 
     const handleLoad = () => setTurnstileReady(true);
-    const handleError = () => setTurnstileError('Captcha failed to load. Please try again later.');
+    const handleError = () => setTurnstileLoadError('Captcha failed to load. Please try again later.');
 
     if (existingScript) {
       existingScript.addEventListener('load', handleLoad);
@@ -622,6 +626,7 @@ export default function HomePage() {
       setShowLeadForm(false);
       setIssuedReferralCode(leadResponse.referral_code ?? null);
       setTurnstileToken(null);
+      setLeadTurnstileError(null);
       if (turnstileWidgetId && window.turnstile) {
         window.turnstile.reset(turnstileWidgetId);
       }
@@ -638,6 +643,18 @@ export default function HomePage() {
       setBookingError('Please select a slot to book.');
       return;
     }
+    if (!turnstileSiteKey) {
+      setBookingError('Captcha not configured. Please contact support.');
+      return;
+    }
+    if (turnstileLoadError) {
+      setBookingError(turnstileLoadError);
+      return;
+    }
+    if (!bookingTurnstileToken) {
+      setBookingError('Please complete the captcha to book your slot.');
+      return;
+    }
     setBookingSubmitting(true);
     setBookingError(null);
     setBookingSuccess(null);
@@ -650,7 +667,8 @@ export default function HomePage() {
         body: JSON.stringify({
           starts_at: selectedSlot,
           time_on_site_hours: estimate.time_on_site_hours,
-          lead_id: undefined
+          lead_id: undefined,
+          captcha_token: bookingTurnstileToken
         })
       });
 
@@ -661,6 +679,11 @@ export default function HomePage() {
 
       const booking = (await response.json()) as { booking_id: string; starts_at: string };
       setBookingSuccess(`Booked slot for ${formatSlotTime(booking.starts_at)}`);
+      setBookingTurnstileToken(null);
+      setBookingTurnstileError(null);
+      if (bookingTurnstileWidgetId && window.turnstile) {
+        window.turnstile.reset(bookingTurnstileWidgetId);
+      }
       await loadSlots();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unexpected booking error';
@@ -668,10 +691,31 @@ export default function HomePage() {
     } finally {
       setBookingSubmitting(false);
     }
-  }, [apiBaseUrl, estimate, loadSlots, selectedSlot]);
+  }, [
+    apiBaseUrl,
+    bookingTurnstileToken,
+    bookingTurnstileWidgetId,
+    estimate,
+    loadSlots,
+    selectedSlot,
+    turnstileLoadError,
+    turnstileSiteKey
+  ]);
 
   const leadSubmitDisabled =
-    leadSubmitting || !turnstileSiteKey || !turnstileToken || Boolean(turnstileError);
+    leadSubmitting ||
+    !turnstileSiteKey ||
+    !turnstileToken ||
+    Boolean(turnstileLoadError) ||
+    Boolean(leadTurnstileError);
+  const bookingSubmitDisabled =
+    bookingSubmitting ||
+    !selectedSlot ||
+    slotsLoading ||
+    !turnstileSiteKey ||
+    !bookingTurnstileToken ||
+    Boolean(turnstileLoadError) ||
+    Boolean(bookingTurnstileError);
 
   return (
     <div className="page">
@@ -1099,11 +1143,39 @@ export default function HomePage() {
                     </div>
                   ) : null}
                   <div className="booking-actions">
+                    {!turnstileSiteKey ? (
+                      <p className="alert alert-error">Captcha not configured. Please try again later.</p>
+                    ) : null}
+                    {turnstileLoadError ? (
+                      <p className="alert alert-error">{turnstileLoadError}</p>
+                    ) : null}
+                    {bookingTurnstileError ? (
+                      <p className="alert alert-error">{bookingTurnstileError}</p>
+                    ) : null}
+                    {turnstileSiteKey ? (
+                      <TurnstileWidget
+                        siteKey={turnstileSiteKey}
+                        ready={turnstileReady}
+                        onVerify={(token) => {
+                          setBookingTurnstileToken(token);
+                          setBookingTurnstileError(null);
+                        }}
+                        onExpire={() => {
+                          setBookingTurnstileToken(null);
+                          setBookingTurnstileError('Captcha expired. Please retry.');
+                        }}
+                        onError={() => {
+                          setBookingTurnstileToken(null);
+                          setBookingTurnstileError('Captcha verification failed. Please retry.');
+                        }}
+                        onWidgetId={(widgetId) => setBookingTurnstileWidgetId(widgetId)}
+                      />
+                    ) : null}
                     <button
                       type="button"
                       className="btn btn-primary"
                       onClick={() => void bookSelectedSlot()}
-                      disabled={bookingSubmitting || !selectedSlot || slotsLoading}
+                      disabled={bookingSubmitDisabled}
                     >
                       {bookingSubmitting ? 'Booking...' : 'Book selected time'}
                     </button>
@@ -1273,8 +1345,11 @@ export default function HomePage() {
                       {!turnstileSiteKey ? (
                         <p className="alert alert-error">Captcha not configured. Please try again later.</p>
                       ) : null}
-                      {turnstileError ? (
-                        <p className="alert alert-error">{turnstileError}</p>
+                      {turnstileLoadError ? (
+                        <p className="alert alert-error">{turnstileLoadError}</p>
+                      ) : null}
+                      {leadTurnstileError ? (
+                        <p className="alert alert-error">{leadTurnstileError}</p>
                       ) : null}
                       {turnstileSiteKey ? (
                         <TurnstileWidget
@@ -1282,15 +1357,15 @@ export default function HomePage() {
                           ready={turnstileReady}
                           onVerify={(token) => {
                             setTurnstileToken(token);
-                            setTurnstileError(null);
+                            setLeadTurnstileError(null);
                           }}
                           onExpire={() => {
                             setTurnstileToken(null);
-                            setTurnstileError('Captcha expired. Please retry.');
+                            setLeadTurnstileError('Captcha expired. Please retry.');
                           }}
                           onError={() => {
                             setTurnstileToken(null);
-                            setTurnstileError('Captcha verification failed. Please retry.');
+                            setLeadTurnstileError('Captcha verification failed. Please retry.');
                           }}
                           onWidgetId={(widgetId) => setTurnstileWidgetId(widgetId)}
                         />

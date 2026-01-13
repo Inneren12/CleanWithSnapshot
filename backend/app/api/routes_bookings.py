@@ -24,6 +24,7 @@ from app.domain.leads.db_models import Lead
 from app.domain.clients import service as client_service
 from app.domain.notifications import email_service
 from app.infra import stripe as stripe_infra
+from app.infra.captcha import verify_turnstile
 from app.infra.email import resolve_app_email_adapter
 from app.settings import settings
 
@@ -237,6 +238,25 @@ async def create_booking(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
 ) -> booking_schemas.BookingResponse:
+    if settings.captcha_mode != "off" and settings.captcha_enabled:
+        if settings.captcha_mode == "turnstile" and not settings.turnstile_secret_key:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Captcha not configured")
+        if not request.captcha_token:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Captcha token is required"
+            )
+        turnstile_transport = getattr(http_request.app.state, "turnstile_transport", None)
+        remote_ip = http_request.client.host if http_request.client else None
+        captcha_ok = await verify_turnstile(
+            request.captcha_token,
+            remote_ip,
+            transport=turnstile_transport,
+        )
+        if not captcha_ok:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Captcha verification failed"
+            )
+
     start = request.normalized_start()
     org_id = entitlements.resolve_org_id(http_request)
     await entitlements.require_booking_entitlement(http_request, session=session)
@@ -428,5 +448,4 @@ async def cleanup_pending_bookings(
 ) -> dict[str, int]:
     deleted = await booking_service.cleanup_stale_bookings(session, timedelta(minutes=30))
     return {"deleted": deleted}
-
 

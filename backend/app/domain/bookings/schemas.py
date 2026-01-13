@@ -55,6 +55,10 @@ class BookingCreateRequest(BaseModel):
     time_on_site_hours: float = Field(gt=0)
     lead_id: str | None = None
     service_type: CleaningType | None = None
+    captcha_token: str | None = Field(
+        None,
+        description="Captcha token when CAPTCHA_MODE is enabled",
+    )
 
     @property
     def duration_minutes(self) -> int:

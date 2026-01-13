@@ -63,6 +63,7 @@ Steps:
 | `EXPORT_MODE` | optional | `off`/`webhook`/`sheets`; default `off` |
 | `EXPORT_WEBHOOK_URL` | optional | Required when `EXPORT_MODE=webhook` |
 | `EXPORT_WEBHOOK_ALLOWED_HOSTS` | optional | Comma/JSON list of allowed webhook hosts |
+| `CAPTCHA_ENABLED` | optional | Set `false` to bypass captcha in dev environments |
 | `CAPTCHA_MODE` | optional | `off` or `turnstile` |
 | `TURNSTILE_SECRET_KEY` | optional | Required when `CAPTCHA_MODE=turnstile` |
 | `RETENTION_*` | optional | `RETENTION_CHAT_DAYS`, `RETENTION_LEAD_DAYS`, `RETENTION_ENABLE_LEADS` |

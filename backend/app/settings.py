@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     export_webhook_allowed_hosts_raw: str | None = Field(None, validation_alias="export_webhook_allowed_hosts")
     export_webhook_allow_http: bool = Field(False)
     export_webhook_block_private_ips: bool = Field(True)
+    captcha_enabled: bool = Field(True)
     captcha_mode: Literal["off", "turnstile"] = Field("off")
     turnstile_secret_key: str | None = Field(None)
     retention_chat_days: int = Field(30)
@@ -246,6 +247,8 @@ class Settings(BaseSettings):
         if self.app_env != "prod":
             if self.legacy_basic_auth_enabled is None:
                 self.legacy_basic_auth_enabled = True
+            if not self.captcha_enabled:
+                self.captcha_mode = "off"
             return self
 
         if self.legacy_basic_auth_enabled is None:
@@ -294,6 +297,9 @@ class Settings(BaseSettings):
             "WORKER_PORTAL_SECRET",
             {"dev-worker-portal-secret"},
         )
+
+        if not self.captcha_enabled:
+            raise ValueError("APP_ENV=prod requires CAPTCHA_ENABLED=true")
 
         if self.strict_cors:
             if not self.cors_origins:
