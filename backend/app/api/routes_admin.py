@@ -5538,8 +5538,8 @@ async def admin_bookings_update(
     booking.assigned_worker_id = assigned_worker_id
     booking.starts_at = starts_at
     booking.duration_minutes = duration_minutes
-    if assigned_worker_id:
-        await _sync_booking_workers(session, booking.booking_id, [assigned_worker_id], replace=False)
+    worker_ids = [assigned_worker_id] if assigned_worker_id else []
+    await _sync_booking_workers(session, booking.booking_id, worker_ids, replace=True)
 
     await audit_service.record_action(
         session,
