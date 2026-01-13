@@ -54,6 +54,7 @@ from app.domain.bookings.db_models import Booking, Team
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
+from app.domain.clients.db_models import ClientUser
 from app.domain.export_events import schemas as export_schemas
 from app.domain.export_events.db_models import ExportEvent
 from app.domain.export_events.schemas import ExportEventResponse, ExportReplayResponse
@@ -107,6 +108,7 @@ from app.domain.subscriptions import service as subscription_service
 from app.domain.subscriptions.db_models import Subscription
 from app.domain.admin_audit import service as audit_service
 from app.domain.workers.db_models import Worker
+from app.infra.auth import hash_password
 from app.infra.export import send_export_with_retry, validate_webhook_url
 from app.infra.logging import update_log_context
 from app.infra.storage import new_storage_backend
@@ -599,6 +601,11 @@ def _wrap_page(
             _icon("users") + html.escape(tr(nav_lang, "admin.nav.workers")),
             "/v1/admin/ui/workers",
             "workers",
+        ),
+        (
+            _icon("users") + html.escape(tr(nav_lang, "admin.nav.clients")),
+            "/v1/admin/ui/clients",
+            "clients",
         ),
         (
             _icon("calendar") + html.escape(tr(nav_lang, "admin.nav.dispatch")),
@@ -4296,6 +4303,11 @@ def _render_worker_form(worker: Worker | None, teams: list[Team], lang: str | No
           <input class=\"input\" type=\"text\" name=\"phone\" required value=\"{html.escape(getattr(worker, 'phone', '') or '')}\" />
         </div>
         <div class=\"form-group\">
+          <label>{html.escape(tr(lang, 'admin.workers.password'))}</label>
+          <input class=\"input\" type=\"password\" name=\"password\" minlength=\"8\" placeholder=\"{html.escape(tr(lang, 'admin.workers.password_placeholder'))}\" {'required' if worker is None else ''} />
+          {'' if worker is None else f'<div class=\"muted\">{html.escape(tr(lang, "admin.workers.password_hint"))}</div>'}
+        </div>
+        <div class=\"form-group\">
           <label>{html.escape(tr(lang, 'admin.workers.email'))}</label>
           <input class=\"input\" type=\"email\" name=\"email\" value=\"{html.escape(getattr(worker, 'email', '') or '')}\" />
         </div>
@@ -4465,6 +4477,7 @@ async def admin_workers_create(
     phone = (form.get("phone") or "").strip()
     email = (form.get("email") or "").strip() or None
     role = (form.get("role") or "").strip() or None
+    password = (form.get("password") or "").strip()
     team_id_raw = form.get("team_id")
     hourly_rate_raw = form.get("hourly_rate_cents")
     is_active = (
@@ -4475,6 +4488,12 @@ async def admin_workers_create(
 
     if not name or not phone or not team_id_raw:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
+
+    # Validate password
+    if not password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password is required")
+    if len(password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
     team_id = int(team_id_raw)
     team = (
         await session.execute(
@@ -4484,9 +4503,14 @@ async def admin_workers_create(
     if team is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     hourly_rate_cents = int(hourly_rate_raw) if hourly_rate_raw else None
+
+    # Hash password
+    password_hash_value = hash_password(password, settings=settings)
+
     worker = Worker(
         name=name,
         phone=phone,
+        password_hash=password_hash_value,
         email=email,
         role=role,
         team_id=team_id,
@@ -4592,6 +4616,14 @@ async def admin_workers_update(
     worker.phone = (form.get("phone") or worker.phone).strip()
     worker.email = (form.get("email") or "").strip() or None
     worker.role = (form.get("role") or "").strip() or None
+
+    # Update password if provided
+    password = (form.get("password") or "").strip()
+    if password:
+        if len(password) < 8:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+        worker.password_hash = hash_password(password, settings=settings)
+
     team_id_raw = form.get("team_id")
     if team_id_raw:
         team = (
@@ -4635,6 +4667,482 @@ async def admin_workers_update(
     )
     await session.commit()
     return RedirectResponse("/v1/admin/ui/workers", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# ============================================================
+# Client Management Routes
+# ============================================================
+
+
+def _render_client_form(client: ClientUser | None, lang: str | None, csrf_input: str) -> str:
+    return f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title with-icon">{_icon('users')}{html.escape(tr(lang, 'admin.clients.title'))}</div>
+          <div class="muted">{html.escape(tr(lang, 'admin.clients.subtitle'))}</div>
+        </div>
+      </div>
+      <form class="stack" method="post">
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.clients.name'))}</label>
+          <input class="input" type="text" name="name" value="{html.escape(getattr(client, 'name', '') or '')}" />
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.clients.phone'))}</label>
+          <input class="input" type="text" name="phone" value="{html.escape(getattr(client, 'phone', '') or '')}" />
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.clients.email'))}</label>
+          <input class="input" type="email" name="email" required value="{html.escape(getattr(client, 'email', '') or '')}" />
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.clients.address'))}</label>
+          <input class="input" type="text" name="address" value="{html.escape(getattr(client, 'address', '') or '')}" />
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.clients.notes'))}</label>
+          <textarea class="input" name="notes" rows="3">{html.escape(getattr(client, 'notes', '') or '')}</textarea>
+        </div>
+        {csrf_input}
+        <button class="btn" type="submit">{html.escape(tr(lang, 'admin.clients.save'))}</button>
+      </form>
+    </div>
+    """
+
+
+async def _list_clients(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    q: str | None,
+) -> list[ClientUser]:
+    filters = [ClientUser.org_id == org_id]
+    if q:
+        pattern = f"%{q.lower()}%"
+        filters.append(
+            or_(
+                func.lower(ClientUser.name).like(pattern),
+                func.lower(ClientUser.phone).like(pattern),
+                func.lower(ClientUser.email).like(pattern),
+            )
+        )
+    stmt = select(ClientUser).where(*filters).order_by(ClientUser.created_at.desc())
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+@router.get("/v1/admin/ui/clients", response_class=HTMLResponse)
+async def admin_clients_list(
+    request: Request,
+    q: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    lang = resolve_lang(request)
+    clients = await _list_clients(session, org_id=org_id, q=q)
+
+    search_value = html.escape(q or "")
+    search_form = f"""
+    <form class="stack" method="get" style="margin-bottom: var(--space-lg);">
+      <div class="form-group">
+        <label>{html.escape(tr(lang, 'admin.clients.search'))}</label>
+        <input class="input" type="text" name="q" value="{search_value}" />
+      </div>
+      <button class="btn" type="submit">Search</button>
+    </form>
+    """
+
+    rows = []
+    for client in clients:
+        rows.append(f"""
+        <tr>
+          <td><a href="/v1/admin/ui/clients/{html.escape(client.client_id)}">{html.escape(client.name or '—')}</a></td>
+          <td>{html.escape(client.email or '—')}</td>
+          <td>{html.escape(client.phone or '—')}</td>
+          <td>{html.escape(client.address or '—')}</td>
+        </tr>
+        """)
+
+    table = f"""
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{html.escape(tr(lang, 'admin.clients.name'))}</th>
+          <th>{html.escape(tr(lang, 'admin.clients.email'))}</th>
+          <th>{html.escape(tr(lang, 'admin.clients.phone'))}</th>
+          <th>{html.escape(tr(lang, 'admin.clients.address'))}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {''.join(rows) if rows else f'<tr><td colspan="4">{html.escape(tr(lang, "admin.clients.none"))}</td></tr>'}
+      </tbody>
+    </table>
+    """ if clients else f'<p class="muted">{html.escape(tr(lang, "admin.clients.none"))}</p>'
+
+    content = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title with-icon">{_icon('users')}{html.escape(tr(lang, 'admin.clients.title'))}</div>
+          <div class="muted">{html.escape(tr(lang, 'admin.clients.subtitle'))}</div>
+        </div>
+        <a class="btn" href="/v1/admin/ui/clients/new">{html.escape(tr(lang, 'admin.clients.create'))}</a>
+      </div>
+    </div>
+    {search_form}
+    {table}
+    """
+
+    return HTMLResponse(_wrap_page(request, content, title="Admin — Clients", active="clients", page_lang=lang))
+
+
+@router.get("/v1/admin/ui/clients/new", response_class=HTMLResponse)
+async def admin_clients_new_form(
+    request: Request,
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    csrf_token = get_csrf_token(request)
+    content = _render_client_form(None, lang, render_csrf_input(csrf_token))
+    response = HTMLResponse(_wrap_page(request, content, title="Admin — New Client", active="clients", page_lang=lang))
+    response.set_cookie("csrf_token", csrf_token, httponly=True, samesite="lax", secure=settings.app_env != "dev")
+    return response
+
+
+@router.post("/v1/admin/ui/clients/new", response_class=HTMLResponse)
+async def admin_clients_create(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    form = await request.form()
+    name = (form.get("name") or "").strip() or None
+    phone = (form.get("phone") or "").strip() or None
+    email = (form.get("email") or "").strip()
+    address = (form.get("address") or "").strip() or None
+    notes = (form.get("notes") or "").strip() or None
+
+    if not email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")
+
+    client = ClientUser(
+        name=name,
+        phone=phone,
+        email=email,
+        address=address,
+        notes=notes,
+        org_id=org_id,
+    )
+    session.add(client)
+    await session.flush()
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="CREATE_CLIENT",
+        resource_type="client",
+        resource_id=None,
+        before=None,
+        after={
+            "name": name,
+            "phone": phone,
+            "email": email,
+            "address": address,
+            "notes": notes,
+        },
+    )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/v1/admin/ui/clients/{client_id}", response_class=HTMLResponse)
+async def admin_clients_edit_form(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    csrf_token = get_csrf_token(request)
+    response = HTMLResponse(
+        _wrap_page(
+            request,
+            _render_client_form(client, lang, render_csrf_input(csrf_token)),
+            title="Admin — Edit Client",
+            active="clients",
+            page_lang=lang,
+        )
+    )
+    response.set_cookie("csrf_token", csrf_token, httponly=True, samesite="lax", secure=settings.app_env != "dev")
+    return response
+
+
+@router.post("/v1/admin/ui/clients/{client_id}", response_class=HTMLResponse)
+async def admin_clients_update(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    before = {
+        "name": client.name,
+        "phone": client.phone,
+        "email": client.email,
+        "address": client.address,
+        "notes": client.notes,
+    }
+
+    form = await request.form()
+    client.name = (form.get("name") or "").strip() or None
+    client.phone = (form.get("phone") or "").strip() or None
+    client.email = (form.get("email") or client.email).strip()
+    client.address = (form.get("address") or "").strip() or None
+    client.notes = (form.get("notes") or "").strip() or None
+
+    if not client.email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UPDATE_CLIENT",
+        resource_type="client",
+        resource_id=client_id,
+        before=before,
+        after={
+            "name": client.name,
+            "phone": client.phone,
+            "email": client.email,
+            "address": client.address,
+            "notes": client.notes,
+        },
+    )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# ============================================================
+# Booking Creation Routes
+# ============================================================
+
+
+def _render_booking_form(
+    teams: list[Team],
+    clients: list[ClientUser],
+    workers: list[Worker],
+    lang: str | None,
+    csrf_input: str,
+) -> str:
+    team_options = "".join(
+        f'<option value="{team.team_id}">{html.escape(team.name)}</option>'
+        for team in teams
+    )
+
+    client_options = '<option value="">—</option>' + "".join(
+        f'<option value="{client.client_id}">{html.escape((client.name or client.email))}</option>'
+        for client in clients
+    )
+
+    worker_options = '<option value="">—</option>' + "".join(
+        f'<option value="{worker.worker_id}">{html.escape(worker.name)}</option>'
+        for worker in workers
+    )
+
+    return f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title with-icon">{_icon('calendar')}{html.escape(tr(lang, 'admin.bookings.title'))}</div>
+          <div class="muted">{html.escape(tr(lang, 'admin.bookings.subtitle'))}</div>
+        </div>
+      </div>
+      <form class="stack" method="post">
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.bookings.team'))}</label>
+          <select class="input" name="team_id" required>{team_options}</select>
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.bookings.client'))}</label>
+          <select class="input" name="client_id">{client_options}</select>
+          <div class="muted">{html.escape(tr(lang, 'admin.bookings.select_client'))}</div>
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.bookings.worker'))}</label>
+          <select class="input" name="assigned_worker_id">{worker_options}</select>
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.bookings.starts_at'))}</label>
+          <input class="input" type="datetime-local" name="starts_at" required />
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.bookings.duration'))}</label>
+          <input class="input" type="number" name="duration_minutes" min="30" step="30" value="120" required />
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.bookings.address'))}</label>
+          <input class="input" type="text" name="address" />
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.bookings.notes'))}</label>
+          <textarea class="input" name="notes" rows="3"></textarea>
+        </div>
+        {csrf_input}
+        <button class="btn" type="submit">{html.escape(tr(lang, 'admin.bookings.save'))}</button>
+      </form>
+    </div>
+    """
+
+
+@router.get("/v1/admin/ui/bookings/new", response_class=HTMLResponse)
+async def admin_bookings_new_form(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+
+    # Fetch teams
+    teams = (
+        await session.execute(
+            select(Team).where(Team.org_id == org_id).order_by(Team.name)
+        )
+    ).scalars().all()
+
+    # Fetch clients
+    clients = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.org_id == org_id).order_by(ClientUser.created_at.desc())
+        )
+    ).scalars().all()
+
+    # Fetch active workers
+    workers = (
+        await session.execute(
+            select(Worker).where(Worker.org_id == org_id, Worker.is_active == True).order_by(Worker.name)  # noqa: E712
+        )
+    ).scalars().all()
+
+    csrf_token = get_csrf_token(request)
+    content = _render_booking_form(teams, clients, workers, lang, render_csrf_input(csrf_token))
+    response = HTMLResponse(_wrap_page(request, content, title="Admin — Create Booking", active="dispatch", page_lang=lang))
+    response.set_cookie("csrf_token", csrf_token, httponly=True, samesite="lax", secure=settings.app_env != "dev")
+    return response
+
+
+@router.post("/v1/admin/ui/bookings/create", response_class=HTMLResponse)
+async def admin_bookings_create(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    form = await request.form()
+
+    team_id_raw = form.get("team_id")
+    client_id = (form.get("client_id") or "").strip() or None
+    assigned_worker_id_raw = form.get("assigned_worker_id")
+    starts_at_raw = form.get("starts_at")
+    duration_minutes_raw = form.get("duration_minutes")
+    address = (form.get("address") or "").strip() or None
+    notes = (form.get("notes") or "").strip() or None
+
+    if not team_id_raw or not starts_at_raw or not duration_minutes_raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
+
+    team_id = int(team_id_raw)
+    duration_minutes = int(duration_minutes_raw)
+    assigned_worker_id = int(assigned_worker_id_raw) if assigned_worker_id_raw else None
+
+    # Validate team exists
+    team = (
+        await session.execute(
+            select(Team).where(Team.team_id == team_id, Team.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if team is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    # Validate worker if assigned
+    if assigned_worker_id:
+        worker = (
+            await session.execute(
+                select(Worker).where(Worker.worker_id == assigned_worker_id, Worker.org_id == org_id)
+            )
+        ).scalar_one_or_none()
+        if worker is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+
+    # Parse datetime
+    try:
+        starts_at = datetime.fromisoformat(starts_at_raw).replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid datetime format") from exc
+
+    # Create booking
+    booking = Booking(
+        booking_id=str(uuid.uuid4()),
+        org_id=org_id,
+        client_id=client_id,
+        team_id=team_id,
+        assigned_worker_id=assigned_worker_id,
+        starts_at=starts_at,
+        duration_minutes=duration_minutes,
+        status="PENDING",
+        deposit_cents=0,
+        base_charge_cents=0,
+        refund_total_cents=0,
+        credit_note_total_cents=0,
+    )
+    session.add(booking)
+    await session.flush()
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="CREATE_BOOKING",
+        resource_type="booking",
+        resource_id=booking.booking_id,
+        before=None,
+        after={
+            "team_id": team_id,
+            "client_id": client_id,
+            "assigned_worker_id": assigned_worker_id,
+            "starts_at": starts_at.isoformat(),
+            "duration_minutes": duration_minutes,
+            "address": address,
+            "notes": notes,
+        },
+    )
+    await session.commit()
+
+    # Redirect to dispatch board for the booking's date
+    booking_date = starts_at.date().isoformat()
+    return RedirectResponse(f"/v1/admin/ui/dispatch?date={booking_date}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/v1/admin/ui/dispatch", response_class=HTMLResponse)
