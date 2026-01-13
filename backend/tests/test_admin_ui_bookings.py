@@ -59,6 +59,7 @@ def _seed_booking(async_session_maker):
                 credit_note_total_cents=0,
             )
             session.add(booking)
+            session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker.worker_id))
             await session.commit()
             return booking.booking_id, team.team_id, client.client_id, worker.worker_id
 
@@ -98,7 +99,7 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
             data={
                 "team_id": team_id,
                 "client_id": client_id,
-                "assigned_worker_id": worker_id,
+                "worker_ids": [worker_id],
                 "starts_at": starts_at.isoformat(),
                 "duration_minutes": 90,
             },
@@ -113,7 +114,7 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
             data={
                 "team_id": team_id,
                 "client_id": client_id,
-                "assigned_worker_id": worker_id,
+                "worker_ids": [worker_id],
                 "starts_at": new_starts,
                 "duration_minutes": 150,
             },
@@ -264,7 +265,15 @@ def test_admin_edit_booking_syncs_assigned_worker(client, async_session_maker):
                     phone="+1 555-333-5555",
                     is_active=True,
                 )
-                session.add_all([worker_a, worker_b])
+                worker_c = Worker(
+                    org_id=settings.default_org_id,
+                    team_id=team.team_id,
+                    name="Worker C",
+                    email=f"worker-c-{uuid.uuid4().hex[:8]}@example.com",
+                    phone="+1 555-333-6666",
+                    is_active=True,
+                )
+                session.add_all([worker_a, worker_b, worker_c])
                 await session.flush()
 
                 starts_at = datetime.now(tz=timezone.utc).replace(microsecond=0)
@@ -284,11 +293,48 @@ def test_admin_edit_booking_syncs_assigned_worker(client, async_session_maker):
                 )
                 session.add(booking)
                 session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker_a.worker_id))
+                session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker_b.worker_id))
                 await session.commit()
-                return booking.booking_id, team.team_id, client.client_id, worker_a.worker_id, worker_b.worker_id, starts_at
+                return (
+                    booking.booking_id,
+                    team.team_id,
+                    client.client_id,
+                    worker_a.worker_id,
+                    worker_b.worker_id,
+                    worker_c.worker_id,
+                    starts_at,
+                )
 
-        booking_id, team_id, client_id, _worker_a_id, worker_b_id, starts_at = asyncio.run(seed_booking())
+        booking_id, team_id, client_id, worker_a_id, worker_b_id, worker_c_id, starts_at = asyncio.run(seed_booking())
         headers = _basic_auth("admin", "secret")
+
+        preserve_response = client.post(
+            f"/v1/admin/ui/bookings/{booking_id}/update",
+            headers=headers,
+            data={
+                "team_id": team_id,
+                "client_id": client_id,
+                "worker_ids": [worker_a_id, worker_b_id],
+                "starts_at": starts_at.isoformat(),
+                "duration_minutes": 120,
+            },
+            follow_redirects=False,
+        )
+        assert preserve_response.status_code == 303
+
+        async def verify_preserved():
+            async with async_session_maker() as session:
+                booking = await session.get(Booking, booking_id)
+                assert booking is not None
+                assert booking.assigned_worker_id == worker_a_id
+                assignments = (
+                    await session.execute(
+                        sa.select(BookingWorker.worker_id).where(BookingWorker.booking_id == booking_id)
+                    )
+                ).scalars().all()
+                assert sorted(assignments) == sorted([worker_a_id, worker_b_id])
+
+        asyncio.run(verify_preserved())
 
         update_response = client.post(
             f"/v1/admin/ui/bookings/{booking_id}/update",
@@ -296,7 +342,7 @@ def test_admin_edit_booking_syncs_assigned_worker(client, async_session_maker):
             data={
                 "team_id": team_id,
                 "client_id": client_id,
-                "assigned_worker_id": worker_b_id,
+                "worker_ids": [worker_b_id, worker_c_id],
                 "starts_at": starts_at.isoformat(),
                 "duration_minutes": 120,
             },
@@ -314,7 +360,7 @@ def test_admin_edit_booking_syncs_assigned_worker(client, async_session_maker):
                         sa.select(BookingWorker.worker_id).where(BookingWorker.booking_id == booking_id)
                     )
                 ).scalars().all()
-                assert assignments == [worker_b_id]
+                assert sorted(assignments) == sorted([worker_b_id, worker_c_id])
 
         asyncio.run(verify_replaced())
 
@@ -324,7 +370,6 @@ def test_admin_edit_booking_syncs_assigned_worker(client, async_session_maker):
             data={
                 "team_id": team_id,
                 "client_id": client_id,
-                "assigned_worker_id": "",
                 "starts_at": starts_at.isoformat(),
                 "duration_minutes": 120,
             },
