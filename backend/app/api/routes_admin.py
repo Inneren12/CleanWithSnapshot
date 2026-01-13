@@ -4957,19 +4957,38 @@ def _render_booking_form(
     workers: list[Worker],
     lang: str | None,
     csrf_input: str,
+    *,
+    action: str,
+    booking: Booking | None = None,
 ) -> str:
+    selected_team_id = getattr(booking, "team_id", None)
+    selected_client_id = getattr(booking, "client_id", None)
+    selected_worker_id = getattr(booking, "assigned_worker_id", None)
+    starts_at_value = ""
+    if getattr(booking, "starts_at", None):
+        starts_at_dt = booking.starts_at
+        if starts_at_dt.tzinfo is None:
+            starts_at_dt = starts_at_dt.replace(tzinfo=timezone.utc)
+        else:
+            starts_at_dt = starts_at_dt.astimezone(timezone.utc)
+        starts_at_value = starts_at_dt.strftime("%Y-%m-%dT%H:%M")
+    duration_value = str(getattr(booking, "duration_minutes", 120) or 120)
+
     team_options = "".join(
-        f'<option value="{team.team_id}">{html.escape(team.name)}</option>'
+        f'<option value="{team.team_id}" {"selected" if team.team_id == selected_team_id else ""}>'
+        f"{html.escape(team.name)}</option>"
         for team in teams
     )
 
     client_options = '<option value="">—</option>' + "".join(
-        f'<option value="{client.client_id}">{html.escape((client.name or client.email))}</option>'
+        f'<option value="{client.client_id}" {"selected" if client.client_id == selected_client_id else ""}>'
+        f"{html.escape((client.name or client.email))}</option>"
         for client in clients
     )
 
     worker_options = '<option value="">—</option>' + "".join(
-        f'<option value="{worker.worker_id}">{html.escape(worker.name)}</option>'
+        f'<option value="{worker.worker_id}" {"selected" if worker.worker_id == selected_worker_id else ""}>'
+        f"{html.escape(worker.name)}</option>"
         for worker in workers
     )
 
@@ -4981,7 +5000,7 @@ def _render_booking_form(
           <div class="muted">{html.escape(tr(lang, 'admin.bookings.subtitle'))}</div>
         </div>
       </div>
-      <form class="stack" method="post">
+      <form class="stack" method="post" action="{html.escape(action)}">
         <div class="form-group">
           <label>{html.escape(tr(lang, 'admin.bookings.team'))}</label>
           <select class="input" name="team_id" required>{team_options}</select>
@@ -4997,11 +5016,11 @@ def _render_booking_form(
         </div>
         <div class="form-group">
           <label>{html.escape(tr(lang, 'admin.bookings.starts_at'))}</label>
-          <input class="input" type="datetime-local" name="starts_at" required />
+          <input class="input" type="datetime-local" name="starts_at" value="{starts_at_value}" required />
         </div>
         <div class="form-group">
           <label>{html.escape(tr(lang, 'admin.bookings.duration'))}</label>
-          <input class="input" type="number" name="duration_minutes" min="30" step="30" value="120" required />
+          <input class="input" type="number" name="duration_minutes" min="30" step="30" value="{duration_value}" required />
         </div>
         {csrf_input}
         <button class="btn" type="submit">{html.escape(tr(lang, 'admin.bookings.save'))}</button>
@@ -5041,7 +5060,14 @@ async def admin_bookings_new_form(
     ).scalars().all()
 
     csrf_token = get_csrf_token(request)
-    content = _render_booking_form(teams, clients, workers, lang, render_csrf_input(csrf_token))
+    content = _render_booking_form(
+        teams,
+        clients,
+        workers,
+        lang,
+        render_csrf_input(csrf_token),
+        action="/v1/admin/ui/bookings/create",
+    )
     response = HTMLResponse(_wrap_page(request, content, title="Admin — Create Booking", active="dispatch", page_lang=lang))
     response.set_cookie("csrf_token", csrf_token, httponly=True, samesite="lax", secure=settings.app_env != "dev")
     return response
@@ -5145,6 +5171,264 @@ async def admin_bookings_create(
     return RedirectResponse(f"/v1/admin/ui/dispatch?date={booking_date}", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.get("/v1/admin/ui/bookings/{booking_id}/edit", response_class=HTMLResponse)
+async def admin_bookings_edit_form(
+    request: Request,
+    booking_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+
+    booking = (
+        await session.execute(
+            select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    teams = (
+        await session.execute(
+            select(Team).where(Team.org_id == org_id).order_by(Team.name)
+        )
+    ).scalars().all()
+    clients = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.org_id == org_id).order_by(ClientUser.created_at.desc())
+        )
+    ).scalars().all()
+    workers = (
+        await session.execute(
+            select(Worker).where(Worker.org_id == org_id, Worker.is_active == True).order_by(Worker.name)  # noqa: E712
+        )
+    ).scalars().all()
+
+    csrf_token = get_csrf_token(request)
+    form_html = _render_booking_form(
+        teams,
+        clients,
+        workers,
+        lang,
+        render_csrf_input(csrf_token),
+        action=f"/v1/admin/ui/bookings/{booking_id}/update",
+        booking=booking,
+    )
+    delete_html = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">Delete Booking</div>
+          <div class="muted">Type DELETE to confirm deletion.</div>
+        </div>
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/bookings/{html.escape(booking_id)}/delete">
+        <input class="input" type="text" name="confirm" placeholder="DELETE" required />
+        {render_csrf_input(csrf_token)}
+        <button class="btn danger" type="submit">Delete Booking</button>
+      </form>
+    </div>
+    """
+    content = form_html + delete_html
+    response = HTMLResponse(_wrap_page(request, content, title="Admin — Edit Booking", active="dispatch", page_lang=lang))
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
+@router.post("/v1/admin/ui/bookings/{booking_id}/update", response_class=HTMLResponse)
+async def admin_bookings_update(
+    request: Request,
+    booking_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    form = await request.form()
+
+    booking = (
+        await session.execute(
+            select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    team_id_raw = form.get("team_id")
+    client_id = (form.get("client_id") or "").strip() or None
+    assigned_worker_id_raw = form.get("assigned_worker_id")
+    starts_at_raw = form.get("starts_at")
+    duration_minutes_raw = form.get("duration_minutes")
+
+    if not team_id_raw or not starts_at_raw or not duration_minutes_raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
+
+    team_id = int(team_id_raw)
+    duration_minutes = int(duration_minutes_raw)
+    assigned_worker_id = int(assigned_worker_id_raw) if assigned_worker_id_raw else None
+
+    team = (
+        await session.execute(
+            select(Team).where(Team.team_id == team_id, Team.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if team is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    if assigned_worker_id:
+        worker = (
+            await session.execute(
+                select(Worker).where(Worker.worker_id == assigned_worker_id, Worker.org_id == org_id)
+            )
+        ).scalar_one_or_none()
+        if worker is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+        if worker.team_id != team_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
+
+    if client_id:
+        client = (
+            await session.execute(
+                select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+            )
+        ).scalar_one_or_none()
+        if client is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client not found or does not belong to your organization")
+
+    try:
+        starts_at = datetime.fromisoformat(starts_at_raw).replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid datetime format") from exc
+
+    before = {
+        "team_id": booking.team_id,
+        "client_id": booking.client_id,
+        "assigned_worker_id": booking.assigned_worker_id,
+        "starts_at": booking.starts_at.isoformat() if booking.starts_at else None,
+        "duration_minutes": booking.duration_minutes,
+    }
+    booking.team_id = team_id
+    booking.client_id = client_id
+    booking.assigned_worker_id = assigned_worker_id
+    booking.starts_at = starts_at
+    booking.duration_minutes = duration_minutes
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UPDATE_BOOKING",
+        resource_type="booking",
+        resource_id=booking.booking_id,
+        before=before,
+        after={
+            "team_id": team_id,
+            "client_id": client_id,
+            "assigned_worker_id": assigned_worker_id,
+            "starts_at": starts_at.isoformat(),
+            "duration_minutes": duration_minutes,
+        },
+    )
+    await session.commit()
+
+    booking_date = starts_at.date().isoformat()
+    return RedirectResponse(f"/v1/admin/ui/dispatch?date={booking_date}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/bookings/{booking_id}/delete", response_class=HTMLResponse)
+async def admin_bookings_delete(
+    request: Request,
+    booking_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    form = await request.form()
+    confirmation = (form.get("confirm") or "").strip().upper()
+    if confirmation != "DELETE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deletion confirmation required")
+
+    booking = (
+        await session.execute(
+            select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    before = {
+        "team_id": booking.team_id,
+        "client_id": booking.client_id,
+        "assigned_worker_id": booking.assigned_worker_id,
+        "starts_at": booking.starts_at.isoformat() if booking.starts_at else None,
+        "duration_minutes": booking.duration_minutes,
+    }
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="DELETE_BOOKING",
+        resource_type="booking",
+        resource_id=booking.booking_id,
+        before=before,
+        after=None,
+    )
+    await session.delete(booking)
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/dispatch", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/bookings/purge", response_class=HTMLResponse)
+async def admin_bookings_purge(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    form = await request.form()
+    confirmation = (form.get("confirm") or "").strip().upper()
+    if confirmation != "PURGE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Purge confirmation required")
+
+    date_from_raw = (form.get("date_from") or "").strip() or None
+    date_to_raw = (form.get("date_to") or "").strip() or None
+    try:
+        date_from_val = date.fromisoformat(date_from_raw) if date_from_raw else None
+        date_to_val = date.fromisoformat(date_to_raw) if date_to_raw else None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format") from exc
+    if date_from_val and date_to_val and date_from_val > date_to_val:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date range")
+
+    conditions = [Booking.org_id == org_id]
+    if date_from_val:
+        start_dt = datetime.combine(date_from_val, time.min).replace(tzinfo=timezone.utc)
+        conditions.append(Booking.starts_at >= start_dt)
+    if date_to_val:
+        end_dt = datetime.combine(date_to_val + timedelta(days=1), time.min).replace(tzinfo=timezone.utc)
+        conditions.append(Booking.starts_at < end_dt)
+
+    count_stmt = select(func.count()).select_from(Booking).where(and_(*conditions))
+    to_delete = (await session.execute(count_stmt)).scalar_one()
+
+    delete_stmt = sa.delete(Booking).where(and_(*conditions))
+    await session.execute(delete_stmt)
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="PURGE_BOOKINGS",
+        resource_type="booking",
+        resource_id=str(org_id),
+        before={"filters": {"date_from": date_from_raw, "date_to": date_to_raw}, "count": to_delete},
+        after={"deleted": to_delete},
+    )
+    await session.commit()
+    redirect_date = date_from_val or datetime.now(timezone.utc).date()
+    return RedirectResponse(f"/v1/admin/ui/dispatch?date={redirect_date.isoformat()}", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.get("/v1/admin/ui/dispatch", response_class=HTMLResponse)
 async def admin_dispatch_board(
     request: Request,
@@ -5213,7 +5497,10 @@ async def admin_dispatch_board(
                   <div class=\"muted\">{customer}</div>
                   <div class=\"muted\">{team_label}: {team}</div>
                 </div>
-                <div class=\"actions\">{status}</div>
+                <div class=\"actions\">
+                  <span>{status}</span>
+                  <a class=\"btn secondary\" href=\"/v1/admin/ui/bookings/{booking_id}/edit\">Edit</a>
+                </div>
               </div>
               <form class=\"actions\" method=\"post\" action=\"/v1/admin/ui/dispatch/assign\">
                 <input type=\"hidden\" name=\"booking_id\" value=\"{booking_id}\" />
@@ -5255,6 +5542,27 @@ async def admin_dispatch_board(
             "</form>",
             "</div>",
             f"<div class=\"stack\">{''.join(cards) if cards else _render_empty(tr(lang, 'admin.workers.none'))}</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div>",
+            "<div class=\"title\">Bulk purge bookings</div>",
+            "<div class=\"muted\">Type PURGE to delete bookings (optional date range).</div>",
+            "</div>",
+            "</div>",
+            "<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/bookings/purge\">",
+            "<div class=\"form-group\">",
+            "<label class=\"muted\">From</label>",
+            "<input class=\"input\" type=\"date\" name=\"date_from\" />",
+            "</div>",
+            "<div class=\"form-group\">",
+            "<label class=\"muted\">To</label>",
+            "<input class=\"input\" type=\"date\" name=\"date_to\" />",
+            "</div>",
+            "<input class=\"input\" type=\"text\" name=\"confirm\" placeholder=\"PURGE\" required />",
+            csrf_input,
+            "<button class=\"btn danger\" type=\"submit\">Purge bookings</button>",
+            "</form>",
+            "</div>",
             "</div>",
         ]
     )
