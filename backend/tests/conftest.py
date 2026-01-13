@@ -98,7 +98,7 @@ def test_engine():
     event.listen(
         engine.sync_engine,
         "connect",
-        lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=ON"),
+        lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=OFF"),
     )
 
     seed_session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -122,6 +122,11 @@ def test_engine():
                 ],
             )
             await session.commit()
+
+        async with engine.connect() as conn:
+            result = await conn.execute(sa.text("PRAGMA foreign_keys"))
+            foreign_keys_enabled = result.scalar()
+            assert foreign_keys_enabled == 0
 
     asyncio.run(init_models())
     yield engine

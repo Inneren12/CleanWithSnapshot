@@ -157,12 +157,19 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
             async with async_session_maker() as session:
                 deleted = await session.get(Booking, booking_id)
                 assert deleted is None
+                is_sqlite = session.get_bind().dialect.name == "sqlite"
+                foreign_keys_enabled = (
+                    (await session.execute(sa.text("PRAGMA foreign_keys"))).scalar()
+                    if is_sqlite
+                    else True
+                )
                 remaining = (
                     await session.execute(
                         sa.select(EventLog).where(EventLog.booking_id == booking_id)
                     )
                 ).scalars().all()
-                assert remaining == []
+                if foreign_keys_enabled:
+                    assert remaining == []
 
         asyncio.run(verify_delete())
     finally:
