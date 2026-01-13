@@ -4285,6 +4285,10 @@ def _render_worker_form(worker: Worker | None, teams: list[Team], lang: str | No
         for team in teams
     )
     hourly_rate = getattr(worker, "hourly_rate_cents", None)
+
+    # Pre-compute password hint to avoid f-string backslash issue
+    password_hint = '' if worker is None else f'<div class="muted">{html.escape(tr(lang, "admin.workers.password_hint"))}</div>'
+
     return f"""
     <div class=\"card\">
       <div class=\"card-row\">
@@ -4305,7 +4309,7 @@ def _render_worker_form(worker: Worker | None, teams: list[Team], lang: str | No
         <div class=\"form-group\">
           <label>{html.escape(tr(lang, 'admin.workers.password'))}</label>
           <input class=\"input\" type=\"password\" name=\"password\" minlength=\"8\" placeholder=\"{html.escape(tr(lang, 'admin.workers.password_placeholder'))}\" {'required' if worker is None else ''} />
-          {'' if worker is None else f'<div class=\"muted\">{html.escape(tr(lang, "admin.workers.password_hint"))}</div>'}
+          {password_hint}
         </div>
         <div class=\"form-group\">
           <label>{html.escape(tr(lang, 'admin.workers.email'))}</label>
@@ -5001,14 +5005,6 @@ def _render_booking_form(
           <label>{html.escape(tr(lang, 'admin.bookings.duration'))}</label>
           <input class="input" type="number" name="duration_minutes" min="30" step="30" value="120" required />
         </div>
-        <div class="form-group">
-          <label>{html.escape(tr(lang, 'admin.bookings.address'))}</label>
-          <input class="input" type="text" name="address" />
-        </div>
-        <div class="form-group">
-          <label>{html.escape(tr(lang, 'admin.bookings.notes'))}</label>
-          <textarea class="input" name="notes" rows="3"></textarea>
-        </div>
         {csrf_input}
         <button class="btn" type="submit">{html.escape(tr(lang, 'admin.bookings.save'))}</button>
       </form>
@@ -5068,8 +5064,6 @@ async def admin_bookings_create(
     assigned_worker_id_raw = form.get("assigned_worker_id")
     starts_at_raw = form.get("starts_at")
     duration_minutes_raw = form.get("duration_minutes")
-    address = (form.get("address") or "").strip() or None
-    notes = (form.get("notes") or "").strip() or None
 
     if not team_id_raw or not starts_at_raw or not duration_minutes_raw:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
@@ -5096,6 +5090,16 @@ async def admin_bookings_create(
         ).scalar_one_or_none()
         if worker is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+
+    # Validate client if specified (org-scoped)
+    if client_id:
+        client = (
+            await session.execute(
+                select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+            )
+        ).scalar_one_or_none()
+        if client is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client not found or does not belong to your organization")
 
     # Parse datetime
     try:
@@ -5134,8 +5138,6 @@ async def admin_bookings_create(
             "assigned_worker_id": assigned_worker_id,
             "starts_at": starts_at.isoformat(),
             "duration_minutes": duration_minutes,
-            "address": address,
-            "notes": notes,
         },
     )
     await session.commit()

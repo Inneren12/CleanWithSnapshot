@@ -199,20 +199,20 @@ curl "https://your-domain.com/v1/admin/ui/clients?q=jane" \
 1. Navigate to `/v1/admin/ui/bookings/new`
 2. Fill in the booking form:
    - **Team** (required): Select which team will handle this booking
-   - **Client** (optional): Select an existing client from dropdown
+   - **Client** (optional): Select an existing client from dropdown (must belong to your organization)
    - **Assigned Worker** (optional): Pre-assign a worker to this booking
    - **Start Date & Time** (required): When the booking starts
    - **Duration** (required): Duration in minutes (default: 120)
-   - **Address** (optional): Job location
-   - **Notes** (optional): Additional booking notes
 3. Click "Create Booking"
 
 **Important Notes**:
+- Client must belong to your organization (org-scoped validation enforced)
 - If no client is selected, booking will be created without a client reference
 - Worker assignment is optional - can be assigned later via dispatch board
 - Start time is in UTC timezone
 - Duration must be at least 30 minutes
 - Booking is created with "PENDING" status by default
+- For address/notes, these should be associated with the client record (see Client Management section)
 
 **Example cURL**:
 ```bash
@@ -223,9 +223,7 @@ curl -X POST https://your-domain.com/v1/admin/ui/bookings/create \
   -d "client_id=abc-123-def-456" \
   -d "assigned_worker_id=5" \
   -d "starts_at=2026-01-15T10:00" \
-  -d "duration_minutes=120" \
-  -d "address=456 Oak Ave, City, State" \
-  -d "notes=Regular cleaning service"
+  -d "duration_minutes=120"
 ```
 
 **After Creation**:
@@ -236,9 +234,15 @@ curl -X POST https://your-domain.com/v1/admin/ui/bookings/create \
 
 **Validation Rules**:
 - Team must exist and belong to your organization
+- Client (if specified) must exist and belong to your organization
 - Worker (if specified) must exist and belong to your organization
-- Duration must be a positive integer
+- Duration must be a positive integer (minimum 30 minutes)
 - Start date/time must be valid ISO 8601 format
+
+**Error Messages**:
+- `"Client not found or does not belong to your organization"` - Attempting to assign a client from a different org
+- `"Team not found"` - Team doesn't exist or belongs to different org
+- `"Worker not found"` - Worker doesn't exist or belongs to different org
 
 ---
 
