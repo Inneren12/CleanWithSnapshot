@@ -134,6 +134,7 @@ class Booking(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     team: Mapped[Team] = relationship("Team", back_populates="bookings")
     client: Mapped[ClientUser | None] = relationship("ClientUser")
@@ -172,6 +173,7 @@ class Booking(Base):
         Index("ix_bookings_org_starts_at", "org_id", "starts_at"),
         Index("ix_bookings_starts_status", "starts_at", "status"),
         Index("ix_bookings_status", "status"),
+        Index("ix_bookings_archived_at", "archived_at"),
         Index("ix_bookings_checkout_session", "stripe_checkout_session_id"),
         UniqueConstraint("subscription_id", "scheduled_date", name="uq_bookings_subscription_schedule"),
     )
