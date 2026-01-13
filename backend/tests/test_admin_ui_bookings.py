@@ -3,7 +3,9 @@ import base64
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from app.domain.bookings.db_models import Booking, Team
+import sqlalchemy as sa
+
+from app.domain.bookings.db_models import Booking, BookingWorker, Team
 from app.domain.clients.db_models import ClientUser
 from app.domain.workers.db_models import Worker
 from app.settings import settings
@@ -218,6 +220,131 @@ def test_admin_can_purge_bookings(client, async_session_maker):
                 assert old is None
 
         asyncio.run(verify_purge())
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_edit_booking_syncs_assigned_worker(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        async def seed_booking():
+            async with async_session_maker() as session:
+                team = Team(name=f"Edit Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+                session.add(team)
+                await session.flush()
+
+                client = ClientUser(
+                    org_id=settings.default_org_id,
+                    name="Edit Client",
+                    email=f"client-{uuid.uuid4().hex[:8]}@example.com",
+                    phone="+1 555-111-2222",
+                    address="456 Admin Way",
+                )
+                session.add(client)
+                await session.flush()
+
+                worker_a = Worker(
+                    org_id=settings.default_org_id,
+                    team_id=team.team_id,
+                    name="Worker A",
+                    email=f"worker-a-{uuid.uuid4().hex[:8]}@example.com",
+                    phone="+1 555-333-4444",
+                    is_active=True,
+                )
+                worker_b = Worker(
+                    org_id=settings.default_org_id,
+                    team_id=team.team_id,
+                    name="Worker B",
+                    email=f"worker-b-{uuid.uuid4().hex[:8]}@example.com",
+                    phone="+1 555-333-5555",
+                    is_active=True,
+                )
+                session.add_all([worker_a, worker_b])
+                await session.flush()
+
+                starts_at = datetime.now(tz=timezone.utc).replace(microsecond=0)
+                booking = Booking(
+                    booking_id=str(uuid.uuid4()),
+                    org_id=settings.default_org_id,
+                    client_id=client.client_id,
+                    team_id=team.team_id,
+                    assigned_worker_id=worker_a.worker_id,
+                    starts_at=starts_at,
+                    duration_minutes=120,
+                    status="PENDING",
+                    deposit_cents=0,
+                    base_charge_cents=0,
+                    refund_total_cents=0,
+                    credit_note_total_cents=0,
+                )
+                session.add(booking)
+                session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker_a.worker_id))
+                await session.commit()
+                return booking.booking_id, team.team_id, client.client_id, worker_a.worker_id, worker_b.worker_id, starts_at
+
+        booking_id, team_id, client_id, _worker_a_id, worker_b_id, starts_at = asyncio.run(seed_booking())
+        headers = _basic_auth("admin", "secret")
+
+        update_response = client.post(
+            f"/v1/admin/ui/bookings/{booking_id}/update",
+            headers=headers,
+            data={
+                "team_id": team_id,
+                "client_id": client_id,
+                "assigned_worker_id": worker_b_id,
+                "starts_at": starts_at.isoformat(),
+                "duration_minutes": 120,
+            },
+            follow_redirects=False,
+        )
+        assert update_response.status_code == 303
+
+        async def verify_replaced():
+            async with async_session_maker() as session:
+                booking = await session.get(Booking, booking_id)
+                assert booking is not None
+                assert booking.assigned_worker_id == worker_b_id
+                assignments = (
+                    await session.execute(
+                        sa.select(BookingWorker.worker_id).where(BookingWorker.booking_id == booking_id)
+                    )
+                ).scalars().all()
+                assert assignments == [worker_b_id]
+
+        asyncio.run(verify_replaced())
+
+        clear_response = client.post(
+            f"/v1/admin/ui/bookings/{booking_id}/update",
+            headers=headers,
+            data={
+                "team_id": team_id,
+                "client_id": client_id,
+                "assigned_worker_id": "",
+                "starts_at": starts_at.isoformat(),
+                "duration_minutes": 120,
+            },
+            follow_redirects=False,
+        )
+        assert clear_response.status_code == 303
+
+        async def verify_cleared():
+            async with async_session_maker() as session:
+                booking = await session.get(Booking, booking_id)
+                assert booking is not None
+                assert booking.assigned_worker_id is None
+                assignments = (
+                    await session.execute(
+                        sa.select(BookingWorker.worker_id).where(BookingWorker.booking_id == booking_id)
+                    )
+                ).scalars().all()
+                assert assignments == []
+
+        asyncio.run(verify_cleared())
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
