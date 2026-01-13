@@ -90,9 +90,10 @@ def _configure_org_context(engine, is_postgres: bool) -> None:
         return
 
     @event.listens_for(engine.sync_engine, "begin")
-    def set_org_id_on_begin(conn):  # noqa: ANN001
-        org_id = get_current_org_id()
-        if org_id is None:
-            return
-
-        conn.exec_driver_sql("SET LOCAL app.current_org_id = %s", (str(org_id),))
+    def set_org_id_on_begin(conn, *args, **kwargs):
+      """Set org_id for RLS on transaction begin."""
+      org_id = get_current_org_id()
+      if org_id is None:
+        return
+      # Use raw SQL without parameters for psycopg3 compatibility
+      conn.exec_driver_sql(f"SET LOCAL app.current_org_id = '{org_id}'")
