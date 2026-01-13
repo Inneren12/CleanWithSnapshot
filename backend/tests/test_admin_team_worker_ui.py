@@ -1,0 +1,169 @@
+import base64
+import datetime as dt
+
+import pytest
+import sqlalchemy as sa
+
+from app.domain.bookings.db_models import Booking, BookingWorker, Team
+from app.domain.bookings.service import ensure_default_team
+from app.domain.workers.db_models import Worker
+from app.settings import settings
+
+
+def _basic_auth(username: str, password: str) -> dict[str, str]:
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
+@pytest.fixture(autouse=True)
+def _reset_dispatch_creds():
+    original = {
+        "dispatcher_basic_username": settings.dispatcher_basic_username,
+        "dispatcher_basic_password": settings.dispatcher_basic_password,
+    }
+    settings.dispatcher_basic_username = "dispatch"
+    settings.dispatcher_basic_password = "secret"
+    yield
+    for key, value in original.items():
+        setattr(settings, key, value)
+
+
+@pytest.mark.anyio
+async def test_admin_can_create_and_edit_team_ui(client, async_session_maker):
+    async with async_session_maker() as session:
+        await ensure_default_team(session)
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    form_resp = client.get("/v1/admin/ui/teams/new", headers=headers)
+    assert form_resp.status_code == 200
+    assert "action=\"/v1/admin/ui/teams/create\"" in form_resp.text
+
+    create_resp = client.post(
+        "/v1/admin/ui/teams/create",
+        headers=headers,
+        data={"name": "Crew B"},
+        follow_redirects=False,
+    )
+    assert create_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        team = (
+            await session.execute(sa.select(Team).where(Team.name == "Crew B"))
+        ).scalar_one()
+
+    update_resp = client.post(
+        f"/v1/admin/ui/teams/{team.team_id}/update",
+        headers=headers,
+        data={"name": "Crew Beta"},
+        follow_redirects=False,
+    )
+    assert update_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        updated = await session.get(Team, team.team_id)
+        assert updated is not None
+        assert updated.name == "Crew Beta"
+
+
+@pytest.mark.anyio
+async def test_admin_team_reassign_and_delete(client, async_session_maker):
+    async with async_session_maker() as session:
+        await ensure_default_team(session)
+        team = Team(name="Crew Delete")
+        target = Team(name="Crew Target")
+        session.add_all([team, target])
+        await session.flush()
+        worker = Worker(name="Worker A", phone="+1 555-0000", team_id=team.team_id)
+        session.add(worker)
+        await session.flush()
+        booking = Booking(
+            team_id=team.team_id,
+            starts_at=dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(days=1),
+            duration_minutes=60,
+            status="PENDING",
+        )
+        session.add(booking)
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    blocked_resp = client.post(
+        f"/v1/admin/ui/teams/{team.team_id}/delete",
+        headers=headers,
+        data={"confirm": "DELETE"},
+        follow_redirects=False,
+    )
+    assert blocked_resp.status_code == 400
+    assert "Team not empty" in blocked_resp.text
+
+    reassign_resp = client.post(
+        f"/v1/admin/ui/teams/{team.team_id}/reassign_and_delete",
+        headers=headers,
+        data={"target_team_id": str(target.team_id)},
+        follow_redirects=False,
+    )
+    assert reassign_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        deleted = await session.get(Team, team.team_id)
+        assert deleted is None
+        moved_worker = await session.get(Worker, worker.worker_id)
+        assert moved_worker is not None
+        assert moved_worker.team_id == target.team_id
+        moved_booking = await session.get(Booking, booking.booking_id)
+        assert moved_booking is not None
+        assert moved_booking.team_id == target.team_id
+
+
+@pytest.mark.anyio
+async def test_admin_worker_delete_archives(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        await session.flush()
+        worker = Worker(name="Archive Me", phone="+1 555-9999", team_id=team.team_id)
+        session.add(worker)
+        await session.flush()
+        booking = Booking(
+            team_id=team.team_id,
+            starts_at=dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(days=2),
+            duration_minutes=90,
+            status="PENDING",
+            assigned_worker_id=worker.worker_id,
+        )
+        session.add(booking)
+        await session.flush()
+        session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker.worker_id))
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    delete_resp = client.post(
+        f"/v1/admin/ui/workers/{worker.worker_id}/delete",
+        headers=headers,
+        data={"confirm": "ARCHIVE"},
+        follow_redirects=False,
+    )
+    assert delete_resp.status_code == 303
+
+    async with async_session_maker() as session:
+        archived = await session.get(Worker, worker.worker_id)
+        assert archived is not None
+        assert archived.is_active is False
+        assignments = (
+            await session.execute(
+                sa.select(BookingWorker).where(BookingWorker.worker_id == worker.worker_id)
+            )
+        ).scalars().all()
+        assert assignments == []
+        updated_booking = await session.get(Booking, booking.booking_id)
+        assert updated_booking is not None
+        assert updated_booking.assigned_worker_id is None
+
+    list_resp = client.get("/v1/admin/ui/workers?active_only=1", headers=headers)
+    assert list_resp.status_code == 200
+    assert "Archive Me" not in list_resp.text
+
+
+@pytest.mark.anyio
+async def test_admin_ui_requires_auth(client):
+    response = client.get("/v1/admin/ui/teams")
+    assert response.status_code == 401
