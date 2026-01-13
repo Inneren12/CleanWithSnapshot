@@ -5196,7 +5196,13 @@ def _parse_admin_booking_datetime(value: str) -> datetime:
     raise ValueError("Invalid datetime format")
 
 
-def _sync_booking_workers(booking: Booking, worker_ids: list[int], *, replace: bool) -> None:
+async def _sync_booking_workers(
+    session: AsyncSession,
+    booking_id: str,
+    worker_ids: list[int],
+    *,
+    replace: bool,
+) -> None:
     unique_ids: list[int] = []
     seen: set[int] = set()
     for worker_id in worker_ids:
@@ -5204,16 +5210,28 @@ def _sync_booking_workers(booking: Booking, worker_ids: list[int], *, replace: b
             unique_ids.append(worker_id)
             seen.add(worker_id)
 
-    existing = {assignment.worker_id: assignment for assignment in booking.worker_assignments}
-    if replace:
-        for worker_id, assignment in list(existing.items()):
-            if worker_id not in seen:
-                booking.worker_assignments.remove(assignment)
-    for worker_id in unique_ids:
-        if worker_id not in existing:
-            booking.worker_assignments.append(
-                BookingWorker(booking_id=booking.booking_id, worker_id=worker_id)
+    existing_ids = set(
+        (
+            await session.execute(
+                select(BookingWorker.worker_id).where(BookingWorker.booking_id == booking_id)
             )
+        ).scalars().all()
+    )
+    if replace:
+        to_remove = existing_ids - seen
+        if to_remove:
+            await session.execute(
+                sa.delete(BookingWorker).where(
+                    BookingWorker.booking_id == booking_id,
+                    BookingWorker.worker_id.in_(to_remove),
+                )
+            )
+
+    to_add = [worker_id for worker_id in unique_ids if worker_id not in existing_ids]
+    if to_add:
+        session.add_all(
+            [BookingWorker(booking_id=booking_id, worker_id=worker_id) for worker_id in to_add]
+        )
 
 
 @router.get("/v1/admin/ui/bookings/new", response_class=HTMLResponse)
@@ -5353,7 +5371,7 @@ async def admin_bookings_create(
     )
     session.add(booking)
     if assigned_worker_id:
-        _sync_booking_workers(booking, [assigned_worker_id], replace=True)
+        await _sync_booking_workers(session, booking.booking_id, [assigned_worker_id], replace=True)
     await session.flush()
 
     await audit_service.record_action(
@@ -5521,7 +5539,7 @@ async def admin_bookings_update(
     booking.starts_at = starts_at
     booking.duration_minutes = duration_minutes
     if assigned_worker_id:
-        _sync_booking_workers(booking, [assigned_worker_id], replace=False)
+        await _sync_booking_workers(session, booking.booking_id, [assigned_worker_id], replace=False)
 
     await audit_service.record_action(
         session,
@@ -5885,8 +5903,7 @@ async def admin_assign_worker(
             if worker.team_id != booking.team_id:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
     booking.assigned_worker_id = unique_worker_ids[0] if unique_worker_ids else None
-    await session.refresh(booking, attribute_names=["worker_assignments"])
-    _sync_booking_workers(booking, unique_worker_ids, replace=True)
+    await _sync_booking_workers(session, booking.booking_id, unique_worker_ids, replace=True)
 
     await audit_service.record_action(
         session,
