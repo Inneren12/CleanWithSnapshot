@@ -35,6 +35,7 @@ ensure_event_loop()
 import anyio
 import pytest
 import sqlalchemy as sa
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from datetime import time
 from fastapi.testclient import TestClient
@@ -93,6 +94,11 @@ def test_engine():
         "sqlite+aiosqlite:///./test.db",
         connect_args={"check_same_thread": False, "timeout": 30},
         poolclass=StaticPool,
+    )
+    event.listen(
+        engine.sync_engine,
+        "connect",
+        lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=ON"),
     )
 
     seed_session_factory = async_sessionmaker(engine, expire_on_commit=False)
