@@ -119,6 +119,19 @@ function formatLastUpdated(value: string | null) {
   }).format(new Date(value));
 }
 
+function isoDateInTz(now: Date, tz: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
 export default function DispatcherPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -143,8 +156,11 @@ export default function DispatcherPage() {
     setLoading(true);
     setError(null);
     try {
+      const isoDate = isoDateInTz(new Date(), EDMONTON_TZ);
       const response = await fetch(
-        `${API_BASE}/v1/admin/dispatcher/board?date=today&tz=${encodeURIComponent(EDMONTON_TZ)}`,
+        `${API_BASE}/v1/admin/dispatcher/board?date=${encodeURIComponent(
+          isoDate
+        )}&tz=${encodeURIComponent(EDMONTON_TZ)}`,
         {
           headers: authHeaders,
           cache: "no-store",
@@ -166,8 +182,11 @@ export default function DispatcherPage() {
   const fetchAlerts = useCallback(async () => {
     if (!username || !password) return;
     try {
+      const isoDate = isoDateInTz(new Date(), EDMONTON_TZ);
       const response = await fetch(
-        `${API_BASE}/v1/admin/dispatcher/alerts?date=today&tz=${encodeURIComponent(EDMONTON_TZ)}`,
+        `${API_BASE}/v1/admin/dispatcher/alerts?date=${encodeURIComponent(
+          isoDate
+        )}&tz=${encodeURIComponent(EDMONTON_TZ)}`,
         {
           headers: authHeaders,
           cache: "no-store",
@@ -360,7 +379,7 @@ export default function DispatcherPage() {
                         onClick={() => focusAlertBooking(alert)}
                       >
                         <strong>{alert.message}</strong>
-                        <span className="muted">Action: {alert.action.replaceAll("_", " ")}</span>
+                        <span className="muted">Action: {alert.action.split("_").join(" ")}</span>
                       </button>
                     ))}
                   </div>
@@ -378,7 +397,7 @@ export default function DispatcherPage() {
                         onClick={() => focusAlertBooking(alert)}
                       >
                         <strong>{alert.message}</strong>
-                        <span className="muted">Action: {alert.action.replaceAll("_", " ")}</span>
+                        <span className="muted">Action: {alert.action.split("_").join(" ")}</span>
                       </button>
                     ))}
                   </div>
@@ -396,7 +415,7 @@ export default function DispatcherPage() {
                         onClick={() => focusAlertBooking(alert)}
                       >
                         <strong>{alert.message}</strong>
-                        <span className="muted">Action: {alert.action.replaceAll("_", " ")}</span>
+                        <span className="muted">Action: {alert.action.split("_").join(" ")}</span>
                       </button>
                     ))}
                   </div>
@@ -451,7 +470,9 @@ export default function DispatcherPage() {
                               <button
                                 key={booking.booking_id}
                                 type="button"
-                                ref={(element) => bookingRefs.current.set(booking.booking_id, element)}
+                                ref={(element) => {
+                                  bookingRefs.current.set(booking.booking_id, element);
+                                }}
                                 className={`dispatcher-booking ${bookingStatusClass(booking.status)}${
                                   isHighlighted ? " alert-focus" : ""
                                 }`}
