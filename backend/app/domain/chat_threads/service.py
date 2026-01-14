@@ -255,6 +255,49 @@ async def list_messages(
     return (await session.execute(stmt)).scalars().all()
 
 
+async def list_messages_since(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    thread_id: uuid.UUID,
+    since: datetime,
+    since_message_id: int = 0,
+    limit: int = 200,
+) -> list[ChatMessage]:
+    stmt = (
+        sa.select(ChatMessage)
+        .where(
+            ChatMessage.thread_id == thread_id,
+            ChatMessage.org_id == org_id,
+            sa.or_(
+                ChatMessage.created_at > since,
+                sa.and_(ChatMessage.created_at == since, ChatMessage.message_id > since_message_id),
+            ),
+        )
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.message_id.asc())
+        .limit(limit)
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def count_unread_messages(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    participant_type: ParticipantType,
+    worker_id: int | None = None,
+    admin_membership_id: int | None = None,
+) -> int:
+    summaries = await list_threads(
+        session,
+        org_id=org_id,
+        participant_type=participant_type,
+        worker_id=worker_id,
+        admin_membership_id=admin_membership_id,
+    )
+    return sum(summary.unread_count for summary in summaries)
+
+
 async def ensure_participant(
     session: AsyncSession,
     *,
@@ -344,4 +387,3 @@ async def mark_thread_read(
         session.add(record)
     await session.flush()
     return record
-

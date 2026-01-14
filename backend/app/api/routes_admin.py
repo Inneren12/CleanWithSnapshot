@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import html
@@ -12,7 +13,8 @@ from typing import Iterable, List, Literal, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 import sqlalchemy as sa
 from sqlalchemy import and_, func, select, or_
@@ -270,6 +272,71 @@ async def _resolve_admin_membership_id(
     )
 
 
+def _parse_since_timestamp(since: str | None) -> datetime:
+    if not since:
+        return datetime.now(timezone.utc)
+    normalized = since.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid since timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+async def _chat_stream(
+    request: Request,
+    *,
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    thread_id: uuid.UUID,
+    participant_type: str,
+    admin_membership_id: int | None = None,
+) -> StreamingResponse:
+    await chat_service.ensure_participant(
+        session,
+        org_id=org_id,
+        thread_id=thread_id,
+        participant_type=participant_type,
+        admin_membership_id=admin_membership_id,
+    )
+    last_seen = _parse_since_timestamp(request.query_params.get("since"))
+    last_seen_id = 0
+
+    async def event_stream():
+        nonlocal last_seen, last_seen_id
+        while True:
+            if await request.is_disconnected():
+                break
+            messages = await chat_service.list_messages_since(
+                session,
+                org_id=org_id,
+                thread_id=thread_id,
+                since=last_seen,
+                since_message_id=last_seen_id,
+            )
+            if messages:
+                for message in messages:
+                    payload = json.dumps(jsonable_encoder(_chat_message_response(message)))
+                    yield f"event: message\ndata: {payload}\n\n"
+                    last_seen = message.created_at
+                    last_seen_id = message.message_id
+            else:
+                yield ": keep-alive\n\n"
+                await asyncio.sleep(1.0)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _chat_message_response(message) -> chat_schemas.ChatMessageResponse:
     return chat_schemas.ChatMessageResponse(
         message_id=message.message_id,
@@ -322,6 +389,23 @@ async def admin_list_chat_threads(
     return [_thread_summary_response(summary) for summary in summaries]
 
 
+@router.get("/v1/admin/chat/unread-count")
+async def admin_chat_unread_count(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_viewer),
+) -> dict[str, int]:
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    unread_count = await chat_service.count_unread_messages(
+        session,
+        org_id=org_id,
+        participant_type=PARTICIPANT_ADMIN,
+        admin_membership_id=admin_membership_id,
+    )
+    return {"unread_count": unread_count}
+
+
 @router.get(
     "/v1/admin/chat/threads/{thread_id}/messages",
     response_model=list[chat_schemas.ChatMessageResponse],
@@ -354,6 +438,30 @@ async def admin_list_chat_messages(
         limit=limit,
     )
     return [_chat_message_response(message) for message in messages]
+
+
+@router.get("/v1/admin/chat/threads/{thread_id}/stream")
+async def admin_stream_chat_messages(
+    thread_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_viewer),
+) -> StreamingResponse:
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    try:
+        return await _chat_stream(
+            request,
+            session=session,
+            org_id=org_id,
+            thread_id=thread_id,
+            participant_type=PARTICIPANT_ADMIN,
+            admin_membership_id=admin_membership_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
 
 
 @router.post(
@@ -803,6 +911,7 @@ def _wrap_page(
     resolved_lang = resolve_lang(request)
     page_lang = page_lang or resolved_lang
     nav_lang = "en" if active == "invoices" else resolved_lang
+    chat_badge = '<span class="nav-badge" id="nav-chat-badge"></span>'
     nav_links = [
         (
             _icon("eye") + html.escape(tr(nav_lang, "admin.nav.observability")),
@@ -810,7 +919,7 @@ def _wrap_page(
             "observability",
         ),
         (
-            _icon("users") + html.escape(tr(nav_lang, "admin.nav.workers")),
+            _icon("users") + html.escape(tr(nav_lang, "admin.nav.workers")) + chat_badge,
             "/v1/admin/ui/workers",
             "workers",
         ),
@@ -855,6 +964,8 @@ def _wrap_page(
           .nav {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }}
           .nav-link {{ text-decoration: none; color: #374151; padding: 8px 12px; border-radius: 10px; border: 1px solid transparent; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }}
           .nav-link-active {{ background: #111827; color: #fff; border-color: #111827; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }}
+          .nav-badge {{ display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: #2563eb; color: #fff; font-size: 11px; font-weight: 700; margin-left: 6px; }}
+          .nav-badge:empty {{ display: none; }}
           .lang-toggle {{ display: flex; gap: 8px; font-size: 13px; align-items: center; }}
           .lang-link {{ text-decoration: none; color: #374151; padding: 6px 10px; border-radius: 8px; border: 1px solid transparent; font-weight: 600; background: #fff; }}
           .lang-link-active {{ background: #111827; color: #fff; border-color: #111827; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }}
@@ -920,6 +1031,21 @@ def _wrap_page(
           </div>
           {content}
         </div>
+        <script>
+          (function() {{
+            const badge = document.getElementById('nav-chat-badge');
+            if (!badge || !window.fetch) return;
+            fetch('/v1/admin/chat/unread-count', {{ credentials: 'same-origin' }})
+              .then((response) => response.ok ? response.json() : null)
+              .then((data) => {{
+                if (!data || !badge) return;
+                if (data.unread_count) {{
+                  badge.textContent = String(data.unread_count);
+                }}
+              }})
+              .catch(() => null);
+          }})();
+        </script>
       </body>
     </html>
     """
@@ -8075,6 +8201,24 @@ async def admin_worker_chat(
         if message_rows
         else "<div class=\"card\"><div class=\"muted\">No messages yet.</div></div>"
     )
+    last_message = messages[-1] if messages else None
+    last_message_ts = last_message.created_at.isoformat() if last_message else ""
+    last_message_id = last_message.message_id if last_message else 0
+    messages_container = (
+        "".join(
+            [
+                "<div id=\"chat-messages\"",
+                f" data-thread-id=\"{html.escape(str(thread.thread_id))}\"",
+                f" data-last-ts=\"{html.escape(last_message_ts)}\"",
+                f" data-last-id=\"{last_message_id}\"",
+                f" data-worker-name=\"{html.escape(worker.name)}\">",
+                messages_section,
+                "</div>",
+            ]
+        )
+        if thread
+        else messages_section
+    )
 
     csrf_token = get_csrf_token(request)
     csrf_input = render_csrf_input(csrf_token)
@@ -8097,7 +8241,7 @@ async def admin_worker_chat(
             "<button class=\"btn secondary\" type=\"submit\">Mark read</button>",
             "</form>",
             "</div>",
-            messages_section,
+            messages_container,
             "<div class=\"card\">",
             "<div class=\"card-row\"><div class=\"title\">Send a message</div></div>",
             f"<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}/chat/messages\">",
@@ -8107,6 +8251,55 @@ async def admin_worker_chat(
             "<button class=\"btn\" type=\"submit\">Send</button>",
             "</form>",
             "</div>",
+            "<script>",
+            "(function() {",
+            "  const container = document.getElementById('chat-messages');",
+            "  if (!container || !window.EventSource) return;",
+            "  const threadId = container.dataset.threadId;",
+            "  const workerName = container.dataset.workerName || 'Worker';",
+            "  let lastTs = container.dataset.lastTs || '';",
+            "  let lastId = parseInt(container.dataset.lastId || '0', 10);",
+            "  const params = new URLSearchParams();",
+            "  if (lastTs) params.set('since', lastTs);",
+            "  const url = `/v1/admin/chat/threads/${threadId}/stream${params.toString() ? `?${params}` : ''}`;",
+            "  const source = new EventSource(url);",
+            "  const formatTimestamp = (value) => {",
+            "    const dt = new Date(value);",
+            "    if (Number.isNaN(dt.getTime())) return value;",
+            "    return dt.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';",
+            "  };",
+            "  source.addEventListener('message', (event) => {",
+            "    if (!event.data) return;",
+            "    const payload = JSON.parse(event.data);",
+            "    if (!payload || !payload.message_id) return;",
+            "    if (payload.created_at === lastTs && payload.message_id <= lastId) return;",
+            "    lastTs = payload.created_at;",
+            "    lastId = payload.message_id;",
+            "    container.dataset.lastTs = lastTs;",
+            "    container.dataset.lastId = String(lastId);",
+            "    const sender = payload.sender_type === 'admin' ? 'Admin' : workerName;",
+            "    const card = document.createElement('div');",
+            "    card.className = 'card';",
+            "    const row = document.createElement('div');",
+            "    row.className = 'card-row';",
+            "    const rowInner = document.createElement('div');",
+            "    const title = document.createElement('div');",
+            "    title.className = 'title';",
+            "    title.textContent = sender;",
+            "    const timestamp = document.createElement('div');",
+            "    timestamp.className = 'muted';",
+            "    timestamp.textContent = formatTimestamp(payload.created_at);",
+            "    rowInner.appendChild(title);",
+            "    rowInner.appendChild(timestamp);",
+            "    row.appendChild(rowInner);",
+            "    const body = document.createElement('div');",
+            "    body.textContent = payload.body;",
+            "    card.appendChild(row);",
+            "    card.appendChild(body);",
+            "    container.appendChild(card);",
+            "  });",
+            "})();",
+            "</script>",
         ]
     )
     response = HTMLResponse(
