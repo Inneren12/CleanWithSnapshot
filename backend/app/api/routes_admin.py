@@ -4,6 +4,7 @@ import html
 import json
 import logging
 import math
+import re
 from datetime import date, datetime, time, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import uuid
@@ -5169,6 +5170,42 @@ def _worker_skill_filters(skills: list[str]) -> list[sa.ColumnElement[bool]]:
     return filters
 
 
+AVAILABILITY_HEAVY_THRESHOLD_MINUTES = 240
+
+
+def _parse_availability_start_date(week: str | None, start: str | None) -> date:
+    if week:
+        match = re.match(r"^(?P<year>\d{4})-W(?P<week>\d{2})$", week)
+        if not match:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid week format")
+        year = int(match.group("year"))
+        week_num = int(match.group("week"))
+        try:
+            return date.fromisocalendar(year, week_num, 1)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid week value") from exc
+    if start:
+        try:
+            return date.fromisoformat(start)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid start date") from exc
+    today = datetime.now(timezone.utc).date()
+    return today - timedelta(days=today.weekday())
+
+
+def _availability_level(minutes: int) -> str:
+    if minutes <= 0:
+        return "free"
+    if minutes > AVAILABILITY_HEAVY_THRESHOLD_MINUTES:
+        return "heavy"
+    return "light"
+
+
+def _availability_week_value(start_date: date) -> str:
+    iso_year, iso_week, _ = start_date.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
+
+
 def _build_workers_export_query(
     *,
     q: str | None,
@@ -6101,6 +6138,7 @@ async def admin_workers_list(
             f"<div class=\"muted\">{html.escape(tr(lang, 'admin.workers.subtitle'))}</div></div>",
             "<div class=\"actions\">",
             "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/dashboard\">Dashboard</a>",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/availability\">Availability</a>",
             f"<a class=\"btn\" href=\"/v1/admin/ui/workers/new\">{_icon('plus')}{html.escape(tr(lang, 'admin.workers.create'))}</a>",
             "</div></div>",
             "<form class=\"filters\" method=\"get\">",
@@ -6170,6 +6208,225 @@ async def admin_workers_list(
     response = HTMLResponse(_wrap_page(request, content, title="Admin — Workers", active="workers", page_lang=lang))
     issue_csrf_token(request, response, csrf_token)
     return response
+
+
+@router.get("/v1/admin/ui/workers/availability", response_class=HTMLResponse)
+async def admin_workers_availability(
+    request: Request,
+    week: str | None = Query(default=None),
+    start: str | None = Query(default=None),
+    skill: list[str] | None = Query(default=None),
+    team_id: int | None = Query(default=None),
+    status: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = _resolve_admin_org(request, identity)
+    start_date = _parse_availability_start_date(week, start)
+    end_date = start_date + timedelta(days=7)
+    days = [start_date + timedelta(days=offset) for offset in range(7)]
+    status_value = status if status in {"active", "archived", "all"} else "active"
+    selected_skills = _normalize_skill_filters(skill)
+    workers = await _list_workers(
+        session,
+        org_id=org_id,
+        q=None,
+        active_only=False,
+        team_id=team_id,
+        status=status_value,
+        rating_min=None,
+        rating_max=None,
+        skills=selected_skills,
+    )
+    workers = sorted(workers, key=lambda worker: worker.name.lower())
+    worker_ids = [worker.worker_id for worker in workers]
+    availability_map: dict[int, dict[date, int]] = {
+        worker_id: {day: 0 for day in days} for worker_id in worker_ids
+    }
+    if worker_ids:
+        assignment_subquery = _booking_worker_assignments_subquery()
+        start_dt = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+        end_dt = datetime.combine(end_date, time.min, tzinfo=timezone.utc)
+        range_start = start_dt - timedelta(days=7)
+        bookings_stmt = (
+            select(
+                assignment_subquery.c.worker_id,
+                Booking.booking_id,
+                Booking.starts_at,
+                Booking.duration_minutes,
+            )
+            .join(Booking, Booking.booking_id == assignment_subquery.c.booking_id)
+            .where(
+                Booking.org_id == org_id,
+                Booking.status.in_(booking_service.BLOCKING_STATUSES),
+                assignment_subquery.c.worker_id.in_(worker_ids),
+                Booking.starts_at < end_dt,
+                Booking.starts_at >= range_start,
+            )
+        )
+        booking_rows = (await session.execute(bookings_stmt)).all()
+        for worker_id, _booking_id, starts_at, duration_minutes in booking_rows:
+            if starts_at is None or duration_minutes is None:
+                continue
+            if starts_at.tzinfo is None:
+                starts_at = starts_at.replace(tzinfo=timezone.utc)
+            ends_at = starts_at + timedelta(minutes=duration_minutes)
+            for day in days:
+                day_start = datetime.combine(day, time.min, tzinfo=timezone.utc)
+                day_end = day_start + timedelta(days=1)
+                overlap_start = max(starts_at, day_start)
+                overlap_end = min(ends_at, day_end)
+                if overlap_end <= overlap_start:
+                    continue
+                minutes = int((overlap_end - overlap_start).total_seconds() / 60)
+                availability_map[worker_id][day] += minutes
+
+    teams = (
+        await session.execute(
+            select(Team)
+            .where(Team.org_id == org_id, Team.archived_at.is_(None))
+            .order_by(Team.name)
+        )
+    ).scalars().all()
+    skill_rows = (
+        await session.execute(select(Worker.skills).where(Worker.org_id == org_id))
+    ).scalars().all()
+    all_skills = sorted(
+        {
+            skill_entry
+            for skill_list in skill_rows
+            if skill_list
+            for skill_entry in skill_list
+            if isinstance(skill_entry, str) and skill_entry
+        }
+    )
+    team_filter_options = "".join(
+        f'<option value="{team.team_id}" {"selected" if team_id == team.team_id else ""}>{html.escape(team.name)}</option>'
+        for team in teams
+    )
+    skill_options = sorted(set(all_skills).union(selected_skills))
+    skill_filter_options = "".join(
+        f'<option value="{html.escape(skill_option)}" {"selected" if skill_option in selected_skills else ""}>{html.escape(skill_option)}</option>'
+        for skill_option in skill_options
+    )
+    rows: list[str] = []
+    for worker in workers:
+        day_cells = []
+        for day in days:
+            minutes = availability_map.get(worker.worker_id, {}).get(day, 0)
+            level = _availability_level(minutes)
+            label = "Free" if level == "free" else "Light" if level == "light" else "Heavy"
+            dispatch_url = (
+                f"/v1/admin/ui/dispatch?date={day.isoformat()}&worker_id={worker.worker_id}"
+            )
+            day_cells.append(
+                """
+                <td class="availability-cell {level}">
+                  <a href="{dispatch_url}">
+                    <div class="minutes">{minutes}m</div>
+                    <div class="status">{label}</div>
+                  </a>
+                </td>
+                """.format(
+                    level=level,
+                    dispatch_url=html.escape(dispatch_url),
+                    minutes=html.escape(str(minutes)),
+                    label=html.escape(label),
+                )
+            )
+        rows.append(
+            """
+            <tr>
+              <td>
+                <div class="title">{name}</div>
+                <div class="muted small">{team}</div>
+              </td>
+              {cells}
+            </tr>
+            """.format(
+                name=html.escape(worker.name),
+                team=html.escape(getattr(worker.team, "name", tr(lang, "admin.workers.team"))),
+                cells="".join(day_cells),
+            )
+        )
+    header_cells = "".join(
+        f"<th>{html.escape(day.strftime('%a %b %d'))}</th>" for day in days
+    )
+    if rows:
+        tbody_html = "".join(rows)
+    else:
+        tbody_html = (
+            f"<tr><td colspan=\"{len(days) + 1}\" class=\"muted\">No workers found.</td></tr>"
+        )
+    table_html = (
+        "<table class=\"table availability-table\">"
+        "<thead><tr><th>Worker</th>"
+        f"{header_cells}</tr></thead>"
+        f"<tbody>{tbody_html}</tbody>"
+        "</table>"
+    )
+    week_value = _availability_week_value(start_date)
+    content = "".join(
+        [
+            "<style>",
+            ".availability-table .availability-cell { text-align: center; padding: 0; }",
+            ".availability-table .availability-cell a { display: block; padding: 8px; color: inherit; text-decoration: none; }",
+            ".availability-table .availability-cell .minutes { font-weight: 600; }",
+            ".availability-table .availability-cell .status { font-size: 12px; opacity: 0.8; }",
+            ".availability-table .availability-cell.free { background: #ecfdf3; }",
+            ".availability-table .availability-cell.light { background: #fff7ed; }",
+            ".availability-table .availability-cell.heavy { background: #fef2f2; }",
+            ".availability-legend { display: flex; gap: 12px; flex-wrap: wrap; }",
+            ".availability-legend .swatch { display: inline-flex; align-items: center; gap: 6px; }",
+            ".availability-legend .box { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }",
+            "</style>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            f"<div><div class=\"title with-icon\">{_icon('calendar')}Availability</div>",
+            f"<div class=\"muted\">Week of {html.escape(start_date.isoformat())}</div></div>",
+            "<div class=\"actions\">",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers\">All workers</a>",
+            "</div></div>",
+            "<form class=\"filters\" method=\"get\">",
+            "<div class=\"form-group\"><label>Week</label>",
+            f"<input class=\"input\" type=\"week\" name=\"week\" value=\"{html.escape(week_value)}\" /></div>",
+            "<div class=\"form-group\"><label>Start date</label>",
+            f"<input class=\"input\" type=\"date\" name=\"start\" value=\"{html.escape(start_date.isoformat())}\" /></div>",
+            "<div class=\"form-group\"><label>Team</label>",
+            f"<select class=\"input\" name=\"team_id\"><option value=\"\"></option>{team_filter_options}</select></div>",
+            "<div class=\"form-group\"><label>Status</label><select class=\"input\" name=\"status\">",
+            f"<option value=\"active\" {'selected' if status_value == 'active' else ''}>Active</option>",
+            f"<option value=\"archived\" {'selected' if status_value == 'archived' else ''}>Archived</option>",
+            f"<option value=\"all\" {'selected' if status_value == 'all' else ''}>All</option>",
+            "</select></div>",
+            "<div class=\"form-group\"><label>Skills</label>",
+            f"<select class=\"input\" name=\"skill\" multiple size=\"3\">{skill_filter_options}</select></div>",
+            "<div class=\"form-group\"><label>&nbsp;</label><div class=\"actions\">",
+            "<button class=\"btn\" type=\"submit\">Apply</button>",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/availability\">Reset</a>",
+            "</div></div>",
+            "</form>",
+            "<div class=\"availability-legend muted\">",
+            "<span class=\"swatch\"><span class=\"box\" style=\"background:#ecfdf3\"></span>Free (0m)</span>",
+            f"<span class=\"swatch\"><span class=\"box\" style=\"background:#fff7ed\"></span>Light (1–{AVAILABILITY_HEAVY_THRESHOLD_MINUTES}m)</span>",
+            f"<span class=\"swatch\"><span class=\"box\" style=\"background:#fef2f2\"></span>Heavy ({AVAILABILITY_HEAVY_THRESHOLD_MINUTES + 1}m+)</span>",
+            "</div>",
+            "</div>",
+            "<div class=\"card\">",
+            table_html,
+            "</div>",
+        ]
+    )
+    return HTMLResponse(
+        _wrap_page(
+            request,
+            content,
+            title="Availability",
+            active="workers",
+            page_lang=lang,
+        )
+    )
 
 
 @router.post("/v1/admin/ui/workers/bulk/archive", response_class=HTMLResponse)
