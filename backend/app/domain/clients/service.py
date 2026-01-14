@@ -34,6 +34,73 @@ class TokenResult:
     org_id: uuid.UUID
 
 
+@dataclass
+class ChurnAssessment:
+    risk_band: str
+    score: int
+    reasons: list[str]
+
+
+def evaluate_churn(
+    *,
+    days_since_last_completed: int | None,
+    avg_gap_days: float | None,
+    complaint_count: int,
+    avg_rating: float | None,
+    low_rating_count: int,
+) -> ChurnAssessment:
+    reasons: list[str] = []
+    score = 0
+
+    if days_since_last_completed is not None:
+        if days_since_last_completed >= settings.client_churn_days_since_last_high:
+            score += 3
+            reasons.append(f"No booking in {days_since_last_completed}d")
+        elif days_since_last_completed >= settings.client_churn_days_since_last_medium:
+            score += 1
+            reasons.append(f"No booking in {days_since_last_completed}d")
+
+        if avg_gap_days is not None and avg_gap_days > 0:
+            if days_since_last_completed >= avg_gap_days * settings.client_churn_avg_gap_multiplier_high:
+                score += 2
+                reasons.append(
+                    "Booking gap {gap}d vs avg {avg:.1f}d".format(
+                        gap=days_since_last_completed,
+                        avg=avg_gap_days,
+                    )
+                )
+            elif days_since_last_completed >= avg_gap_days * settings.client_churn_avg_gap_multiplier_medium:
+                score += 1
+                reasons.append(
+                    "Booking gap {gap}d vs avg {avg:.1f}d".format(
+                        gap=days_since_last_completed,
+                        avg=avg_gap_days,
+                    )
+                )
+
+    if complaint_count >= settings.client_risk_complaints_threshold:
+        score += 1
+        reasons.append(
+            f"Complaints last {settings.client_risk_complaints_window_days}d"
+        )
+
+    low_rating_flag = (
+        avg_rating is not None and avg_rating <= settings.client_risk_avg_rating_threshold
+    ) or (low_rating_count >= settings.client_risk_low_rating_count_threshold)
+    if low_rating_flag:
+        score += 1
+        reasons.append(f"Low ratings last {settings.client_risk_feedback_window_days}d")
+
+    if score >= settings.client_churn_score_high:
+        band = "HIGH"
+    elif score >= settings.client_churn_score_medium:
+        band = "MEDIUM"
+    else:
+        band = "LOW"
+
+    return ChurnAssessment(risk_band=band, score=score, reasons=reasons)
+
+
 def issue_magic_token(
     email: str,
     client_id: str,

@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import sqlalchemy as sa
 
+from app.domain.addons.db_models import AddonDefinition, OrderAddon
 from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, BookingWorker, Team
 from app.domain.clients.db_models import ClientAddress, ClientFeedback, ClientNote, ClientUser
@@ -307,6 +308,187 @@ def _seed_client_with_analytics(async_session_maker):
                 worker_secondary.name,
                 worker_third.name,
             )
+
+    return asyncio.run(create())
+
+
+def _seed_client_with_preferences(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Pref Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Preference Client",
+                email=f"prefs-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-222-3333",
+                address="202 Preference Way",
+                is_active=True,
+            )
+            session.add(client)
+            await session.flush()
+
+            addon = AddonDefinition(
+                code=f"OVEN-{uuid.uuid4().hex[:6].upper()}",
+                name="Oven Cleaning",
+                price_cents=2500,
+                default_minutes=30,
+                is_active=True,
+            )
+            session.add(addon)
+            await session.flush()
+
+            booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=client.client_id,
+                team_id=team.team_id,
+                starts_at=datetime.now(tz=timezone.utc) - timedelta(days=3),
+                duration_minutes=120,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+                policy_snapshot={"cleaning_type": "standard"},
+            )
+            session.add(booking)
+            await session.flush()
+
+            order_addon = OrderAddon(
+                order_id=booking.booking_id,
+                addon_id=addon.addon_id,
+                qty=2,
+                unit_price_cents_snapshot=addon.price_cents,
+                minutes_snapshot=addon.default_minutes,
+            )
+            session.add(order_addon)
+
+            await session.commit()
+            return client.client_id
+
+    return asyncio.run(create())
+
+
+def _seed_clients_for_churn_filter(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Churn Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            active_client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Churn Active",
+                email=f"churn-active-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-444-1111",
+                address="303 Active Blvd",
+                is_active=True,
+            )
+            dormant_client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Churn Dormant",
+                email=f"churn-dormant-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-444-2222",
+                address="404 Dormant Blvd",
+                is_active=True,
+            )
+            session.add_all([active_client, dormant_client])
+            await session.flush()
+
+            now = datetime.now(tz=timezone.utc)
+            recent_booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=active_client.client_id,
+                team_id=team.team_id,
+                starts_at=now - timedelta(days=7),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            older_booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=active_client.client_id,
+                team_id=team.team_id,
+                starts_at=now - timedelta(days=14),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            dormant_recent = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=dormant_client.client_id,
+                team_id=team.team_id,
+                starts_at=now - timedelta(days=90),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            dormant_older = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=dormant_client.client_id,
+                team_id=team.team_id,
+                starts_at=now - timedelta(days=120),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            session.add_all([recent_booking, older_booking, dormant_recent, dormant_older])
+
+            other_org = Organization(
+                org_id=uuid.uuid4(),
+                name="Churn Other Org",
+            )
+            session.add(other_org)
+            await session.flush()
+            other_team = Team(name="Churn Other Team", org_id=other_org.org_id)
+            session.add(other_team)
+            await session.flush()
+            other_client = ClientUser(
+                org_id=other_org.org_id,
+                name="Churn Other",
+                email=f"churn-other-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-444-3333",
+                address="505 Other Blvd",
+                is_active=True,
+            )
+            session.add(other_client)
+            await session.flush()
+            other_booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=other_org.org_id,
+                client_id=other_client.client_id,
+                team_id=other_team.team_id,
+                starts_at=now - timedelta(days=120),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            session.add(other_booking)
+
+            await session.commit()
+            return active_client.client_id, dormant_client.client_id
 
     return asyncio.run(create())
 
@@ -986,6 +1168,47 @@ def test_admin_client_analytics_section(client, async_session_maker):
         assert "Bookings last 30 days</div>\n              <div class=\"title\">2</div>" in response.text
         assert "Bookings last 90 days</div>\n              <div class=\"title\">4</div>" in response.text
         assert "Avg days between completed</div>\n              <div class=\"title\">23.3 days</div>" in response.text
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_client_preferences_section(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id = _seed_client_with_preferences(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(f"/v1/admin/ui/clients/{client_id}", headers=headers)
+        assert response.status_code == 200
+        assert "Service preferences" in response.text
+        assert "Top service types" in response.text
+        assert "standard" in response.text
+        assert "Top add-ons" in response.text
+        assert "Oven Cleaning" in response.text
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_clients_churn_filter(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        _seed_clients_for_churn_filter(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get("/v1/admin/ui/clients?churn=high", headers=headers)
+        assert response.status_code == 200
+        assert "Churn Dormant" in response.text
+        assert "Churn Active" not in response.text
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
