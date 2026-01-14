@@ -5155,11 +5155,15 @@ def _resolve_worker_filters(
     return status_value, availability_value, selected_skills
 
 
-def _resolve_worker_active_state(active_state: str | None, active_only: bool) -> str:
+def _resolve_worker_active_state(
+    active_state: str | None, active_only: bool, status: str | None
+) -> str:
     if active_only:
         return "active"
     if active_state in {"active", "inactive", "all"}:
         return active_state
+    if status in {"archived", "all"}:
+        return "all"
     return "active"
 
 
@@ -5475,10 +5479,11 @@ async def _list_workers(
 ) -> list[Worker]:
     filters = [Worker.org_id == org_id]
     if status == "archived":
-        filters.append(Worker.archived_at.is_not(None))
-    elif status != "all":
+        filters.append(or_(Worker.archived_at.is_not(None), Worker.is_active.is_(False)))
+    elif status == "active":
         filters.append(Worker.archived_at.is_(None))
-    active_state_value = _resolve_worker_active_state(active_state, active_only)
+        filters.append(Worker.is_active.is_(True))
+    active_state_value = _resolve_worker_active_state(active_state, active_only, status)
     if active_state_value == "active":
         filters.append(Worker.is_active.is_(True))
     elif active_state_value == "inactive":
@@ -6000,7 +6005,9 @@ async def admin_workers_list(
         availability=availability,
         skill=skill,
     )
-    active_state_value = _resolve_worker_active_state(active_state, active_only)
+    if status is None and active_state in {"inactive", "all"}:
+        status_value = "all"
+    active_state_value = _resolve_worker_active_state(active_state, active_only, status_value)
     workers = await _list_workers(
         session,
         org_id=org_id,
@@ -6624,7 +6631,9 @@ async def admin_workers_export_filtered(
         availability=availability,
         skill=skill,
     )
-    active_state_value = _resolve_worker_active_state(active_state, active_only)
+    if status is None and active_state in {"inactive", "all"}:
+        status_value = "all"
+    active_state_value = _resolve_worker_active_state(active_state, active_only, status_value)
     workers = await _list_workers(
         session,
         org_id=org_id,
