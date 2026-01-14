@@ -9543,6 +9543,203 @@ async def _client_booking_stats(
     }
 
 
+def _bucket_key_expr(column: sa.ColumnElement, period: str, bind) -> sa.ColumnElement:
+    if bind and bind.dialect.name == "sqlite":
+        if period == "week":
+            return func.strftime("%Y-%W", column)
+        return func.strftime("%Y-%m", column)
+    return func.date_trunc(period, column)
+
+
+def _week_start(value: datetime) -> datetime:
+    floored = value - timedelta(days=value.weekday())
+    return floored.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _month_start(value: datetime) -> datetime:
+    return value.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _add_months(value: datetime, months: int) -> datetime:
+    year = value.year + (value.month - 1 + months) // 12
+    month = (value.month - 1 + months) % 12 + 1
+    return value.replace(year=year, month=month, day=1)
+
+
+async def _client_booking_time_series(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+    period: str,
+    periods: int = 12,
+) -> list[dict[str, int | str]]:
+    now = datetime.now(tz=timezone.utc)
+    if period == "week":
+        current_start = _week_start(now)
+        bucket_starts = [
+            current_start - timedelta(weeks=offset) for offset in range(periods - 1, -1, -1)
+        ]
+        label_format = "%b %d"
+        key_format = "%Y-%W"
+    else:
+        current_start = _month_start(now)
+        bucket_starts = [_add_months(current_start, -offset) for offset in range(periods - 1, -1, -1)]
+        label_format = "%b %Y"
+        key_format = "%Y-%m"
+
+    cutoff = bucket_starts[0]
+    bucket_expr = _bucket_key_expr(Booking.starts_at, period, session.bind)
+    rows = (
+        await session.execute(
+            select(bucket_expr.label("bucket"), func.count())
+            .where(Booking.client_id == client_id, Booking.org_id == org_id, Booking.starts_at >= cutoff)
+            .group_by(bucket_expr)
+            .order_by(bucket_expr)
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for bucket, count in rows:
+        if bucket is None:
+            continue
+        if isinstance(bucket, str):
+            key = bucket
+        else:
+            key = bucket.strftime(key_format)
+        counts[key] = int(count)
+
+    series: list[dict[str, int | str]] = []
+    for bucket_start in bucket_starts:
+        key = bucket_start.strftime(key_format)
+        series.append(
+            {
+                "label": bucket_start.strftime(label_format),
+                "count": counts.get(key, 0),
+            }
+        )
+    return series
+
+
+async def _client_booking_frequency_stats(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+) -> dict[str, int | float | datetime | None]:
+    now = datetime.now(tz=timezone.utc)
+    cutoff_30 = now - timedelta(days=30)
+    cutoff_90 = now - timedelta(days=90)
+    base_filters = (Booking.client_id == client_id, Booking.org_id == org_id)
+    total_count = (
+        await session.execute(select(func.count()).select_from(Booking).where(*base_filters))
+    ).scalar_one()
+    last_30_count = (
+        await session.execute(
+            select(func.count()).select_from(Booking).where(*base_filters, Booking.starts_at >= cutoff_30)
+        )
+    ).scalar_one()
+    last_90_count = (
+        await session.execute(
+            select(func.count()).select_from(Booking).where(*base_filters, Booking.starts_at >= cutoff_90)
+        )
+    ).scalar_one()
+    last_booking_at = (
+        await session.execute(select(func.max(Booking.starts_at)).where(*base_filters))
+    ).scalar_one()
+
+    completed_rows = (
+        await session.execute(
+            select(Booking.starts_at)
+            .where(*base_filters, Booking.status.in_(_COMPLETED_BOOKING_STATUSES))
+            .order_by(Booking.starts_at.asc())
+        )
+    ).scalars().all()
+    avg_gap_days = None
+    if len(completed_rows) >= 2:
+        gaps = [
+            (current - previous).total_seconds() / 86400
+            for previous, current in zip(completed_rows, completed_rows[1:])
+        ]
+        avg_gap_days = sum(gaps) / len(gaps) if gaps else None
+
+    return {
+        "total": int(total_count or 0),
+        "last_30": int(last_30_count or 0),
+        "last_90": int(last_90_count or 0),
+        "avg_gap_days": float(avg_gap_days) if avg_gap_days is not None else None,
+        "last_booking_at": last_booking_at,
+    }
+
+
+async def _client_favorite_workers(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+    limit: int = 3,
+) -> list[dict[str, int | str]]:
+    assigned = (
+        select(
+            Booking.booking_id.label("booking_id"),
+            Booking.assigned_worker_id.label("worker_id"),
+            Booking.duration_minutes.label("duration_minutes"),
+            Booking.base_charge_cents.label("base_charge_cents"),
+        )
+        .where(
+            Booking.client_id == client_id,
+            Booking.org_id == org_id,
+            Booking.assigned_worker_id.is_not(None),
+            Booking.status.in_(_COMPLETED_BOOKING_STATUSES),
+        )
+    )
+    crew = (
+        select(
+            BookingWorker.booking_id.label("booking_id"),
+            BookingWorker.worker_id.label("worker_id"),
+            Booking.duration_minutes.label("duration_minutes"),
+            Booking.base_charge_cents.label("base_charge_cents"),
+        )
+        .join(Booking, Booking.booking_id == BookingWorker.booking_id)
+        .where(
+            Booking.client_id == client_id,
+            Booking.org_id == org_id,
+            Booking.status.in_(_COMPLETED_BOOKING_STATUSES),
+        )
+    )
+    combined = sa.union(assigned, crew).subquery()
+    rows = (
+        await session.execute(
+            select(
+                Worker.worker_id,
+                Worker.name,
+                func.count(combined.c.booking_id).label("completed_count"),
+                func.coalesce(func.sum(combined.c.duration_minutes), 0).label("total_minutes"),
+                func.coalesce(func.sum(combined.c.base_charge_cents), 0).label("total_revenue_cents"),
+            )
+            .join(Worker, Worker.worker_id == combined.c.worker_id)
+            .where(Worker.org_id == org_id)
+            .group_by(Worker.worker_id, Worker.name)
+            .order_by(
+                sa.desc("completed_count"),
+                sa.desc("total_revenue_cents"),
+                sa.desc("total_minutes"),
+                Worker.name.asc(),
+            )
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "worker_id": int(worker_id),
+            "name": name,
+            "completed_count": int(completed_count or 0),
+            "total_minutes": int(total_minutes or 0),
+            "total_revenue_cents": int(total_revenue_cents or 0),
+        }
+        for worker_id, name, completed_count, total_minutes, total_revenue_cents in rows
+    ]
+
+
 async def _client_feedback_summary(
     session: AsyncSession,
     *,
@@ -10329,6 +10526,16 @@ async def admin_clients_edit_form(
         )
     ).scalars().all()
     booking_stats = await _client_booking_stats(session, org_id=org_id, client_id=client_id)
+    weekly_series = await _client_booking_time_series(
+        session, org_id=org_id, client_id=client_id, period="week"
+    )
+    monthly_series = await _client_booking_time_series(
+        session, org_id=org_id, client_id=client_id, period="month"
+    )
+    frequency_stats = await _client_booking_frequency_stats(
+        session, org_id=org_id, client_id=client_id
+    )
+    favorite_workers = await _client_favorite_workers(session, org_id=org_id, client_id=client_id)
     feedback_summary = await _client_feedback_summary(session, org_id=org_id, client_id=client_id)
     risk_summary = await _client_risk_summary(session, org_id=org_id, client_id=client_id)
     recent_feedback = await _client_recent_feedback(session, org_id=org_id, client_id=client_id)
@@ -10807,6 +11014,117 @@ async def admin_clients_edit_form(
       </div>
     </div>
     """
+
+    def _render_time_series(title: str, series: list[dict[str, int | str]]) -> str:
+        max_count = max((int(item["count"]) for item in series), default=0)
+        rows = []
+        for item in series:
+            count = int(item["count"])
+            percent = int(round((count / max_count) * 100)) if max_count else 0
+            rows.append(
+                """
+                <div style="display: flex; align-items: center; gap: var(--space-sm);">
+                  <div class="muted" style="min-width: 70px;">{label}</div>
+                  <div style="flex: 1; background: var(--color-surface-muted); height: 8px; border-radius: 999px; overflow: hidden;">
+                    <div style="width: {percent}%; background: var(--color-primary); height: 100%;"></div>
+                  </div>
+                  <div class="muted" style="min-width: 24px; text-align: right;">{count}</div>
+                </div>
+                """.format(
+                    label=html.escape(str(item["label"])),
+                    percent=percent,
+                    count=count,
+                )
+            )
+        rows_html = "".join(rows) if rows else '<div class="muted">No bookings yet.</div>'
+        return f"""
+        <div class="stack">
+          <div class="muted">{html.escape(title)}</div>
+          <div class="stack">
+            {rows_html}
+          </div>
+        </div>
+        """
+
+    avg_gap_days = frequency_stats["avg_gap_days"]
+    avg_gap_display = "—" if avg_gap_days is None else f"{avg_gap_days:.1f} days"
+    last_booking_display = (
+        html.escape(_format_dt(frequency_stats["last_booking_at"]))
+        if frequency_stats["last_booking_at"]
+        else "—"
+    )
+    favorite_workers_rows = "".join(
+        """
+        <div class="card" style="padding: var(--space-md);">
+          <div class="title">
+            <a href="/v1/admin/ui/workers/{worker_id}">{name}</a>
+          </div>
+          <div class="muted">
+            {count} completed · {minutes} min · {revenue}
+          </div>
+        </div>
+        """.format(
+            worker_id=html.escape(str(worker["worker_id"])),
+            name=html.escape(str(worker["name"])),
+            count=worker["completed_count"],
+            minutes=worker["total_minutes"],
+            revenue=html.escape(_format_money(worker["total_revenue_cents"], currency))
+            if worker["total_revenue_cents"]
+            else "—",
+        )
+        for worker in favorite_workers
+    )
+    favorite_workers_html = (
+        f"<div class=\"stack\">{favorite_workers_rows}</div>"
+        if favorite_workers_rows
+        else "<div class=\"muted\">No completed bookings yet.</div>"
+    )
+    analytics_card = f"""
+    <div class="card" id="client-analytics">
+      <div class="card-row">
+        <div>
+          <div class="title">Analytics</div>
+          <div class="muted">Booking trends, frequency, and favorite workers.</div>
+        </div>
+      </div>
+      <div class="stack" style="gap: var(--space-lg);">
+        <div class="stack">
+          <div class="title">Bookings over time</div>
+          {_render_time_series("Last 12 weeks", weekly_series)}
+          {_render_time_series("Last 12 months", monthly_series)}
+        </div>
+        <div>
+          <div class="title">Frequency stats</div>
+          <div style="display: grid; gap: var(--space-md); grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+            <div>
+              <div class="muted">Total bookings</div>
+              <div class="title">{frequency_stats["total"]}</div>
+            </div>
+            <div>
+              <div class="muted">Bookings last 30 days</div>
+              <div class="title">{frequency_stats["last_30"]}</div>
+            </div>
+            <div>
+              <div class="muted">Bookings last 90 days</div>
+              <div class="title">{frequency_stats["last_90"]}</div>
+            </div>
+            <div>
+              <div class="muted">Avg days between completed</div>
+              <div class="title">{html.escape(avg_gap_display)}</div>
+            </div>
+            <div>
+              <div class="muted">Last booking date</div>
+              <div class="title">{last_booking_display}</div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="title">Favorite workers</div>
+          {favorite_workers_html}
+        </div>
+      </div>
+    </div>
+    """
     overview_card = f"""
     <div class="card">
       <div class="card-row">
@@ -10851,6 +11169,7 @@ async def admin_clients_edit_form(
       </form>
     </div>
     {quick_actions_card}
+    {analytics_card}
     <div class="card" id="client-addresses">
       <div class="card-row">
         <div>
