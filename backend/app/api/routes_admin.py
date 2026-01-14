@@ -5155,6 +5155,18 @@ def _resolve_worker_filters(
     return status_value, availability_value, selected_skills
 
 
+def _resolve_worker_active_state(
+    active_state: str | None, active_only: bool, status: str | None
+) -> str:
+    if active_only:
+        return "active"
+    if active_state in {"active", "inactive", "all"}:
+        return active_state
+    if status in {"archived", "all"}:
+        return "all"
+    return "active"
+
+
 def _normalize_skill_filters(skill: list[str] | None) -> list[str]:
     return [entry.strip() for entry in (skill or []) if entry and entry.strip()]
 
@@ -5210,6 +5222,7 @@ def _build_workers_export_query(
     *,
     q: str | None,
     active_only: bool,
+    active_state: str | None,
     team_id: int | None,
     status: str | None,
     rating_min: float | None,
@@ -5222,6 +5235,8 @@ def _build_workers_export_query(
         params["q"] = q
     if active_only:
         params["active_only"] = "1"
+    elif active_state and active_state != "active":
+        params["active_state"] = active_state
     if team_id:
         params["team_id"] = str(team_id)
     if status:
@@ -5454,6 +5469,7 @@ async def _list_workers(
     org_id: uuid.UUID,
     q: str | None,
     active_only: bool,
+    active_state: str | None,
     team_id: int | None,
     status: str | None,
     rating_min: float | None,
@@ -5463,11 +5479,15 @@ async def _list_workers(
 ) -> list[Worker]:
     filters = [Worker.org_id == org_id]
     if status == "archived":
-        filters.append(Worker.archived_at.is_not(None))
-    elif status != "all":
+        filters.append(or_(Worker.archived_at.is_not(None), Worker.is_active.is_(False)))
+    elif status == "active":
         filters.append(Worker.archived_at.is_(None))
-    if active_only:
         filters.append(Worker.is_active.is_(True))
+    active_state_value = _resolve_worker_active_state(active_state, active_only, status)
+    if active_state_value == "active":
+        filters.append(Worker.is_active.is_(True))
+    elif active_state_value == "inactive":
+        filters.append(Worker.is_active.is_(False))
     if team_id:
         filters.append(Worker.team_id == team_id)
     if q:
@@ -5965,6 +5985,7 @@ async def admin_workers_list(
     request: Request,
     q: str | None = Query(default=None),
     active_only: bool = Query(default=False),
+    active_state: str | None = Query(default=None),
     team_id: int | None = Query(default=None),
     status: str | None = Query(default=None),
     show: str | None = Query(default=None),
@@ -5984,11 +6005,15 @@ async def admin_workers_list(
         availability=availability,
         skill=skill,
     )
+    if status is None and active_state in {"inactive", "all"}:
+        status_value = "all"
+    active_state_value = _resolve_worker_active_state(active_state, active_only, status_value)
     workers = await _list_workers(
         session,
         org_id=org_id,
         q=q,
         active_only=active_only,
+        active_state=active_state_value,
         team_id=team_id,
         status=status_value,
         rating_min=rating_min,
@@ -6038,6 +6063,7 @@ async def admin_workers_list(
     export_query = _build_workers_export_query(
         q=q,
         active_only=active_only,
+        active_state=active_state_value,
         team_id=team_id,
         status=status_value,
         rating_min=rating_min,
@@ -6123,7 +6149,7 @@ async def admin_workers_list(
                 busy_until=html.escape(_format_dt(busy_until) if busy_until else "-"),
                 worker_id=worker.worker_id,
                 edit_icon=_icon("edit"),
-                edit_label=html.escape("Details"),
+                edit_label=html.escape(tr(lang, "admin.workers.details")),
                 delete_label=html.escape(tr(lang, "admin.workers.delete_permanent")),
                 archive_action=archive_action,
                 archive_label=html.escape(archive_label),
@@ -6144,6 +6170,11 @@ async def admin_workers_list(
             "<form class=\"filters\" method=\"get\">",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.search'))}</label><input class=\"input\" type=\"text\" name=\"q\" value=\"{html.escape(q or '')}\" /></div>",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.team'))}</label><select class=\"input\" name=\"team_id\"><option value=\"\"></option>{team_filter_options}</select></div>",
+            f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.active_state'))}</label><select class=\"input\" name=\"active_state\">"
+            f"<option value=\"active\" {'selected' if active_state_value == 'active' else ''}>{html.escape(tr(lang, 'admin.workers.status_active'))}</option>"
+            f"<option value=\"inactive\" {'selected' if active_state_value == 'inactive' else ''}>{html.escape(tr(lang, 'admin.workers.status_inactive'))}</option>"
+            f"<option value=\"all\" {'selected' if active_state_value == 'all' else ''}>{html.escape(tr(lang, 'admin.workers.status_all'))}</option>"
+            f"</select></div>",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.status_label'))}</label><select class=\"input\" name=\"status\">"
             f"<option value=\"active\" {'selected' if status_value == 'active' else ''}>{html.escape(tr(lang, 'admin.workers.status_active'))}</option>"
             f"<option value=\"archived\" {'selected' if status_value == 'archived' else ''}>{html.escape(tr(lang, 'admin.workers.status_archived'))}</option>"
@@ -6233,6 +6264,7 @@ async def admin_workers_availability(
         org_id=org_id,
         q=None,
         active_only=False,
+        active_state="all",
         team_id=team_id,
         status=status_value,
         rating_min=None,
@@ -6579,6 +6611,7 @@ async def admin_workers_export_filtered(
     format: str = Query(default="csv"),
     q: str | None = Query(default=None),
     active_only: bool = Query(default=False),
+    active_state: str | None = Query(default=None),
     team_id: int | None = Query(default=None),
     status: str | None = Query(default=None),
     show: str | None = Query(default=None),
@@ -6598,11 +6631,15 @@ async def admin_workers_export_filtered(
         availability=availability,
         skill=skill,
     )
+    if status is None and active_state in {"inactive", "all"}:
+        status_value = "all"
+    active_state_value = _resolve_worker_active_state(active_state, active_only, status_value)
     workers = await _list_workers(
         session,
         org_id=org_id,
         q=q,
         active_only=active_only,
+        active_state=active_state_value,
         team_id=team_id,
         status=status_value,
         rating_min=rating_min,
@@ -6926,12 +6963,16 @@ async def admin_worker_detail(
     csrf_input = render_csrf_input(csrf_token)
     schedule_table = (
         "<table class=\"table\"><thead><tr>"
-        "<th>Date</th><th>Time</th><th>Duration (min)</th><th>Client</th><th>Status</th>"
+        f"<th>{html.escape(tr(lang, 'admin.workers.schedule_date'))}</th>"
+        f"<th>{html.escape(tr(lang, 'admin.workers.schedule_time'))}</th>"
+        f"<th>{html.escape(tr(lang, 'admin.workers.schedule_duration'))}</th>"
+        f"<th>{html.escape(tr(lang, 'admin.workers.schedule_client'))}</th>"
+        f"<th>{html.escape(tr(lang, 'admin.workers.schedule_status'))}</th>"
         "</tr></thead><tbody>"
         f"{''.join(schedule_rows)}"
         "</tbody></table>"
         if schedule_rows
-        else _render_empty("No bookings scheduled in the next 7 days.")
+        else _render_empty(tr(lang, "admin.workers.schedule_empty"))
     )
     content = "".join(
         [
@@ -6942,29 +6983,29 @@ async def admin_worker_detail(
             f"<div class=\"muted\">{html.escape(getattr(worker.team, 'name', ''))}</div></div>",
             "<div class=\"actions\">",
             f"<span>{status_label}</span>",
-            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/edit\">{_icon('edit')}Edit</a>",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/edit\">{_icon('edit')}{html.escape(tr(lang, 'admin.workers.edit'))}</a>",
             "</div></div>",
             "<div class=\"card-row\">",
-            f"<div><strong>Rating:</strong> {html.escape(rating_display)}</div>",
-            f"<div><strong>Skills:</strong> {skills_html}</div>",
+            f"<div><strong>{html.escape(tr(lang, 'admin.workers.rating'))}:</strong> {html.escape(rating_display)}</div>",
+            f"<div><strong>{html.escape(tr(lang, 'admin.workers.skills'))}:</strong> {skills_html}</div>",
             "</div></div>",
             "<div class=\"card\">",
             "<div class=\"card-row\">",
             "<div class=\"metrics\">",
-            f"<div class=\"metric\"><div class=\"label\">Completed bookings</div><div class=\"value\">{completed_count}</div></div>",
-            f"<div class=\"metric\"><div class=\"label\">Cancelled bookings</div><div class=\"value\">{cancelled_count}</div></div>",
-            f"<div class=\"metric\"><div class=\"label\">Avg ticket</div><div class=\"value\">{html.escape(avg_ticket_display)}</div></div>",
-            f"<div class=\"metric\"><div class=\"label\">Working since</div><div class=\"value\">{html.escape(_format_date(worker.created_at.date()))}</div></div>",
+            f"<div class=\"metric\"><div class=\"label\">{html.escape(tr(lang, 'admin.workers.completed_bookings'))}</div><div class=\"value\">{completed_count}</div></div>",
+            f"<div class=\"metric\"><div class=\"label\">{html.escape(tr(lang, 'admin.workers.cancelled_bookings'))}</div><div class=\"value\">{cancelled_count}</div></div>",
+            f"<div class=\"metric\"><div class=\"label\">{html.escape(tr(lang, 'admin.workers.avg_ticket'))}</div><div class=\"value\">{html.escape(avg_ticket_display)}</div></div>",
+            f"<div class=\"metric\"><div class=\"label\">{html.escape(tr(lang, 'admin.workers.working_since'))}</div><div class=\"value\">{html.escape(_format_date(worker.created_at.date()))}</div></div>",
             "</div>",
             "</div>",
             "</div>",
             "<div class=\"card\">",
             "<div class=\"card-row\">",
-            "<div><div class=\"title\">Quick actions</div></div>",
+            f"<div><div class=\"title\">{html.escape(tr(lang, 'admin.workers.quick_actions'))}</div></div>",
             "<div class=\"actions\">",
-            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/dispatch?date={today_str}&worker_id={worker.worker_id}\">{_icon('calendar')}Assign</a>",
-            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/export?format=csv\">Export CSV</a>",
-            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/export?format=json\">Export JSON</a>",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/dispatch?date={today_str}&worker_id={worker.worker_id}\">{_icon('calendar')}{html.escape(tr(lang, 'admin.workers.assign'))}</a>",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/export?format=csv\">{html.escape(tr(lang, 'admin.workers.export_csv'))}</a>",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/export?format=json\">{html.escape(tr(lang, 'admin.workers.export_json'))}</a>",
             "</div>",
             "</div>",
             "<div class=\"card-row\">",
@@ -6973,13 +7014,13 @@ async def admin_worker_detail(
             "</div>",
             "<div class=\"card\">",
             "<div class=\"card-row\">",
-            "<div><div class=\"title\">Edit skills & rating</div></div>",
+            f"<div><div class=\"title\">{html.escape(tr(lang, 'admin.workers.edit_skills_rating'))}</div></div>",
             "</div>",
             f"<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}\">",
             "<div class=\"form-group\">",
             f"<label>{html.escape(tr(lang, 'admin.workers.skills'))}</label>",
             f"<input class=\"input\" type=\"text\" name=\"skills\" value=\"{html.escape(', '.join(worker.skills or []))}\" />",
-            "<div class=\"muted\">Comma-separated skills (e.g., deep clean, windows).</div>",
+            f"<div class=\"muted\">{html.escape(tr(lang, 'admin.workers.skills_hint'))}</div>",
             "</div>",
             "<div class=\"form-group\">",
             f"<label>{html.escape(tr(lang, 'admin.workers.rating'))}</label>",
@@ -6991,8 +7032,8 @@ async def admin_worker_detail(
             "</div>",
             "<div class=\"card\">",
             "<div class=\"card-row\">",
-            "<div><div class=\"title\">Weekly schedule</div>",
-            "<div class=\"muted\">Next 7 days</div></div>",
+            f"<div><div class=\"title\">{html.escape(tr(lang, 'admin.workers.weekly_schedule'))}</div>",
+            f"<div class=\"muted\">{html.escape(tr(lang, 'admin.workers.next_7_days'))}</div></div>",
             "</div>",
             schedule_table,
             "</div>",
