@@ -68,7 +68,15 @@ async def test_admin_workers_list_filters(client, async_session_maker):
             archived_at=now,
             is_active=False,
         )
-        session.add_all([worker_free, worker_busy_primary, worker_busy_crew, worker_archived])
+        worker_inactive = Worker(
+            name="Inactive Worker",
+            phone="+1 555-5000",
+            team_id=team.team_id,
+            is_active=False,
+        )
+        session.add_all(
+            [worker_free, worker_busy_primary, worker_busy_crew, worker_archived, worker_inactive]
+        )
         await session.flush()
 
         booking = Booking(
@@ -86,6 +94,7 @@ async def test_admin_workers_list_filters(client, async_session_maker):
     headers = _basic_auth("dispatch", "secret")
     list_resp = client.get("/v1/admin/ui/workers", headers=headers)
     assert list_resp.status_code == 200
+    assert "Inactive Worker" not in list_resp.text
 
     status_resp = client.get("/v1/admin/ui/workers?status=archived", headers=headers)
     assert "Archived Worker" in status_resp.text
@@ -107,3 +116,11 @@ async def test_admin_workers_list_filters(client, async_session_maker):
     free_resp = client.get("/v1/admin/ui/workers?availability=free", headers=headers)
     assert "Free Worker" in free_resp.text
     assert "Busy Primary" not in free_resp.text
+
+    inactive_resp = client.get("/v1/admin/ui/workers?active_state=inactive", headers=headers)
+    assert "Inactive Worker" in inactive_resp.text
+    assert "Free Worker" not in inactive_resp.text
+
+    ru_headers = {**headers, "accept-language": "ru"}
+    translated_resp = client.get("/v1/admin/ui/workers", headers=ru_headers)
+    assert "Детали" in translated_resp.text
