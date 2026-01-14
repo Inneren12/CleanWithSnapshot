@@ -5873,7 +5873,7 @@ async def admin_workers_dashboard(
             "</div>",
             "<div class=\"card\">",
             "<div class=\"card-row\">",
-            f"<div class=\"title\">Newbies needing attention (last {_DASHBOARD_NEWBIE_DAYS} days)</div>",
+            f"<div class=\"title\">New workers needing attention (last {_DASHBOARD_NEWBIE_DAYS} days)</div>",
             "<div class=\"actions\">",
             f"<a class=\"btn secondary small\" href=\"{html.escape(_workers_list_url(worker_ids=[row.worker_id for row in newbie_rows], skills=selected_skills))}\">View list</a>",
             "</div>",
