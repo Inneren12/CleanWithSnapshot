@@ -66,9 +66,39 @@ type DispatcherAlertsResponse = {
   alerts: DispatcherAlert[];
 };
 
+type DispatcherNotifyResponse = {
+  audit_id: string;
+  status: "sent" | "failed";
+  error_code: string | null;
+  provider_msg_id: string | null;
+  sent_at: string;
+};
+
+type DispatcherNotifyAuditEntry = {
+  audit_id: string;
+  booking_id: string;
+  target: "client" | "worker";
+  channel: "sms" | "call";
+  template_id: string;
+  admin_user_id: string;
+  status: "sent" | "failed";
+  error_code: string | null;
+  provider_msg_id: string | null;
+  sent_at: string;
+};
+
+type DispatcherNotifyAuditResponse = {
+  audits: DispatcherNotifyAuditEntry[];
+};
+
 const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, index) => START_HOUR + index);
 const RANGE_START_MINUTES = START_HOUR * 60;
 const RANGE_END_MINUTES = END_HOUR * 60;
+const DISPATCHER_TEMPLATES = [
+  { id: "WORKER_EN_ROUTE_15MIN", label: "Worker: route reminder (15 min)" },
+  { id: "CLIENT_DELAY_TRAFFIC", label: "Client: delay due to traffic" },
+  { id: "CLIENT_DONE", label: "Client: cleaning complete" },
+];
 
 function formatTimeLabel(hour: number) {
   const value = hour.toString().padStart(2, "0");
@@ -140,6 +170,14 @@ function formatLastUpdated(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatAuditTime(value: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: EDMONTON_TZ,
+  }).format(new Date(value));
+}
+
 function isoDateInTz(now: Date, tz: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
@@ -170,6 +208,11 @@ export default function DispatcherPage() {
   const [rescheduleEnd, setRescheduleEnd] = useState("");
   const [rescheduleOverride, setRescheduleOverride] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [commTarget, setCommTarget] = useState<"client" | "worker">("client");
+  const [commChannel, setCommChannel] = useState<"sms" | "call">("sms");
+  const [commTemplateId, setCommTemplateId] = useState(DISPATCHER_TEMPLATES[1]?.id ?? "");
+  const [commAudits, setCommAudits] = useState<DispatcherNotifyAuditEntry[]>([]);
+  const [commError, setCommError] = useState<string | null>(null);
   const [draggingBookingId, setDraggingBookingId] = useState<string | null>(null);
   const [dragOverWorkerId, setDragOverWorkerId] = useState<number | null>(null);
   const hoursScrollRef = useRef<HTMLDivElement | null>(null);
@@ -192,6 +235,17 @@ export default function DispatcherPage() {
     const timeout = window.setTimeout(() => setToast(null), 4000);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (!selectedBooking) {
+      setCommAudits([]);
+      setCommError(null);
+      return;
+    }
+    setCommTarget("client");
+    setCommChannel("sms");
+    setCommTemplateId(DISPATCHER_TEMPLATES[1]?.id ?? "");
+  }, [selectedBooking]);
 
   const fetchBoard = useCallback(async () => {
     if (!username || !password) return;
@@ -244,6 +298,29 @@ export default function DispatcherPage() {
     }
   }, [authHeaders, password, username]);
 
+  const fetchNotifyAudits = useCallback(async () => {
+    if (!isAuthenticated || !selectedBooking) return;
+    setCommError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE}/v1/admin/dispatcher/notify/audit?booking_id=${encodeURIComponent(
+          selectedBooking.booking_id
+        )}&limit=5`,
+        {
+          headers: authHeaders,
+          cache: "no-store",
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+      const payload = (await response.json()) as DispatcherNotifyAuditResponse;
+      setCommAudits(payload.audits);
+    } catch (fetchError) {
+      setCommError(fetchError instanceof Error ? fetchError.message : "Unable to load communication history");
+    }
+  }, [authHeaders, isAuthenticated, selectedBooking]);
+
   useEffect(() => {
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
     const storedPassword = window.localStorage.getItem(STORAGE_PASSWORD_KEY);
@@ -270,6 +347,11 @@ export default function DispatcherPage() {
     setRescheduleOverride(false);
     setCancelReason("");
   }, [selectedBooking]);
+
+  useEffect(() => {
+    if (!selectedBooking) return;
+    void fetchNotifyAudits();
+  }, [fetchNotifyAudits, selectedBooking]);
 
   const handleSaveCredentials = useCallback(() => {
     window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
@@ -519,6 +601,56 @@ export default function DispatcherPage() {
         })
     );
   }, [applyOptimisticUpdate, authHeaders, cancelReason, isAuthenticated, selectedBooking, showToast]);
+
+  const handleNotify = useCallback(
+    async (target: "client" | "worker", channel: "sms" | "call", templateId: string) => {
+      if (!selectedBooking) return;
+      if (!isAuthenticated) {
+        showToast("Save credentials to contact clients or workers.");
+        return;
+      }
+      if (channel === "sms") {
+        const confirmed = window.confirm("Send this SMS now?");
+        if (!confirmed) return;
+      }
+      setActionPending(selectedBooking.booking_id, true);
+      try {
+        const response = await fetch(`${API_BASE}/v1/admin/dispatcher/notify`, {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            booking_id: selectedBooking.booking_id,
+            target,
+            channel,
+            template_id: templateId,
+            params: {},
+          }),
+        });
+        const payload = (await response.json()) as DispatcherNotifyResponse;
+        if (!response.ok) {
+          const message =
+            typeof (payload as { detail?: string })?.detail === "string"
+              ? (payload as { detail?: string }).detail
+              : `Request failed (${response.status})`;
+          throw new Error(message);
+        }
+        if (payload.status === "sent") {
+          showToast("Message sent.", "success");
+        } else {
+          showToast(payload.error_code ?? "Message failed to send.");
+        }
+        await fetchNotifyAudits();
+      } catch (notifyError) {
+        showToast(
+          notifyError instanceof Error ? notifyError.message : "Unable to send notification",
+          "error"
+        );
+      } finally {
+        setActionPending(selectedBooking.booking_id, false);
+      }
+    },
+    [authHeaders, fetchNotifyAudits, isAuthenticated, selectedBooking, setActionPending, showToast]
+  );
 
   const handleDragStart = useCallback((bookingId: string) => {
     return (event: DragEvent<HTMLButtonElement>) => {
@@ -932,6 +1064,115 @@ export default function DispatcherPage() {
                     >
                       Mark done
                     </button>
+                  </div>
+                </div>
+                <div className="dispatcher-action-group">
+                  <span className="detail-label">Communication</span>
+                  <div className="dispatcher-comm-quick">
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => void handleNotify("client", "call", commTemplateId)}
+                      disabled={!isAuthenticated || selectedPending}
+                    >
+                      Call client
+                    </button>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => void handleNotify("client", "sms", commTemplateId)}
+                      disabled={!isAuthenticated || selectedPending}
+                    >
+                      SMS client
+                    </button>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => void handleNotify("worker", "call", commTemplateId)}
+                      disabled={!isAuthenticated || selectedPending}
+                    >
+                      Call worker
+                    </button>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => void handleNotify("worker", "sms", commTemplateId)}
+                      disabled={!isAuthenticated || selectedPending}
+                    >
+                      SMS worker
+                    </button>
+                  </div>
+                  <div className="dispatcher-action-row dispatcher-comm-template">
+                    <label className="field">
+                      <span>Target</span>
+                      <select
+                        className="input"
+                        value={commTarget}
+                        onChange={(event) => setCommTarget(event.target.value as "client" | "worker")}
+                        disabled={!isAuthenticated || selectedPending}
+                      >
+                        <option value="client">Client</option>
+                        <option value="worker">Worker</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Channel</span>
+                      <select
+                        className="input"
+                        value={commChannel}
+                        onChange={(event) => setCommChannel(event.target.value as "sms" | "call")}
+                        disabled={!isAuthenticated || selectedPending}
+                      >
+                        <option value="sms">SMS</option>
+                        <option value="call">Call</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Template</span>
+                      <select
+                        className="input"
+                        value={commTemplateId}
+                        onChange={(event) => setCommTemplateId(event.target.value)}
+                        disabled={!isAuthenticated || selectedPending}
+                      >
+                        {DISPATCHER_TEMPLATES.map((template) => (
+                          <option key={template.id} value={template.id}>
+                            {template.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => void handleNotify(commTarget, commChannel, commTemplateId)}
+                      disabled={!isAuthenticated || selectedPending}
+                    >
+                      Send
+                    </button>
+                  </div>
+                  {commError ? <p className="muted">{commError}</p> : null}
+                  <div className="dispatcher-comm-history">
+                    <span className="detail-label">Last sent</span>
+                    {commAudits.length ? (
+                      <ul>
+                        {commAudits.map((audit) => (
+                          <li key={audit.audit_id}>
+                            <span>{formatAuditTime(audit.sent_at)}</span>
+                            <span>
+                              {audit.channel.toUpperCase()} {audit.target}
+                            </span>
+                            <span>{audit.template_id}</span>
+                            <span className={`dispatcher-comm-status ${audit.status}`}>
+                              {audit.status}
+                            </span>
+                            {audit.error_code ? <span>{audit.error_code}</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="muted">No communications logged yet.</p>
+                    )}
                   </div>
                 </div>
                 <div className="dispatcher-action-group">
