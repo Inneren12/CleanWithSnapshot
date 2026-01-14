@@ -3,6 +3,9 @@ import base64
 import uuid
 from datetime import datetime, timezone
 
+import sqlalchemy as sa
+
+from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.clients.db_models import ClientUser
 from app.settings import settings
@@ -91,8 +94,10 @@ def _seed_client_with_booking(async_session_maker):
                 credit_note_total_cents=0,
             )
             session.add(booking)
+            event_log = EventLog(event_type="booking_created", booking_id=booking.booking_id)
+            session.add(event_log)
             await session.commit()
-            return client.client_id, booking.booking_id
+            return client.client_id, booking.booking_id, event_log.event_id
 
     return asyncio.run(create())
 
@@ -165,7 +170,7 @@ def test_admin_can_delete_client_with_detach_strategy(client, async_session_make
     settings.admin_basic_password = "secret"
 
     try:
-        client_id, booking_id = _seed_client_with_booking(async_session_maker)
+        client_id, booking_id, event_log_id = _seed_client_with_booking(async_session_maker)
         headers = _basic_auth("admin", "secret")
 
         delete_response = client.post(
@@ -181,6 +186,8 @@ def test_admin_can_delete_client_with_detach_strategy(client, async_session_make
                 booking = await session.get(Booking, booking_id)
                 assert booking is not None
                 assert booking.client_id is None
+                event_log = await session.get(EventLog, event_log_id)
+                assert event_log is not None
                 deleted_client = await session.get(ClientUser, client_id)
                 assert deleted_client is None
 
@@ -197,7 +204,7 @@ def test_admin_can_delete_client_with_cascade_strategy(client, async_session_mak
     settings.admin_basic_password = "secret"
 
     try:
-        client_id, booking_id = _seed_client_with_booking(async_session_maker)
+        client_id, booking_id, event_log_id = _seed_client_with_booking(async_session_maker)
         headers = _basic_auth("admin", "secret")
 
         delete_response = client.post(
@@ -212,6 +219,14 @@ def test_admin_can_delete_client_with_cascade_strategy(client, async_session_mak
             async with async_session_maker() as session:
                 booking = await session.get(Booking, booking_id)
                 assert booking is None
+                event_logs = (
+                    await session.execute(
+                        sa.select(EventLog).where(EventLog.booking_id == booking_id)
+                    )
+                ).scalars().all()
+                assert event_logs == []
+                deleted_event_log = await session.get(EventLog, event_log_id)
+                assert deleted_event_log is None
                 deleted_client = await session.get(ClientUser, client_id)
                 assert deleted_client is None
 
