@@ -972,6 +972,8 @@ async def reschedule_booking(
     booking: Booking,
     starts_at: datetime,
     duration_minutes: int,
+    *,
+    allow_conflicts: bool = False,
 ) -> Booking:
     normalized = _normalize_datetime(starts_at)
     team_stmt = select(Team).where(Team.team_id == booking.team_id).with_for_update()
@@ -980,14 +982,15 @@ async def reschedule_booking(
 
     if booking.status == "CANCELLED":
         raise ValueError("Cannot reschedule a cancelled booking")
-    if not await is_slot_available(
-        normalized,
-        duration_minutes,
-        session,
-        team_id=team.team_id,
-        excluded_booking_id=booking.booking_id,
-    ):
-        raise ValueError("Requested slot is no longer available")
+    if not allow_conflicts:
+        if not await is_slot_available(
+            normalized,
+            duration_minutes,
+            session,
+            team_id=team.team_id,
+            excluded_booking_id=booking.booking_id,
+        ):
+            raise ValueError("Requested slot is no longer available")
 
     booking.starts_at = normalized
     booking.duration_minutes = duration_minutes

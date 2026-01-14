@@ -1106,6 +1106,12 @@ button:focus-visible {
   background-size: 120px 100%;
 }
 
+.dispatcher-row-track.drop-target {
+  background-color: rgba(14, 116, 144, 0.08);
+  outline: 2px dashed rgba(14, 116, 144, 0.5);
+  outline-offset: -2px;
+}
+
 .dispatcher-booking {
   position: absolute;
   top: 12px;
@@ -1120,6 +1126,11 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.dispatcher-booking.dragging {
+  opacity: 0.6;
+  cursor: grabbing;
 }
 
 .dispatcher-booking-title {
@@ -1196,6 +1207,32 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.dispatcher-actions {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dispatcher-action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dispatcher-action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.dispatcher-action-row .field {
+  flex: 1 1 160px;
 }
 
 .detail {

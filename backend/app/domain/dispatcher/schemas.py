@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+DISPATCHER_STATUS_VALUES = {"PLANNED", "IN_PROGRESS", "DONE", "CANCELLED"}
 
 
 class DispatcherBoardClient(BaseModel):
@@ -62,3 +64,34 @@ class DispatcherAlert(BaseModel):
 
 class DispatcherAlertsResponse(BaseModel):
     alerts: list[DispatcherAlert] = Field(default_factory=list)
+
+
+class DispatcherReassignRequest(BaseModel):
+    worker_id: int = Field(gt=0)
+
+
+class DispatcherRescheduleRequest(BaseModel):
+    starts_at: datetime
+    ends_at: datetime
+    override_conflicts: bool = False
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "DispatcherRescheduleRequest":
+        if self.ends_at <= self.starts_at:
+            raise ValueError("End time must be after start time")
+        return self
+
+
+class DispatcherStatusRequest(BaseModel):
+    status: str
+    reason: str | None = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: str) -> str:
+        if value is None:
+            raise ValueError("Status is required")
+        normalized = str(value).strip().upper()
+        if normalized not in DISPATCHER_STATUS_VALUES:
+            raise ValueError("Status must be planned, in_progress, done, or cancelled")
+        return normalized
