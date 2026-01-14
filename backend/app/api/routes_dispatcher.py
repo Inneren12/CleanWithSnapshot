@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -292,10 +293,10 @@ async def reschedule_dispatcher_booking(
 )
 async def notify_dispatcher_target(
     payload: schemas.DispatcherNotifyRequest,
-    session: AsyncSession = Depends(get_db_session),
-    org_id=Depends(require_org_context),
-    identity: AdminIdentity = Depends(require_dispatch),
     request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(require_dispatch),
 ) -> schemas.DispatcherNotifyResponse:
     adapter = resolve_app_communication_adapter(request)
     try:
