@@ -2,8 +2,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import JSON
 
 from app.infra.db import UUID_TYPE
 from app.infra.db import Base
@@ -30,6 +31,9 @@ class Worker(Base):
     email: Mapped[str | None] = mapped_column(String(255))
     role: Mapped[str | None] = mapped_column(String(80))
     hourly_rate_cents: Mapped[int | None] = mapped_column(Integer)
+    rating_avg: Mapped[float | None] = mapped_column(Float)
+    rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    skills: Mapped[list[str] | None] = mapped_column(JSON)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
