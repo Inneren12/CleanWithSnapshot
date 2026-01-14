@@ -861,6 +861,71 @@ button:focus-visible {
   gap: 16px;
 }
 
+.dispatcher-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.dispatcher-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dispatcher-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.dispatcher-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.dispatcher-metric-grid span {
+  display: block;
+  font-size: var(--type-sizes-xs);
+}
+
+.dispatcher-metric-grid strong {
+  font-size: var(--type-sizes-lg);
+}
+
+.dispatcher-zone-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dispatcher-zone-chip {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text);
+  padding: 6px 12px;
+  font-size: var(--type-sizes-xs);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dispatcher-zone-chip:hover {
+  border-color: rgba(37, 99, 235, 0.4);
+}
+
+.dispatcher-zone-chip.active {
+  border-color: rgba(37, 99, 235, 0.6);
+  background: rgba(37, 99, 235, 0.12);
+  color: rgb(30, 64, 175);
+}
+
 .dispatcher-grid {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);

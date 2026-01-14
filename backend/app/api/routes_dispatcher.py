@@ -49,6 +49,8 @@ async def _load_dispatcher_booking(
     starts_at = booking.starts_at
     duration_min = booking.duration_minutes
     updated_at = booking.updated_at or booking.created_at or datetime.now(timezone.utc)
+    lat = getattr(address, "lat", None)
+    lng = getattr(address, "lng", None)
     return schemas.DispatcherBoardBooking(
         booking_id=booking.booking_id,
         status=booking.status,
@@ -63,9 +65,9 @@ async def _load_dispatcher_booking(
         address=schemas.DispatcherBoardAddress(
             id=getattr(address, "address_id", None),
             formatted=getattr(address, "address_text", None),
-            lat=None,
-            lng=None,
-            zone=None,
+            lat=lat,
+            lng=lng,
+            zone=dispatcher_service.zone_for_point(lat, lng),
         ),
         assigned_worker=schemas.DispatcherBoardWorker(
             id=getattr(worker, "worker_id", None),
@@ -104,6 +106,10 @@ async def get_dispatcher_board(
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+    try:
+        dispatcher_service.resolve_zone(zone)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid zone") from exc
 
     result = await dispatcher_service.fetch_dispatcher_board(
         session,
@@ -118,6 +124,49 @@ async def get_dispatcher_board(
         workers=result.workers,
         server_time=result.server_time,
         data_version=result.data_version,
+    )
+
+
+@router.get(
+    "/v1/admin/dispatcher/stats",
+    response_model=schemas.DispatcherStatsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_dispatcher_stats(
+    stats_date: date = Query(..., alias="date", description="Target date in YYYY-MM-DD"),
+    tz: str = Query("America/Edmonton", description="IANA timezone, e.g. America/Edmonton"),
+    zone: str | None = Query(None, description="Optional zone filter"),
+    session: AsyncSession = Depends(get_db_session),
+    org_id=Depends(require_org_context),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> schemas.DispatcherStatsResponse:
+    """Fetch dispatcher stats for a single day.
+
+    Revenue is derived from succeeded payments received during the day window (cents).
+    """
+    del identity
+    try:
+        ZoneInfo(tz)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+    try:
+        dispatcher_service.resolve_zone(zone)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid zone") from exc
+
+    result = await dispatcher_service.fetch_dispatcher_stats(
+        session,
+        org_id=org_id,
+        target_date=stats_date,
+        tz_name=tz,
+        zone=zone,
+    )
+    return schemas.DispatcherStatsResponse(
+        done_count=result.done_count,
+        in_progress_count=result.in_progress_count,
+        planned_count=result.planned_count,
+        avg_duration_hours=result.avg_duration_hours,
+        revenue_today=result.revenue_today_cents,
     )
 
 

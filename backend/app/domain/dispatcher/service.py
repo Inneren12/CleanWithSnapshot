@@ -6,11 +6,14 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Booking
 from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.dispatcher.db_models import DispatcherCommunicationAudit
+from app.domain.invoices import statuses as invoice_statuses
+from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.dispatcher import schemas
 from app.domain.notifications.email_service import LOCAL_TZ
 from app.domain.workers.db_models import Worker
@@ -30,6 +33,74 @@ class DispatcherBoardResult:
 @dataclass(frozen=True)
 class DispatcherAlertsResult:
     alerts: list[schemas.DispatcherAlert]
+
+
+@dataclass(frozen=True)
+class DispatcherStatsResult:
+    done_count: int
+    in_progress_count: int
+    planned_count: int
+    avg_duration_hours: float | None
+    revenue_today_cents: int
+
+
+@dataclass(frozen=True)
+class _ZoneBox:
+    name: str
+    lat_min: float
+    lat_max: float
+    lng_min: float
+    lng_max: float
+
+
+_ZONE_BOXES: list[_ZoneBox] = [
+    _ZoneBox("Downtown", 53.53, 53.57, -113.53, -113.47),
+    _ZoneBox("Whyte/Old Strathcona", 53.50, 53.53, -113.55, -113.48),
+    _ZoneBox("West", 53.50, 53.60, -113.68, -113.54),
+    _ZoneBox("South/Millwoods", 53.44, 53.52, -113.58, -113.44),
+    _ZoneBox("North/Castle Downs", 53.58, 53.68, -113.56, -113.42),
+    _ZoneBox("St. Albert", 53.60, 53.70, -113.72, -113.58),
+]
+
+_ZONE_LOOKUP = {zone.name.lower(): zone for zone in _ZONE_BOXES}
+_ZONE_ALIASES = {
+    "whyte": "whyte/old strathcona",
+    "old strathcona": "whyte/old strathcona",
+    "st albert": "st. albert",
+}
+
+
+def resolve_zone(zone: str | None) -> _ZoneBox | None:
+    if not zone:
+        return None
+    normalized = zone.strip().lower()
+    normalized = _ZONE_ALIASES.get(normalized, normalized)
+    match = _ZONE_LOOKUP.get(normalized)
+    if not match:
+        raise ValueError("unknown_zone")
+    return match
+
+
+def zone_for_point(lat: float | None, lng: float | None) -> str | None:
+    if lat is None or lng is None:
+        return None
+    for zone in _ZONE_BOXES:
+        if zone.lat_min <= lat <= zone.lat_max and zone.lng_min <= lng <= zone.lng_max:
+            return zone.name
+    return None
+
+
+def _apply_zone_filter(stmt: sa.Select, zone: _ZoneBox | None) -> sa.Select:
+    if zone is None:
+        return stmt
+    return stmt.where(
+        ClientAddress.lat.isnot(None),
+        ClientAddress.lng.isnot(None),
+        ClientAddress.lat >= zone.lat_min,
+        ClientAddress.lat <= zone.lat_max,
+        ClientAddress.lng >= zone.lng_min,
+        ClientAddress.lng <= zone.lng_max,
+    )
 
 
 def _booking_end(booking: Booking) -> datetime:
@@ -80,6 +151,7 @@ async def fetch_dispatcher_board(
     tz_name: str,
     zone: str | None = None,
 ) -> DispatcherBoardResult:
+    zone_filter = resolve_zone(zone)
     start_utc, end_utc = resolve_day_window(target_date, tz_name)
     stmt = (
         select(Booking, ClientUser, ClientAddress, Worker)
@@ -95,7 +167,7 @@ async def fetch_dispatcher_board(
         )
         .order_by(Worker.worker_id.asc().nulls_last(), Booking.starts_at.asc())
     )
-    del zone
+    stmt = _apply_zone_filter(stmt, zone_filter)
     result = await session.execute(stmt)
     rows = result.all()
 
@@ -109,6 +181,8 @@ async def fetch_dispatcher_board(
         ends_at = starts_at + timedelta(minutes=duration_min)
         updated_at = booking.updated_at or booking.created_at or datetime.now(timezone.utc)
         updated_at_values.append(updated_at)
+        lat = getattr(address, "lat", None)
+        lng = getattr(address, "lng", None)
         booking_payload = schemas.DispatcherBoardBooking(
             booking_id=booking.booking_id,
             status=booking.status,
@@ -123,9 +197,9 @@ async def fetch_dispatcher_board(
             address=schemas.DispatcherBoardAddress(
                 id=getattr(address, "address_id", None),
                 formatted=getattr(address, "address_text", None),
-                lat=None,
-                lng=None,
-                zone=None,
+                lat=lat,
+                lng=lng,
+                zone=zone_for_point(lat, lng),
             ),
             assigned_worker=schemas.DispatcherBoardWorker(
                 id=getattr(worker, "worker_id", None),
@@ -159,6 +233,84 @@ async def fetch_dispatcher_board(
         workers=workers,
         server_time=server_time,
         data_version=data_version,
+    )
+
+
+async def fetch_dispatcher_stats(
+    session: AsyncSession,
+    *,
+    org_id,
+    target_date: date,
+    tz_name: str,
+    zone: str | None = None,
+) -> DispatcherStatsResult:
+    zone_filter = resolve_zone(zone)
+    start_utc, end_utc = resolve_day_window(target_date, tz_name)
+    status_lower = func.lower(Booking.status)
+    duration_expr = func.coalesce(Booking.actual_duration_minutes, Booking.duration_minutes)
+    stats_stmt = (
+        select(
+            func.sum(sa.case((status_lower == "done", 1), else_=0)).label("done_count"),
+            func.sum(sa.case((status_lower == "in_progress", 1), else_=0)).label(
+                "in_progress_count"
+            ),
+            func.sum(
+                sa.case(
+                    (status_lower.in_(["planned", "confirmed"]), 1),
+                    else_=0,
+                )
+            ).label("planned_count"),
+            func.avg(sa.case((status_lower == "done", duration_expr), else_=None)).label(
+                "avg_duration_minutes"
+            ),
+        )
+        .select_from(Booking)
+        .join(ClientAddress, ClientAddress.address_id == Booking.address_id, isouter=True)
+        .where(
+            Booking.org_id == org_id,
+            Booking.starts_at >= start_utc,
+            Booking.starts_at < end_utc,
+            Booking.archived_at.is_(None),
+        )
+    )
+    stats_stmt = _apply_zone_filter(stats_stmt, zone_filter)
+    stats_row = (await session.execute(stats_stmt)).first()
+    done_count = int(stats_row.done_count or 0) if stats_row else 0
+    in_progress_count = int(stats_row.in_progress_count or 0) if stats_row else 0
+    planned_count = int(stats_row.planned_count or 0) if stats_row else 0
+    avg_minutes = float(stats_row.avg_duration_minutes) if stats_row and stats_row.avg_duration_minutes else None
+    avg_hours = round(avg_minutes / 60, 2) if avg_minutes is not None else None
+
+    revenue_stmt = (
+        select(func.coalesce(func.sum(func.coalesce(Payment.amount_cents, 0)), 0).label("revenue_cents"))
+        .select_from(Payment)
+        .join(Invoice, Invoice.invoice_id == Payment.invoice_id, isouter=True)
+        .join(
+            Booking,
+            sa.or_(
+                Booking.booking_id == Payment.booking_id,
+                Booking.booking_id == Invoice.order_id,
+            ),
+            isouter=True,
+        )
+        .join(ClientAddress, ClientAddress.address_id == Booking.address_id, isouter=True)
+        .where(
+            Payment.org_id == org_id,
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            func.coalesce(Payment.received_at, Payment.created_at) >= start_utc,
+            func.coalesce(Payment.received_at, Payment.created_at) < end_utc,
+        )
+    )
+    revenue_stmt = _apply_zone_filter(revenue_stmt, zone_filter)
+    revenue_row = (await session.execute(revenue_stmt)).first()
+    revenue_cents = int(revenue_row.revenue_cents or 0) if revenue_row else 0
+
+    return DispatcherStatsResult(
+        done_count=done_count,
+        in_progress_count=in_progress_count,
+        planned_count=planned_count,
+        avg_duration_hours=avg_hours,
+        revenue_today_cents=revenue_cents,
     )
 
 
