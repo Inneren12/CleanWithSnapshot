@@ -224,8 +224,16 @@ def _resolve_admin_org(request: Request, identity: AdminIdentity) -> uuid.UUID:
             requested_org = uuid.UUID(requested_org_header)
         except Exception:  # noqa: BLE001
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid organization header")
+        saas_identity = getattr(request.state, "saas_identity", None)
+        if saas_identity and requested_org != saas_identity.org_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        if not saas_identity and (settings.testing or settings.app_env == "dev"):
+            request.state.current_org_id = requested_org
+            return requested_org
         if identity.org_id and requested_org != identity.org_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        request.state.current_org_id = requested_org
+        return requested_org
     org_id = entitlements.resolve_org_id(request)
     if identity.org_id and identity.org_id != org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
@@ -5101,14 +5109,20 @@ async def admin_teams_delete(
     return RedirectResponse("/v1/admin/ui/teams", status_code=status.HTTP_303_SEE_OTHER)
 
 
-def _worker_status_badge(worker: Worker, lang: str | None) -> str:
+def _worker_availability_indicator(
+    worker: Worker,
+    busy_until: datetime | None,
+    lang: str | None,
+) -> str:
     if worker.archived_at:
         label = tr(lang, "admin.workers.status_archived")
-        cls = "badge"
-    else:
-        label = tr(lang, "admin.workers.status_active") if worker.is_active else tr(lang, "admin.workers.status_inactive")
-        cls = "badge" + (" badge-active" if worker.is_active else "")
-    return f'<span class="{cls}">{html.escape(label)}</span>'
+        return f"🔴 {html.escape(label)}"
+    if not worker.is_active:
+        label = tr(lang, "admin.workers.status_inactive")
+        return f"🔴 {html.escape(label)}"
+    if busy_until:
+        return f"🟡 {html.escape(tr(lang, 'admin.workers.busy_now'))}"
+    return f"🟢 {html.escape(tr(lang, 'admin.workers.free_now'))}"
 
 
 def _render_worker_form(worker: Worker | None, teams: list[Team], lang: str | None, csrf_input: str) -> str:
@@ -5249,12 +5263,15 @@ async def _list_workers(
     q: str | None,
     active_only: bool,
     team_id: int | None,
-    show: str | None,
+    status: str | None,
+    rating_min: float | None,
+    rating_max: float | None,
+    skills: list[str],
 ) -> list[Worker]:
     filters = [Worker.org_id == org_id]
-    if show == "archived":
+    if status == "archived":
         filters.append(Worker.archived_at.is_not(None))
-    else:
+    elif status != "all":
         filters.append(Worker.archived_at.is_(None))
     if active_only:
         filters.append(Worker.is_active.is_(True))
@@ -5269,9 +5286,67 @@ async def _list_workers(
                 func.lower(Worker.email).like(pattern),
             )
         )
+    if rating_min is not None or rating_max is not None:
+        filters.append(Worker.rating_avg.is_not(None))
+    if rating_min is not None:
+        filters.append(Worker.rating_avg >= rating_min)
+    if rating_max is not None:
+        filters.append(Worker.rating_avg <= rating_max)
+    for skill in skills:
+        normalized = skill.strip().lower()
+        if not normalized:
+            continue
+        pattern = f'%"{normalized}"%'
+        filters.append(func.lower(sa.cast(Worker.skills, sa.String)).like(pattern))
     stmt = select(Worker).where(*filters).options(selectinload(Worker.team)).order_by(Worker.created_at.desc())
     result = await session.execute(stmt)
     return result.scalars().all()
+
+
+async def _worker_busy_until_map(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    worker_ids: list[int],
+) -> dict[int, datetime]:
+    if not worker_ids:
+        return {}
+    now = datetime.now(timezone.utc)
+    stmt = (
+        select(
+            Booking.assigned_worker_id,
+            Booking.starts_at,
+            Booking.duration_minutes,
+            BookingWorker.worker_id.label("crew_worker_id"),
+        )
+        .outerjoin(BookingWorker, BookingWorker.booking_id == Booking.booking_id)
+        .where(
+            Booking.org_id == org_id,
+            Booking.status.in_(booking_service.BLOCKING_STATUSES),
+            Booking.starts_at <= now,
+            or_(
+                Booking.assigned_worker_id.in_(worker_ids),
+                BookingWorker.worker_id.in_(worker_ids),
+            ),
+        )
+    )
+    rows = (await session.execute(stmt)).all()
+    busy_until_map: dict[int, datetime] = {}
+    for assigned_worker_id, starts_at, duration_minutes, crew_worker_id in rows:
+        if starts_at is None or duration_minutes is None:
+            continue
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=timezone.utc)
+        ends_at = starts_at + timedelta(minutes=duration_minutes)
+        if now >= ends_at:
+            continue
+        for worker_id in (assigned_worker_id, crew_worker_id):
+            if worker_id is None:
+                continue
+            current = busy_until_map.get(worker_id)
+            if current is None or ends_at > current:
+                busy_until_map[worker_id] = ends_at
+    return busy_until_map
 
 
 @router.get("/v1/admin/ui/workers", response_class=HTMLResponse)
@@ -5280,16 +5355,44 @@ async def admin_workers_list(
     q: str | None = Query(default=None),
     active_only: bool = Query(default=False),
     team_id: int | None = Query(default=None),
+    status: str | None = Query(default=None),
     show: str | None = Query(default=None),
+    rating_min: float | None = Query(default=None),
+    rating_max: float | None = Query(default=None),
+    availability: str | None = Query(default=None),
+    skill: list[str] | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_dispatch),
+    identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
     lang = resolve_lang(request)
-    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    show_value = show or ""
+    org_id = _resolve_admin_org(request, identity)
+    status_value = status or ("archived" if show == "archived" else "active")
+    if status_value not in {"active", "archived", "all"}:
+        status_value = "active"
+    availability_value = availability or "all"
+    if availability_value not in {"free", "busy", "all"}:
+        availability_value = "all"
+    selected_skills = [entry.strip() for entry in (skill or []) if entry and entry.strip()]
     workers = await _list_workers(
-        session, org_id=org_id, q=q, active_only=active_only, team_id=team_id, show=show_value
+        session,
+        org_id=org_id,
+        q=q,
+        active_only=active_only,
+        team_id=team_id,
+        status=status_value,
+        rating_min=rating_min,
+        rating_max=rating_max,
+        skills=selected_skills,
     )
+    busy_until_map = await _worker_busy_until_map(
+        session,
+        org_id=org_id,
+        worker_ids=[worker.worker_id for worker in workers],
+    )
+    if availability_value == "busy":
+        workers = [worker for worker in workers if worker.worker_id in busy_until_map]
+    elif availability_value == "free":
+        workers = [worker for worker in workers if worker.worker_id not in busy_until_map]
     teams = (
         await session.execute(
             select(Team)
@@ -5297,55 +5400,90 @@ async def admin_workers_list(
             .order_by(Team.name)
         )
     ).scalars().all()
+    skill_rows = (
+        await session.execute(select(Worker.skills).where(Worker.org_id == org_id))
+    ).scalars().all()
+    all_skills = sorted(
+        {
+            skill_entry
+            for skill_list in skill_rows
+            if skill_list
+            for skill_entry in skill_list
+            if isinstance(skill_entry, str) and skill_entry
+        }
+    )
     team_filter_options = "".join(
         f'<option value="{team.team_id}" {"selected" if team_id == team.team_id else ""}>{html.escape(team.name)}</option>'
         for team in teams
     )
+    skill_options = sorted(set(all_skills).union(selected_skills))
+    skill_filter_options = "".join(
+        f'<option value="{html.escape(skill_option)}" {"selected" if skill_option in selected_skills else ""}>{html.escape(skill_option)}</option>'
+        for skill_option in skill_options
+    )
     csrf_token = get_csrf_token(request)
     csrf_input = render_csrf_input(csrf_token)
-    cards: list[str] = []
+    rows: list[str] = []
     for worker in workers:
+        busy_until = busy_until_map.get(worker.worker_id)
         contact = [worker.phone]
         if worker.email:
             contact.append(worker.email)
+        skills_html = (
+            " ".join(
+                f'<span class="chip">{html.escape(skill_item)}</span>'
+                for skill_item in (worker.skills or [])
+            )
+            or "-"
+        )
+        if worker.rating_avg is None:
+            rating_display = "-"
+        else:
+            rating_display = f"{worker.rating_avg:.1f} ({worker.rating_count})"
         archive_action = (
             f"/v1/admin/ui/workers/{worker.worker_id}/unarchive"
             if worker.archived_at
             else f"/v1/admin/ui/workers/{worker.worker_id}/archive"
         )
         archive_label = tr(lang, "admin.workers.unarchive" if worker.archived_at else "admin.workers.archive")
-        cards.append(
+        rows.append(
             """
-            <div class=\"card\">
-              <div class=\"card-row\">
-                <div>
-                  <div class=\"title with-icon\">{icon}{name}</div>
-                  <div class=\"muted\">{team}</div>
-                  <div class=\"muted\">{contact_label}: {contact}</div>
-                </div>
-                <div class=\"actions\">
-                  {status}
-                  <a class=\"btn secondary small\" href=\"/v1/admin/ui/workers/{worker_id}\">{edit_icon}{edit_label}</a>
-                  <form method=\"post\" action=\"{archive_action}\">
+            <tr>
+              <td>
+                <div class="title">{name}</div>
+                <div class="muted small">{team}</div>
+              </td>
+              <td>
+                <div>{phone}</div>
+                <div class="muted small">{email}</div>
+              </td>
+              <td>{status}</td>
+              <td>{skills}</td>
+              <td>{rating}</td>
+              <td>{busy_until}</td>
+              <td>
+                <div class="actions">
+                  <a class="btn secondary small" href="/v1/admin/ui/workers/{worker_id}">{edit_icon}{edit_label}</a>
+                  <form method="post" action="{archive_action}">
                     {csrf_input}
-                    <button class=\"btn secondary small\" type=\"submit\">{archive_label}</button>
+                    <button class="btn secondary small" type="submit">{archive_label}</button>
                   </form>
-                  <a class=\"btn danger small\" href=\"/v1/admin/ui/workers/{worker_id}/delete\">{delete_label}</a>
+                  <a class="btn danger small" href="/v1/admin/ui/workers/{worker_id}/delete">{delete_label}</a>
                 </div>
-              </div>
-              <div class=\"muted small\">{role}</div>
-            </div>
+              </td>
+            </tr>
             """.format(
-                icon=_icon("users"),
                 name=html.escape(worker.name),
                 team=html.escape(getattr(worker.team, "name", tr(lang, "admin.workers.team"))),
-                contact_label=html.escape(tr(lang, "admin.workers.contact")),
-                contact=html.escape(" · ".join(filter(None, contact))),
-                status=_worker_status_badge(worker, lang),
+                phone=html.escape(worker.phone),
+                email=html.escape(worker.email or "-"),
+                status=_worker_availability_indicator(worker, busy_until, lang),
+                skills=skills_html,
+                rating=html.escape(rating_display),
+                busy_until=html.escape(_format_dt(busy_until) if busy_until else "-"),
                 worker_id=worker.worker_id,
                 edit_icon=_icon("edit"),
                 edit_label=html.escape(tr(lang, "admin.workers.save")),
-                role=html.escape(worker.role or tr(lang, "admin.workers.role")),
                 delete_label=html.escape(tr(lang, "admin.workers.delete_permanent")),
                 archive_action=archive_action,
                 archive_label=html.escape(archive_label),
@@ -5364,15 +5502,38 @@ async def admin_workers_list(
             "<form class=\"filters\" method=\"get\">",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.search'))}</label><input class=\"input\" type=\"text\" name=\"q\" value=\"{html.escape(q or '')}\" /></div>",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.team'))}</label><select class=\"input\" name=\"team_id\"><option value=\"\"></option>{team_filter_options}</select></div>",
-            f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.status_label'))}</label><select class=\"input\" name=\"show\">"
-            f"<option value=\"\" {'selected' if show_value == '' else ''}>{html.escape(tr(lang, 'admin.workers.status_active'))}</option>"
-            f"<option value=\"archived\" {'selected' if show_value == 'archived' else ''}>{html.escape(tr(lang, 'admin.workers.status_archived'))}</option>"
+            f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.status_label'))}</label><select class=\"input\" name=\"status\">"
+            f"<option value=\"active\" {'selected' if status_value == 'active' else ''}>{html.escape(tr(lang, 'admin.workers.status_active'))}</option>"
+            f"<option value=\"archived\" {'selected' if status_value == 'archived' else ''}>{html.escape(tr(lang, 'admin.workers.status_archived'))}</option>"
+            f"<option value=\"all\" {'selected' if status_value == 'all' else ''}>{html.escape(tr(lang, 'admin.workers.status_all'))}</option>"
             f"</select></div>",
-            f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.active_only'))}</label><input type=\"checkbox\" name=\"active_only\" value=\"1\" { 'checked' if active_only else '' } /></div>",
+            f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.availability'))}</label><select class=\"input\" name=\"availability\">"
+            f"<option value=\"all\" {'selected' if availability_value == 'all' else ''}>{html.escape(tr(lang, 'admin.workers.availability_all'))}</option>"
+            f"<option value=\"free\" {'selected' if availability_value == 'free' else ''}>{html.escape(tr(lang, 'admin.workers.availability_free'))}</option>"
+            f"<option value=\"busy\" {'selected' if availability_value == 'busy' else ''}>{html.escape(tr(lang, 'admin.workers.availability_busy'))}</option>"
+            f"</select></div>",
+            f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.rating_min'))}</label><input class=\"input\" type=\"number\" name=\"rating_min\" min=\"0\" max=\"5\" step=\"0.1\" value=\"{'' if rating_min is None else rating_min}\" /></div>",
+            f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.rating_max'))}</label><input class=\"input\" type=\"number\" name=\"rating_max\" min=\"0\" max=\"5\" step=\"0.1\" value=\"{'' if rating_max is None else rating_max}\" /></div>",
+            f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.skills'))}</label><select class=\"input\" name=\"skill\" multiple size=\"3\">{skill_filter_options}</select></div>",
             "<div class=\"form-group\"><label>&nbsp;</label><div class=\"actions\"><button class=\"btn\" type=\"submit\">Apply</button><a class=\"btn secondary\" href=\"/v1/admin/ui/workers\">Reset</a></div></div>",
             "</form>",
             "</div>",
-            "<div class=\"stack\">{cards}</div>".format(cards="".join(cards) or _render_empty(tr(lang, "admin.workers.none"))),
+            (
+                "<table class=\"table\">"
+                "<thead><tr>"
+                f"<th>{html.escape(tr(lang, 'admin.workers.name'))}</th>"
+                f"<th>{html.escape(tr(lang, 'admin.workers.phone'))}</th>"
+                f"<th>{html.escape(tr(lang, 'admin.workers.status_label'))}</th>"
+                f"<th>{html.escape(tr(lang, 'admin.workers.skills'))}</th>"
+                f"<th>{html.escape(tr(lang, 'admin.workers.rating'))}</th>"
+                f"<th>{html.escape(tr(lang, 'admin.workers.busy_until'))}</th>"
+                f"<th>{html.escape(tr(lang, 'admin.workers.actions'))}</th>"
+                "</tr></thead><tbody>"
+                f"{''.join(rows)}"
+                "</tbody></table>"
+                if rows
+                else _render_empty(tr(lang, "admin.workers.none"))
+            ),
         ]
     )
     response = HTMLResponse(_wrap_page(request, content, title="Admin — Workers", active="workers", page_lang=lang))
