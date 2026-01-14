@@ -953,6 +953,98 @@ button:focus-visible {
   align-items: start;
 }
 
+.dispatcher-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dispatcher-view-toggle {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.dispatcher-view-button {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text);
+  padding: 6px 14px;
+  font-size: var(--type-sizes-xs);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dispatcher-view-button.active {
+  border-color: rgba(37, 99, 235, 0.6);
+  background: rgba(37, 99, 235, 0.12);
+  color: rgb(30, 64, 175);
+}
+
+.dispatcher-view {
+  display: grid;
+  gap: 16px;
+}
+
+.dispatcher-view-split {
+  grid-template-rows: auto auto;
+}
+
+.dispatcher-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dispatcher-panel.is-hidden {
+  display: none;
+}
+
+.dispatcher-map-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.dispatcher-map-header h3 {
+  margin: 0;
+}
+
+.dispatcher-map-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: var(--type-sizes-xs);
+  color: var(--muted);
+}
+
+.dispatcher-map-meta strong {
+  color: var(--text);
+  font-size: var(--type-sizes-md);
+}
+
+.dispatcher-map-canvas {
+  height: 360px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.dispatcher-view-map .dispatcher-map-canvas {
+  height: 520px;
+}
+
+.dispatcher-map-unavailable {
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  background: var(--surface);
+  color: var(--muted);
+}
+
 .dispatcher-alerts {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1376,6 +1468,10 @@ button:focus-visible {
 @media (max-width: 900px) {
   .dispatcher-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dispatcher-view-toggle {
+    justify-content: flex-start;
   }
 
   .dispatcher-timeline-header,
