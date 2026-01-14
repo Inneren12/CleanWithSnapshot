@@ -99,6 +99,24 @@ def _seed_client_team_worker(async_session_maker):
     return asyncio.run(create())
 
 
+def _seed_blocked_client(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Blocked UI Client",
+                email=f"blocked-{uuid.uuid4().hex[:8]}@example.com",
+                phone="+1 555-555-0000",
+                address="404 Blocked Blvd",
+                is_blocked=True,
+            )
+            session.add(client)
+            await session.commit()
+            return client.client_id
+
+    return asyncio.run(create())
+
+
 def test_admin_create_booking_form_action(client):
     previous_username = settings.admin_basic_username
     previous_password = settings.admin_basic_password
@@ -212,6 +230,23 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
                     assert remaining == []
 
         asyncio.run(verify_delete())
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_booking_form_warns_on_blocked_client(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id = _seed_blocked_client(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+        response = client.get(f"/v1/admin/ui/bookings/new?client_id={client_id}", headers=headers)
+        assert response.status_code == 200
+        assert "Client is blocked" in response.text
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
