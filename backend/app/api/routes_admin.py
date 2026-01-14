@@ -73,6 +73,9 @@ from app.domain.invoices import schemas as invoice_schemas
 from app.domain.invoices import service as invoice_service
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.checklists.db_models import ChecklistRun, ChecklistRunItem
+from app.domain.chat_threads import schemas as chat_schemas
+from app.domain.chat_threads import service as chat_service
+from app.domain.chat_threads.service import PARTICIPANT_ADMIN
 from app.domain.disputes.db_models import Dispute, FinancialAdjustmentEvent
 from app.domain.invoices.db_models import Invoice, InvoiceItem, InvoicePublicToken, Payment
 from app.domain.leads import statuses as lead_statuses
@@ -252,6 +255,177 @@ def _resolve_admin_org(request: Request, identity: AdminIdentity) -> uuid.UUID:
     if identity.org_id and identity.org_id != org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return org_id
+
+
+async def _resolve_admin_membership_id(
+    request: Request, session: AsyncSession, org_id: uuid.UUID, identity: AdminIdentity
+) -> int:
+    saas_identity = getattr(request.state, "saas_identity", None)
+    user_id = getattr(saas_identity, "user_id", None) if saas_identity else None
+    return await chat_service.resolve_admin_membership_id(
+        session,
+        org_id=org_id,
+        admin_username=identity.username,
+        user_id=user_id,
+    )
+
+
+def _chat_message_response(message) -> chat_schemas.ChatMessageResponse:
+    return chat_schemas.ChatMessageResponse(
+        message_id=message.message_id,
+        thread_id=message.thread_id,
+        sender_type=message.sender_type,
+        body=message.body,
+        created_at=message.created_at,
+    )
+
+
+def _thread_summary_response(summary: chat_service.ThreadSummary) -> chat_schemas.ChatThreadSummary:
+    last_message = summary.last_message
+    last_message_summary = (
+        chat_schemas.ChatMessageSummary(
+            message_id=last_message.message_id,
+            sender_type=last_message.sender_type,
+            body=last_message.body,
+            created_at=last_message.created_at,
+        )
+        if last_message
+        else None
+    )
+    return chat_schemas.ChatThreadSummary(
+        thread_id=summary.thread.thread_id,
+        thread_type=summary.thread.thread_type,
+        worker_id=summary.worker_id,
+        admin_membership_id=summary.admin_membership_id,
+        last_message=last_message_summary,
+        unread_count=summary.unread_count,
+    )
+
+
+@router.get(
+    "/v1/admin/chat/threads",
+    response_model=list[chat_schemas.ChatThreadSummary],
+)
+async def admin_list_chat_threads(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_viewer),
+) -> list[chat_schemas.ChatThreadSummary]:
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    summaries = await chat_service.list_threads(
+        session,
+        org_id=org_id,
+        participant_type=PARTICIPANT_ADMIN,
+        admin_membership_id=admin_membership_id,
+    )
+    return [_thread_summary_response(summary) for summary in summaries]
+
+
+@router.get(
+    "/v1/admin/chat/threads/{thread_id}/messages",
+    response_model=list[chat_schemas.ChatMessageResponse],
+)
+async def admin_list_chat_messages(
+    thread_id: uuid.UUID,
+    request: Request,
+    limit: int = Query(200, ge=1, le=500),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_viewer),
+) -> list[chat_schemas.ChatMessageResponse]:
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    try:
+        await chat_service.ensure_participant(
+            session,
+            org_id=org_id,
+            thread_id=thread_id,
+            participant_type=PARTICIPANT_ADMIN,
+            admin_membership_id=admin_membership_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
+    messages = await chat_service.list_messages(
+        session,
+        org_id=org_id,
+        thread_id=thread_id,
+        limit=limit,
+    )
+    return [_chat_message_response(message) for message in messages]
+
+
+@router.post(
+    "/v1/admin/chat/threads/{thread_id}/messages",
+    response_model=chat_schemas.ChatMessageResponse,
+)
+async def admin_send_chat_message(
+    thread_id: uuid.UUID,
+    payload: chat_schemas.ChatMessageCreateRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_viewer),
+) -> chat_schemas.ChatMessageResponse:
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty")
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    try:
+        thread = await chat_service.ensure_participant(
+            session,
+            org_id=org_id,
+            thread_id=thread_id,
+            participant_type=PARTICIPANT_ADMIN,
+            admin_membership_id=admin_membership_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
+    message = await chat_service.send_message(
+        session,
+        org_id=org_id,
+        thread=thread,
+        sender_type=PARTICIPANT_ADMIN,
+        admin_membership_id=admin_membership_id,
+        body=body,
+    )
+    await session.commit()
+    return _chat_message_response(message)
+
+
+@router.post("/v1/admin/chat/threads/{thread_id}/read")
+async def admin_mark_chat_read(
+    thread_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_viewer),
+) -> dict[str, str]:
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    try:
+        await chat_service.ensure_participant(
+            session,
+            org_id=org_id,
+            thread_id=thread_id,
+            participant_type=PARTICIPANT_ADMIN,
+            admin_membership_id=admin_membership_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
+    await chat_service.mark_thread_read(
+        session,
+        org_id=org_id,
+        thread_id=thread_id,
+        participant_type=PARTICIPANT_ADMIN,
+        admin_membership_id=admin_membership_id,
+    )
+    await session.commit()
+    return {"status": "ok"}
 
 
 def _resolve_membership_role(target_type: str, explicit: MembershipRole | None) -> MembershipRole:
@@ -7766,6 +7940,7 @@ async def admin_worker_detail(
             "<div class=\"actions\">",
             f"<span>{status_label}</span>",
             f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/edit\">{_icon('edit')}{html.escape(tr(lang, 'admin.workers.edit'))}</a>",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/chat\">Chat</a>",
             "</div></div>",
             "<div class=\"card-row\">",
             f"<div><strong>{html.escape(tr(lang, 'admin.workers.rating'))}:</strong> {html.escape(rating_display)}</div>",
@@ -7848,6 +8023,192 @@ async def admin_worker_detail(
     )
     issue_csrf_token(request, response, csrf_token)
     return response
+
+
+@router.get("/v1/admin/ui/workers/{worker_id}/chat", response_class=HTMLResponse)
+async def admin_worker_chat(
+    worker_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+
+    thread = await chat_service.get_or_create_direct_thread(
+        session,
+        org_id=org_id,
+        worker_id=worker.worker_id,
+        admin_membership_id=admin_membership_id,
+    )
+    messages = await chat_service.list_messages(
+        session,
+        org_id=org_id,
+        thread_id=thread.thread_id,
+    )
+    message_rows = []
+    for message in messages:
+        sender = "Admin" if message.sender_type == PARTICIPANT_ADMIN else worker.name
+        message_rows.append(
+            "".join(
+                [
+                    "<div class=\"card\">",
+                    "<div class=\"card-row\">",
+                    f"<div><div class=\"title\">{html.escape(sender)}</div>",
+                    f"<div class=\"muted\">{html.escape(_format_dt(message.created_at))}</div></div>",
+                    "</div>",
+                    f"<div>{html.escape(message.body)}</div>",
+                    "</div>",
+                ]
+            )
+        )
+    messages_section = (
+        "".join(message_rows)
+        if message_rows
+        else "<div class=\"card\"><div class=\"muted\">No messages yet.</div></div>"
+    )
+
+    csrf_token = get_csrf_token(request)
+    csrf_input = render_csrf_input(csrf_token)
+    content = "".join(
+        [
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            f"<div><div class=\"title\">Chat with {html.escape(worker.name)}</div>",
+            f"<div class=\"muted\">Thread {html.escape(str(thread.thread_id))}</div></div>",
+            "<div class=\"actions\">",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}\">Back to worker</a>",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/chat\">Refresh</a>",
+            "</div>",
+            "</div>",
+            "</div>",
+            "<div class=\"actions\">",
+            f"<form method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}/chat/read\">",
+            csrf_input,
+            f"<input type=\"hidden\" name=\"thread_id\" value=\"{thread.thread_id}\" />",
+            "<button class=\"btn secondary\" type=\"submit\">Mark read</button>",
+            "</form>",
+            "</div>",
+            messages_section,
+            "<div class=\"card\">",
+            "<div class=\"card-row\"><div class=\"title\">Send a message</div></div>",
+            f"<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}/chat/messages\">",
+            csrf_input,
+            f"<input type=\"hidden\" name=\"thread_id\" value=\"{thread.thread_id}\" />",
+            "<textarea class=\"input\" name=\"body\" rows=\"3\" required></textarea>",
+            "<button class=\"btn\" type=\"submit\">Send</button>",
+            "</form>",
+            "</div>",
+        ]
+    )
+    response = HTMLResponse(
+        _wrap_page(request, content, title=f"Admin — Chat with {worker.name}", active="workers", page_lang=lang)
+    )
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
+@router.post("/v1/admin/ui/workers/{worker_id}/chat/messages", response_class=HTMLResponse)
+async def admin_worker_chat_send(
+    worker_id: int,
+    request: Request,
+    thread_id: uuid.UUID = Form(...),
+    body: str = Form(...),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+    try:
+        thread = await chat_service.ensure_participant(
+            session,
+            org_id=org_id,
+            thread_id=thread_id,
+            participant_type=PARTICIPANT_ADMIN,
+            admin_membership_id=admin_membership_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
+    message_body = body.strip()
+    if not message_body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty")
+    await chat_service.send_message(
+        session,
+        org_id=org_id,
+        thread=thread,
+        sender_type=PARTICIPANT_ADMIN,
+        admin_membership_id=admin_membership_id,
+        body=message_body,
+    )
+    await session.commit()
+    return HTMLResponse(
+        "",
+        status_code=status.HTTP_303_SEE_OTHER,
+        headers={"Location": f"/v1/admin/ui/workers/{worker_id}/chat"},
+    )
+
+
+@router.post("/v1/admin/ui/workers/{worker_id}/chat/read", response_class=HTMLResponse)
+async def admin_worker_chat_mark_read(
+    worker_id: int,
+    request: Request,
+    thread_id: uuid.UUID = Form(...),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+    try:
+        await chat_service.ensure_participant(
+            session,
+            org_id=org_id,
+            thread_id=thread_id,
+            participant_type=PARTICIPANT_ADMIN,
+            admin_membership_id=admin_membership_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
+    await chat_service.mark_thread_read(
+        session,
+        org_id=org_id,
+        thread_id=thread_id,
+        participant_type=PARTICIPANT_ADMIN,
+        admin_membership_id=admin_membership_id,
+    )
+    await session.commit()
+    return HTMLResponse(
+        "",
+        status_code=status.HTTP_303_SEE_OTHER,
+        headers={"Location": f"/v1/admin/ui/workers/{worker_id}/chat"},
+    )
 
 
 @router.post("/v1/admin/ui/workers/{worker_id}/onboarding", response_class=HTMLResponse)
