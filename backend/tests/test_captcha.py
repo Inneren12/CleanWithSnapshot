@@ -132,7 +132,7 @@ def test_leads_captcha_turnstile_rejects_invalid_token(client):
 
     try:
         response = client.post("/v1/leads", json=lead_payload)
-        assert response.status_code == 400
+        assert response.status_code == 422
     finally:
         settings.captcha_mode = original_mode
         settings.turnstile_secret_key = original_secret
@@ -165,6 +165,31 @@ def test_bookings_captcha_prod_missing_token_blocks(client):
         app.state.turnstile_transport = original_transport
 
 
+def test_bookings_captcha_missing_secret_returns_unavailable(client):
+    original_mode = settings.captcha_mode
+    original_secret = settings.turnstile_secret_key
+    original_transport = getattr(app.state, "turnstile_transport", None)
+    original_enabled = settings.captcha_enabled
+    lead_id = _create_lead(client)
+
+    settings.captcha_enabled = True
+    settings.captcha_mode = "turnstile"
+    settings.turnstile_secret_key = None
+    app.state.turnstile_transport = None
+
+    payload = _booking_payload(lead_id)
+    payload["captcha_token"] = "ok"
+
+    try:
+        response = client.post("/v1/bookings", json=payload)
+        assert response.status_code == 503
+    finally:
+        settings.captcha_enabled = original_enabled
+        settings.captcha_mode = original_mode
+        settings.turnstile_secret_key = original_secret
+        app.state.turnstile_transport = original_transport
+
+
 def test_bookings_captcha_prod_invalid_token_blocks(client):
     original_mode = settings.captcha_mode
     original_secret = settings.turnstile_secret_key
@@ -186,7 +211,7 @@ def test_bookings_captcha_prod_invalid_token_blocks(client):
 
     try:
         response = client.post("/v1/bookings", json=payload)
-        assert response.status_code == 400
+        assert response.status_code == 422
     finally:
         settings.app_env = original_env
         settings.captcha_enabled = original_enabled
@@ -211,6 +236,36 @@ def test_bookings_captcha_dev_bypass_allows(client):
 
     try:
         response = client.post("/v1/bookings", json=_booking_payload(lead_id))
+        assert response.status_code == 201
+    finally:
+        settings.app_env = original_env
+        settings.captcha_enabled = original_enabled
+        settings.captcha_mode = original_mode
+        settings.turnstile_secret_key = original_secret
+        app.state.turnstile_transport = original_transport
+
+
+def test_bookings_captcha_turnstile_allows_valid_token(client):
+    original_mode = settings.captcha_mode
+    original_secret = settings.turnstile_secret_key
+    original_transport = getattr(app.state, "turnstile_transport", None)
+    original_env = settings.app_env
+    original_enabled = settings.captcha_enabled
+    lead_id = _create_lead(client)
+
+    settings.app_env = "prod"
+    settings.captcha_enabled = True
+    settings.captcha_mode = "turnstile"
+    settings.turnstile_secret_key = "secret-key"
+    app.state.turnstile_transport = MockTransport(
+        lambda request: Response(200, request=request, json={"success": True})
+    )
+
+    payload = _booking_payload(lead_id)
+    payload["captcha_token"] = "ok"
+
+    try:
+        response = client.post("/v1/bookings", json=payload)
         assert response.status_code == 201
     finally:
         settings.app_env = original_env

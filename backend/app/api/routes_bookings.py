@@ -25,7 +25,7 @@ from app.domain.leads.db_models import Lead
 from app.domain.clients import service as client_service
 from app.domain.notifications import email_service
 from app.infra import stripe as stripe_infra
-from app.infra.captcha import verify_turnstile
+from app.infra.captcha import log_captcha_event, log_captcha_unavailable, verify_turnstile
 from app.infra.email import resolve_app_email_adapter
 from app.settings import settings
 
@@ -47,7 +47,7 @@ def _validate_lead_contact(lead: Lead | None) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
     missing = []
     if not lead.name or not lead.name.strip():
-        missing.append("name")
+        missing.append("full_name")
     if not lead.phone or not lead.phone.strip():
         missing.append("phone")
     if not lead.address or not lead.address.strip():
@@ -55,7 +55,7 @@ def _validate_lead_contact(lead: Lead | None) -> None:
     if missing:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Lead missing required fields: {', '.join(missing)}",
+            detail=f"Missing required fields: {', '.join(missing)}",
         )
 
 
@@ -256,13 +256,26 @@ async def create_booking(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
 ) -> booking_schemas.BookingResponse:
-    if settings.captcha_mode != "off" and settings.captcha_enabled:
+    request_id = getattr(http_request.state, "request_id", None)
+    captcha_required = settings.captcha_mode != "off" and settings.captcha_enabled
+    if captcha_required:
         if settings.captcha_mode == "turnstile" and not settings.turnstile_secret_key:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Captcha not configured")
-        if not request.captcha_token:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Captcha token is required"
+            log_captcha_unavailable(
+                "turnstile_secret_missing",
+                request_id=request_id,
+                mode=settings.captcha_mode,
             )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="captcha_unavailable"
+            )
+        if not request.captcha_token:
+            log_captcha_event(
+                "missing_token",
+                request_id=request_id,
+                mode=settings.captcha_mode,
+                provider=settings.captcha_mode,
+            )
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="captcha_required")
         turnstile_transport = getattr(http_request.app.state, "turnstile_transport", None)
         remote_ip = http_request.client.host if http_request.client else None
         captcha_ok = await verify_turnstile(
@@ -271,9 +284,19 @@ async def create_booking(
             transport=turnstile_transport,
         )
         if not captcha_ok:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Captcha verification failed"
+            log_captcha_event(
+                "failed",
+                request_id=request_id,
+                mode=settings.captcha_mode,
+                provider=settings.captcha_mode,
             )
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="captcha_failed")
+        log_captcha_event(
+            "success",
+            request_id=request_id,
+            mode=settings.captcha_mode,
+            provider=settings.captcha_mode,
+        )
 
     start = request.normalized_start()
     org_id = entitlements.resolve_org_id(http_request)

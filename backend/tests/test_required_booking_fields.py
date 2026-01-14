@@ -90,6 +90,7 @@ def test_booking_requires_lead_contact(client, async_session_maker):
         json={"starts_at": starts_at, "time_on_site_hours": 1.5, "lead_id": lead_id},
     )
     assert response.status_code == 422
+    assert "address" in response.json()["detail"]
 
 
 def test_admin_booking_requires_client_contact(client, async_session_maker):
