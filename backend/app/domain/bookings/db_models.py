@@ -82,6 +82,9 @@ class Booking(Base):
     client_id: Mapped[str | None] = mapped_column(
         ForeignKey("client_users.client_id"), nullable=True, index=True
     )
+    address_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_addresses.address_id", ondelete="SET NULL"), nullable=True, index=True
+    )
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.team_id"), nullable=False)
     lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.lead_id"), nullable=True)
     assigned_worker_id: Mapped[int | None] = mapped_column(
