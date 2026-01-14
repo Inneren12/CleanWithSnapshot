@@ -9570,6 +9570,58 @@ async def _client_feedback_summary(
     }
 
 
+async def _client_risk_summary(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+) -> dict[str, float | int | None]:
+    complaints_cutoff = datetime.now(tz=timezone.utc) - timedelta(
+        days=settings.client_risk_complaints_window_days
+    )
+    feedback_cutoff = datetime.now(tz=timezone.utc) - timedelta(
+        days=settings.client_risk_feedback_window_days
+    )
+    complaint_count = (
+        await session.execute(
+            select(func.count(ClientNote.note_id)).where(
+                ClientNote.org_id == org_id,
+                ClientNote.client_id == client_id,
+                ClientNote.note_type == ClientNote.NOTE_TYPE_COMPLAINT,
+                ClientNote.created_at >= complaints_cutoff,
+            )
+        )
+    ).scalar_one()
+    feedback_row = (
+        await session.execute(
+            select(
+                func.avg(ClientFeedback.rating).label("avg_rating"),
+                func.coalesce(
+                    func.sum(
+                        sa.case(
+                            (ClientFeedback.rating <= settings.client_risk_low_rating_threshold, 1),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("low_rating_count"),
+                func.count(ClientFeedback.feedback_id).label("rating_count"),
+            ).where(
+                ClientFeedback.org_id == org_id,
+                ClientFeedback.client_id == client_id,
+                ClientFeedback.created_at >= feedback_cutoff,
+            )
+        )
+    ).one()
+    avg_rating = float(feedback_row.avg_rating) if feedback_row.avg_rating is not None else None
+    return {
+        "complaint_count": int(complaint_count or 0),
+        "avg_rating": avg_rating,
+        "low_rating_count": int(feedback_row.low_rating_count or 0),
+        "rating_count": int(feedback_row.rating_count or 0),
+    }
+
+
 async def _client_recent_feedback(
     session: AsyncSession,
     *,
@@ -9937,7 +9989,12 @@ async def _list_clients(
     org_id: uuid.UUID,
     q: str | None,
     show: str | None,
+    risk: str | None,
 ) -> list[ClientUser]:
+    risk_value = (risk or "all").strip().lower()
+    allowed_risks = {"all", "frequent_complaints", "low_rater", "any"}
+    if risk_value not in allowed_risks:
+        risk_value = "all"
     filters = [ClientUser.org_id == org_id]
     if show == "archived":
         filters.append(ClientUser.is_active.is_(False))
@@ -9952,7 +10009,65 @@ async def _list_clients(
                 func.lower(ClientUser.email).like(pattern),
             )
         )
-    stmt = select(ClientUser).where(*filters).order_by(ClientUser.created_at.desc())
+    complaints_cutoff = datetime.now(tz=timezone.utc) - timedelta(
+        days=settings.client_risk_complaints_window_days
+    )
+    feedback_cutoff = datetime.now(tz=timezone.utc) - timedelta(
+        days=settings.client_risk_feedback_window_days
+    )
+    complaints_subq = (
+        select(
+            ClientNote.client_id.label("client_id"),
+            func.count(ClientNote.note_id).label("complaint_count"),
+        )
+        .where(
+            ClientNote.org_id == org_id,
+            ClientNote.note_type == ClientNote.NOTE_TYPE_COMPLAINT,
+            ClientNote.created_at >= complaints_cutoff,
+        )
+        .group_by(ClientNote.client_id)
+        .subquery()
+    )
+    feedback_subq = (
+        select(
+            ClientFeedback.client_id.label("client_id"),
+            func.avg(ClientFeedback.rating).label("avg_rating"),
+            func.coalesce(
+                func.sum(
+                    sa.case(
+                        (ClientFeedback.rating <= settings.client_risk_low_rating_threshold, 1),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("low_rating_count"),
+        )
+        .where(ClientFeedback.org_id == org_id, ClientFeedback.created_at >= feedback_cutoff)
+        .group_by(ClientFeedback.client_id)
+        .subquery()
+    )
+    complaint_count = func.coalesce(complaints_subq.c.complaint_count, 0)
+    low_rating_count = func.coalesce(feedback_subq.c.low_rating_count, 0)
+    low_rating_by_avg = and_(
+        feedback_subq.c.avg_rating.is_not(None),
+        feedback_subq.c.avg_rating <= settings.client_risk_avg_rating_threshold,
+    )
+    low_rating_by_count = low_rating_count >= settings.client_risk_low_rating_count_threshold
+    frequent_complaints_filter = complaint_count >= settings.client_risk_complaints_threshold
+    low_rater_filter = or_(low_rating_by_avg, low_rating_by_count)
+    if risk_value == "frequent_complaints":
+        filters.append(frequent_complaints_filter)
+    elif risk_value == "low_rater":
+        filters.append(low_rater_filter)
+    elif risk_value == "any":
+        filters.append(or_(frequent_complaints_filter, low_rater_filter))
+    stmt = (
+        select(ClientUser)
+        .outerjoin(complaints_subq, complaints_subq.c.client_id == ClientUser.client_id)
+        .outerjoin(feedback_subq, feedback_subq.c.client_id == ClientUser.client_id)
+        .where(*filters)
+        .order_by(ClientUser.created_at.desc())
+    )
     result = await session.execute(stmt)
     return result.scalars().all()
 
@@ -9997,15 +10112,19 @@ async def admin_clients_list(
     request: Request,
     q: str | None = Query(default=None),
     show: str | None = Query(default=None),
+    risk: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_admin),
 ) -> HTMLResponse:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     lang = resolve_lang(request)
-    clients = await _list_clients(session, org_id=org_id, q=q, show=show)
+    clients = await _list_clients(session, org_id=org_id, q=q, show=show, risk=risk)
 
     search_value = html.escape(q or "")
     show_value = show or ""
+    risk_value = (risk or "all").strip().lower()
+    if risk_value not in {"all", "frequent_complaints", "low_rater", "any"}:
+        risk_value = "all"
     csrf_token = get_csrf_token(request)
     csrf_input = render_csrf_input(csrf_token)
     search_form = f"""
@@ -10019,6 +10138,15 @@ async def admin_clients_list(
         <select class="input" name="show">
           <option value="" {"selected" if show_value == "" else ""}>{html.escape(tr(lang, 'admin.clients.status_active'))}</option>
           <option value="archived" {"selected" if show_value == "archived" else ""}>{html.escape(tr(lang, 'admin.clients.status_archived'))}</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Risk flags</label>
+        <select class="input" name="risk">
+          <option value="all" {"selected" if risk_value == "all" else ""}>All clients</option>
+          <option value="frequent_complaints" {"selected" if risk_value == "frequent_complaints" else ""}>Frequent complaints</option>
+          <option value="low_rater" {"selected" if risk_value == "low_rater" else ""}>Low ratings</option>
+          <option value="any" {"selected" if risk_value == "any" else ""}>Any risk</option>
         </select>
       </div>
       <button class="btn" type="submit">Search</button>
@@ -10202,6 +10330,7 @@ async def admin_clients_edit_form(
     ).scalars().all()
     booking_stats = await _client_booking_stats(session, org_id=org_id, client_id=client_id)
     feedback_summary = await _client_feedback_summary(session, org_id=org_id, client_id=client_id)
+    risk_summary = await _client_risk_summary(session, org_id=org_id, client_id=client_id)
     recent_feedback = await _client_recent_feedback(session, org_id=org_id, client_id=client_id)
     finance_summary = await _client_finance_aggregates(session, org_id=org_id, client_id=client_id)
     invoice_history = await _client_invoice_history(session, org_id=org_id, client_id=client_id)
@@ -10324,6 +10453,48 @@ async def admin_clients_edit_form(
         if finance_summary["avg_basis"] > 0
         else "—"
     )
+    complaint_count = risk_summary["complaint_count"]
+    avg_recent_rating = risk_summary["avg_rating"]
+    low_rating_count_recent = risk_summary["low_rating_count"]
+    frequent_complaints = complaint_count >= settings.client_risk_complaints_threshold
+    low_rater = (
+        (avg_recent_rating is not None and avg_recent_rating <= settings.client_risk_avg_rating_threshold)
+        or low_rating_count_recent >= settings.client_risk_low_rating_count_threshold
+    )
+    risk_badges: list[str] = []
+    risk_details: list[str] = []
+    if frequent_complaints:
+        risk_badges.append('<span class="badge">⚠️ Frequent complaints</span>')
+        risk_details.append(
+            "Complaints last {days} days: {count} (threshold {threshold}).".format(
+                days=settings.client_risk_complaints_window_days,
+                count=complaint_count,
+                threshold=settings.client_risk_complaints_threshold,
+            )
+        )
+    if low_rater:
+        risk_badges.append('<span class="badge">⭐ Low ratings</span>')
+        avg_recent_display = "—" if avg_recent_rating is None else f"{avg_recent_rating:.1f}/5"
+        risk_details.append(
+            "Avg rating last {days} days: {avg} (threshold {threshold}).".format(
+                days=settings.client_risk_feedback_window_days,
+                avg=avg_recent_display,
+                threshold=f"{settings.client_risk_avg_rating_threshold:.1f}/5",
+            )
+        )
+        risk_details.append(
+            "Low ratings (≤{low_threshold}) last {days} days: {count} (threshold {threshold}).".format(
+                low_threshold=settings.client_risk_low_rating_threshold,
+                days=settings.client_risk_feedback_window_days,
+                count=low_rating_count_recent,
+                threshold=settings.client_risk_low_rating_count_threshold,
+            )
+        )
+    if not risk_badges:
+        risk_badges.append('<span class="muted">No risk flags detected.</span>')
+        risk_details.append("No recent complaints or low ratings within the alert windows.")
+    risk_badges_html = "".join(risk_badges)
+    risk_details_html = "".join(f'<div class="muted">{html.escape(detail)}</div>' for detail in risk_details)
     balance_details: list[str] = []
     if finance_summary["invoice_count"] > 0:
         if finance_summary["outstanding_cents"] > 0:
@@ -10658,6 +10829,11 @@ async def admin_clients_edit_form(
         <div><strong>{html.escape(tr(lang, "admin.clients.email"))}:</strong> {html.escape(client.email or "—")}</div>
         <div><strong>{html.escape(tr(lang, "admin.clients.registered_at"))}:</strong> {html.escape(_format_dt(client.created_at))}</div>
         <div><strong>{html.escape(tr(lang, "admin.clients.last_booking"))}:</strong> {html.escape(_format_dt(last_booking))}</div>
+        <div class="stack" style="margin-top: var(--space-sm);">
+          <div><strong>Risk flags</strong></div>
+          <div style="display: flex; gap: var(--space-xs); flex-wrap: wrap;">{risk_badges_html}</div>
+          {risk_details_html}
+        </div>
       </div>
     </div>
     <div class="card">
