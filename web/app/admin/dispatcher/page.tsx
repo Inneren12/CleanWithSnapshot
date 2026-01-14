@@ -582,7 +582,7 @@ export default function DispatcherPage() {
     [board, setActionPending, showToast, updateBookingState]
   );
 
-  const workerBookings = useMemo(() => {
+  const workerBookings = useMemo<Map<number, DispatcherBooking[]>>(() => {
     if (!board) return new Map<number, DispatcherBooking[]>();
     const mapping = new Map<number, DispatcherBooking[]>();
     board.workers.forEach((worker) => {
@@ -610,25 +610,26 @@ export default function DispatcherPage() {
   const resolveWorkerOrigin = useCallback(
     (workerId: number | null | undefined, targetStartsAt: string) => {
       if (!workerId) return null;
-      const list = workerBookings.get(workerId) ?? [];
-      if (!list.length) return null;
+      const list = workerBookings.get(workerId);
+      if (!list || list.length === 0) return null;
       const targetStart = new Date(targetStartsAt).getTime();
-      let candidate: DispatcherBooking | null = null;
-      list.forEach((booking) => {
+      let candidate: DispatcherBooking | undefined;
+      for (const booking of list) {
         const bookingStart = new Date(booking.starts_at).getTime();
-        if (Number.isNaN(bookingStart) || bookingStart >= targetStart) return;
+        if (Number.isNaN(bookingStart) || bookingStart >= targetStart) continue;
         if (!candidate) {
           candidate = booking;
-          return;
+          continue;
         }
         const candidateEnd = new Date(candidate.ends_at).getTime();
         const bookingEnd = new Date(booking.ends_at).getTime();
         if (!Number.isNaN(bookingEnd) && bookingEnd >= candidateEnd) {
           candidate = booking;
         }
-      });
-      const lat = candidate?.address?.lat;
-      const lng = candidate?.address?.lng;
+      }
+      if (!candidate) return null;
+      const lat = candidate.address?.lat;
+      const lng = candidate.address?.lng;
       if (lat == null || lng == null) return null;
       return {
         lat,
@@ -1136,12 +1137,17 @@ export default function DispatcherPage() {
         handleMapBookingSelect(booking);
         const infoWindow = mapInfoWindowRef.current;
         if (infoWindow) {
-          infoWindow.setContent(
-            `<div style="display:flex;flex-direction:column;gap:4px;min-width:160px;">
-              <strong>${booking.client?.name ?? "Client"}</strong>
-              <span>${formatStartTime(booking.starts_at)} • ${shortAddress(booking.address)}</span>
-            </div>`
-          );
+          const root = document.createElement("div");
+          root.style.display = "flex";
+          root.style.flexDirection = "column";
+          root.style.gap = "4px";
+          root.style.minWidth = "160px";
+          const strong = document.createElement("strong");
+          strong.textContent = booking.client?.name ?? "Client";
+          const span = document.createElement("span");
+          span.textContent = `${formatStartTime(booking.starts_at)} • ${shortAddress(booking.address)}`;
+          root.append(strong, span);
+          infoWindow.setContent(root);
           infoWindow.open({ map, anchor: marker });
         }
       });
