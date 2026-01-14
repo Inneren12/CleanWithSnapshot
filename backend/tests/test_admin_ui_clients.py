@@ -3,12 +3,15 @@ import base64
 import json
 import uuid
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 import sqlalchemy as sa
 
 from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, BookingWorker, Team
 from app.domain.clients.db_models import ClientNote, ClientUser
+from app.domain.invoices import service as invoice_service
+from app.domain.invoices.schemas import InvoiceItemCreate
 from app.domain.saas.db_models import Organization
 from app.domain.subscriptions.db_models import Subscription
 from app.domain.workers.db_models import Worker
@@ -214,6 +217,108 @@ def _seed_client_in_other_org(async_session_maker):
     return asyncio.run(create())
 
 
+def _seed_client_finance(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Finance Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Finance Client",
+                email=f"finance-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-222-9090",
+                address="100 Finance Way",
+                is_active=True,
+            )
+            session.add(client)
+            await session.flush()
+
+            booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=client.client_id,
+                team_id=team.team_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=60,
+                status="DONE",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            session.add(booking)
+            await session.flush()
+
+            invoice = await invoice_service.create_invoice_from_order(
+                session,
+                booking,
+                items=[
+                    InvoiceItemCreate(
+                        description="Standard clean",
+                        qty=1,
+                        unit_price_cents=20000,
+                        tax_rate=Decimal("0.00"),
+                    )
+                ],
+                created_by="admin",
+            )
+            await invoice_service.record_manual_payment(session, invoice, 20000, method="cash")
+
+            other_org_id = uuid.uuid4()
+            session.add(Organization(org_id=other_org_id, name="Other Org"))
+            other_team = Team(name=f"Other Team {uuid.uuid4().hex[:6]}", org_id=other_org_id)
+            session.add(other_team)
+            await session.flush()
+
+            other_client = ClientUser(
+                org_id=other_org_id,
+                name="Other Finance Client",
+                email=f"other-finance-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-777-8888",
+                address="200 Other Way",
+                is_active=True,
+            )
+            session.add(other_client)
+            await session.flush()
+
+            other_booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=other_org_id,
+                client_id=other_client.client_id,
+                team_id=other_team.team_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="DONE",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            session.add(other_booking)
+            await session.flush()
+
+            other_invoice = await invoice_service.create_invoice_from_order(
+                session,
+                other_booking,
+                items=[
+                    InvoiceItemCreate(
+                        description="Other clean",
+                        qty=1,
+                        unit_price_cents=15000,
+                        tax_rate=Decimal("0.00"),
+                    )
+                ],
+                created_by="admin",
+            )
+            await invoice_service.record_manual_payment(session, other_invoice, 15000, method="cash")
+            await session.commit()
+            return client.client_id, invoice.invoice_number, other_invoice.invoice_number
+
+    return asyncio.run(create())
+
+
 def test_admin_can_archive_clients_and_filter(client, async_session_maker):
     previous_username = settings.admin_basic_username
     previous_password = settings.admin_basic_password
@@ -397,6 +502,29 @@ def test_admin_client_detail_shows_bookings_and_notes(client, async_session_make
         assert "Assigned Worker" in response.text
         assert "First note" in response.text
         assert booking_id in response.text
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_client_finance_section_is_org_scoped(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, invoice_number, other_invoice_number = _seed_client_finance(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(f"/v1/admin/ui/clients/{client_id}", headers=headers)
+        assert response.status_code == 200
+        assert "Finance" in response.text
+        assert "LTV" in response.text
+        assert "Avg check" in response.text
+        assert "CAD 200.00" in response.text
+        assert invoice_number in response.text
+        assert other_invoice_number not in response.text
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password

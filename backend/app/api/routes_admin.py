@@ -9509,9 +9509,254 @@ async def _client_booking_stats(
     total = sum(counts.values())
     return {
         "total": total,
-        "completed": counts.get("COMPLETED", 0),
+        "completed": counts.get("COMPLETED", 0) + counts.get("DONE", 0),
         "cancelled": counts.get("CANCELLED", 0),
     }
+
+
+_COMPLETED_BOOKING_STATUSES = {"COMPLETED", "DONE"}
+
+
+async def _client_finance_aggregates(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+) -> dict[str, int | str]:
+    booking_totals = (
+        await session.execute(
+            select(
+                func.count(Booking.booking_id).label("total_bookings"),
+                func.coalesce(
+                    func.sum(
+                        sa.case(
+                            (Booking.status.in_(_COMPLETED_BOOKING_STATUSES), 1),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("completed_bookings"),
+                func.coalesce(
+                    func.sum(
+                        sa.case(
+                            (Booking.status.in_(_COMPLETED_BOOKING_STATUSES), Booking.base_charge_cents),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("completed_total_cents"),
+            ).where(Booking.client_id == client_id, Booking.org_id == org_id)
+        )
+    ).one()
+    total_bookings = int(booking_totals.total_bookings or 0)
+    completed_bookings = int(booking_totals.completed_bookings or 0)
+    completed_total_cents = int(booking_totals.completed_total_cents or 0)
+
+    paid_invoice_totals = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(Invoice.total_cents), 0).label("paid_total_cents"),
+                func.count(Invoice.invoice_id).label("paid_invoice_count"),
+            )
+            .select_from(Invoice)
+            .join(Booking, Invoice.order_id == Booking.booking_id)
+            .where(
+                Booking.client_id == client_id,
+                Booking.org_id == org_id,
+                Invoice.org_id == org_id,
+                Invoice.status == invoice_statuses.INVOICE_STATUS_PAID,
+            )
+        )
+    ).one()
+    paid_invoice_total_cents = int(paid_invoice_totals.paid_total_cents or 0)
+    paid_invoice_count = int(paid_invoice_totals.paid_invoice_count or 0)
+
+    booking_ids_subq = select(Booking.booking_id).where(
+        Booking.client_id == client_id, Booking.org_id == org_id
+    )
+    invoice_ids_subq = (
+        select(Invoice.invoice_id)
+        .join(Booking, Invoice.order_id == Booking.booking_id)
+        .where(Booking.client_id == client_id, Booking.org_id == org_id, Invoice.org_id == org_id)
+    )
+
+    payment_totals = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(Payment.amount_cents), 0).label("paid_cents"),
+                func.count(Payment.payment_id).label("payment_count"),
+            ).where(
+                Payment.org_id == org_id,
+                Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                or_(
+                    Payment.booking_id.in_(booking_ids_subq),
+                    Payment.invoice_id.in_(invoice_ids_subq),
+                ),
+            )
+        )
+    ).one()
+    paid_payments_cents = int(payment_totals.paid_cents or 0)
+    payment_count = int(payment_totals.payment_count or 0)
+
+    payments_by_invoice = (
+        select(
+            Payment.invoice_id.label("invoice_id"),
+            func.coalesce(func.sum(Payment.amount_cents), 0).label("paid_cents"),
+        )
+        .where(
+            Payment.org_id == org_id,
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+        )
+        .group_by(Payment.invoice_id)
+        .subquery()
+    )
+    balance_rows = (
+        await session.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        sa.case(
+                            (
+                                (Invoice.total_cents - func.coalesce(payments_by_invoice.c.paid_cents, 0)) > 0,
+                                Invoice.total_cents - func.coalesce(payments_by_invoice.c.paid_cents, 0),
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("outstanding_cents"),
+                func.coalesce(
+                    func.sum(
+                        sa.case(
+                            (
+                                (func.coalesce(payments_by_invoice.c.paid_cents, 0) - Invoice.total_cents) > 0,
+                                func.coalesce(payments_by_invoice.c.paid_cents, 0) - Invoice.total_cents,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("overpaid_cents"),
+                func.count(Invoice.invoice_id).label("invoice_count"),
+                func.coalesce(
+                    func.sum(
+                        sa.case(
+                            (
+                                Invoice.total_cents
+                                > func.coalesce(payments_by_invoice.c.paid_cents, 0),
+                                1,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("unpaid_invoice_count"),
+            )
+            .select_from(Invoice)
+            .join(Booking, Invoice.order_id == Booking.booking_id)
+            .outerjoin(payments_by_invoice, payments_by_invoice.c.invoice_id == Invoice.invoice_id)
+            .where(
+                Booking.client_id == client_id,
+                Booking.org_id == org_id,
+                Invoice.org_id == org_id,
+                Invoice.status.in_(
+                    {
+                        invoice_statuses.INVOICE_STATUS_SENT,
+                        invoice_statuses.INVOICE_STATUS_OVERDUE,
+                        invoice_statuses.INVOICE_STATUS_PARTIAL,
+                        invoice_statuses.INVOICE_STATUS_PAID,
+                    }
+                ),
+            )
+        )
+    ).one()
+
+    ltv_source = "completed_bookings"
+    if payment_count > 0 or paid_payments_cents > 0:
+        ltv_cents = paid_payments_cents
+        ltv_source = "payments"
+    elif paid_invoice_total_cents > 0:
+        ltv_cents = paid_invoice_total_cents
+        ltv_source = "paid_invoices"
+    else:
+        ltv_cents = completed_total_cents
+
+    if ltv_source == "payments":
+        avg_basis = paid_invoice_count or completed_bookings
+    elif ltv_source == "paid_invoices":
+        avg_basis = paid_invoice_count
+    else:
+        avg_basis = completed_bookings
+    avg_check_cents = int(round(ltv_cents / avg_basis)) if avg_basis else 0
+
+    return {
+        "total_bookings": total_bookings,
+        "completed_bookings": completed_bookings,
+        "ltv_cents": int(ltv_cents),
+        "avg_check_cents": avg_check_cents,
+        "avg_basis": int(avg_basis),
+        "ltv_source": ltv_source,
+        "outstanding_cents": int(balance_rows.outstanding_cents or 0),
+        "overpaid_cents": int(balance_rows.overpaid_cents or 0),
+        "invoice_count": int(balance_rows.invoice_count or 0),
+        "unpaid_invoice_count": int(balance_rows.unpaid_invoice_count or 0),
+    }
+
+
+async def _client_invoice_history(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+) -> list[Invoice]:
+    return (
+        (
+            await session.execute(
+                select(Invoice)
+                .join(Booking, Invoice.order_id == Booking.booking_id)
+                .where(
+                    Booking.client_id == client_id,
+                    Booking.org_id == org_id,
+                    Invoice.org_id == org_id,
+                )
+                .order_by(Invoice.issue_date.desc(), Invoice.created_at.desc())
+                .limit(20)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def _client_payment_history(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+) -> list[tuple[Payment, str | None]]:
+    booking_ids_subq = select(Booking.booking_id).where(
+        Booking.client_id == client_id, Booking.org_id == org_id
+    )
+    invoice_ids_subq = (
+        select(Invoice.invoice_id)
+        .join(Booking, Invoice.order_id == Booking.booking_id)
+        .where(Booking.client_id == client_id, Booking.org_id == org_id, Invoice.org_id == org_id)
+    )
+    return (
+        await session.execute(
+            select(Payment, Invoice.invoice_number)
+            .outerjoin(Invoice, Payment.invoice_id == Invoice.invoice_id)
+            .where(
+                Payment.org_id == org_id,
+                or_(
+                    Payment.booking_id.in_(booking_ids_subq),
+                    Payment.invoice_id.in_(invoice_ids_subq),
+                ),
+            )
+            .order_by(sa.desc(func.coalesce(Payment.received_at, Payment.created_at)))
+            .limit(20)
+        )
+    ).all()
 
 
 def _render_client_form(client: ClientUser | None, lang: str | None, csrf_input: str) -> str:
@@ -9852,6 +10097,9 @@ async def admin_clients_edit_form(
         )
     ).scalars().all()
     booking_stats = await _client_booking_stats(session, org_id=org_id, client_id=client_id)
+    finance_summary = await _client_finance_aggregates(session, org_id=org_id, client_id=client_id)
+    invoice_history = await _client_invoice_history(session, org_id=org_id, client_id=client_id)
+    payment_history = await _client_payment_history(session, org_id=org_id, client_id=client_id)
     last_booking = bookings[0].starts_at if bookings else None
     notes = (
         await session.execute(
@@ -9881,6 +10129,7 @@ async def admin_clients_edit_form(
         else html.escape(tr(lang, "admin.clients.block"))
     )
     tags_input_value = html.escape(", ".join(tags))
+    currency = settings.deposit_currency.upper()
     bookings_rows = "".join(
         f"""
         <tr>
@@ -9895,6 +10144,137 @@ async def admin_clients_edit_form(
         """
         for booking in bookings
     )
+    ltv_display = (
+        _format_money(finance_summary["ltv_cents"], currency)
+        if finance_summary["ltv_cents"] > 0
+        else "—"
+    )
+    avg_display = (
+        _format_money(finance_summary["avg_check_cents"], currency)
+        if finance_summary["avg_basis"] > 0
+        else "—"
+    )
+    balance_details: list[str] = []
+    if finance_summary["invoice_count"] > 0:
+        if finance_summary["outstanding_cents"] > 0:
+            balance_details.append(
+                f"{html.escape(tr(lang, 'admin.clients.finance_outstanding'))}: "
+                f"{html.escape(_format_money(finance_summary['outstanding_cents'], currency))}"
+            )
+        if finance_summary["overpaid_cents"] > 0:
+            balance_details.append(
+                f"{html.escape(tr(lang, 'admin.clients.finance_overpaid'))}: "
+                f"{html.escape(_format_money(finance_summary['overpaid_cents'], currency))}"
+            )
+        if not balance_details:
+            balance_details.append(
+                f"{html.escape(tr(lang, 'admin.clients.finance_balance'))}: "
+                f"{html.escape(_format_money(0, currency))}"
+            )
+        if finance_summary["unpaid_invoice_count"] > 0:
+            balance_details.append(
+                f"{html.escape(tr(lang, 'admin.clients.finance_unpaid_invoices'))}: "
+                f"{finance_summary['unpaid_invoice_count']}"
+            )
+        balance_display = " · ".join(balance_details)
+    else:
+        balance_display = html.escape(tr(lang, "admin.clients.finance_balance_na"))
+    invoice_rows = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(_format_date(invoice.issue_date))}</td>
+          <td>{_status_badge(invoice.status)}</td>
+          <td>{html.escape(_format_money(invoice.total_cents, invoice.currency))}</td>
+          <td><a href="/v1/admin/ui/invoices/{html.escape(invoice.invoice_id)}">{html.escape(invoice.invoice_number)}</a></td>
+        </tr>
+        """
+        for invoice in invoice_history
+    )
+    invoice_table = (
+        f"""
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{html.escape(tr(lang, "admin.clients.finance_date"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.finance_status"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.finance_amount"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.finance_invoice"))}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoice_rows}
+          </tbody>
+        </table>
+        """
+        if invoice_rows
+        else f"<div class=\"muted\">{html.escape(tr(lang, 'admin.clients.finance_invoices_none'))}</div>"
+    )
+    payment_rows = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(_format_dt(payment.received_at or payment.created_at))}</td>
+          <td><span class="badge">{html.escape(payment.status)}</span></td>
+          <td>{html.escape(_format_money(payment.amount_cents, payment.currency))}</td>
+          <td>
+            {f'<a href="/v1/admin/ui/invoices/{html.escape(payment.invoice_id)}">{html.escape(invoice_number)}</a>' if payment.invoice_id and invoice_number else "—"}
+          </td>
+        </tr>
+        """
+        for payment, invoice_number in payment_history
+    )
+    payment_table = (
+        f"""
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{html.escape(tr(lang, "admin.clients.finance_date"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.finance_status"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.finance_amount"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.finance_invoice"))}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {payment_rows}
+          </tbody>
+        </table>
+        """
+        if payment_rows
+        else f"<div class=\"muted\">{html.escape(tr(lang, 'admin.clients.finance_payments_none'))}</div>"
+    )
+    finance_card = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.finance_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.finance_hint"))}</div>
+        </div>
+      </div>
+      <div style="display: grid; gap: var(--space-md); grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+        <div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.finance_ltv"))}</div>
+          <div class="title">{html.escape(ltv_display)}</div>
+        </div>
+        <div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.finance_avg_check"))}</div>
+          <div class="title">{html.escape(avg_display)}</div>
+        </div>
+        <div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.finance_balance"))}</div>
+          <div>{balance_display}</div>
+        </div>
+      </div>
+      <div class="stack" style="margin-top: var(--space-md);">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.finance_invoices_title"))}</div>
+          {invoice_table}
+        </div>
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.finance_payments_title"))}</div>
+          {payment_table}
+        </div>
+      </div>
+    </div>
+    """
     bookings_table = (
         f"""
         <table class="table">
@@ -9965,6 +10345,7 @@ async def admin_clients_edit_form(
         <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.tags_save"))}</button>
       </form>
     </div>
+    {finance_card}
     <div class="card">
       <div class="card-row">
         <div>
