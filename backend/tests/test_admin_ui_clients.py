@@ -1403,6 +1403,36 @@ def test_admin_client_detail_shows_bookings_and_notes(client, async_session_make
         settings.promos_enabled = previous_promos_enabled
 
 
+def test_admin_client_quick_action_endpoints_when_enabled(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    previous_chat_enabled = settings.chat_enabled
+    previous_promos_enabled = settings.promos_enabled
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    settings.chat_enabled = True
+    settings.promos_enabled = True
+
+    try:
+        client_id, _booking_id = _seed_client_with_notes_and_bookings(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        chat_response = client.get(
+            f"/v1/admin/ui/clients/{client_id}/chat", headers=headers, follow_redirects=False
+        )
+        assert chat_response.status_code in {200, 303}
+
+        promos_response = client.get(
+            f"/v1/admin/ui/clients/{client_id}/promos", headers=headers, follow_redirects=False
+        )
+        assert promos_response.status_code in {200, 303}
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+        settings.chat_enabled = previous_chat_enabled
+        settings.promos_enabled = previous_promos_enabled
+
+
 def test_admin_client_detail_lists_addresses(client, async_session_maker):
     previous_username = settings.admin_basic_username
     previous_password = settings.admin_basic_password
@@ -1716,3 +1746,33 @@ def test_admin_client_org_scope_enforced(client, async_session_maker):
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
+
+
+def test_admin_client_quick_actions_org_scope_enforced(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    previous_chat_enabled = settings.chat_enabled
+    previous_promos_enabled = settings.promos_enabled
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    settings.chat_enabled = True
+    settings.promos_enabled = True
+
+    try:
+        client_id = _seed_client_in_other_org(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        chat_response = client.get(
+            f"/v1/admin/ui/clients/{client_id}/chat", headers=headers, follow_redirects=False
+        )
+        assert chat_response.status_code in {403, 404}
+
+        promos_response = client.get(
+            f"/v1/admin/ui/clients/{client_id}/promos", headers=headers, follow_redirects=False
+        )
+        assert promos_response.status_code in {403, 404}
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+        settings.chat_enabled = previous_chat_enabled
+        settings.promos_enabled = previous_promos_enabled
