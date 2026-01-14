@@ -6033,7 +6033,7 @@ async def admin_clients_new_form(
     csrf_token = get_csrf_token(request)
     content = _render_client_form(None, lang, render_csrf_input(csrf_token))
     response = HTMLResponse(_wrap_page(request, content, title="Admin — New Client", active="clients", page_lang=lang))
-    response.set_cookie("csrf_token", csrf_token, httponly=True, samesite="lax", secure=settings.app_env != "dev")
+    issue_csrf_token(request, response, csrf_token)
     return response
 
 
@@ -6657,7 +6657,7 @@ async def admin_bookings_new_form(
         action="/v1/admin/ui/bookings/create",
     )
     response = HTMLResponse(_wrap_page(request, content, title="Admin — Create Booking", active="dispatch", page_lang=lang))
-    response.set_cookie("csrf_token", csrf_token, httponly=True, samesite="lax", secure=settings.app_env != "dev")
+    issue_csrf_token(request, response, csrf_token)
     return response
 
 

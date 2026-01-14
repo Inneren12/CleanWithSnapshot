@@ -28,8 +28,30 @@ def get_csrf_token(request: Request) -> str:
     return _cookie_token(request) or _new_token()
 
 
-def set_csrf_cookie(response: Response, token: str) -> None:
-    response.set_cookie(CSRF_COOKIE_NAME, token, httponly=False, samesite="lax")
+def set_csrf_cookie(
+    response: Response,
+    token: str,
+    *,
+    secure: bool | None = None,
+    httponly: bool = True,
+    samesite: str = "lax",
+    path: str = "/",
+    domain: str | None = None,
+) -> None:
+    if secure is None:
+        from app.settings import settings
+
+        secure = settings.app_env != "dev"
+
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        token,
+        httponly=httponly,
+        samesite=samesite,
+        secure=secure,
+        path=path,
+        domain=domain,
+    )
 
 
 def issue_csrf_token(request: Request, response: Response, token: str | None = None) -> str:
