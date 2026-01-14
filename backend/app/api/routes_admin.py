@@ -4202,7 +4202,7 @@ def _status_badge(value: str) -> str:
     return f'<span class="badge badge-status status-{normalized}"><span class="with-icon">{warning}{html.escape(value)}</span></span>'
 
 
-def _churn_badge(band: str) -> str:
+def _churn_badge(band: str, lang: str | None) -> str:
     normalized = band.strip().upper()
     class_map = {
         "LOW": "badge-low",
@@ -4210,7 +4210,8 @@ def _churn_badge(band: str) -> str:
         "HIGH": "badge-high",
     }
     badge_class = class_map.get(normalized, "badge-low")
-    return f'<span class="badge {badge_class}">Churn: {html.escape(normalized)}</span>'
+    label = tr(lang, "admin.clients.churn_badge", band=normalized)
+    return f'<span class="badge {badge_class}">{html.escape(label)}</span>'
 
 
 def _note_type_label(note_type: str, lang: str | None) -> str:
@@ -10625,24 +10626,24 @@ async def admin_clients_list(
         </select>
       </div>
       <div class="form-group">
-        <label>Risk flags</label>
+        <label>{html.escape(tr(lang, "admin.clients.risk_flags_label"))}</label>
         <select class="input" name="risk">
-          <option value="all" {"selected" if risk_value == "all" else ""}>All clients</option>
-          <option value="frequent_complaints" {"selected" if risk_value == "frequent_complaints" else ""}>Frequent complaints</option>
-          <option value="low_rater" {"selected" if risk_value == "low_rater" else ""}>Low ratings</option>
-          <option value="any" {"selected" if risk_value == "any" else ""}>Any risk</option>
+          <option value="all" {"selected" if risk_value == "all" else ""}>{html.escape(tr(lang, "admin.clients.risk_filter_all"))}</option>
+          <option value="frequent_complaints" {"selected" if risk_value == "frequent_complaints" else ""}>{html.escape(tr(lang, "admin.clients.risk_filter_frequent_complaints"))}</option>
+          <option value="low_rater" {"selected" if risk_value == "low_rater" else ""}>{html.escape(tr(lang, "admin.clients.risk_filter_low_ratings"))}</option>
+          <option value="any" {"selected" if risk_value == "any" else ""}>{html.escape(tr(lang, "admin.clients.risk_filter_any"))}</option>
         </select>
       </div>
       <div class="form-group">
-        <label>Churn risk</label>
+        <label>{html.escape(tr(lang, "admin.clients.churn_label"))}</label>
         <select class="input" name="churn">
-          <option value="any" {"selected" if churn_value == "any" else ""}>Any churn</option>
-          <option value="low" {"selected" if churn_value == "low" else ""}>Low churn</option>
-          <option value="medium" {"selected" if churn_value == "medium" else ""}>Medium churn</option>
-          <option value="high" {"selected" if churn_value == "high" else ""}>High churn</option>
+          <option value="any" {"selected" if churn_value == "any" else ""}>{html.escape(tr(lang, "admin.clients.churn_filter_any"))}</option>
+          <option value="low" {"selected" if churn_value == "low" else ""}>{html.escape(tr(lang, "admin.clients.churn_filter_low"))}</option>
+          <option value="medium" {"selected" if churn_value == "medium" else ""}>{html.escape(tr(lang, "admin.clients.churn_filter_medium"))}</option>
+          <option value="high" {"selected" if churn_value == "high" else ""}>{html.escape(tr(lang, "admin.clients.churn_filter_high"))}</option>
         </select>
       </div>
-      <button class="btn" type="submit">Search</button>
+      <button class="btn" type="submit">{html.escape(tr(lang, "admin.clients.search_button"))}</button>
     </form>
     """
 
@@ -10673,7 +10674,7 @@ async def admin_clients_list(
         else:
             action_html = f"<span class=\"badge\">{html.escape(tr(lang, 'admin.clients.status_archived'))}</span>"
         churn_assessment = churn_assessments.get(client.client_id)
-        churn_badge = _churn_badge(churn_assessment.risk_band if churn_assessment else "LOW")
+        churn_badge = _churn_badge(churn_assessment.risk_band if churn_assessment else "LOW", lang)
         rows.append(f"""
         <tr>
           <td><a href="/v1/admin/ui/clients/{html.escape(client.client_id)}">{html.escape(client.name or '—')}</a></td>
@@ -10694,7 +10695,7 @@ async def admin_clients_list(
           <th>{html.escape(tr(lang, 'admin.clients.email'))}</th>
           <th>{html.escape(tr(lang, 'admin.clients.phone'))}</th>
           <th>{html.escape(tr(lang, 'admin.clients.address'))}</th>
-          <th>Churn risk</th>
+          <th>{html.escape(tr(lang, "admin.clients.churn_column"))}</th>
           <th>{html.escape(tr(lang, 'admin.clients.status_label'))}</th>
           <th>{html.escape(tr(lang, 'admin.clients.actions'))}</th>
         </tr>
@@ -11020,11 +11021,11 @@ async def admin_clients_edit_form(
         avg_rating=avg_recent_rating,
         low_rating_count=int(low_rating_count_recent or 0),
     )
-    churn_badge = _churn_badge(churn_assessment.risk_band)
+    churn_badge = _churn_badge(churn_assessment.risk_band, lang)
     churn_reasons_html = (
         "<ul>" + "".join(f"<li>{html.escape(reason)}</li>" for reason in churn_assessment.reasons) + "</ul>"
         if churn_assessment.reasons
-        else '<div class="muted">No churn signals yet.</div>'
+        else f'<div class="muted">{html.escape(tr(lang, "admin.clients.churn_no_signals"))}</div>'
     )
     frequent_complaints = complaint_count >= settings.client_risk_complaints_threshold
     low_rater = (
@@ -11034,26 +11035,36 @@ async def admin_clients_edit_form(
     risk_badges: list[str] = []
     risk_details: list[str] = []
     if frequent_complaints:
-        risk_badges.append('<span class="badge">⚠️ Frequent complaints</span>')
+        risk_badges.append(
+            f'<span class="badge">{html.escape(tr(lang, "admin.clients.risk_badge_frequent_complaints"))}</span>'
+        )
         risk_details.append(
-            "Complaints last {days} days: {count} (threshold {threshold}).".format(
+            tr(
+                lang,
+                "admin.clients.risk_detail_complaints",
                 days=settings.client_risk_complaints_window_days,
                 count=complaint_count,
                 threshold=settings.client_risk_complaints_threshold,
             )
         )
     if low_rater:
-        risk_badges.append('<span class="badge">⭐ Low ratings</span>')
+        risk_badges.append(
+            f'<span class="badge">{html.escape(tr(lang, "admin.clients.risk_badge_low_ratings"))}</span>'
+        )
         avg_recent_display = "—" if avg_recent_rating is None else f"{avg_recent_rating:.1f}/5"
         risk_details.append(
-            "Avg rating last {days} days: {avg} (threshold {threshold}).".format(
+            tr(
+                lang,
+                "admin.clients.risk_detail_avg_rating",
                 days=settings.client_risk_feedback_window_days,
                 avg=avg_recent_display,
                 threshold=f"{settings.client_risk_avg_rating_threshold:.1f}/5",
             )
         )
         risk_details.append(
-            "Low ratings (≤{low_threshold}) last {days} days: {count} (threshold {threshold}).".format(
+            tr(
+                lang,
+                "admin.clients.risk_detail_low_ratings",
                 low_threshold=settings.client_risk_low_rating_threshold,
                 days=settings.client_risk_feedback_window_days,
                 count=low_rating_count_recent,
@@ -11061,8 +11072,10 @@ async def admin_clients_edit_form(
             )
         )
     if not risk_badges:
-        risk_badges.append('<span class="muted">No risk flags detected.</span>')
-        risk_details.append("No recent complaints or low ratings within the alert windows.")
+        risk_badges.append(
+            f'<span class="muted">{html.escape(tr(lang, "admin.clients.risk_none_badge"))}</span>'
+        )
+        risk_details.append(tr(lang, "admin.clients.risk_none_detail"))
     risk_badges_html = "".join(risk_badges)
     risk_details_html = "".join(f'<div class="muted">{html.escape(detail)}</div>' for detail in risk_details)
     balance_details: list[str] = []
@@ -11222,23 +11235,27 @@ async def admin_clients_edit_form(
               <td>{rating}</td>
               <td>{comment}</td>
               <td>{booking_date}</td>
-              <td><a class="btn small" href="/v1/admin/ui/bookings/{booking_id}/edit">View</a></td>
+              <td><a class="btn small" href="/v1/admin/ui/bookings/{booking_id}/edit">{view_label}</a></td>
             </tr>
             """.format(
                 rating=html.escape(f"{feedback.rating}/5"),
                 comment=html.escape(feedback.comment or "—"),
                 booking_date=html.escape(_format_dt(booking.starts_at)),
                 booking_id=html.escape(feedback.booking_id),
+                view_label=html.escape(tr(lang, "admin.clients.feedback_view_booking")),
             )
         )
     feedback_table = (
         "<table class=\"table\"><thead><tr>"
-        "<th>Rating</th><th>Comment</th><th>Booking date</th><th>Booking</th>"
+        f"<th>{html.escape(tr(lang, 'admin.clients.feedback_table_rating'))}</th>"
+        f"<th>{html.escape(tr(lang, 'admin.clients.feedback_table_comment'))}</th>"
+        f"<th>{html.escape(tr(lang, 'admin.clients.feedback_table_booking_date'))}</th>"
+        f"<th>{html.escape(tr(lang, 'admin.clients.feedback_table_booking'))}</th>"
         "</tr></thead><tbody>"
         f"{''.join(feedback_rows)}"
         "</tbody></table>"
         if feedback_rows
-        else _render_empty("No feedback yet.")
+        else _render_empty(tr(lang, "admin.clients.feedback_none"))
     )
     booking_options = "".join(
         f"<option value=\"{html.escape(booking.booking_id)}\">"
@@ -11250,13 +11267,13 @@ async def admin_clients_edit_form(
         f"""
         <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/feedback/create">
           <div class="form-group">
-            <label>Booking</label>
+            <label>{html.escape(tr(lang, "admin.clients.feedback_form_booking_label"))}</label>
             <select class="input" name="booking_id" required>
               {booking_options}
             </select>
           </div>
           <div class="form-group">
-            <label>Rating</label>
+            <label>{html.escape(tr(lang, "admin.clients.feedback_form_rating_label"))}</label>
             <select class="input" name="rating" required>
               <option value="5">5</option>
               <option value="4">4</option>
@@ -11266,45 +11283,45 @@ async def admin_clients_edit_form(
             </select>
           </div>
           <div class="form-group">
-            <label>Comment</label>
-            <textarea class="input" name="comment" rows="2" placeholder="Optional"></textarea>
+            <label>{html.escape(tr(lang, "admin.clients.feedback_form_comment_label"))}</label>
+            <textarea class="input" name="comment" rows="2" placeholder="{html.escape(tr(lang, 'admin.clients.feedback_form_comment_placeholder'))}"></textarea>
           </div>
           {csrf_input}
-          <button class="btn secondary" type="submit">Add feedback</button>
+          <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.feedback_form_submit"))}</button>
         </form>
         """
         if booking_options
-        else "<div class=\"muted\">Add a booking to record client feedback.</div>"
+        else f"<div class=\"muted\">{html.escape(tr(lang, 'admin.clients.feedback_form_no_bookings'))}</div>"
     )
     feedback_card = f"""
     <div class="card" id="client-feedback">
       <div class="card-row">
         <div>
-          <div class="title">Ratings &amp; reviews</div>
-          <div class="muted">Client feedback about the service.</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.feedback_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.feedback_subtitle"))}</div>
         </div>
       </div>
       <div style="display: grid; gap: var(--space-md); grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
         <div>
-          <div class="muted">Average rating</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.feedback_avg_rating"))}</div>
           <div class="title">{html.escape(avg_rating_display)}</div>
         </div>
         <div>
-          <div class="muted">Total ratings</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.feedback_total_ratings"))}</div>
           <div class="title">{rating_count}</div>
         </div>
         <div>
-          <div class="muted">Low ratings (≤2)</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.feedback_low_ratings"))}</div>
           <div class="title">{low_rating_count}</div>
         </div>
       </div>
       <div class="stack" style="margin-top: var(--space-md);">
         <div>
-          <div class="title">Recent feedback</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.feedback_recent_title"))}</div>
           {feedback_table}
         </div>
         <div>
-          <div class="title">Add feedback</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.feedback_add_title"))}</div>
           {feedback_form}
         </div>
       </div>
@@ -11409,7 +11426,11 @@ async def admin_clients_edit_form(
                     count=count,
                 )
             )
-        rows_html = "".join(rows) if rows else '<div class="muted">No bookings yet.</div>'
+        rows_html = (
+            "".join(rows)
+            if rows
+            else f'<div class="muted">{html.escape(tr(lang, "admin.clients.analytics_no_bookings"))}</div>'
+        )
         return f"""
         <div class="stack">
           <div class="muted">{html.escape(title)}</div>
@@ -11422,18 +11443,30 @@ async def admin_clients_edit_form(
     preference_sections = []
     if service_preferences["service_types"]:
         preference_sections.append(
-            _render_time_series("Top service types", service_preferences["service_types"])
+            _render_time_series(
+                tr(lang, "admin.clients.preferences_top_service_types"),
+                service_preferences["service_types"],
+            )
         )
     if service_preferences["addons"]:
-        preference_sections.append(_render_time_series("Top add-ons", service_preferences["addons"]))
+        preference_sections.append(
+            _render_time_series(
+                tr(lang, "admin.clients.preferences_top_addons"),
+                service_preferences["addons"],
+            )
+        )
     preferences_html = (
         "".join(preference_sections)
         if preference_sections
-        else '<div class="muted">Preferences unavailable (data not collected yet).</div>'
+        else f'<div class="muted">{html.escape(tr(lang, "admin.clients.preferences_empty"))}</div>'
     )
 
     avg_gap_days = frequency_stats["avg_gap_days"]
-    avg_gap_display = "—" if avg_gap_days is None else f"{avg_gap_days:.1f} days"
+    avg_gap_display = (
+        "—"
+        if avg_gap_days is None
+        else tr(lang, "admin.clients.analytics_avg_gap_value", value=f"{avg_gap_days:.1f}")
+    )
     last_booking_display = (
         html.escape(_format_dt(frequency_stats["last_booking_at"]))
         if frequency_stats["last_booking_at"]
@@ -11446,79 +11479,87 @@ async def admin_clients_edit_form(
             <a href="/v1/admin/ui/workers/{worker_id}">{name}</a>
           </div>
           <div class="muted">
-            {count} completed · {minutes} min · {revenue}
+            {summary}
           </div>
         </div>
         """.format(
             worker_id=html.escape(str(worker["worker_id"])),
             name=html.escape(str(worker["name"])),
-            count=worker["completed_count"],
-            minutes=worker["total_minutes"],
-            revenue=html.escape(_format_money(worker["total_revenue_cents"], booking_currency))
-            if worker["total_revenue_cents"]
-            else "—",
+            summary=html.escape(
+                tr(
+                    lang,
+                    "admin.clients.analytics_completed_summary",
+                    count=worker["completed_count"],
+                    minutes=worker["total_minutes"],
+                    revenue=(
+                        _format_money(worker["total_revenue_cents"], booking_currency)
+                        if worker["total_revenue_cents"]
+                        else "—"
+                    ),
+                )
+            ),
         )
         for worker in favorite_workers
     )
     favorite_workers_html = (
         f"<div class=\"stack\">{favorite_workers_rows}</div>"
         if favorite_workers_rows
-        else "<div class=\"muted\">No completed bookings yet.</div>"
+        else f"<div class=\"muted\">{html.escape(tr(lang, 'admin.clients.analytics_no_completed_bookings'))}</div>"
     )
     analytics_card = f"""
     <div class="card" id="client-analytics">
       <div class="card-row">
         <div>
-          <div class="title">Analytics</div>
-          <div class="muted">Booking trends, frequency, and favorite workers.</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.analytics_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.analytics_subtitle"))}</div>
         </div>
       </div>
       <div class="stack" style="gap: var(--space-lg);">
         <div class="stack">
-          <div class="title">Bookings over time</div>
-          {_render_time_series("Last 12 weeks", weekly_series)}
-          {_render_time_series("Last 12 months", monthly_series)}
+          <div class="title">{html.escape(tr(lang, "admin.clients.analytics_bookings_over_time"))}</div>
+          {_render_time_series(tr(lang, "admin.clients.analytics_last_12_weeks"), weekly_series)}
+          {_render_time_series(tr(lang, "admin.clients.analytics_last_12_months"), monthly_series)}
         </div>
         <div>
-          <div class="title">Frequency stats</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.analytics_frequency_stats"))}</div>
           <div style="display: grid; gap: var(--space-md); grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
             <div>
-              <div class="muted">Total bookings</div>
+              <div class="muted">{html.escape(tr(lang, "admin.clients.analytics_total_bookings"))}</div>
               <div class="title">{frequency_stats["total"]}</div>
             </div>
             <div>
-              <div class="muted">Bookings last 30 days</div>
+              <div class="muted">{html.escape(tr(lang, "admin.clients.analytics_last_30_days"))}</div>
               <div class="title">{frequency_stats["last_30"]}</div>
             </div>
             <div>
-              <div class="muted">Bookings last 90 days</div>
+              <div class="muted">{html.escape(tr(lang, "admin.clients.analytics_last_90_days"))}</div>
               <div class="title">{frequency_stats["last_90"]}</div>
             </div>
             <div>
-              <div class="muted">Avg days between completed</div>
+              <div class="muted">{html.escape(tr(lang, "admin.clients.analytics_avg_gap_days"))}</div>
               <div class="title">{html.escape(avg_gap_display)}</div>
             </div>
             <div>
-              <div class="muted">Last booking date</div>
+              <div class="muted">{html.escape(tr(lang, "admin.clients.analytics_last_booking_date"))}</div>
               <div class="title">{last_booking_display}</div>
             </div>
           </div>
         </div>
         <div>
-          <div class="title">Churn risk</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.analytics_churn_risk_title"))}</div>
           <div class="stack">
             <div>{churn_badge}</div>
             {churn_reasons_html}
           </div>
         </div>
         <div>
-          <div class="title">Service preferences</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.analytics_service_preferences"))}</div>
           <div class="stack">
             {preferences_html}
           </div>
         </div>
         <div>
-          <div class="title">Favorite workers</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.analytics_favorite_workers"))}</div>
           {favorite_workers_html}
         </div>
       </div>
@@ -11547,7 +11588,7 @@ async def admin_clients_edit_form(
         <div><strong>{html.escape(tr(lang, "admin.clients.registered_at"))}:</strong> {html.escape(_format_dt(client.created_at))}</div>
         <div><strong>{html.escape(tr(lang, "admin.clients.last_booking"))}:</strong> {html.escape(_format_dt(last_booking))}</div>
         <div class="stack" style="margin-top: var(--space-sm);">
-          <div><strong>Risk flags</strong></div>
+          <div><strong>{html.escape(tr(lang, "admin.clients.risk_flags_label"))}</strong></div>
           <div style="display: flex; gap: var(--space-xs); flex-wrap: wrap;">{risk_badges_html}</div>
           {risk_details_html}
         </div>
@@ -13356,6 +13397,7 @@ async def admin_bookings_update(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid datetime format") from exc
 
+    previous_client_id = booking.client_id
     before = {
         "team_id": booking.team_id,
         "client_id": booking.client_id,
@@ -13363,6 +13405,19 @@ async def admin_bookings_update(
         "starts_at": booking.starts_at.isoformat() if booking.starts_at else None,
         "duration_minutes": booking.duration_minutes,
     }
+    if client_id != previous_client_id and booking.address_id:
+        address = (
+            await session.execute(
+                select(ClientAddress).where(
+                    ClientAddress.address_id == booking.address_id,
+                    ClientAddress.org_id == org_id,
+                    ClientAddress.client_id == client_id,
+                    ClientAddress.is_active.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if address is None:
+            booking.address_id = None
     booking.team_id = team_id
     booking.client_id = client_id
     booking.assigned_worker_id = assigned_worker_id

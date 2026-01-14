@@ -278,6 +278,95 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
         settings.admin_basic_password = previous_password
 
 
+def test_admin_booking_update_clears_address_when_client_changes(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        async def seed_booking():
+            async with async_session_maker() as session:
+                team = Team(name=f"Address Update {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+                session.add(team)
+                await session.flush()
+
+                client_a = ClientUser(
+                    org_id=settings.default_org_id,
+                    name="Address Client A",
+                    email=f"address-a-{uuid.uuid4().hex[:8]}@example.com",
+                    phone="+1 555-111-2222",
+                    address="111 A St",
+                )
+                client_b = ClientUser(
+                    org_id=settings.default_org_id,
+                    name="Address Client B",
+                    email=f"address-b-{uuid.uuid4().hex[:8]}@example.com",
+                    phone="+1 555-333-4444",
+                    address="222 B St",
+                )
+                session.add_all([client_a, client_b])
+                await session.flush()
+
+                address = ClientAddress(
+                    org_id=settings.default_org_id,
+                    client_id=client_a.client_id,
+                    label="Home",
+                    address_text="111 A St",
+                    notes=None,
+                )
+                session.add(address)
+                await session.flush()
+
+                starts_at = datetime.now(tz=timezone.utc).replace(microsecond=0)
+                booking = Booking(
+                    booking_id=str(uuid.uuid4()),
+                    org_id=settings.default_org_id,
+                    client_id=client_a.client_id,
+                    team_id=team.team_id,
+                    assigned_worker_id=None,
+                    starts_at=starts_at,
+                    duration_minutes=120,
+                    status="PENDING",
+                    deposit_cents=0,
+                    base_charge_cents=0,
+                    refund_total_cents=0,
+                    credit_note_total_cents=0,
+                    address_id=address.address_id,
+                )
+                session.add(booking)
+                await session.commit()
+                return booking.booking_id, team.team_id, client_b.client_id, starts_at
+
+        booking_id, team_id, new_client_id, starts_at = asyncio.run(seed_booking())
+        headers = _basic_auth("admin", "secret")
+
+        update_response = client.post(
+            f"/v1/admin/ui/bookings/{booking_id}/update",
+            headers=headers,
+            data={
+                "team_id": team_id,
+                "client_id": new_client_id,
+                "starts_at": starts_at.isoformat(),
+                "duration_minutes": 120,
+            },
+            follow_redirects=False,
+        )
+        assert update_response.status_code == 303
+
+        async def verify_address_cleared():
+            async with async_session_maker() as session:
+                booking = await session.get(Booking, booking_id)
+                assert booking is not None
+                assert booking.client_id == new_client_id
+                assert booking.address_id is None
+
+        asyncio.run(verify_address_cleared())
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
 def test_admin_booking_form_warns_on_blocked_client(client, async_session_maker):
     previous_username = settings.admin_basic_username
     previous_password = settings.admin_basic_password
