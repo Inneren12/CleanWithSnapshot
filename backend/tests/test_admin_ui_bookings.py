@@ -67,6 +67,38 @@ def _seed_booking(async_session_maker):
     return asyncio.run(create())
 
 
+def _seed_client_team_worker(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Dispatch Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Prefill Client",
+                email=f"prefill-{uuid.uuid4().hex[:8]}@example.com",
+                phone="+1 555-222-3333",
+                address="901 Booking Blvd",
+            )
+            session.add(client)
+            await session.flush()
+
+            worker = Worker(
+                org_id=settings.default_org_id,
+                team_id=team.team_id,
+                name="Prefill Worker",
+                email=f"prefill-worker-{uuid.uuid4().hex[:8]}@example.com",
+                phone="+1 555-999-0000",
+                is_active=True,
+            )
+            session.add(worker)
+            await session.commit()
+            return team.team_id, client.client_id, worker.worker_id, client.name, client.address
+
+    return asyncio.run(create())
+
+
 def test_admin_create_booking_form_action(client):
     previous_username = settings.admin_basic_username
     previous_password = settings.admin_basic_password
@@ -180,6 +212,46 @@ def test_admin_can_create_edit_delete_booking(client, async_session_maker):
                     assert remaining == []
 
         asyncio.run(verify_delete())
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_booking_new_prefills_client_address(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        team_id, client_id, worker_id, client_name, client_address = _seed_client_team_worker(
+            async_session_maker
+        )
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(
+            f"/v1/admin/ui/bookings/new?client_id={client_id}",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert f'Creating booking for {client_name}' in response.text
+        assert f'<option value="{client_id}" selected>' in response.text
+        assert f'name="address" value="{client_address}"' in response.text
+
+        starts_at = datetime.now(tz=timezone.utc).replace(microsecond=0)
+        create_response = client.post(
+            "/v1/admin/ui/bookings/create",
+            headers=headers,
+            data={
+                "team_id": team_id,
+                "client_id": client_id,
+                "worker_ids": [worker_id],
+                "starts_at": starts_at.isoformat(),
+                "duration_minutes": 90,
+            },
+            follow_redirects=False,
+        )
+        assert create_response.status_code == 303
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
