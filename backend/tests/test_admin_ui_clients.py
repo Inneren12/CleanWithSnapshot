@@ -181,6 +181,136 @@ def _seed_client_with_subscription(async_session_maker):
     return asyncio.run(create())
 
 
+def _seed_client_with_analytics(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Analytics Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Analytics Client",
+                email=f"analytics-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-444-1234",
+                address="101 Data Drive",
+                is_active=True,
+            )
+            session.add(client)
+            await session.flush()
+
+            worker_primary = Worker(
+                org_id=settings.default_org_id,
+                team_id=team.team_id,
+                name="Worker Alpha",
+                phone="+1 555-000-0001",
+                is_active=True,
+            )
+            worker_secondary = Worker(
+                org_id=settings.default_org_id,
+                team_id=team.team_id,
+                name="Worker Beta",
+                phone="+1 555-000-0002",
+                is_active=True,
+            )
+            worker_third = Worker(
+                org_id=settings.default_org_id,
+                team_id=team.team_id,
+                name="Worker Gamma",
+                phone="+1 555-000-0003",
+                is_active=True,
+            )
+            session.add_all([worker_primary, worker_secondary, worker_third])
+            await session.flush()
+
+            now = datetime.now(tz=timezone.utc)
+
+            def make_booking(
+                *,
+                offset_days: int,
+                status: str,
+                assigned_worker_id: int | None,
+                base_charge_cents: int,
+                duration_minutes: int,
+            ) -> Booking:
+                booking = Booking(
+                    booking_id=str(uuid.uuid4()),
+                    org_id=settings.default_org_id,
+                    client_id=client.client_id,
+                    team_id=team.team_id,
+                    starts_at=now - timedelta(days=offset_days),
+                    duration_minutes=duration_minutes,
+                    status=status,
+                    deposit_cents=0,
+                    base_charge_cents=base_charge_cents,
+                    refund_total_cents=0,
+                    credit_note_total_cents=0,
+                    assigned_worker_id=assigned_worker_id,
+                )
+                session.add(booking)
+                return booking
+
+            booking_one = make_booking(
+                offset_days=10,
+                status="COMPLETED",
+                assigned_worker_id=worker_primary.worker_id,
+                base_charge_cents=20000,
+                duration_minutes=120,
+            )
+            booking_two = make_booking(
+                offset_days=25,
+                status="DONE",
+                assigned_worker_id=None,
+                base_charge_cents=15000,
+                duration_minutes=90,
+            )
+            session.add(
+                BookingWorker(
+                    booking_id=booking_two.booking_id,
+                    worker_id=worker_primary.worker_id,
+                    role="crew",
+                )
+            )
+            make_booking(
+                offset_days=45,
+                status="COMPLETED",
+                assigned_worker_id=worker_secondary.worker_id,
+                base_charge_cents=30000,
+                duration_minutes=60,
+            )
+            booking_four = make_booking(
+                offset_days=80,
+                status="COMPLETED",
+                assigned_worker_id=None,
+                base_charge_cents=10000,
+                duration_minutes=30,
+            )
+            session.add(
+                BookingWorker(
+                    booking_id=booking_four.booking_id,
+                    worker_id=worker_third.worker_id,
+                    role="crew",
+                )
+            )
+            make_booking(
+                offset_days=140,
+                status="CANCELLED",
+                assigned_worker_id=worker_primary.worker_id,
+                base_charge_cents=0,
+                duration_minutes=60,
+            )
+
+            await session.commit()
+            return (
+                client.client_id,
+                worker_primary.name,
+                worker_secondary.name,
+                worker_third.name,
+            )
+
+    return asyncio.run(create())
+
+
 def _seed_client_with_notes_and_bookings(async_session_maker):
     async def create():
         async with async_session_maker() as session:
@@ -820,6 +950,42 @@ def test_admin_client_feedback_summary(client, async_session_maker):
         assert "Low ratings (≤2)" in response.text
         assert "Great service" in response.text
         assert "Not satisfied" in response.text
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_client_analytics_section(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, worker_primary, worker_secondary, worker_third = _seed_client_with_analytics(
+            async_session_maker
+        )
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(f"/v1/admin/ui/clients/{client_id}", headers=headers)
+        assert response.status_code == 200
+        assert "Analytics" in response.text
+        assert "Bookings over time" in response.text
+        assert "Frequency stats" in response.text
+        assert "Favorite workers" in response.text
+        assert "Total bookings" in response.text
+        assert "Bookings last 30 days" in response.text
+        assert "Bookings last 90 days" in response.text
+        assert "Avg days between completed" in response.text
+        assert "Last booking date" in response.text
+        assert worker_primary in response.text
+        assert worker_secondary in response.text
+        assert worker_third in response.text
+        assert "2 completed" in response.text
+        assert "Total bookings</div>\n              <div class=\"title\">5</div>" in response.text
+        assert "Bookings last 30 days</div>\n              <div class=\"title\">2</div>" in response.text
+        assert "Bookings last 90 days</div>\n              <div class=\"title\">4</div>" in response.text
+        assert "Avg days between completed</div>\n              <div class=\"title\">23.3 days</div>" in response.text
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
