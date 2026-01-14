@@ -4,7 +4,18 @@ from datetime import datetime
 from typing import Iterable
 
 import sqlalchemy as sa
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infra.db import UUID_TYPE, Base
@@ -148,6 +159,8 @@ class ClientAddress(Base):
     label: Mapped[str] = mapped_column(String(50), nullable=False)
     address_text: Mapped[str] = mapped_column(String(500), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text())
+    lat: Mapped[float | None] = mapped_column(Float)
+    lng: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -66,6 +66,14 @@ type DispatcherAlertsResponse = {
   alerts: DispatcherAlert[];
 };
 
+type DispatcherStatsResponse = {
+  done_count: number;
+  in_progress_count: number;
+  planned_count: number;
+  avg_duration_hours: number | null;
+  revenue_today: number;
+};
+
 type DispatcherNotifyResponse = {
   audit_id: string;
   status: "sent" | "failed";
@@ -94,6 +102,15 @@ type DispatcherNotifyAuditResponse = {
 const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, index) => START_HOUR + index);
 const RANGE_START_MINUTES = START_HOUR * 60;
 const RANGE_END_MINUTES = END_HOUR * 60;
+const ZONE_OPTIONS = [
+  "All",
+  "Downtown",
+  "Whyte/Old Strathcona",
+  "West",
+  "South/Millwoods",
+  "North/Castle Downs",
+  "St. Albert",
+];
 const DISPATCHER_TEMPLATES = [
   { id: "WORKER_EN_ROUTE_15MIN", label: "Worker: route reminder (15 min)" },
   { id: "CLIENT_DELAY_TRAFFIC", label: "Client: delay due to traffic" },
@@ -178,6 +195,15 @@ function formatAuditTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatCurrencyFromCents(value: number) {
+  const formatter = new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: "CAD",
+    maximumFractionDigits: 0,
+  });
+  return formatter.format(value / 100);
+}
+
 function isoDateInTz(now: Date, tz: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
@@ -195,6 +221,7 @@ export default function DispatcherPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [board, setBoard] = useState<DispatcherBoardResponse | null>(null);
+  const [stats, setStats] = useState<DispatcherStatsResponse | null>(null);
   const [alerts, setAlerts] = useState<DispatcherAlert[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -215,6 +242,7 @@ export default function DispatcherPage() {
   const [commError, setCommError] = useState<string | null>(null);
   const [draggingBookingId, setDraggingBookingId] = useState<string | null>(null);
   const [dragOverWorkerId, setDragOverWorkerId] = useState<number | null>(null);
+  const [selectedZone, setSelectedZone] = useState<string>("All");
   const hoursScrollRef = useRef<HTMLDivElement | null>(null);
   const bookingRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
@@ -253,10 +281,12 @@ export default function DispatcherPage() {
     setError(null);
     try {
       const isoDate = isoDateInTz(new Date(), EDMONTON_TZ);
+      const zoneParam = selectedZone === "All" ? null : selectedZone;
+      const zoneQuery = zoneParam ? `&zone=${encodeURIComponent(zoneParam)}` : "";
       const response = await fetch(
         `${API_BASE}/v1/admin/dispatcher/board?date=${encodeURIComponent(
           isoDate
-        )}&tz=${encodeURIComponent(EDMONTON_TZ)}`,
+        )}&tz=${encodeURIComponent(EDMONTON_TZ)}${zoneQuery}`,
         {
           headers: authHeaders,
           cache: "no-store",
@@ -273,7 +303,32 @@ export default function DispatcherPage() {
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, password, selectedZone, username]);
+
+  const fetchStats = useCallback(async () => {
+    if (!username || !password) return;
+    try {
+      const isoDate = isoDateInTz(new Date(), EDMONTON_TZ);
+      const zoneParam = selectedZone === "All" ? null : selectedZone;
+      const zoneQuery = zoneParam ? `&zone=${encodeURIComponent(zoneParam)}` : "";
+      const response = await fetch(
+        `${API_BASE}/v1/admin/dispatcher/stats?date=${encodeURIComponent(
+          isoDate
+        )}&tz=${encodeURIComponent(EDMONTON_TZ)}${zoneQuery}`,
+        {
+          headers: authHeaders,
+          cache: "no-store",
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+      const payload = (await response.json()) as DispatcherStatsResponse;
+      setStats(payload);
+    } catch (fetchError) {
+      setError(fetchError instanceof Error ? fetchError.message : "Unable to load dispatcher stats");
+    }
+  }, [authHeaders, password, selectedZone, username]);
 
   const fetchAlerts = useCallback(async () => {
     if (!username || !password) return;
@@ -332,12 +387,14 @@ export default function DispatcherPage() {
     if (!username || !password) return;
     void fetchBoard();
     void fetchAlerts();
+    void fetchStats();
     const interval = window.setInterval(() => {
       void fetchBoard();
       void fetchAlerts();
+      void fetchStats();
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [fetchAlerts, fetchBoard, password, username]);
+  }, [fetchAlerts, fetchBoard, fetchStats, password, username]);
 
   useEffect(() => {
     if (!selectedBooking) return;
@@ -357,7 +414,8 @@ export default function DispatcherPage() {
     window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
     window.localStorage.setItem(STORAGE_PASSWORD_KEY, password);
     void fetchBoard();
-  }, [fetchBoard, password, username]);
+    void fetchStats();
+  }, [fetchBoard, fetchStats, password, username]);
 
   const handleClearCredentials = useCallback(() => {
     window.localStorage.removeItem(STORAGE_USERNAME_KEY);
@@ -365,6 +423,7 @@ export default function DispatcherPage() {
     setUsername("");
     setPassword("");
     setBoard(null);
+    setStats(null);
     setSelectedBooking(null);
   }, []);
 
@@ -773,6 +832,61 @@ export default function DispatcherPage() {
       <section className="dispatcher-content">
         {toast ? <div className={`inline-alert ${toast.kind}`}>{toast.message}</div> : null}
         {error ? <div className="inline-alert error">{error}</div> : null}
+        <div className="dispatcher-metrics">
+          <section className="dispatcher-card" aria-label="Today stats">
+            <header>
+              <h2>Today</h2>
+              <span className="muted">Paid revenue</span>
+            </header>
+            <div className="dispatcher-metric-grid">
+              <div>
+                <span className="muted">Planned</span>
+                <strong>{stats?.planned_count ?? "—"}</strong>
+              </div>
+              <div>
+                <span className="muted">In progress</span>
+                <strong>{stats?.in_progress_count ?? "—"}</strong>
+              </div>
+              <div>
+                <span className="muted">Done</span>
+                <strong>{stats?.done_count ?? "—"}</strong>
+              </div>
+              <div>
+                <span className="muted">Avg duration</span>
+                <strong>
+                  {stats?.avg_duration_hours !== null && stats?.avg_duration_hours !== undefined
+                    ? `${stats.avg_duration_hours.toFixed(2)}h`
+                    : "—"}
+                </strong>
+              </div>
+              <div>
+                <span className="muted">Revenue</span>
+                <strong>{stats ? formatCurrencyFromCents(stats.revenue_today) : "—"}</strong>
+              </div>
+            </div>
+          </section>
+          <section className="dispatcher-card" aria-label="Zone filter">
+            <header>
+              <h2>Zones</h2>
+              <span className="muted">Filter board + stats</span>
+            </header>
+            <div className="dispatcher-zone-chips" role="group" aria-label="Zone filters">
+              {ZONE_OPTIONS.map((zone) => {
+                const isActive = selectedZone === zone;
+                return (
+                  <button
+                    key={zone}
+                    type="button"
+                    className={`dispatcher-zone-chip${isActive ? " active" : ""}`}
+                    onClick={() => setSelectedZone(zone)}
+                  >
+                    {zone}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        </div>
         {loading ? (
           <div className="dispatcher-skeleton" aria-label="Loading dispatcher board">
             <div className="skeleton-line" />

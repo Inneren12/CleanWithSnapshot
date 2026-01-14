@@ -66,6 +66,14 @@ class DispatcherAlertsResponse(BaseModel):
     alerts: list[DispatcherAlert] = Field(default_factory=list)
 
 
+class DispatcherStatsResponse(BaseModel):
+    done_count: int
+    in_progress_count: int
+    planned_count: int
+    avg_duration_hours: float | None = None
+    revenue_today: int
+
+
 class DispatcherReassignRequest(BaseModel):
     worker_id: int = Field(gt=0)
 
