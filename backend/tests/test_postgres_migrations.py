@@ -27,6 +27,8 @@ CORE_TABLES = {
     "break_glass_sessions",
     "export_events",
     "email_events",
+    "worker_reviews",
+    "worker_notes",
 }
 
 
