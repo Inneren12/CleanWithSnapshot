@@ -786,3 +786,320 @@ button:focus-visible {
     padding: 16px;
   }
 }
+
+.dispatcher-page {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dispatcher-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dispatcher-updated {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--type-sizes-sm);
+  color: var(--muted);
+}
+
+.dispatcher-updated strong {
+  color: var(--text);
+}
+
+.dispatcher-auth {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.dispatcher-auth-fields {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--type-sizes-xs);
+  color: var(--muted);
+}
+
+.field input {
+  min-width: 220px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: var(--type-sizes-sm);
+  color: var(--text);
+}
+
+.dispatcher-auth-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dispatcher-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.inline-alert {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: var(--type-sizes-sm);
+}
+
+.inline-alert.error {
+  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--error);
+  background: var(--error-soft);
+}
+
+.empty-state {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  background: var(--surface);
+}
+
+.dispatcher-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeleton-line,
+.skeleton-grid {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--surface-muted) 25%, var(--surface) 45%, var(--surface-muted) 65%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton-line {
+  height: 18px;
+  width: 200px;
+}
+
+.skeleton-grid {
+  height: 160px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 0% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.dispatcher-timeline {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.dispatcher-timeline-header {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.dispatcher-worker-spacer {
+  padding: 12px 16px;
+  font-size: var(--type-sizes-xs);
+  font-weight: var(--type-weights-semibold);
+  color: var(--muted);
+}
+
+.dispatcher-hours {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 120px;
+  align-items: center;
+}
+
+.dispatcher-hours-scroll {
+  overflow: hidden;
+}
+
+.dispatcher-hour {
+  padding: 12px 12px;
+  border-left: 1px solid var(--border);
+  font-size: var(--type-sizes-xs);
+  color: var(--muted);
+}
+
+.dispatcher-timeline-body {
+  max-height: 640px;
+}
+
+.dispatcher-body-scroll {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  overflow: auto;
+  max-height: 640px;
+}
+
+.dispatcher-worker-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.dispatcher-worker-name {
+  padding: 18px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: var(--type-weights-semibold);
+  font-size: var(--type-sizes-sm);
+}
+
+.dispatcher-rows {
+  overflow: visible;
+}
+
+.dispatcher-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.dispatcher-row-track {
+  position: relative;
+  height: 72px;
+  background-image: linear-gradient(to right, var(--border) 1px, transparent 1px);
+  background-size: 120px 100%;
+}
+
+.dispatcher-booking {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dispatcher-booking-title {
+  font-size: var(--type-sizes-sm);
+  font-weight: var(--type-weights-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dispatcher-booking-subtitle {
+  font-size: var(--type-sizes-xs);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dispatcher-booking.default {
+  background: var(--surface-muted);
+  border-color: var(--border);
+}
+
+.dispatcher-booking.planned {
+  background: var(--primary-soft);
+  border-color: rgba(15, 185, 177, 0.4);
+}
+
+.dispatcher-booking.in-progress {
+  background: var(--success-soft);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.dispatcher-booking.done-today {
+  background: var(--warning-soft);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.dispatcher-drawer {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  z-index: 40;
+}
+
+.dispatcher-drawer-backdrop {
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.dispatcher-drawer-panel {
+  width: 320px;
+  background: var(--surface);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: var(--shadow-md);
+}
+
+.dispatcher-drawer-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.dispatcher-drawer-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-label {
+  font-size: var(--type-sizes-xs);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+@media (max-width: 900px) {
+  .dispatcher-timeline-header,
+  .dispatcher-body-scroll {
+    grid-template-columns: 140px 1fr;
+  }
+
+  .dispatcher-worker-spacer,
+  .dispatcher-worker-name {
+    padding: 12px;
+  }
+}
