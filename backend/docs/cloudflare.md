@@ -65,7 +65,7 @@ Steps:
 | `EXPORT_WEBHOOK_ALLOWED_HOSTS` | optional | Comma/JSON list of allowed webhook hosts |
 | `CAPTCHA_ENABLED` | optional | Set `false` to bypass captcha in dev environments |
 | `CAPTCHA_MODE` | optional | `off` or `turnstile` |
-| `TURNSTILE_SECRET_KEY` | optional | Required when `CAPTCHA_MODE=turnstile` |
+| `TURNSTILE_SECRET_KEY` | optional | Required when `CAPTCHA_MODE=turnstile` (public booking/lead creation returns 503 if missing) |
 | `RETENTION_*` | optional | `RETENTION_CHAT_DAYS`, `RETENTION_LEAD_DAYS`, `RETENTION_ENABLE_LEADS` |
 | `STRIPE_*` | optional | Required if deposits are enabled (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`) |
 | `EMAIL_MODE` + provider vars | optional | `sendgrid` or `smtp` with `EMAIL_FROM`, `EMAIL_FROM_NAME`, `SENDGRID_API_KEY` or `SMTP_*` |

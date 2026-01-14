@@ -19,7 +19,7 @@ from app.domain.leads.db_models import Lead
 from app.domain.leads.service import ensure_unique_referral_code, export_payload_from_lead
 from app.domain.leads.schemas import LeadCreateRequest, LeadResponse
 from app.domain.leads.statuses import LEAD_STATUS_NEW
-from app.infra.captcha import verify_turnstile
+from app.infra.captcha import log_captcha_event, log_captcha_unavailable, verify_turnstile
 from app.infra.export import export_lead_async
 from app.infra.email import EmailAdapter, resolve_app_email_adapter
 from app.settings import settings
@@ -88,16 +88,41 @@ async def create_lead(
     org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
     turnstile_transport = getattr(http_request.app.state, "turnstile_transport", None)
     remote_ip = http_request.client.host if http_request.client else None
-    if settings.captcha_mode != "off" and settings.captcha_enabled:
+    request_id = getattr(http_request.state, "request_id", None)
+    captcha_required = settings.captcha_mode != "off" and settings.captcha_enabled
+    if captcha_required:
         if settings.captcha_mode == "turnstile" and not settings.turnstile_secret_key:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Captcha not configured")
-        if not request.captcha_token:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Captcha token is required"
+            log_captcha_unavailable(
+                "turnstile_secret_missing",
+                request_id=request_id,
+                mode=settings.captcha_mode,
             )
-    captcha_ok = await verify_turnstile(request.captcha_token, remote_ip, transport=turnstile_transport)
-    if not captcha_ok:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Captcha verification failed")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="captcha_unavailable"
+            )
+        if not request.captcha_token:
+            log_captcha_event(
+                "missing_token",
+                request_id=request_id,
+                mode=settings.captcha_mode,
+                provider=settings.captcha_mode,
+            )
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="captcha_required")
+        captcha_ok = await verify_turnstile(request.captcha_token, remote_ip, transport=turnstile_transport)
+        if not captcha_ok:
+            log_captcha_event(
+                "failed",
+                request_id=request_id,
+                mode=settings.captcha_mode,
+                provider=settings.captcha_mode,
+            )
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="captcha_failed")
+        log_captcha_event(
+            "success",
+            request_id=request_id,
+            mode=settings.captcha_mode,
+            provider=settings.captcha_mode,
+        )
 
     estimate_payload = request.estimate_snapshot.model_dump(mode="json")
     structured_inputs = request.structured_inputs.model_dump(mode="json")

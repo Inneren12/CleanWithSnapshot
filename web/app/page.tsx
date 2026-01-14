@@ -588,7 +588,7 @@ export default function HomePage() {
       return;
     }
     if (!turnstileSiteKey) {
-      setLeadError('Captcha not configured. Please contact support.');
+      setLeadError('Booking temporarily unavailable. Please call us to schedule.');
       return;
     }
     if (!turnstileToken) {
@@ -1227,7 +1227,9 @@ export default function HomePage() {
                       </div>
 
                       {!turnstileSiteKey ? (
-                        <p className="alert alert-error">Captcha not configured. Please try again later.</p>
+                        <p className="alert alert-error">
+                          Booking temporarily unavailable. Please call a human to schedule.
+                        </p>
                       ) : null}
                       {turnstileLoadError ? (
                         <p className="alert alert-error">{turnstileLoadError}</p>

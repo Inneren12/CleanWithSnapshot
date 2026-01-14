@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -9,6 +10,51 @@ from app.settings import settings
 
 logger = logging.getLogger(__name__)
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+CAPTCHA_UNAVAILABLE_LOG_INTERVAL_SECONDS = 300
+_last_unavailable_log = 0.0
+
+
+def log_captcha_event(
+    outcome: str,
+    *,
+    request_id: str | None = None,
+    mode: str | None = None,
+    provider: str | None = None,
+) -> None:
+    logger.info(
+        "captcha_verification",
+        extra={
+            "extra": {
+                "outcome": outcome,
+                "mode": mode,
+                "provider": provider,
+                "request_id": request_id,
+            }
+        },
+    )
+
+
+def log_captcha_unavailable(
+    reason: str,
+    *,
+    request_id: str | None = None,
+    mode: str | None = None,
+) -> None:
+    global _last_unavailable_log
+    now = time.monotonic()
+    if now - _last_unavailable_log < CAPTCHA_UNAVAILABLE_LOG_INTERVAL_SECONDS:
+        return
+    _last_unavailable_log = now
+    logger.error(
+        "captcha_unavailable",
+        extra={
+            "extra": {
+                "reason": reason,
+                "mode": mode,
+                "request_id": request_id,
+            }
+        },
+    )
 
 
 async def verify_turnstile(
