@@ -546,8 +546,12 @@ def test_admin_cannot_delete_client_with_subscriptions(client, async_session_mak
 def test_admin_client_detail_shows_bookings_and_notes(client, async_session_maker):
     previous_username = settings.admin_basic_username
     previous_password = settings.admin_basic_password
+    previous_chat_enabled = settings.chat_enabled
+    previous_promos_enabled = settings.promos_enabled
     settings.admin_basic_username = "admin"
     settings.admin_basic_password = "secret"
+    settings.chat_enabled = False
+    settings.promos_enabled = False
 
     try:
         client_id, booking_id = _seed_client_with_notes_and_bookings(async_session_maker)
@@ -564,9 +568,15 @@ def test_admin_client_detail_shows_bookings_and_notes(client, async_session_make
         assert "Complaint" in response.text
         assert "Praise" in response.text
         assert booking_id in response.text
+        assert "Chat not enabled yet" in response.text
+        assert "Promos not enabled yet" in response.text
+        assert f"/v1/admin/ui/clients/{client_id}/chat" not in response.text
+        assert f"/v1/admin/ui/clients/{client_id}/promos" not in response.text
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
+        settings.chat_enabled = previous_chat_enabled
+        settings.promos_enabled = previous_promos_enabled
 
 
 def test_admin_client_detail_lists_addresses(client, async_session_maker):

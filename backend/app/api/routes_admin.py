@@ -10425,6 +10425,48 @@ async def admin_clients_edit_form(
         <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.notes_filter_apply"))}</button>
       </form>
     """
+    if settings.chat_enabled:
+        chat_action = (
+            f'<a class="btn secondary" href="/v1/admin/ui/clients/{html.escape(client.client_id)}/chat">'
+            "Send message</a>"
+        )
+        chat_hint = ""
+    else:
+        chat_action = '<button class="btn secondary" type="button" disabled>Chat not enabled yet</button>'
+        chat_hint = '<div class="muted small">Coming soon</div>'
+
+    if settings.promos_enabled:
+        promo_action = (
+            f'<a class="btn secondary" href="/v1/admin/ui/clients/{html.escape(client.client_id)}/promos">'
+            "Apply promo</a>"
+        )
+        promo_hint = ""
+    else:
+        promo_action = '<button class="btn secondary" type="button" disabled>Promos not enabled yet</button>'
+        promo_hint = '<div class="muted small">Coming soon</div>'
+
+    quick_actions_card = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">Quick actions</div>
+          <div class="muted">Reach out or apply a discount for this client.</div>
+        </div>
+      </div>
+      <div style="display: grid; gap: var(--space-md); grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+        <div class="stack">
+          <div class="title">Send message</div>
+          {chat_action}
+          {chat_hint}
+        </div>
+        <div class="stack">
+          <div class="title">Apply promo</div>
+          {promo_action}
+          {promo_hint}
+        </div>
+      </div>
+    </div>
+    """
     overview_card = f"""
     <div class="card">
       <div class="card-row">
@@ -10463,6 +10505,7 @@ async def admin_clients_edit_form(
         <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.tags_save"))}</button>
       </form>
     </div>
+    {quick_actions_card}
     <div class="card" id="client-addresses">
       <div class="card-row">
         <div>

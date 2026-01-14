@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     retention_chat_days: int = Field(30)
     retention_lead_days: int = Field(365)
     retention_enable_leads: bool = Field(False)
+    chat_enabled: bool = Field(False)
+    promos_enabled: bool = Field(False)
     default_worker_hourly_rate_cents: int = Field(2500)
     worker_alert_inactive_days: int = Field(30)
     worker_alert_rating_drop_threshold: float = Field(0.5)
