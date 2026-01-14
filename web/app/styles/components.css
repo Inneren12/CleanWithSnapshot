@@ -447,6 +447,26 @@ button:focus-visible {
   color: var(--primary);
 }
 
+.field-error {
+  display: block;
+  margin-top: 6px;
+  font-size: var(--type-sizes-sm);
+  color: var(--error);
+}
+
+.input-error {
+  border-color: rgba(239, 68, 68, 0.6);
+  background: var(--error-soft);
+}
+
+.slot-summary {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: var(--surface-muted);
+  margin-bottom: 16px;
+}
+
 .estimate-card {
   overflow: hidden;
 }
