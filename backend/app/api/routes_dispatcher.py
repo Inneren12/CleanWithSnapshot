@@ -230,6 +230,36 @@ async def estimate_dispatcher_route(
     return schemas.DispatcherRouteEstimateResponse(**estimate.as_payload(), cached=cached)
 
 
+@router.get(
+    "/v1/admin/dispatcher/assign/suggest",
+    response_model=schemas.DispatcherAssignmentSuggestionsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def suggest_dispatcher_assignments(
+    booking_id: str = Query(..., description="Booking ID"),
+    limit: int = Query(5, ge=1, le=25),
+    session: AsyncSession = Depends(get_db_session),
+    org_id=Depends(require_org_context),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> schemas.DispatcherAssignmentSuggestionsResponse:
+    """Suggest workers for a booking assignment.
+
+    Requires: DISPATCH permission (dispatcher/admin/owner roles).
+    """
+    del identity
+    try:
+        result = await dispatcher_service.fetch_dispatcher_assignment_suggestions(
+            session,
+            org_id=org_id,
+            booking_id=booking_id,
+            limit=limit,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found") from exc
+
+    return schemas.DispatcherAssignmentSuggestionsResponse(suggestions=result.suggestions)
+
+
 @router.post(
     "/v1/admin/dispatcher/bookings/{booking_id}/reassign",
     response_model=schemas.DispatcherBoardBooking,
