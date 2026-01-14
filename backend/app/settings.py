@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     captcha_enabled: bool = Field(True)
     captcha_mode: Literal["off", "turnstile"] = Field("off")
     turnstile_secret_key: str | None = Field(None)
+    google_maps_api_key: str | None = Field(None)
     retention_chat_days: int = Field(30)
     retention_lead_days: int = Field(365)
     retention_enable_leads: bool = Field(False)

@@ -1458,6 +1458,45 @@ button:focus-visible {
   gap: 4px;
 }
 
+.dispatcher-route-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dispatcher-route-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.dispatcher-route-title {
+  font-size: var(--type-sizes-sm);
+  font-weight: 600;
+  display: block;
+}
+
+.dispatcher-route-subtitle {
+  font-size: var(--type-sizes-xs);
+  color: var(--muted);
+  display: block;
+}
+
+.dispatcher-route-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: var(--type-sizes-xs);
+}
+
+.dispatcher-route-delta {
+  font-size: var(--type-sizes-xs);
+  font-weight: 600;
+  color: var(--primary);
+}
+
 .detail-label {
   font-size: var(--type-sizes-xs);
   color: var(--muted);

@@ -103,6 +103,14 @@ type DispatcherNotifyAuditResponse = {
   audits: DispatcherNotifyAuditEntry[];
 };
 
+type RouteEstimateResponse = {
+  distance_km: number;
+  duration_min: number;
+  duration_in_traffic_min: number | null;
+  provider: "google" | "heuristic";
+  cached: boolean;
+};
+
 const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, index) => START_HOUR + index);
 const RANGE_START_MINUTES = START_HOUR * 60;
 const RANGE_END_MINUTES = END_HOUR * 60;
@@ -226,6 +234,19 @@ function formatCurrencyFromCents(value: number) {
   return formatter.format(value / 100);
 }
 
+function formatDurationMinutes(value: number) {
+  return `${value} min`;
+}
+
+function formatDistanceKm(value: number) {
+  return `${value.toFixed(1)} km`;
+}
+
+function formatDurationDelta(value: number) {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${Math.abs(value)} min`;
+}
+
 function isoDateInTz(now: Date, tz: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
@@ -269,6 +290,12 @@ export default function DispatcherPage() {
   const [commTemplateId, setCommTemplateId] = useState(DISPATCHER_TEMPLATES[1]?.id ?? "");
   const [commAudits, setCommAudits] = useState<DispatcherNotifyAuditEntry[]>([]);
   const [commError, setCommError] = useState<string | null>(null);
+  const [currentRouteEstimate, setCurrentRouteEstimate] = useState<RouteEstimateResponse | null>(null);
+  const [currentRouteError, setCurrentRouteError] = useState<string | null>(null);
+  const [currentRoutePending, setCurrentRoutePending] = useState(false);
+  const [reassignRouteEstimate, setReassignRouteEstimate] = useState<RouteEstimateResponse | null>(null);
+  const [reassignRouteError, setReassignRouteError] = useState<string | null>(null);
+  const [reassignRoutePending, setReassignRoutePending] = useState(false);
   const [draggingBookingId, setDraggingBookingId] = useState<string | null>(null);
   const [dragOverWorkerId, setDragOverWorkerId] = useState<number | null>(null);
   const [selectedZone, setSelectedZone] = useState<string>("All");
@@ -472,6 +499,7 @@ export default function DispatcherPage() {
     void fetchNotifyAudits();
   }, [fetchNotifyAudits, selectedBooking]);
 
+
   const handleSaveCredentials = useCallback(() => {
     window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
     window.localStorage.setItem(STORAGE_PASSWORD_KEY, password);
@@ -570,6 +598,195 @@ export default function DispatcherPage() {
     mapping.forEach((list) => list.sort((a, b) => a.starts_at.localeCompare(b.starts_at)));
     return mapping;
   }, [board]);
+
+  const workerNames = useMemo(() => {
+    const mapping = new Map<number, string>();
+    board?.workers.forEach((worker) => {
+      mapping.set(worker.worker_id, worker.display_name || `Worker ${worker.worker_id}`);
+    });
+    return mapping;
+  }, [board]);
+
+  const resolveWorkerOrigin = useCallback(
+    (workerId: number | null | undefined, targetStartsAt: string) => {
+      if (!workerId) return null;
+      const list = workerBookings.get(workerId) ?? [];
+      if (!list.length) return null;
+      const targetStart = new Date(targetStartsAt).getTime();
+      let candidate: DispatcherBooking | null = null;
+      list.forEach((booking) => {
+        const bookingStart = new Date(booking.starts_at).getTime();
+        if (Number.isNaN(bookingStart) || bookingStart >= targetStart) return;
+        if (!candidate) {
+          candidate = booking;
+          return;
+        }
+        const candidateEnd = new Date(candidate.ends_at).getTime();
+        const bookingEnd = new Date(booking.ends_at).getTime();
+        if (!Number.isNaN(bookingEnd) && bookingEnd >= candidateEnd) {
+          candidate = booking;
+        }
+      });
+      const lat = candidate?.address?.lat;
+      const lng = candidate?.address?.lng;
+      if (lat == null || lng == null) return null;
+      return {
+        lat,
+        lng,
+        label: shortAddress(candidate.address),
+        bookingId: candidate.booking_id,
+      };
+    },
+    [workerBookings]
+  );
+
+  const fetchRouteEstimate = useCallback(
+    async (origin: { lat: number; lng: number }, dest: { lat: number; lng: number }, departAt?: string) => {
+      const response = await fetch(`${API_BASE}/v1/admin/dispatcher/routes/estimate`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          origin,
+          dest,
+          depart_at: departAt ?? null,
+          mode: "driving",
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+      return (await response.json()) as RouteEstimateResponse;
+    },
+    [authHeaders]
+  );
+
+  useEffect(() => {
+    if (!selectedBooking || !isAuthenticated) {
+      setCurrentRouteEstimate(null);
+      setCurrentRouteError(null);
+      setCurrentRoutePending(false);
+      return;
+    }
+    const destinationLat = selectedBooking.address?.lat;
+    const destinationLng = selectedBooking.address?.lng;
+    const origin = resolveWorkerOrigin(selectedBooking.assigned_worker?.id ?? null, selectedBooking.starts_at);
+    if (destinationLat == null || destinationLng == null) {
+      setCurrentRouteEstimate(null);
+      setCurrentRouteError("Missing booking location.");
+      setCurrentRoutePending(false);
+      return;
+    }
+    if (!origin) {
+      setCurrentRouteEstimate(null);
+      setCurrentRouteError("No previous booking location.");
+      setCurrentRoutePending(false);
+      return;
+    }
+    setCurrentRouteError(null);
+    let isActive = true;
+    const timeout = window.setTimeout(() => {
+      setCurrentRoutePending(true);
+      fetchRouteEstimate(origin, { lat: destinationLat, lng: destinationLng }, selectedBooking.starts_at)
+        .then((payload) => {
+          if (!isActive) return;
+          setCurrentRouteEstimate(payload);
+        })
+        .catch((routeError) => {
+          if (!isActive) return;
+          setCurrentRouteError(routeError instanceof Error ? routeError.message : "Route estimate failed.");
+          setCurrentRouteEstimate(null);
+        })
+        .finally(() => {
+          if (!isActive) return;
+          setCurrentRoutePending(false);
+        });
+    }, 400);
+    return () => {
+      isActive = false;
+      window.clearTimeout(timeout);
+    };
+  }, [fetchRouteEstimate, isAuthenticated, resolveWorkerOrigin, selectedBooking]);
+
+  useEffect(() => {
+    if (!selectedBooking || !isAuthenticated) {
+      setReassignRouteEstimate(null);
+      setReassignRouteError(null);
+      setReassignRoutePending(false);
+      return;
+    }
+    const destinationLat = selectedBooking.address?.lat;
+    const destinationLng = selectedBooking.address?.lng;
+    const workerId = reassignWorkerId ? Number(reassignWorkerId) : null;
+    if (!workerId || workerId === selectedBooking.assigned_worker?.id) {
+      setReassignRouteEstimate(null);
+      setReassignRouteError(null);
+      setReassignRoutePending(false);
+      return;
+    }
+    if (destinationLat == null || destinationLng == null) {
+      setReassignRouteEstimate(null);
+      setReassignRouteError("Missing booking location.");
+      setReassignRoutePending(false);
+      return;
+    }
+    const origin = resolveWorkerOrigin(workerId, selectedBooking.starts_at);
+    if (!origin) {
+      setReassignRouteEstimate(null);
+      setReassignRouteError("No previous booking location.");
+      setReassignRoutePending(false);
+      return;
+    }
+    setReassignRouteError(null);
+    let isActive = true;
+    const timeout = window.setTimeout(() => {
+      setReassignRoutePending(true);
+      fetchRouteEstimate(origin, { lat: destinationLat, lng: destinationLng }, selectedBooking.starts_at)
+        .then((payload) => {
+          if (!isActive) return;
+          setReassignRouteEstimate(payload);
+        })
+        .catch((routeError) => {
+          if (!isActive) return;
+          setReassignRouteError(routeError instanceof Error ? routeError.message : "Route estimate failed.");
+          setReassignRouteEstimate(null);
+        })
+        .finally(() => {
+          if (!isActive) return;
+          setReassignRoutePending(false);
+        });
+    }, 400);
+    return () => {
+      isActive = false;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    fetchRouteEstimate,
+    isAuthenticated,
+    reassignWorkerId,
+    resolveWorkerOrigin,
+    selectedBooking,
+  ]);
+
+  const currentOriginInfo = useMemo(() => {
+    if (!selectedBooking) return null;
+    return resolveWorkerOrigin(selectedBooking.assigned_worker?.id ?? null, selectedBooking.starts_at);
+  }, [resolveWorkerOrigin, selectedBooking]);
+
+  const reassignOriginInfo = useMemo(() => {
+    if (!selectedBooking || !reassignWorkerId) return null;
+    return resolveWorkerOrigin(Number(reassignWorkerId), selectedBooking.starts_at);
+  }, [reassignWorkerId, resolveWorkerOrigin, selectedBooking]);
+
+  const reassignWorkerName = useMemo(() => {
+    if (!reassignWorkerId) return null;
+    const workerId = Number(reassignWorkerId);
+    return workerNames.get(workerId) ?? `Worker ${workerId}`;
+  }, [reassignWorkerId, workerNames]);
+
+  const routeDeltaMinutes = useMemo(() => {
+    if (!currentRouteEstimate || !reassignRouteEstimate) return null;
+    return reassignRouteEstimate.duration_min - currentRouteEstimate.duration_min;
+  }, [currentRouteEstimate, reassignRouteEstimate]);
 
   const alertCounts = useMemo(() => {
     const counts = { info: 0, warn: 0, critical: 0 };
@@ -1334,6 +1551,66 @@ export default function DispatcherPage() {
               <div className="detail">
                 <span className="detail-label">Worker</span>
                 <strong>{selectedBooking.assigned_worker?.display_name ?? "Unassigned"}</strong>
+              </div>
+              <div className="detail dispatcher-route-detail">
+                <span className="detail-label">Routes</span>
+                <div className="dispatcher-route-stack">
+                  <div className="dispatcher-route-row">
+                    <div>
+                      <span className="dispatcher-route-title">Current assignment</span>
+                      <span className="dispatcher-route-subtitle">
+                        {currentOriginInfo
+                          ? `From ${currentOriginInfo.label} → ${shortAddress(selectedBooking.address)}`
+                          : "Origin unavailable"}
+                      </span>
+                    </div>
+                    <div className="dispatcher-route-meta">
+                      {currentRoutePending ? (
+                        <span className="muted">Estimating...</span>
+                      ) : currentRouteEstimate ? (
+                        <>
+                          <strong>{formatDurationMinutes(currentRouteEstimate.duration_min)}</strong>
+                          <span className="muted">{formatDistanceKm(currentRouteEstimate.distance_km)}</span>
+                          {currentRouteEstimate.duration_in_traffic_min ? (
+                            <span className="muted">
+                              Traffic {formatDurationMinutes(currentRouteEstimate.duration_in_traffic_min)}
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="muted">{currentRouteError ?? "Select a booking with locations."}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="dispatcher-route-row">
+                    <div>
+                      <span className="dispatcher-route-title">Reassign comparison</span>
+                      <span className="dispatcher-route-subtitle">
+                        {reassignWorkerName
+                          ? `From ${reassignOriginInfo?.label ?? "origin unavailable"}`
+                          : "Select a worker to compare"}
+                      </span>
+                    </div>
+                    <div className="dispatcher-route-meta">
+                      {reassignRoutePending ? (
+                        <span className="muted">Estimating...</span>
+                      ) : reassignRouteEstimate ? (
+                        <>
+                          <strong>{formatDurationMinutes(reassignRouteEstimate.duration_min)}</strong>
+                          <span className="muted">{formatDistanceKm(reassignRouteEstimate.distance_km)}</span>
+                        </>
+                      ) : (
+                        <span className="muted">{reassignRouteError ?? "—"}</span>
+                      )}
+                    </div>
+                  </div>
+                  {routeDeltaMinutes !== null && reassignWorkerName ? (
+                    <div className="dispatcher-route-delta">
+                      Assigning to {reassignWorkerName} {routeDeltaMinutes >= 0 ? "adds" : "saves"}{" "}
+                      {formatDurationDelta(routeDeltaMinutes)} travel.
+                    </div>
+                  ) : null}
+                </div>
               </div>
               <div className="dispatcher-actions">
                 <div className="dispatcher-action-group">
