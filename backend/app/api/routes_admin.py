@@ -6083,7 +6083,7 @@ async def admin_clients_list(
 @router.get("/v1/admin/ui/clients/new", response_class=HTMLResponse)
 async def admin_clients_new_form(
     request: Request,
-    _identity: AdminIdentity = Depends(require_admin),
+    _identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
     lang = resolve_lang(request)
     csrf_token = get_csrf_token(request)
