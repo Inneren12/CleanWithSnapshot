@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, BookingWorker, Team
-from app.domain.clients.db_models import ClientAddress, ClientNote, ClientUser
+from app.domain.clients.db_models import ClientAddress, ClientFeedback, ClientNote, ClientUser
 from app.domain.invoices import service as invoice_service
 from app.domain.invoices.schemas import InvoiceItemCreate
 from app.domain.saas.db_models import Organization
@@ -255,6 +255,148 @@ def _seed_client_with_notes_and_bookings(async_session_maker):
     return asyncio.run(create())
 
 
+def _seed_client_with_feedback(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Feedback Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Feedback Client",
+                email=f"feedback-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-111-9999",
+                address="800 Feedback Way",
+                is_active=True,
+            )
+            session.add(client)
+            await session.flush()
+
+            booking_one = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=client.client_id,
+                team_id=team.team_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            booking_two = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=client.client_id,
+                team_id=team.team_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=120,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            session.add_all([booking_one, booking_two])
+            await session.flush()
+
+            feedback_rows = [
+                ClientFeedback(
+                    org_id=settings.default_org_id,
+                    client_id=client.client_id,
+                    booking_id=booking_one.booking_id,
+                    rating=5,
+                    comment="Great service",
+                    channel="admin",
+                ),
+                ClientFeedback(
+                    org_id=settings.default_org_id,
+                    client_id=client.client_id,
+                    booking_id=booking_two.booking_id,
+                    rating=2,
+                    comment="Not satisfied",
+                    channel="admin",
+                ),
+            ]
+            session.add_all(feedback_rows)
+            await session.commit()
+            return client.client_id, booking_one.booking_id, booking_two.booking_id
+
+    return asyncio.run(create())
+
+
+def _seed_client_and_cross_org_booking(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Feedback Admin {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Feedback Admin Client",
+                email=f"feedback-admin-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-999-1111",
+                address="900 Feedback Way",
+                is_active=True,
+            )
+            session.add(client)
+            await session.flush()
+
+            booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=client.client_id,
+                team_id=team.team_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            session.add(booking)
+
+            other_org_id = uuid.uuid4()
+            session.add(Organization(org_id=other_org_id, name="Feedback Other Org"))
+            other_team = Team(name=f"Feedback Other {uuid.uuid4().hex[:6]}", org_id=other_org_id)
+            session.add(other_team)
+            await session.flush()
+
+            other_client = ClientUser(
+                org_id=other_org_id,
+                name="Feedback Other Client",
+                email=f"feedback-other-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-222-8888",
+                address="901 Feedback Way",
+                is_active=True,
+            )
+            session.add(other_client)
+            await session.flush()
+
+            other_booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=other_org_id,
+                client_id=other_client.client_id,
+                team_id=other_team.team_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            session.add(other_booking)
+            await session.commit()
+            return client.client_id, booking.booking_id, other_booking.booking_id
+
+    return asyncio.run(create())
+
+
 def _seed_client_in_other_org(async_session_maker):
     async def create():
         async with async_session_maker() as session:
@@ -433,6 +575,76 @@ def test_admin_can_archive_clients_and_filter(client, async_session_maker):
                 assert refreshed.client_id == active_client_id
 
         asyncio.run(verify_booking())
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_client_feedback_summary(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, _, _ = _seed_client_with_feedback(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(f"/v1/admin/ui/clients/{client_id}", headers=headers)
+        assert response.status_code == 200
+        assert "Ratings &amp; reviews" in response.text
+        assert "3.5/5" in response.text
+        assert "Low ratings (≤2)" in response.text
+        assert "Great service" in response.text
+        assert "Not satisfied" in response.text
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_can_create_client_feedback_and_scope_booking(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, booking_id, other_booking_id = _seed_client_and_cross_org_booking(
+            async_session_maker
+        )
+        headers = _basic_auth("admin", "secret")
+
+        create_response = client.post(
+            f"/v1/admin/ui/clients/{client_id}/feedback/create",
+            headers=headers,
+            data={"booking_id": booking_id, "rating": "4", "comment": "Solid clean"},
+            follow_redirects=False,
+        )
+        assert create_response.status_code == 303
+
+        async def verify_feedback():
+            async with async_session_maker() as session:
+                feedback = (
+                    await session.execute(
+                        sa.select(ClientFeedback).where(
+                            ClientFeedback.booking_id == booking_id,
+                            ClientFeedback.org_id == settings.default_org_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                assert feedback is not None
+                assert feedback.rating == 4
+                assert feedback.comment == "Solid clean"
+
+        asyncio.run(verify_feedback())
+
+        invalid_response = client.post(
+            f"/v1/admin/ui/clients/{client_id}/feedback/create",
+            headers=headers,
+            data={"booking_id": other_booking_id, "rating": "5", "comment": "Nope"},
+            follow_redirects=False,
+        )
+        assert invalid_response.status_code == 400
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password

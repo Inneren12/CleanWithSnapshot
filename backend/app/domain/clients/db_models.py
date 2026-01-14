@@ -3,8 +3,8 @@ import uuid
 from datetime import datetime
 from typing import Iterable
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infra.db import UUID_TYPE, Base
 from app.settings import settings
@@ -155,3 +155,39 @@ class ClientAddress(Base):
     )
 
     __table_args__ = (Index("ix_client_addresses_org_client", "org_id", "client_id"),)
+
+
+class ClientFeedback(Base):
+    __tablename__ = "client_feedback"
+
+    feedback_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    client_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("client_users.client_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    booking_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("bookings.booking_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text())
+    channel: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    client: Mapped["ClientUser"] = relationship("ClientUser")
+    booking: Mapped["Booking"] = relationship("Booking", back_populates="client_feedback")
+
+    __table_args__ = (
+        Index("ix_client_feedback_org_client_created", "org_id", "client_id", "created_at"),
+        UniqueConstraint("org_id", "booking_id", name="uq_client_feedback_org_booking"),
+    )

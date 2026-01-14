@@ -69,6 +69,7 @@ from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
 from app.domain.clients.db_models import (
     ClientAddress,
+    ClientFeedback,
     ClientNote,
     ClientUser,
     normalize_note_type,
@@ -9542,6 +9543,72 @@ async def _client_booking_stats(
     }
 
 
+async def _client_feedback_summary(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+) -> dict[str, float | int | None]:
+    row = (
+        await session.execute(
+            select(
+                func.count(ClientFeedback.feedback_id).label("rating_count"),
+                func.avg(ClientFeedback.rating).label("avg_rating"),
+                func.coalesce(
+                    func.sum(sa.case((ClientFeedback.rating <= 2, 1), else_=0)), 0
+                ).label("low_rating_count"),
+            ).where(ClientFeedback.org_id == org_id, ClientFeedback.client_id == client_id)
+        )
+    ).one()
+    rating_count = int(row.rating_count or 0)
+    avg_rating = float(row.avg_rating) if row.avg_rating is not None else None
+    low_rating_count = int(row.low_rating_count or 0)
+    return {
+        "rating_count": rating_count,
+        "avg_rating": avg_rating,
+        "low_rating_count": low_rating_count,
+    }
+
+
+async def _client_recent_feedback(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+    limit: int = 5,
+) -> list[tuple[ClientFeedback, Booking]]:
+    stmt = (
+        select(ClientFeedback, Booking)
+        .join(Booking, Booking.booking_id == ClientFeedback.booking_id)
+        .where(ClientFeedback.org_id == org_id, ClientFeedback.client_id == client_id)
+        .order_by(ClientFeedback.created_at.desc())
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [(feedback, booking) for feedback, booking in rows]
+
+
+async def _resolve_client_booking(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+    booking_id: str,
+) -> Booking:
+    booking = (
+        await session.execute(
+            select(Booking).where(
+                Booking.booking_id == booking_id,
+                Booking.org_id == org_id,
+                Booking.client_id == client_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid booking for client")
+    return booking
+
+
 _COMPLETED_BOOKING_STATUSES = {"COMPLETED", "DONE"}
 
 
@@ -10134,6 +10201,8 @@ async def admin_clients_edit_form(
         )
     ).scalars().all()
     booking_stats = await _client_booking_stats(session, org_id=org_id, client_id=client_id)
+    feedback_summary = await _client_feedback_summary(session, org_id=org_id, client_id=client_id)
+    recent_feedback = await _client_recent_feedback(session, org_id=org_id, client_id=client_id)
     finance_summary = await _client_finance_aggregates(session, org_id=org_id, client_id=client_id)
     invoice_history = await _client_invoice_history(session, org_id=org_id, client_id=client_id)
     payment_history = await _client_payment_history(session, org_id=org_id, client_id=client_id)
@@ -10398,6 +10467,106 @@ async def admin_clients_edit_form(
         if bookings_rows
         else f"<div class=\"muted\">{html.escape(tr(lang, 'admin.clients.bookings_none'))}</div>"
     )
+    avg_rating = feedback_summary["avg_rating"]
+    avg_rating_display = "—" if avg_rating is None else f"{avg_rating:.1f}/5"
+    rating_count = feedback_summary["rating_count"]
+    low_rating_count = feedback_summary["low_rating_count"]
+    feedback_rows = []
+    for feedback, booking in recent_feedback:
+        feedback_rows.append(
+            """
+            <tr>
+              <td>{rating}</td>
+              <td>{comment}</td>
+              <td>{booking_date}</td>
+              <td><a class="btn small" href="/v1/admin/ui/bookings/{booking_id}/edit">View</a></td>
+            </tr>
+            """.format(
+                rating=html.escape(f"{feedback.rating}/5"),
+                comment=html.escape(feedback.comment or "—"),
+                booking_date=html.escape(_format_dt(booking.starts_at)),
+                booking_id=html.escape(feedback.booking_id),
+            )
+        )
+    feedback_table = (
+        "<table class=\"table\"><thead><tr>"
+        "<th>Rating</th><th>Comment</th><th>Booking date</th><th>Booking</th>"
+        "</tr></thead><tbody>"
+        f"{''.join(feedback_rows)}"
+        "</tbody></table>"
+        if feedback_rows
+        else _render_empty("No feedback yet.")
+    )
+    booking_options = "".join(
+        f"<option value=\"{html.escape(booking.booking_id)}\">"
+        f"{html.escape(_format_dt(booking.starts_at))} · {html.escape(booking.status)}"
+        "</option>"
+        for booking in bookings
+    )
+    feedback_form = (
+        f"""
+        <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/feedback/create">
+          <div class="form-group">
+            <label>Booking</label>
+            <select class="input" name="booking_id" required>
+              {booking_options}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Rating</label>
+            <select class="input" name="rating" required>
+              <option value="5">5</option>
+              <option value="4">4</option>
+              <option value="3">3</option>
+              <option value="2">2</option>
+              <option value="1">1</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Comment</label>
+            <textarea class="input" name="comment" rows="2" placeholder="Optional"></textarea>
+          </div>
+          {csrf_input}
+          <button class="btn secondary" type="submit">Add feedback</button>
+        </form>
+        """
+        if booking_options
+        else "<div class=\"muted\">Add a booking to record client feedback.</div>"
+    )
+    feedback_card = f"""
+    <div class="card" id="client-feedback">
+      <div class="card-row">
+        <div>
+          <div class="title">Ratings &amp; reviews</div>
+          <div class="muted">Client feedback about the service.</div>
+        </div>
+      </div>
+      <div style="display: grid; gap: var(--space-md); grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+        <div>
+          <div class="muted">Average rating</div>
+          <div class="title">{html.escape(avg_rating_display)}</div>
+        </div>
+        <div>
+          <div class="muted">Total ratings</div>
+          <div class="title">{rating_count}</div>
+        </div>
+        <div>
+          <div class="muted">Low ratings (≤2)</div>
+          <div class="title">{low_rating_count}</div>
+        </div>
+      </div>
+      <div class="stack" style="margin-top: var(--space-md);">
+        <div>
+          <div class="title">Recent feedback</div>
+          {feedback_table}
+        </div>
+        <div>
+          <div class="title">Add feedback</div>
+          {feedback_form}
+        </div>
+      </div>
+    </div>
+    """
     notes_list = "".join(
         f"""
         <div class="card" style="padding: var(--space-md);">
@@ -10540,6 +10709,7 @@ async def admin_clients_edit_form(
       </form>
     </div>
     {finance_card}
+    {feedback_card}
     <div class="card">
       <div class="card-row">
         <div>
@@ -10920,6 +11090,80 @@ async def admin_clients_add_note(
         resource_id=str(note.note_id),
         before=None,
         after={"client_id": client_id},
+    )
+    await session.commit()
+    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/feedback/create", response_class=HTMLResponse)
+async def admin_clients_add_feedback(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    form = await request.form()
+    booking_id = (form.get("booking_id") or "").strip()
+    rating_raw = (form.get("rating") or "").strip()
+    comment = (form.get("comment") or "").strip() or None
+    if not booking_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Booking is required")
+    try:
+        rating = int(rating_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid rating") from exc
+    if rating < 1 or rating > 5:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid rating")
+
+    await _resolve_client_booking(
+        session,
+        org_id=org_id,
+        client_id=client_id,
+        booking_id=booking_id,
+    )
+    existing_feedback = (
+        await session.execute(
+            select(ClientFeedback).where(
+                ClientFeedback.org_id == org_id,
+                ClientFeedback.booking_id == booking_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_feedback is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Feedback already exists for this booking",
+        )
+
+    feedback = ClientFeedback(
+        org_id=org_id,
+        client_id=client_id,
+        booking_id=booking_id,
+        rating=rating,
+        comment=comment,
+        channel="admin",
+    )
+    session.add(feedback)
+    await session.flush()
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="CREATE_CLIENT_FEEDBACK",
+        resource_type="client_feedback",
+        resource_id=str(feedback.feedback_id),
+        before=None,
+        after={"client_id": client_id, "booking_id": booking_id, "rating": rating},
     )
     await session.commit()
     return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
