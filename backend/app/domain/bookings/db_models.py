@@ -30,6 +30,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.domain.workers.db_models import Worker
     from app.domain.workers.db_models import WorkerNote, WorkerReview
     from app.domain.invoices.db_models import Invoice
+    from app.domain.clients.db_models import ClientFeedback
 
 
 class Team(Base):
@@ -170,6 +171,12 @@ class Booking(Base):
         "WorkerReview",
         back_populates="booking",
         cascade="all, delete-orphan",
+    )
+    client_feedback: Mapped["ClientFeedback | None"] = relationship(
+        "ClientFeedback",
+        back_populates="booking",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
     worker_notes: Mapped[list["WorkerNote"]] = relationship(
         "WorkerNote",
