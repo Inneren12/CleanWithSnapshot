@@ -59,6 +59,44 @@ def _seed_clients(async_session_maker):
     return asyncio.run(create())
 
 
+def _seed_client_with_booking(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Delete Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Delete Client",
+                email=f"delete-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-777-8888",
+                address="400 Delete Lane",
+                is_active=True,
+            )
+            session.add(client)
+            await session.flush()
+
+            booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=client.client_id,
+                team_id=team.team_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="PENDING",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            session.add(booking)
+            await session.commit()
+            return client.client_id, booking.booking_id
+
+    return asyncio.run(create())
+
+
 def test_admin_can_archive_clients_and_filter(client, async_session_maker):
     previous_username = settings.admin_basic_username
     previous_password = settings.admin_basic_password
@@ -97,6 +135,17 @@ def test_admin_can_archive_clients_and_filter(client, async_session_maker):
         assert archived_list_after.status_code == 200
         assert "Active Client" in archived_list_after.text
 
+        unarchive_response = client.post(
+            f"/v1/admin/ui/clients/{active_client_id}/unarchive",
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert unarchive_response.status_code == 303
+
+        list_after_unarchive = client.get("/v1/admin/ui/clients", headers=headers)
+        assert list_after_unarchive.status_code == 200
+        assert "Active Client" in list_after_unarchive.text
+
         async def verify_booking():
             async with async_session_maker() as session:
                 refreshed = await session.get(Booking, booking_id)
@@ -104,6 +153,69 @@ def test_admin_can_archive_clients_and_filter(client, async_session_maker):
                 assert refreshed.client_id == active_client_id
 
         asyncio.run(verify_booking())
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_can_delete_client_with_detach_strategy(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, booking_id = _seed_client_with_booking(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        delete_response = client.post(
+            f"/v1/admin/ui/clients/{client_id}/delete",
+            headers=headers,
+            data={"confirm": "DELETE", "strategy": "detach"},
+            follow_redirects=False,
+        )
+        assert delete_response.status_code == 303
+
+        async def verify_detach():
+            async with async_session_maker() as session:
+                booking = await session.get(Booking, booking_id)
+                assert booking is not None
+                assert booking.client_id is None
+                deleted_client = await session.get(ClientUser, client_id)
+                assert deleted_client is None
+
+        asyncio.run(verify_detach())
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_can_delete_client_with_cascade_strategy(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, booking_id = _seed_client_with_booking(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        delete_response = client.post(
+            f"/v1/admin/ui/clients/{client_id}/delete",
+            headers=headers,
+            data={"confirm": "DELETE", "strategy": "cascade"},
+            follow_redirects=False,
+        )
+        assert delete_response.status_code == 303
+
+        async def verify_cascade():
+            async with async_session_maker() as session:
+                booking = await session.get(Booking, booking_id)
+                assert booking is None
+                deleted_client = await session.get(ClientUser, client_id)
+                assert deleted_client is None
+
+        asyncio.run(verify_cascade())
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
