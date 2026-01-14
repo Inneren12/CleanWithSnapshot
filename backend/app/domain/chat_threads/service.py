@@ -22,6 +22,7 @@ ParticipantType = str
 PARTICIPANT_ADMIN: ParticipantType = "admin"
 PARTICIPANT_WORKER: ParticipantType = "worker"
 THREAD_TYPE_DIRECT = "direct"
+THREAD_TYPE_GROUP = "group"
 
 
 @dataclass
@@ -137,6 +138,41 @@ async def get_or_create_direct_thread(
     return thread
 
 
+async def create_group_thread(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    worker_ids: list[int],
+    admin_membership_id: int,
+) -> ChatThread:
+    if not worker_ids:
+        raise ValueError("worker_ids required")
+
+    thread = ChatThread(org_id=org_id, thread_type=THREAD_TYPE_GROUP)
+    session.add(thread)
+    await session.flush()
+    participants = [
+        ChatParticipant(
+            org_id=org_id,
+            thread_id=thread.thread_id,
+            participant_type=PARTICIPANT_ADMIN,
+            admin_membership_id=admin_membership_id,
+        ),
+        *[
+            ChatParticipant(
+                org_id=org_id,
+                thread_id=thread.thread_id,
+                participant_type=PARTICIPANT_WORKER,
+                worker_id=worker_id,
+            )
+            for worker_id in worker_ids
+        ],
+    ]
+    session.add_all(participants)
+    await session.flush()
+    return thread
+
+
 async def list_threads(
     session: AsyncSession,
     *,
@@ -181,10 +217,17 @@ async def list_threads(
                 sa.select(ChatParticipant).where(ChatParticipant.thread_id == thread.thread_id)
             )
         ).scalars().all()
-        thread_worker_id = next(
-            (participant.worker_id for participant in participants if participant.participant_type == PARTICIPANT_WORKER),
-            None,
-        )
+        if thread.thread_type == THREAD_TYPE_GROUP:
+            thread_worker_id = None
+        else:
+            thread_worker_id = next(
+                (
+                    participant.worker_id
+                    for participant in participants
+                    if participant.participant_type == PARTICIPANT_WORKER
+                ),
+                None,
+            )
         thread_admin_id = next(
             (
                 participant.admin_membership_id
