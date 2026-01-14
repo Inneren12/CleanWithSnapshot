@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 import uuid
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -70,6 +70,17 @@ class Worker(Base):
     )
     notes: Mapped[list["WorkerNote"]] = relationship(
         "WorkerNote",
+        back_populates="worker",
+        cascade="all, delete-orphan",
+    )
+    onboarding: Mapped["WorkerOnboarding | None"] = relationship(
+        "WorkerOnboarding",
+        back_populates="worker",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    certificates: Mapped[list["WorkerCertificate"]] = relationship(
+        "WorkerCertificate",
         back_populates="worker",
         cascade="all, delete-orphan",
     )
@@ -157,4 +168,83 @@ class WorkerNote(Base):
         Index("ix_worker_notes_booking_id", "booking_id"),
         Index("ix_worker_notes_note_type", "note_type"),
         Index("ix_worker_notes_created_at", "created_at"),
+    )
+
+
+class WorkerOnboarding(Base):
+    __tablename__ = "worker_onboarding"
+
+    worker_id: Mapped[int] = mapped_column(
+        ForeignKey("workers.worker_id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    docs_received: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    background_check: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    training_completed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    first_booking_done: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    worker: Mapped["Worker"] = relationship("Worker", back_populates="onboarding")
+
+    __table_args__ = (Index("ix_worker_onboarding_org_id", "org_id"),)
+
+
+class WorkerCertificate(Base):
+    __tablename__ = "worker_certificates"
+
+    cert_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    worker_id: Mapped[int] = mapped_column(
+        ForeignKey("workers.worker_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    issued_at: Mapped[date | None] = mapped_column(Date)
+    expires_at: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active"
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    worker: Mapped["Worker"] = relationship("Worker", back_populates="certificates")
+
+    __table_args__ = (
+        Index("ix_worker_certificates_org_id", "org_id"),
+        Index("ix_worker_certificates_worker_id", "worker_id"),
+        Index("ix_worker_certificates_status", "status"),
+        Index("ix_worker_certificates_expires_at", "expires_at"),
     )

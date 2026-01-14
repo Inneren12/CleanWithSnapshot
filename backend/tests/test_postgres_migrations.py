@@ -29,6 +29,8 @@ CORE_TABLES = {
     "email_events",
     "worker_reviews",
     "worker_notes",
+    "worker_onboarding",
+    "worker_certificates",
 }
 
 
