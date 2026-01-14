@@ -1,11 +1,13 @@
 "use client";
 
+import Script from "next/script";
 import { type DragEvent, type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const EDMONTON_TZ = "America/Edmonton";
+const EDMONTON_CENTER = { lat: 53.5461, lng: -113.4938 };
 const START_HOUR = 8;
 const END_HOUR = 20;
 const MINUTE_WIDTH = 2;
@@ -26,6 +28,8 @@ type DispatcherAddress = {
   id: number | null;
   formatted: string | null;
   zone: string | null;
+  lat?: number | null;
+  lng?: number | null;
 };
 
 type DispatcherWorkerRef = {
@@ -132,6 +136,16 @@ function formatTimeRange(startsAt: string, endsAt: string) {
   return `${formatter.format(new Date(startsAt))}–${formatter.format(new Date(endsAt))}`;
 }
 
+function formatStartTime(startsAt: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: EDMONTON_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return formatter.format(new Date(startsAt));
+}
+
 function formatDateTimeLocal(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -178,6 +192,14 @@ function bookingStatusClass(status: string) {
   return "default";
 }
 
+function bookingStatusColor(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized === "planned") return "#2563eb";
+  if (normalized === "in_progress") return "#16a34a";
+  if (normalized === "done_today" || normalized === "done") return "#f59e0b";
+  return "#64748b";
+}
+
 function formatLastUpdated(value: string | null) {
   if (!value) return "—";
   return new Intl.DateTimeFormat("en-CA", {
@@ -217,6 +239,13 @@ function isoDateInTz(now: Date, tz: string): string {
   return `${year}-${month}-${day}`;
 }
 
+function shortAddress(address: DispatcherAddress | null | undefined) {
+  const formatted = address?.formatted ?? "";
+  if (!formatted) return "Address unavailable";
+  const [street] = formatted.split(",");
+  return street?.trim() || formatted;
+}
+
 export default function DispatcherPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -243,8 +272,21 @@ export default function DispatcherPage() {
   const [draggingBookingId, setDraggingBookingId] = useState<string | null>(null);
   const [dragOverWorkerId, setDragOverWorkerId] = useState<number | null>(null);
   const [selectedZone, setSelectedZone] = useState<string>("All");
+  const [viewMode, setViewMode] = useState<"timeline" | "map" | "split">("split");
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
+  const [mapScriptsLoaded, setMapScriptsLoaded] = useState(false);
+  const [clustererLoaded, setClustererLoaded] = useState(false);
   const hoursScrollRef = useRef<HTMLDivElement | null>(null);
   const bookingRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const mapMarkersRef = useRef<any[]>([]);
+  const mapClustererRef = useRef<any>(null);
+  const mapInfoWindowRef = useRef<any>(null);
+  const lastBoundsRef = useRef<any>(null);
+
+  const mapApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+  const hasMapKey = Boolean(mapApiKey);
 
   const isAuthenticated = Boolean(username && password);
 
@@ -381,6 +423,26 @@ export default function DispatcherPage() {
     const storedPassword = window.localStorage.getItem(STORAGE_PASSWORD_KEY);
     if (storedUsername) setUsername(storedUsername);
     if (storedPassword) setPassword(storedPassword);
+  }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 900px)");
+    const isSmall = mediaQuery.matches;
+    setIsSmallScreen(isSmall);
+    setViewMode(isSmall ? "timeline" : "split");
+    const handleChange = (event: MediaQueryListEvent) => setIsSmallScreen(event.matches);
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", handleChange);
+    } else {
+      mediaQuery.addListener(handleChange);
+    }
+    return () => {
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener("change", handleChange);
+      } else {
+        mediaQuery.removeListener(handleChange);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -753,6 +815,17 @@ export default function DispatcherPage() {
     setDragOverWorkerId(null);
   }, []);
 
+  const focusBooking = useCallback((booking: DispatcherBooking) => {
+    setSelectedBooking(booking);
+    setHighlightedBookingId(booking.booking_id);
+    window.setTimeout(
+      () => setHighlightedBookingId((current) => (current === booking.booking_id ? null : current)),
+      1800
+    );
+    const target = bookingRefs.current.get(booking.booking_id);
+    target?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  }, []);
+
   const focusAlertBooking = useCallback(
     (alert: DispatcherAlert) => {
       if (!board) return;
@@ -760,14 +833,126 @@ export default function DispatcherPage() {
       if (!bookingId) return;
       const booking = board.bookings.find((item) => item.booking_id === bookingId) ?? null;
       if (!booking) return;
-      setSelectedBooking(booking);
-      setHighlightedBookingId(bookingId);
-      window.setTimeout(() => setHighlightedBookingId((current) => (current === bookingId ? null : current)), 1800);
-      const target = bookingRefs.current.get(bookingId);
-      target?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      focusBooking(booking);
     },
-    [board]
+    [board, focusBooking]
   );
+
+  const handleMapBookingSelect = useCallback(
+    (booking: DispatcherBooking) => {
+      if (viewMode === "map") {
+        setViewMode(isSmallScreen ? "timeline" : "split");
+      }
+      focusBooking(booking);
+    },
+    [focusBooking, isSmallScreen, viewMode]
+  );
+
+  const mapBookings = useMemo(() => board?.bookings ?? [], [board]);
+
+  const mapLocations = useMemo(() => {
+    const withCoords: Array<{ booking: DispatcherBooking; lat: number; lng: number }> = [];
+    let missingCount = 0;
+    mapBookings.forEach((booking) => {
+      const lat = booking.address?.lat;
+      const lng = booking.address?.lng;
+      if (typeof lat === "number" && typeof lng === "number") {
+        withCoords.push({ booking, lat, lng });
+      } else {
+        missingCount += 1;
+      }
+    });
+    return { withCoords, missingCount };
+  }, [mapBookings]);
+
+  useEffect(() => {
+    if (!mapScriptsLoaded || !hasMapKey) return;
+    if (!mapContainerRef.current) return;
+    if (!(window as any).google?.maps) return;
+    if (!mapInstanceRef.current) {
+      mapInstanceRef.current = new (window as any).google.maps.Map(mapContainerRef.current, {
+        center: EDMONTON_CENTER,
+        zoom: 11,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+      });
+      mapInfoWindowRef.current = new (window as any).google.maps.InfoWindow();
+    }
+  }, [hasMapKey, mapScriptsLoaded]);
+
+  useEffect(() => {
+    if (!mapScriptsLoaded || !hasMapKey) return;
+    const googleMaps = (window as any).google?.maps;
+    const map = mapInstanceRef.current;
+    if (!googleMaps || !map) return;
+
+    mapMarkersRef.current.forEach((marker) => marker.setMap(null));
+    mapMarkersRef.current = [];
+    if (mapClustererRef.current?.clearMarkers) {
+      mapClustererRef.current.clearMarkers();
+      mapClustererRef.current = null;
+    }
+
+    if (mapLocations.withCoords.length === 0) {
+      map.setCenter(EDMONTON_CENTER);
+      map.setZoom(11);
+      lastBoundsRef.current = null;
+      return;
+    }
+
+    const bounds = new googleMaps.LatLngBounds();
+    mapLocations.withCoords.forEach(({ booking, lat, lng }) => {
+      const marker = new googleMaps.Marker({
+        position: { lat, lng },
+        title: booking.client?.name ?? "Booking",
+        icon: {
+          path: googleMaps.SymbolPath.CIRCLE,
+          scale: 7,
+          fillColor: bookingStatusColor(booking.status),
+          fillOpacity: 0.9,
+          strokeColor: "#1f2937",
+          strokeWeight: 1,
+        },
+      });
+      marker.addListener("click", () => {
+        handleMapBookingSelect(booking);
+        const infoWindow = mapInfoWindowRef.current;
+        if (infoWindow) {
+          infoWindow.setContent(
+            `<div style="display:flex;flex-direction:column;gap:4px;min-width:160px;">
+              <strong>${booking.client?.name ?? "Client"}</strong>
+              <span>${formatStartTime(booking.starts_at)} • ${shortAddress(booking.address)}</span>
+            </div>`
+          );
+          infoWindow.open({ map, anchor: marker });
+        }
+      });
+      marker.setMap(map);
+      mapMarkersRef.current.push(marker);
+      bounds.extend({ lat, lng });
+    });
+
+    const clustererConstructor =
+      (window as any).MarkerClusterer ?? (window as any).markerClusterer?.MarkerClusterer;
+    if (clustererConstructor && clustererLoaded) {
+      mapClustererRef.current = new clustererConstructor({ map, markers: mapMarkersRef.current });
+    }
+
+    map.fitBounds(bounds);
+    lastBoundsRef.current = bounds;
+  }, [clustererLoaded, handleMapBookingSelect, hasMapKey, mapLocations, mapScriptsLoaded]);
+
+  useEffect(() => {
+    if (!mapInstanceRef.current || !(window as any).google?.maps) return;
+    (window as any).google.maps.event.trigger(mapInstanceRef.current, "resize");
+    if (lastBoundsRef.current) {
+      mapInstanceRef.current.fitBounds(lastBoundsRef.current);
+    } else {
+      mapInstanceRef.current.setCenter(EDMONTON_CENTER);
+      mapInstanceRef.current.setZoom(11);
+    }
+  }, [viewMode]);
 
   const totalTimelineWidth = (RANGE_END_MINUTES - RANGE_START_MINUTES) * MINUTE_WIDTH;
   const handleRowsScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
@@ -780,6 +965,18 @@ export default function DispatcherPage() {
 
   return (
     <div className="dispatcher-page">
+      {hasMapKey ? (
+        <>
+          <Script
+            src={`https://maps.googleapis.com/maps/api/js?key=${mapApiKey}`}
+            onLoad={() => setMapScriptsLoaded(true)}
+          />
+          <Script
+            src="https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js"
+            onLoad={() => setClustererLoaded(true)}
+          />
+        </>
+      ) : null}
       <header className="dispatcher-header">
         <div>
           <h1>Dispatcher Timeline</h1>
@@ -965,93 +1162,144 @@ export default function DispatcherPage() {
                 </div>
               ) : null}
             </aside>
-            {board.workers.length > 0 ? (
-              <div className="dispatcher-timeline" role="region" aria-label="Dispatcher timeline">
-              <div className="dispatcher-timeline-header">
-                <div className="dispatcher-worker-spacer">Worker</div>
-                <div className="dispatcher-hours-scroll" ref={hoursScrollRef}>
-                  <div className="dispatcher-hours" style={{ minWidth: totalTimelineWidth }}>
-                    {HOURS.map((hour) => (
-                      <div key={hour} className="dispatcher-hour">
-                        {formatTimeLabel(hour)}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+            <div className="dispatcher-main">
+              <div className="dispatcher-view-toggle" role="tablist" aria-label="Timeline map view">
+                {(["timeline", "map", "split"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    aria-selected={viewMode === mode}
+                    className={`dispatcher-view-button${viewMode === mode ? " active" : ""}`}
+                    onClick={() => setViewMode(mode)}
+                  >
+                    {mode === "timeline" ? "Timeline" : mode === "map" ? "Map" : "Split"}
+                  </button>
+                ))}
               </div>
-              <div className="dispatcher-timeline-body">
-                <div className="dispatcher-body-scroll" onScroll={handleRowsScroll}>
-                  <div className="dispatcher-worker-list">
-                    {board.workers.map((worker) => (
-                      <div key={worker.worker_id} className="dispatcher-worker-name">
-                        {worker.display_name || `Worker ${worker.worker_id}`}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="dispatcher-rows">
-                    {board.workers.map((worker) => (
-                      <div key={worker.worker_id} className="dispatcher-row">
-                        <div
-                          className={`dispatcher-row-track${
-                            dragOverWorkerId === worker.worker_id ? " drop-target" : ""
-                          }`}
-                          style={{ minWidth: totalTimelineWidth }}
-                          aria-label={`Timeline for ${worker.display_name}`}
-                          onDragOver={handleDragOver}
-                          onDragEnter={handleDragEnter(worker.worker_id)}
-                          onDragLeave={handleDragLeave}
-                          onDrop={handleDropOnWorker(worker.worker_id)}
-                        >
-                          {(workerBookings.get(worker.worker_id) ?? []).map((booking) => {
-                            const startOffset = clampRange(
-                              minutesFromRangeStart(booking.starts_at),
-                              0,
-                              RANGE_END_MINUTES
-                            );
-                            const endOffset = clampRange(
-                              minutesFromRangeStart(booking.ends_at),
-                              0,
-                              RANGE_END_MINUTES
-                            );
-                            const width = Math.max((endOffset - startOffset) * MINUTE_WIDTH, 24);
-                            const isHighlighted = highlightedBookingId === booking.booking_id;
-                            return (
-                              <button
-                                key={booking.booking_id}
-                                type="button"
-                                ref={(element) => {
-                                  bookingRefs.current.set(booking.booking_id, element);
-                                }}
-                                className={`dispatcher-booking ${bookingStatusClass(booking.status)}${
-                                  isHighlighted ? " alert-focus" : ""
-                                }${draggingBookingId === booking.booking_id ? " dragging" : ""}`}
-                                style={{
-                                  left: `${startOffset * MINUTE_WIDTH}px`,
-                                  width: `${width}px`,
-                                }}
-                                onClick={() => setSelectedBooking(booking)}
-                                onDragStart={handleDragStart(booking.booking_id)}
-                                onDragEnd={handleDragEnd}
-                                draggable
-                                aria-label={`Booking for ${booking.client?.name ?? "client"}`}
-                              >
-                                <div className="dispatcher-booking-title">
-                                  {booking.client?.name ?? "Unnamed client"}
-                                </div>
-                                <div className="dispatcher-booking-subtitle">
-                                  {formatTimeRange(booking.starts_at, booking.ends_at)}
-                                </div>
-                              </button>
-                            );
-                          })}
+              <div className={`dispatcher-view dispatcher-view-${viewMode}`}>
+                {board.workers.length > 0 ? (
+                  <div
+                    className={`dispatcher-panel dispatcher-panel-timeline${
+                      viewMode === "map" ? " is-hidden" : ""
+                    }`}
+                    role="region"
+                    aria-label="Dispatcher timeline"
+                  >
+                    <div className="dispatcher-timeline">
+                      <div className="dispatcher-timeline-header">
+                        <div className="dispatcher-worker-spacer">Worker</div>
+                        <div className="dispatcher-hours-scroll" ref={hoursScrollRef}>
+                          <div className="dispatcher-hours" style={{ minWidth: totalTimelineWidth }}>
+                            {HOURS.map((hour) => (
+                              <div key={hour} className="dispatcher-hour">
+                                {formatTimeLabel(hour)}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    ))}
+                      <div className="dispatcher-timeline-body">
+                        <div className="dispatcher-body-scroll" onScroll={handleRowsScroll}>
+                          <div className="dispatcher-worker-list">
+                            {board.workers.map((worker) => (
+                              <div key={worker.worker_id} className="dispatcher-worker-name">
+                                {worker.display_name || `Worker ${worker.worker_id}`}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="dispatcher-rows">
+                            {board.workers.map((worker) => (
+                              <div key={worker.worker_id} className="dispatcher-row">
+                                <div
+                                  className={`dispatcher-row-track${
+                                    dragOverWorkerId === worker.worker_id ? " drop-target" : ""
+                                  }`}
+                                  style={{ minWidth: totalTimelineWidth }}
+                                  aria-label={`Timeline for ${worker.display_name}`}
+                                  onDragOver={handleDragOver}
+                                  onDragEnter={handleDragEnter(worker.worker_id)}
+                                  onDragLeave={handleDragLeave}
+                                  onDrop={handleDropOnWorker(worker.worker_id)}
+                                >
+                                  {(workerBookings.get(worker.worker_id) ?? []).map((booking) => {
+                                    const startOffset = clampRange(
+                                      minutesFromRangeStart(booking.starts_at),
+                                      0,
+                                      RANGE_END_MINUTES
+                                    );
+                                    const endOffset = clampRange(
+                                      minutesFromRangeStart(booking.ends_at),
+                                      0,
+                                      RANGE_END_MINUTES
+                                    );
+                                    const width = Math.max((endOffset - startOffset) * MINUTE_WIDTH, 24);
+                                    const isHighlighted = highlightedBookingId === booking.booking_id;
+                                    return (
+                                      <button
+                                        key={booking.booking_id}
+                                        type="button"
+                                        ref={(element) => {
+                                          bookingRefs.current.set(booking.booking_id, element);
+                                        }}
+                                        className={`dispatcher-booking ${bookingStatusClass(booking.status)}${
+                                          isHighlighted ? " alert-focus" : ""
+                                        }${draggingBookingId === booking.booking_id ? " dragging" : ""}`}
+                                        style={{
+                                          left: `${startOffset * MINUTE_WIDTH}px`,
+                                          width: `${width}px`,
+                                        }}
+                                        onClick={() => focusBooking(booking)}
+                                        onDragStart={handleDragStart(booking.booking_id)}
+                                        onDragEnd={handleDragEnd}
+                                        draggable
+                                        aria-label={`Booking for ${booking.client?.name ?? "client"}`}
+                                      >
+                                        <div className="dispatcher-booking-title">
+                                          {booking.client?.name ?? "Unnamed client"}
+                                        </div>
+                                        <div className="dispatcher-booking-subtitle">
+                                          {formatTimeRange(booking.starts_at, booking.ends_at)}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
+                ) : null}
+                <div
+                  className={`dispatcher-panel dispatcher-panel-map${
+                    viewMode === "timeline" ? " is-hidden" : ""
+                  }`}
+                  role="region"
+                  aria-label="Dispatcher map"
+                >
+                  <div className="dispatcher-map-header">
+                    <div>
+                      <h3>Active bookings map</h3>
+                      <p className="muted">Edmonton area view for today.</p>
+                    </div>
+                    <div className="dispatcher-map-meta">
+                      <span className="muted">Missing locations</span>
+                      <strong>{board ? mapLocations.missingCount : "—"}</strong>
+                    </div>
+                  </div>
+                  {!hasMapKey ? (
+                    <div className="dispatcher-map-unavailable">
+                      Map unavailable (missing key).
+                    </div>
+                  ) : (
+                    <div className="dispatcher-map-canvas" ref={mapContainerRef} />
+                  )}
                 </div>
               </div>
             </div>
-            ) : null}
           </div>
         ) : null}
       </section>

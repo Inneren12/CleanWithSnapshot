@@ -150,6 +150,18 @@ def _ensure_aware(value: datetime) -> datetime:
     return value
 
 
+def _cancellation_timestamp(booking: Booking) -> datetime | None:
+    cancelled_at = getattr(booking, "cancelled_at", None)
+    if cancelled_at:
+        return _ensure_aware(cancelled_at)
+    status_updated_at = getattr(booking, "status_updated_at", None)
+    if status_updated_at:
+        return _ensure_aware(status_updated_at)
+    if booking.updated_at:
+        return _ensure_aware(booking.updated_at)
+    return None
+
+
 def _make_alert(
     *,
     alert_type: str,
@@ -559,13 +571,27 @@ async def fetch_dispatcher_alerts(
     tz_name: str,
 ) -> DispatcherAlertsResult:
     start_utc, end_utc = resolve_day_window(target_date, tz_name)
+    cancellation_timestamp = (
+        getattr(Booking, "cancelled_at", None)
+        or getattr(Booking, "status_updated_at", None)
+        or Booking.updated_at
+    )
     booking_stmt = (
         select(Booking)
         .where(
             Booking.org_id == org_id,
-            Booking.starts_at >= start_utc,
-            Booking.starts_at < end_utc,
             Booking.archived_at.is_(None),
+            sa.or_(
+                sa.and_(
+                    Booking.starts_at >= start_utc,
+                    Booking.starts_at < end_utc,
+                ),
+                sa.and_(
+                    func.lower(Booking.status) == "cancelled",
+                    cancellation_timestamp >= start_utc,
+                    cancellation_timestamp < end_utc,
+                ),
+            ),
         )
         .order_by(Booking.starts_at.asc())
     )
@@ -606,9 +632,9 @@ async def fetch_dispatcher_alerts(
     grace = timedelta(minutes=15)
     tzinfo = ZoneInfo(tz_name)
     for booking in bookings:
-        if _normalize_status(booking.status) == "cancelled" and booking.updated_at:
-            updated_at = _ensure_aware(booking.updated_at)
-            if start_utc <= updated_at < end_utc:
+        if _normalize_status(booking.status) == "cancelled":
+            cancelled_at = _cancellation_timestamp(booking)
+            if cancelled_at and start_utc <= cancelled_at < end_utc:
                 alerts.append(
                     _make_alert(
                         alert_type="CLIENT_CANCELLED_TODAY",
