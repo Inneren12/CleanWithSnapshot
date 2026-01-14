@@ -100,6 +100,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    conn = op.get_bind()
+    is_sqlite = conn.dialect.name == "sqlite"
+
+    if is_sqlite:
+        with op.batch_alter_table("client_users", recreate="always") as batch_op:
+            batch_op.drop_constraint("fk_client_users_org_id", type_="foreignkey")
+            batch_op.drop_index("ix_client_users_org_id")
+            batch_op.drop_column("updated_at")
+            batch_op.drop_column("notes")
+            batch_op.drop_column("address")
+            batch_op.drop_column("phone")
+            batch_op.drop_column("org_id")
+        return
+
     # Drop additional columns
     op.drop_column("client_users", "updated_at")
     op.drop_column("client_users", "notes")
