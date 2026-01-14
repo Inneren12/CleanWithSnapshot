@@ -272,6 +272,61 @@ def test_admin_exports_are_org_scoped(client, async_session_maker):
     assert all(row["invoice_number"] != other_org_invoice for row in pnl_rows)
 
 
+@pytest.mark.anyio
+async def test_worker_export_org_scoped(client, async_session_maker):
+    org_a, org_b = uuid.uuid4(), uuid.uuid4()
+    async with async_session_maker() as session:
+        session.add_all([Organization(org_id=org_a, name="Org A"), Organization(org_id=org_b, name="Org B")])
+        lead_a = Lead(org_id=org_a, **_lead_payload("Export Lead"))
+        session.add(lead_a)
+        await session.flush()
+        team_a = Team(org_id=org_a, name="Team A Export")
+        team_b = Team(org_id=org_b, name="Team B Export")
+        session.add_all([team_a, team_b])
+        await session.flush()
+        worker_a = Worker(org_id=org_a, team_id=team_a.team_id, name="=CSV Danger", phone="123")
+        worker_b = Worker(org_id=org_b, team_id=team_b.team_id, name="Worker B", phone="456")
+        session.add_all([worker_a, worker_b])
+        await session.flush()
+        booking_a = Booking(
+            org_id=org_a,
+            team_id=team_a.team_id,
+            lead_id=lead_a.lead_id,
+            assigned_worker_id=worker_a.worker_id,
+            starts_at=datetime(2024, 1, 5, 12, 0, tzinfo=timezone.utc),
+            duration_minutes=120,
+            status="DONE",
+            base_charge_cents=15000,
+        )
+        session.add(booking_a)
+        await session.commit()
+
+    headers_a = _auth_headers("admin", "secret", org_a)
+    headers_b = _auth_headers("admin", "secret", org_b)
+
+    json_resp = client.get(
+        f"/v1/admin/ui/workers/{worker_a.worker_id}/export?format=json",
+        headers=headers_a,
+    )
+    assert json_resp.status_code == 200
+    json_payload = json_resp.json()
+    assert json_payload["worker"]["name"] == "=CSV Danger"
+    assert json_payload["bookings"][0]["booking_id"] == booking_a.booking_id
+
+    csv_resp = client.get(
+        f"/v1/admin/ui/workers/{worker_a.worker_id}/export?format=csv",
+        headers=headers_a,
+    )
+    assert csv_resp.status_code == 200
+    assert "'=CSV Danger" in csv_resp.text
+
+    other_org_resp = client.get(
+        f"/v1/admin/ui/workers/{worker_a.worker_id}/export?format=json",
+        headers=headers_b,
+    )
+    assert other_org_resp.status_code == 404
+
+
 def test_export_dead_letter_scoped(client, async_session_maker):
     org_a, org_b = uuid.uuid4(), uuid.uuid4()
 

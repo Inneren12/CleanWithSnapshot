@@ -5125,12 +5125,34 @@ def _worker_availability_indicator(
     return f"🟢 {html.escape(tr(lang, 'admin.workers.free_now'))}"
 
 
+_DANGEROUS_CSV_PREFIXES = ("=", "+", "-", "@", "\t")
+
+
+def _safe_csv_value(value: object) -> str:
+    text = "" if value is None else str(value)
+    if not text:
+        return ""
+    if text.startswith(_DANGEROUS_CSV_PREFIXES):
+        return f"'{text}"
+    return text
+
+
+def _normalize_worker_skills(raw: str | None) -> list[str] | None:
+    if raw is None:
+        return None
+    parts = [part.strip() for part in raw.replace("\n", ",").split(",")]
+    skills = [part for part in parts if part]
+    return skills or None
+
+
 def _render_worker_form(worker: Worker | None, teams: list[Team], lang: str | None, csrf_input: str) -> str:
     team_options = "".join(
         f'<option value="{team.team_id}" {"selected" if worker and worker.team_id == team.team_id else ""}>{html.escape(team.name)}</option>'
         for team in teams
     )
     hourly_rate = getattr(worker, "hourly_rate_cents", None)
+    skills_value = ", ".join(worker.skills or []) if worker else ""
+    rating_value = "" if worker is None or worker.rating_avg is None else f"{worker.rating_avg:.1f}"
 
     # Pre-compute password hint to avoid f-string backslash issue
     password_hint = '' if worker is None else f'<div class="muted">{html.escape(tr(lang, "admin.workers.password_hint"))}</div>'
@@ -5168,6 +5190,15 @@ def _render_worker_form(worker: Worker | None, teams: list[Team], lang: str | No
         <div class=\"form-group\">
           <label>{html.escape(tr(lang, 'admin.workers.hourly_rate'))}</label>
           <input class=\"input\" type=\"number\" name=\"hourly_rate_cents\" min=\"0\" step=\"50\" value=\"{'' if hourly_rate is None else hourly_rate}\" />
+        </div>
+        <div class=\"form-group\">
+          <label>{html.escape(tr(lang, 'admin.workers.skills'))}</label>
+          <input class=\"input\" type=\"text\" name=\"skills\" value=\"{html.escape(skills_value)}\" />
+          <div class=\"muted\">Comma-separated skills (e.g., deep clean, windows).</div>
+        </div>
+        <div class=\"form-group\">
+          <label>{html.escape(tr(lang, 'admin.workers.rating'))}</label>
+          <input class=\"input\" type=\"number\" name=\"rating_avg\" min=\"0\" max=\"5\" step=\"0.1\" value=\"{html.escape(rating_value)}\" />
         </div>
         <div class=\"form-group\">
           <label>{html.escape(tr(lang, 'admin.workers.team'))}</label>
@@ -5483,7 +5514,7 @@ async def admin_workers_list(
                 busy_until=html.escape(_format_dt(busy_until) if busy_until else "-"),
                 worker_id=worker.worker_id,
                 edit_icon=_icon("edit"),
-                edit_label=html.escape(tr(lang, "admin.workers.save")),
+                edit_label=html.escape("Details"),
                 delete_label=html.escape(tr(lang, "admin.workers.delete_permanent")),
                 archive_action=archive_action,
                 archive_label=html.escape(archive_label),
@@ -5587,6 +5618,8 @@ async def admin_workers_create(
     password = (form.get("password") or "").strip()
     team_id_raw = form.get("team_id")
     hourly_rate_raw = form.get("hourly_rate_cents")
+    skills = _normalize_worker_skills(form.get("skills"))
+    rating_raw = (form.get("rating_avg") or "").strip()
     is_active = (
         form.get("is_active") == "on"
         or form.get("is_active") == "1"
@@ -5610,6 +5643,14 @@ async def admin_workers_create(
     if team is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     hourly_rate_cents = int(hourly_rate_raw) if hourly_rate_raw else None
+    rating_avg = None
+    if rating_raw:
+        try:
+            rating_avg = float(rating_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid rating") from exc
+        if rating_avg < 0 or rating_avg > 5:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rating must be between 0 and 5")
 
     # Hash password if provided
     password_hash_value = hash_password(password, settings=settings) if password else None
@@ -5623,6 +5664,8 @@ async def admin_workers_create(
         team_id=team_id,
         org_id=org_id,
         hourly_rate_cents=hourly_rate_cents,
+        skills=skills,
+        rating_avg=rating_avg,
         is_active=is_active,
     )
     session.add(worker)
@@ -5649,14 +5692,245 @@ async def admin_workers_create(
             "role": role,
             "team_id": team_id,
             "hourly_rate_cents": hourly_rate_cents,
+            "skills": skills,
+            "rating_avg": rating_avg,
             "is_active": is_active,
         },
     )
     await session.commit()
-    return RedirectResponse("/v1/admin/ui/workers", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        f"/v1/admin/ui/workers/{worker.worker_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+async def _worker_booking_stats(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    worker_id: int,
+) -> tuple[int, int, int | None]:
+    worker_join = and_(
+        BookingWorker.booking_id == Booking.booking_id, BookingWorker.worker_id == worker_id
+    )
+    stmt = (
+        select(
+            func.count(func.distinct(Booking.booking_id))
+            .filter(Booking.status == "DONE")
+            .label("completed"),
+            func.count(func.distinct(Booking.booking_id))
+            .filter(Booking.status == "CANCELLED")
+            .label("cancelled"),
+            func.avg(Booking.base_charge_cents).filter(Booking.status == "DONE").label("avg_ticket"),
+        )
+        .select_from(Booking)
+        .outerjoin(BookingWorker, worker_join)
+        .where(
+            Booking.org_id == org_id,
+            or_(Booking.assigned_worker_id == worker_id, BookingWorker.worker_id.is_not(None)),
+        )
+    )
+    row = (await session.execute(stmt)).one()
+    completed = int(row.completed or 0)
+    cancelled = int(row.cancelled or 0)
+    avg_ticket = int(round(float(row.avg_ticket))) if row.avg_ticket is not None else None
+    return completed, cancelled, avg_ticket
+
+
+async def _worker_upcoming_bookings(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    worker_id: int,
+    start_dt: datetime,
+    end_dt: datetime,
+) -> list[Booking]:
+    worker_join = and_(
+        BookingWorker.booking_id == Booking.booking_id, BookingWorker.worker_id == worker_id
+    )
+    stmt = (
+        select(Booking)
+        .outerjoin(BookingWorker, worker_join)
+        .options(selectinload(Booking.client), selectinload(Booking.lead))
+        .where(
+            Booking.org_id == org_id,
+            Booking.starts_at >= start_dt,
+            Booking.starts_at < end_dt,
+            or_(Booking.assigned_worker_id == worker_id, BookingWorker.worker_id.is_not(None)),
+        )
+        .order_by(Booking.starts_at.asc())
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
 
 @router.get("/v1/admin/ui/workers/{worker_id}", response_class=HTMLResponse)
+async def admin_worker_detail(
+    worker_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    worker = (
+        await session.execute(
+            select(Worker)
+            .options(selectinload(Worker.team))
+            .where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+
+    completed_count, cancelled_count, avg_ticket_cents = await _worker_booking_stats(
+        session,
+        org_id=org_id,
+        worker_id=worker.worker_id,
+    )
+    now = datetime.now(timezone.utc)
+    start_dt = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
+    end_dt = start_dt + timedelta(days=7)
+    schedule_bookings = await _worker_upcoming_bookings(
+        session,
+        org_id=org_id,
+        worker_id=worker.worker_id,
+        start_dt=start_dt,
+        end_dt=end_dt,
+    )
+    busy_until_map = await _worker_busy_until_map(
+        session,
+        org_id=org_id,
+        worker_ids=[worker.worker_id],
+    )
+    status_label = _worker_availability_indicator(worker, busy_until_map.get(worker.worker_id), lang)
+    skills_html = (
+        " ".join(f'<span class="chip">{html.escape(skill)}</span>' for skill in (worker.skills or []))
+        or "-"
+    )
+    rating_display = "-" if worker.rating_avg is None else f"{worker.rating_avg:.1f} ({worker.rating_count})"
+    avg_ticket_display = (
+        _format_money(avg_ticket_cents, settings.deposit_currency.upper())
+        if avg_ticket_cents is not None
+        else "-"
+    )
+
+    schedule_rows = []
+    for booking in schedule_bookings:
+        starts_at = booking.starts_at
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=timezone.utc)
+        starts_at = starts_at.astimezone(timezone.utc)
+        client = booking.client or booking.lead
+        client_name = getattr(client, "name", None) or getattr(client, "full_name", None) or "-"
+        schedule_rows.append(
+            """
+            <tr>
+              <td>{date}</td>
+              <td>{time}</td>
+              <td>{duration}</td>
+              <td>{client}</td>
+              <td>{status}</td>
+            </tr>
+            """.format(
+                date=html.escape(starts_at.strftime("%Y-%m-%d")),
+                time=html.escape(starts_at.strftime("%H:%M UTC")),
+                duration=html.escape(str(booking.duration_minutes)),
+                client=html.escape(client_name),
+                status=html.escape(booking.status),
+            )
+        )
+
+    archive_action = (
+        f"/v1/admin/ui/workers/{worker.worker_id}/unarchive"
+        if worker.archived_at
+        else f"/v1/admin/ui/workers/{worker.worker_id}/archive"
+    )
+    archive_label = tr(lang, "admin.workers.unarchive" if worker.archived_at else "admin.workers.archive")
+    today_str = now.date().isoformat()
+    csrf_token = get_csrf_token(request)
+    csrf_input = render_csrf_input(csrf_token)
+    schedule_table = (
+        "<table class=\"table\"><thead><tr>"
+        "<th>Date</th><th>Time</th><th>Duration (min)</th><th>Client</th><th>Status</th>"
+        "</tr></thead><tbody>"
+        f"{''.join(schedule_rows)}"
+        "</tbody></table>"
+        if schedule_rows
+        else _render_empty("No bookings scheduled in the next 7 days.")
+    )
+    content = "".join(
+        [
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            f"<div><div class=\"title with-icon\">{_icon('users')}{html.escape(worker.name)}</div>",
+            f"<div class=\"muted\">{html.escape(worker.phone)} · {html.escape(worker.email or '-')}</div>",
+            f"<div class=\"muted\">{html.escape(getattr(worker.team, 'name', ''))}</div></div>",
+            "<div class=\"actions\">",
+            f"<span>{status_label}</span>",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/edit\">{_icon('edit')}Edit</a>",
+            "</div></div>",
+            "<div class=\"card-row\">",
+            f"<div><strong>Rating:</strong> {html.escape(rating_display)}</div>",
+            f"<div><strong>Skills:</strong> {skills_html}</div>",
+            "</div></div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div class=\"metrics\">",
+            f"<div class=\"metric\"><div class=\"label\">Completed bookings</div><div class=\"value\">{completed_count}</div></div>",
+            f"<div class=\"metric\"><div class=\"label\">Cancelled bookings</div><div class=\"value\">{cancelled_count}</div></div>",
+            f"<div class=\"metric\"><div class=\"label\">Avg ticket</div><div class=\"value\">{html.escape(avg_ticket_display)}</div></div>",
+            f"<div class=\"metric\"><div class=\"label\">Working since</div><div class=\"value\">{html.escape(_format_date(worker.created_at.date()))}</div></div>",
+            "</div>",
+            "</div>",
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div><div class=\"title\">Quick actions</div></div>",
+            "<div class=\"actions\">",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/dispatch?date={today_str}&worker_id={worker.worker_id}\">{_icon('calendar')}Assign</a>",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/export?format=csv\">Export CSV</a>",
+            f"<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/{worker.worker_id}/export?format=json\">Export JSON</a>",
+            "</div>",
+            "</div>",
+            "<div class=\"card-row\">",
+            f"<form method=\"post\" action=\"{archive_action}\">{csrf_input}<button class=\"btn secondary\" type=\"submit\">{html.escape(archive_label)}</button></form>",
+            "</div>",
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div><div class=\"title\">Edit skills & rating</div></div>",
+            "</div>",
+            f"<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}\">",
+            "<div class=\"form-group\">",
+            f"<label>{html.escape(tr(lang, 'admin.workers.skills'))}</label>",
+            f"<input class=\"input\" type=\"text\" name=\"skills\" value=\"{html.escape(', '.join(worker.skills or []))}\" />",
+            "<div class=\"muted\">Comma-separated skills (e.g., deep clean, windows).</div>",
+            "</div>",
+            "<div class=\"form-group\">",
+            f"<label>{html.escape(tr(lang, 'admin.workers.rating'))}</label>",
+            f"<input class=\"input\" type=\"number\" name=\"rating_avg\" min=\"0\" max=\"5\" step=\"0.1\" value=\"{'' if worker.rating_avg is None else f'{worker.rating_avg:.1f}'}\" />",
+            "</div>",
+            csrf_input,
+            f"<button class=\"btn\" type=\"submit\">{html.escape(tr(lang, 'admin.workers.save'))}</button>",
+            "</form>",
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div><div class=\"title\">Weekly schedule</div>",
+            "<div class=\"muted\">Next 7 days</div></div>",
+            "</div>",
+            schedule_table,
+            "</div>",
+        ]
+    )
+    response = HTMLResponse(
+        _wrap_page(request, content, title=f"Admin — {worker.name}", active="workers", page_lang=lang)
+    )
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
+@router.get("/v1/admin/ui/workers/{worker_id}/edit", response_class=HTMLResponse)
 async def admin_workers_edit_form(
     worker_id: int,
     request: Request,
@@ -5696,6 +5970,132 @@ async def admin_workers_edit_form(
     return response
 
 
+@router.get("/v1/admin/ui/workers/{worker_id}/export")
+async def admin_worker_export(
+    worker_id: int,
+    request: Request,
+    format: str = Query(default="csv"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    if format not in {"csv", "json"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid export format")
+    worker = (
+        await session.execute(
+            select(Worker)
+            .options(selectinload(Worker.team))
+            .where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+
+    worker_join = and_(
+        BookingWorker.booking_id == Booking.booking_id, BookingWorker.worker_id == worker_id
+    )
+    booking_stmt = (
+        select(Booking)
+        .outerjoin(BookingWorker, worker_join)
+        .options(selectinload(Booking.client), selectinload(Booking.lead))
+        .where(
+            Booking.org_id == org_id,
+            or_(Booking.assigned_worker_id == worker_id, BookingWorker.worker_id.is_not(None)),
+        )
+        .order_by(Booking.starts_at.desc())
+        .limit(25)
+    )
+    booking_rows = (await session.execute(booking_stmt)).scalars().all()
+
+    def _client_name(booking: Booking) -> str:
+        client = booking.client or booking.lead
+        return getattr(client, "name", None) or getattr(client, "full_name", None) or ""
+
+    if format == "json":
+        payload = {
+            "worker": {
+                "worker_id": worker.worker_id,
+                "name": worker.name,
+                "phone": worker.phone,
+                "email": worker.email,
+                "role": worker.role,
+                "team_id": worker.team_id,
+                "team_name": getattr(worker.team, "name", None),
+                "is_active": worker.is_active,
+                "archived_at": worker.archived_at.isoformat() if worker.archived_at else None,
+                "rating_avg": worker.rating_avg,
+                "rating_count": worker.rating_count,
+                "skills": worker.skills or [],
+                "created_at": worker.created_at.isoformat() if worker.created_at else None,
+            },
+            "bookings": [
+                {
+                    "booking_id": booking.booking_id,
+                    "starts_at": booking.starts_at.isoformat() if booking.starts_at else None,
+                    "duration_minutes": booking.duration_minutes,
+                    "status": booking.status,
+                    "base_charge_cents": booking.base_charge_cents,
+                    "client": _client_name(booking),
+                }
+                for booking in booking_rows
+            ],
+        }
+        return Response(
+            content=json.dumps(payload),
+            media_type="application/json",
+        )
+
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer)
+    headers = [
+        "worker_id",
+        "worker_name",
+        "worker_phone",
+        "worker_email",
+        "worker_role",
+        "worker_team",
+        "worker_is_active",
+        "worker_archived_at",
+        "worker_rating_avg",
+        "worker_rating_count",
+        "worker_skills",
+        "worker_created_at",
+        "booking_id",
+        "booking_starts_at",
+        "booking_duration_minutes",
+        "booking_status",
+        "booking_base_charge_cents",
+        "booking_client",
+    ]
+    writer.writerow(headers)
+    rows = booking_rows or [None]
+    for booking in rows:
+        booking_client = _client_name(booking) if booking else ""
+        row_values = [
+            worker.worker_id,
+            worker.name,
+            worker.phone,
+            worker.email or "",
+            worker.role or "",
+            getattr(worker.team, "name", "") if worker.team else "",
+            worker.is_active,
+            worker.archived_at.isoformat() if worker.archived_at else "",
+            worker.rating_avg if worker.rating_avg is not None else "",
+            worker.rating_count,
+            ", ".join(worker.skills or []),
+            worker.created_at.isoformat() if worker.created_at else "",
+            booking.booking_id if booking else "",
+            booking.starts_at.isoformat() if booking else "",
+            booking.duration_minutes if booking else "",
+            booking.status if booking else "",
+            booking.base_charge_cents if booking else "",
+            booking_client,
+        ]
+        writer.writerow([_safe_csv_value(value) for value in row_values])
+    csv_content = csv_buffer.getvalue()
+    return Response(content=csv_content, media_type="text/csv")
+
+
 @router.post("/v1/admin/ui/workers/{worker_id}", response_class=HTMLResponse)
 async def admin_workers_update(
     worker_id: int,
@@ -5720,6 +6120,8 @@ async def admin_workers_update(
         "role": worker.role,
         "team_id": worker.team_id,
         "hourly_rate_cents": worker.hourly_rate_cents,
+        "skills": worker.skills,
+        "rating_avg": worker.rating_avg,
         "is_active": worker.is_active,
     }
 
@@ -5728,6 +6130,20 @@ async def admin_workers_update(
     worker.phone = (form.get("phone") or worker.phone).strip()
     worker.email = (form.get("email") or "").strip() or None
     worker.role = (form.get("role") or "").strip() or None
+    if "skills" in form:
+        worker.skills = _normalize_worker_skills(form.get("skills"))
+    if "rating_avg" in form:
+        rating_raw = (form.get("rating_avg") or "").strip()
+        if rating_raw:
+            try:
+                rating_avg = float(rating_raw)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid rating") from exc
+            if rating_avg < 0 or rating_avg > 5:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rating must be between 0 and 5")
+            worker.rating_avg = rating_avg
+        else:
+            worker.rating_avg = None
 
     # Update password if provided
     password = (form.get("password") or "").strip()
@@ -5778,11 +6194,15 @@ async def admin_workers_update(
             "role": worker.role,
             "team_id": worker.team_id,
             "hourly_rate_cents": worker.hourly_rate_cents,
+            "skills": worker.skills,
+            "rating_avg": worker.rating_avg,
             "is_active": worker.is_active,
         },
     )
     await session.commit()
-    return RedirectResponse("/v1/admin/ui/workers", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        f"/v1/admin/ui/workers/{worker.worker_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.post("/v1/admin/ui/workers/{worker_id}/archive", response_class=HTMLResponse)
@@ -5834,7 +6254,9 @@ async def admin_workers_archive(
         after={"archived_at": worker.archived_at.isoformat(), "is_active": worker.is_active},
     )
     await session.commit()
-    return RedirectResponse("/v1/admin/ui/workers", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        f"/v1/admin/ui/workers/{worker.worker_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.post("/v1/admin/ui/workers/{worker_id}/unarchive", response_class=HTMLResponse)

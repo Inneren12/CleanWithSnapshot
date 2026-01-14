@@ -8,6 +8,7 @@ from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, BookingWorker, Team
 from app.domain.reason_logs.db_models import ReasonLog
 from app.domain.bookings.service import ensure_default_team
+from app.domain.leads.db_models import Lead
 from app.domain.workers.db_models import Worker
 from app.settings import settings
 
@@ -262,6 +263,76 @@ async def test_admin_worker_archive_unarchive(client, async_session_maker):
         assert unarchived is not None
         assert unarchived.archived_at is None
         assert unarchived.is_active is True
+
+
+@pytest.mark.anyio
+async def test_admin_worker_detail_stats_and_schedule(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        await session.flush()
+        worker = Worker(name="Detail Worker", phone="+1 555-2222", team_id=team.team_id)
+        session.add(worker)
+        await session.flush()
+        lead_payload = {
+            "preferred_dates": ["Mon"],
+            "structured_inputs": {"beds": 1, "baths": 1, "cleaning_type": "standard"},
+            "estimate_snapshot": {
+                "price_cents": 10000,
+                "subtotal_cents": 10000,
+                "tax_cents": 0,
+                "pricing_config_version": "v1",
+                "config_hash": "hash",
+                "line_items": [],
+            },
+            "pricing_config_version": "v1",
+            "config_hash": "hash",
+        }
+        lead_one = Lead(name="Alpha Client", phone="111", postal_code="12345", **lead_payload)
+        lead_two = Lead(name="Beta Client", phone="222", postal_code="54321", **lead_payload)
+        lead_three = Lead(name="Far Future", phone="333", postal_code="77777", **lead_payload)
+        session.add_all([lead_one, lead_two, lead_three])
+        await session.flush()
+        now = dt.datetime.now(tz=dt.timezone.utc)
+        booking_one = Booking(
+            team_id=team.team_id,
+            lead_id=lead_one.lead_id,
+            assigned_worker_id=worker.worker_id,
+            starts_at=now + dt.timedelta(days=1),
+            duration_minutes=60,
+            status="DONE",
+            base_charge_cents=12000,
+        )
+        booking_two = Booking(
+            team_id=team.team_id,
+            lead_id=lead_two.lead_id,
+            starts_at=now + dt.timedelta(days=2),
+            duration_minutes=90,
+            status="CANCELLED",
+            base_charge_cents=8000,
+        )
+        booking_three = Booking(
+            team_id=team.team_id,
+            lead_id=lead_three.lead_id,
+            assigned_worker_id=worker.worker_id,
+            starts_at=now + dt.timedelta(days=10),
+            duration_minutes=120,
+            status="DONE",
+            base_charge_cents=20000,
+        )
+        session.add_all([booking_one, booking_two, booking_three])
+        await session.flush()
+        session.add(BookingWorker(booking_id=booking_two.booking_id, worker_id=worker.worker_id))
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    detail_resp = client.get(f"/v1/admin/ui/workers/{worker.worker_id}", headers=headers)
+    assert detail_resp.status_code == 200
+    assert "Completed bookings</div><div class=\"value\">2" in detail_resp.text
+    assert "Cancelled bookings</div><div class=\"value\">1" in detail_resp.text
+    assert "CAD 160.00" in detail_resp.text
+    assert "Alpha Client" in detail_resp.text
+    assert "Beta Client" in detail_resp.text
+    assert "Far Future" not in detail_resp.text
 
 
 @pytest.mark.anyio
