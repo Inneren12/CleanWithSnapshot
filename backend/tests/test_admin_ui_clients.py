@@ -1493,7 +1493,6 @@ def test_admin_client_address_usage_counts_from_bookings(client, async_session_m
                 )
                 session.add(client_user)
                 await session.flush()
-
                 address = ClientAddress(
                     org_id=settings.default_org_id,
                     client_id=client_user.client_id,
@@ -1503,6 +1502,7 @@ def test_admin_client_address_usage_counts_from_bookings(client, async_session_m
                 )
                 session.add(address)
                 await session.flush()
+                await session.commit()
                 return client_user.client_id, team.team_id, address.address_id
 
         client_id, team_id, address_id = asyncio.run(seed_address_booking())
