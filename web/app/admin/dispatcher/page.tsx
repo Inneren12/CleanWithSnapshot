@@ -335,6 +335,9 @@ export default function DispatcherPage() {
   const mapClustererRef = useRef<any>(null);
   const mapInfoWindowRef = useRef<any>(null);
   const lastBoundsRef = useRef<any>(null);
+  const suggestAbortRef = useRef<AbortController | null>(null);
+  const suggestionsBookingIdRef = useRef<string | null>(null);
+  const selectedBookingIdRef = useRef<string | null>(null);
 
   const mapApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
   const hasMapKey = Boolean(mapApiKey);
@@ -369,6 +372,13 @@ export default function DispatcherPage() {
   }, [selectedBooking]);
 
   useEffect(() => {
+    selectedBookingIdRef.current = selectedBooking?.booking_id ?? null;
+  }, [selectedBooking]);
+
+  useEffect(() => {
+    suggestAbortRef.current?.abort();
+    suggestAbortRef.current = null;
+    suggestionsBookingIdRef.current = null;
     setSuggestions([]);
     setSuggestionsError(null);
     setSuggestionsPending(false);
@@ -529,6 +539,11 @@ export default function DispatcherPage() {
     void fetchNotifyAudits();
   }, [fetchNotifyAudits, selectedBooking]);
 
+  useEffect(() => {
+    return () => {
+      suggestAbortRef.current?.abort();
+    };
+  }, []);
 
   const handleSaveCredentials = useCallback(() => {
     window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
@@ -643,29 +658,27 @@ export default function DispatcherPage() {
       const list = workerBookings.get(workerId);
       if (!list || list.length === 0) return null;
       const targetStart = new Date(targetStartsAt).getTime();
-      let candidate: DispatcherBooking | undefined;
+      let candidateWithCoords: { booking: DispatcherBooking; start: number } | undefined;
       for (const booking of list) {
         const bookingStart = new Date(booking.starts_at).getTime();
-        if (Number.isNaN(bookingStart) || bookingStart >= targetStart) continue;
-        if (!candidate) {
-          candidate = booking;
-          continue;
-        }
-        const candidateEnd = new Date(candidate.ends_at).getTime();
         const bookingEnd = new Date(booking.ends_at).getTime();
-        if (!Number.isNaN(bookingEnd) && bookingEnd >= candidateEnd) {
-          candidate = booking;
+        if (Number.isNaN(bookingStart) || Number.isNaN(bookingEnd)) continue;
+        if (bookingStart >= targetStart || bookingEnd > targetStart) continue;
+        const hasCoords = booking.address?.lat != null && booking.address?.lng != null;
+        if (!hasCoords) continue;
+        if (!candidateWithCoords || bookingStart > candidateWithCoords.start) {
+          candidateWithCoords = { booking, start: bookingStart };
         }
       }
-      if (!candidate) return null;
-      const lat = candidate.address?.lat;
-      const lng = candidate.address?.lng;
+      if (!candidateWithCoords) return null;
+      const lat = candidateWithCoords.booking.address?.lat;
+      const lng = candidateWithCoords.booking.address?.lng;
       if (lat == null || lng == null) return null;
       return {
         lat,
         lng,
-        label: shortAddress(candidate.address),
-        bookingId: candidate.booking_id,
+        label: shortAddress(candidateWithCoords.booking.address),
+        bookingId: candidateWithCoords.booking.booking_id,
       };
     },
     [workerBookings]
@@ -693,15 +706,21 @@ export default function DispatcherPage() {
 
   const fetchSuggestions = useCallback(async () => {
     if (!selectedBooking || !isAuthenticated) return;
+    const bookingId = selectedBooking.booking_id;
+    suggestAbortRef.current?.abort();
+    const controller = new AbortController();
+    suggestAbortRef.current = controller;
+    suggestionsBookingIdRef.current = bookingId;
     setSuggestionsPending(true);
     setSuggestionsError(null);
     try {
       const response = await fetch(
         `${API_BASE}/v1/admin/dispatcher/assign/suggest?booking_id=${encodeURIComponent(
-          selectedBooking.booking_id
+          bookingId
         )}&limit=5`,
         {
           headers: authHeaders,
+          signal: controller.signal,
         }
       );
       const payload = await response.json();
@@ -710,11 +729,24 @@ export default function DispatcherPage() {
           typeof payload?.detail === "string" ? payload.detail : `Request failed (${response.status})`;
         throw new Error(message);
       }
+      if (
+        controller.signal.aborted ||
+        suggestionsBookingIdRef.current !== bookingId ||
+        selectedBookingIdRef.current !== bookingId
+      ) {
+        return;
+      }
       setSuggestions((payload as DispatcherAssignmentSuggestionsResponse).suggestions ?? []);
     } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === "AbortError") {
+        return;
+      }
       setSuggestions([]);
       setSuggestionsError(requestError instanceof Error ? requestError.message : "Unable to load suggestions");
     } finally {
+      if (controller.signal.aborted || suggestionsBookingIdRef.current !== bookingId) {
+        return;
+      }
       setSuggestionsPending(false);
     }
   }, [authHeaders, isAuthenticated, selectedBooking]);
@@ -1124,7 +1156,7 @@ export default function DispatcherPage() {
     [focusBooking, isSmallScreen, viewMode]
   );
 
-  const mapBookings = useMemo(() => board?.bookings ?? [], [board]);
+  const mapBookings = useMemo<DispatcherBooking[]>(() => board?.bookings ?? [], [board]);
 
   const mapLocations = useMemo(() => {
     const withCoords: Array<{ booking: DispatcherBooking; lat: number; lng: number }> = [];
