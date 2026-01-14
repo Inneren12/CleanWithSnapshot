@@ -7,7 +7,8 @@ import sqlalchemy as sa
 
 from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, BookingWorker, Team
-from app.domain.clients.db_models import ClientUser
+from app.domain.clients.db_models import ClientAddress, ClientUser
+from app.domain.saas.db_models import Organization
 from app.domain.workers.db_models import Worker
 from app.settings import settings
 
@@ -95,6 +96,48 @@ def _seed_client_team_worker(async_session_maker):
             session.add(worker)
             await session.commit()
             return team.team_id, client.client_id, worker.worker_id, client.name, client.address
+
+    return asyncio.run(create())
+
+
+def _seed_client_team_worker_with_addresses(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Dispatch Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Address Client",
+                email=f"address-{uuid.uuid4().hex[:8]}@example.com",
+                phone="+1 555-888-2222",
+                address="Base Address",
+            )
+            session.add(client)
+            await session.flush()
+
+            worker = Worker(
+                org_id=settings.default_org_id,
+                team_id=team.team_id,
+                name="Address Worker",
+                email=f"address-worker-{uuid.uuid4().hex[:8]}@example.com",
+                phone="+1 555-999-1111",
+                is_active=True,
+            )
+            session.add(worker)
+            await session.flush()
+
+            address = ClientAddress(
+                org_id=settings.default_org_id,
+                client_id=client.client_id,
+                label="Home",
+                address_text="742 Evergreen Terrace",
+                notes="Gate code 1234",
+            )
+            session.add(address)
+            await session.commit()
+            return team.team_id, client.client_id, worker.worker_id, address.address_id, address.address_text
 
     return asyncio.run(create())
 
@@ -287,6 +330,93 @@ def test_admin_booking_new_prefills_client_address(client, async_session_maker):
             follow_redirects=False,
         )
         assert create_response.status_code == 303
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_booking_new_prefills_selected_address(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        team_id, client_id, worker_id, address_id, address_text = (
+            _seed_client_team_worker_with_addresses(async_session_maker)
+        )
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(
+            f"/v1/admin/ui/bookings/new?client_id={client_id}&address_id={address_id}",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert f'Using address' in response.text
+        assert f'name="address" value="{address_text}"' in response.text
+
+        starts_at = datetime.now(tz=timezone.utc).replace(microsecond=0)
+        create_response = client.post(
+            "/v1/admin/ui/bookings/create",
+            headers=headers,
+            data={
+                "team_id": team_id,
+                "client_id": client_id,
+                "worker_ids": [worker_id],
+                "starts_at": starts_at.isoformat(),
+                "duration_minutes": 90,
+            },
+            follow_redirects=False,
+        )
+        assert create_response.status_code == 303
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_booking_new_address_org_scope(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        _team_id, client_id, _worker_id, _address_id, _address_text = (
+            _seed_client_team_worker_with_addresses(async_session_maker)
+        )
+
+        async def seed_other_org_address():
+            async with async_session_maker() as session:
+                other_org_id = uuid.uuid4()
+                session.add(Organization(org_id=other_org_id, name="Other Org"))
+                other_client = ClientUser(
+                    org_id=other_org_id,
+                    name="Other Client",
+                    email=f"other-{uuid.uuid4().hex[:6]}@example.com",
+                    phone="+1 555-222-7777",
+                    address="Elsewhere",
+                )
+                session.add(other_client)
+                await session.flush()
+                other_address = ClientAddress(
+                    org_id=other_org_id,
+                    client_id=other_client.client_id,
+                    label="Work",
+                    address_text="555 Other St",
+                )
+                session.add(other_address)
+                await session.commit()
+                return other_address.address_id
+
+        other_address_id = asyncio.run(seed_other_org_address())
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(
+            f"/v1/admin/ui/bookings/new?client_id={client_id}&address_id={other_address_id}",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert "Selected address not found" in response.text
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
