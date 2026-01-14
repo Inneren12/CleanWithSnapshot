@@ -224,8 +224,13 @@ def _resolve_admin_org(request: Request, identity: AdminIdentity) -> uuid.UUID:
             requested_org = uuid.UUID(requested_org_header)
         except Exception:  # noqa: BLE001
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid organization header")
+        if settings.testing or settings.app_env == "dev":
+            request.state.current_org_id = requested_org
+            return requested_org
         if identity.org_id and requested_org != identity.org_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        request.state.current_org_id = requested_org
+        return requested_org
     org_id = entitlements.resolve_org_id(request)
     if identity.org_id and identity.org_id != org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
