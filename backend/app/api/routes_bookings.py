@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import require_admin
+from app.api.problem_details import problem_details
 from app.api import entitlements
 from app.domain.saas import billing_service
 from app.domain.analytics.service import (
@@ -290,6 +291,13 @@ async def create_booking(
         client_user = await client_service.get_or_create_client(
             session, lead.email, name=lead.name, commit=False
         )
+        if client_user.is_blocked:
+            return problem_details(
+                http_request,
+                status=status.HTTP_403_FORBIDDEN,
+                title="Booking blocked",
+                detail="Client is blocked from booking.",
+            )
         client_id = client_user.client_id
 
     risk_assessment = await booking_service.evaluate_risk(

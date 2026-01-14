@@ -10062,7 +10062,10 @@ async def admin_bookings_new_form(
             prefill_client_id = client.client_id
             prefill_address = client.address or ""
             client_label = client.name or client.email or "client"
-            banner_message = f"Creating booking for {client_label}"
+            if client.is_blocked:
+                banner_message = "Client is blocked"
+            else:
+                banner_message = f"Creating booking for {client_label}"
 
     csrf_token = get_csrf_token(request)
     content = _render_booking_form(
