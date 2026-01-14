@@ -681,6 +681,9 @@ def _wrap_page(
           .form-group {{ display: flex; flex-direction: column; gap: 6px; font-size: 13px; }}
           .input {{ padding: 8px 10px; border-radius: 8px; border: 1px solid #d1d5db; min-width: 160px; font-size: 14px; background: #fff; }}
           .badge {{ display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; border: 1px solid #d1d5db; text-decoration: none; color: #111827; font-size: 13px; background: #fff; }}
+          .badge-low {{ background: #f3f4f6; color: #374151; border-color: #e5e7eb; }}
+          .badge-medium {{ background: #fffbeb; color: #92400e; border-color: #fcd34d; }}
+          .badge-high {{ background: #fef2f2; color: #b91c1c; border-color: #fecaca; }}
           .badge-active {{ background: #2563eb; color: #fff; border-color: #2563eb; }}
           .badge-status {{ font-weight: 600; }}
           .status-draft {{ background: #f3f4f6; }}
@@ -5182,6 +5185,80 @@ def _worker_skill_filters(skills: list[str]) -> list[sa.ColumnElement[bool]]:
     return filters
 
 
+_ALERT_SEVERITIES = {"low", "medium", "high"}
+
+
+def _normalize_alert_severities(severities: list[str] | None) -> list[str]:
+    return [entry for entry in (severities or []) if entry in _ALERT_SEVERITIES]
+
+
+def _coerce_alert_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _coerce_alert_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _resolve_worker_alert_config(
+    worker: Worker,
+    overrides: dict[str, dict[str, object]],
+) -> dict[str, float | int]:
+    config: dict[str, float | int] = {
+        "inactive_days": settings.worker_alert_inactive_days,
+        "rating_drop_threshold": settings.worker_alert_rating_drop_threshold,
+        "rating_drop_window": settings.worker_alert_rating_drop_review_window,
+    }
+    for skill in worker.skills or []:
+        normalized = str(skill).strip().lower()
+        if not normalized:
+            continue
+        override = overrides.get(normalized)
+        if not override:
+            continue
+        inactive_days = _coerce_alert_int(override.get("inactive_days"))
+        if inactive_days is not None:
+            config["inactive_days"] = min(int(config["inactive_days"]), inactive_days)
+        rating_drop_threshold = _coerce_alert_float(override.get("rating_drop_threshold"))
+        if rating_drop_threshold is not None:
+            config["rating_drop_threshold"] = min(
+                float(config["rating_drop_threshold"]), rating_drop_threshold
+            )
+        rating_drop_window = _coerce_alert_int(override.get("rating_drop_window"))
+        if rating_drop_window is not None:
+            config["rating_drop_window"] = min(int(config["rating_drop_window"]), rating_drop_window)
+    return config
+
+
+def _alert_severity_badge(severity: str) -> str:
+    normalized = severity if severity in _ALERT_SEVERITIES else "low"
+    return (
+        f'<span class="badge badge-{html.escape(normalized)}">'
+        f"{html.escape(normalized.title())}"
+        "</span>"
+    )
+
+
 AVAILABILITY_HEAVY_THRESHOLD_MINUTES = 240
 
 
@@ -5919,6 +5996,7 @@ async def admin_workers_dashboard(
             "</div>",
             "<div class=\"actions\">",
             "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers\">All workers</a>",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/alerts\">Alerts</a>",
             "</div>",
             "</div>",
             "<form class=\"filters\" method=\"get\">",
@@ -6020,6 +6098,260 @@ async def admin_workers_dashboard(
             content,
             title="Workers dashboard",
             active="workers",
+        )
+    )
+
+
+@router.get("/v1/admin/ui/workers/alerts", response_class=HTMLResponse)
+async def admin_workers_alerts(
+    request: Request,
+    skill: list[str] | None = Query(default=None),
+    severity: list[str] | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = _resolve_admin_org(request, identity)
+    selected_skills = _normalize_skill_filters(skill)
+    selected_severities = _normalize_alert_severities(severity)
+    worker_skill_filters = _worker_skill_filters(selected_skills)
+
+    workers_stmt = (
+        select(Worker)
+        .where(
+            Worker.org_id == org_id,
+            Worker.archived_at.is_(None),
+            Worker.is_active.is_(True),
+            *worker_skill_filters,
+        )
+        .order_by(Worker.name)
+    )
+    workers = (await session.execute(workers_stmt)).scalars().all()
+    worker_ids = [worker.worker_id for worker in workers]
+
+    skill_rows = (
+        await session.execute(select(Worker.skills).where(Worker.org_id == org_id))
+    ).scalars().all()
+    all_skills = sorted(
+        {
+            skill_entry
+            for skill_list in skill_rows
+            if skill_list
+            for skill_entry in skill_list
+            if isinstance(skill_entry, str) and skill_entry
+        }
+    )
+    skill_options = sorted(set(all_skills).union(selected_skills))
+    skill_filter_options = "".join(
+        f'<option value="{html.escape(skill_option)}" {"selected" if skill_option in selected_skills else ""}>{html.escape(skill_option)}</option>'
+        for skill_option in skill_options
+    )
+    severity_filter_options = "".join(
+        f'<option value="{html.escape(option)}" {"selected" if option in selected_severities else ""}>{html.escape(option.title())}</option>'
+        for option in sorted(_ALERT_SEVERITIES)
+    )
+
+    now = datetime.now(timezone.utc)
+    last_booking_end_by_worker: dict[int, datetime] = {}
+    if worker_ids:
+        assignment_subquery = _booking_worker_assignments_subquery()
+        bookings_stmt = (
+            select(
+                assignment_subquery.c.worker_id,
+                Booking.starts_at,
+                Booking.duration_minutes,
+            )
+            .join(Booking, Booking.booking_id == assignment_subquery.c.booking_id)
+            .where(
+                Booking.org_id == org_id,
+                assignment_subquery.c.worker_id.in_(worker_ids),
+                Booking.status.in_({"CONFIRMED", "DONE"}),
+            )
+        )
+        booking_rows = (await session.execute(bookings_stmt)).all()
+        for worker_id, starts_at, duration_minutes in booking_rows:
+            if starts_at is None or duration_minutes is None:
+                continue
+            if starts_at.tzinfo is None:
+                starts_at = starts_at.replace(tzinfo=timezone.utc)
+            ends_at = starts_at + timedelta(minutes=duration_minutes)
+            current = last_booking_end_by_worker.get(worker_id)
+            if current is None or ends_at > current:
+                last_booking_end_by_worker[worker_id] = ends_at
+
+    reviews_by_worker: dict[int, list[tuple[int, datetime]]] = {}
+    if worker_ids:
+        reviews_stmt = (
+            select(WorkerReview.worker_id, WorkerReview.rating, WorkerReview.created_at)
+            .where(
+                WorkerReview.org_id == org_id,
+                WorkerReview.worker_id.in_(worker_ids),
+            )
+            .order_by(WorkerReview.worker_id, WorkerReview.created_at.desc())
+        )
+        review_rows = (await session.execute(reviews_stmt)).all()
+        for worker_id, rating, created_at in review_rows:
+            if rating is None or created_at is None:
+                continue
+            reviews_by_worker.setdefault(worker_id, []).append((rating, created_at))
+
+    overrides = settings.worker_alert_skill_thresholds
+    alerts: list[dict[str, object]] = []
+    inactive_count = 0
+    rating_drop_count = 0
+    unread_messages_count = 0
+
+    def include_severity(value: str) -> bool:
+        return not selected_severities or value in selected_severities
+
+    for worker in workers:
+        config = _resolve_worker_alert_config(worker, overrides)
+        inactive_days = int(config["inactive_days"])
+        rating_drop_threshold = float(config["rating_drop_threshold"])
+        rating_drop_window = int(config["rating_drop_window"])
+
+        last_booking_end = last_booking_end_by_worker.get(worker.worker_id)
+        last_activity = last_booking_end or worker.created_at
+        if last_activity and last_activity.tzinfo is None:
+            last_activity = last_activity.replace(tzinfo=timezone.utc)
+        if last_activity:
+            days_inactive = (now - last_activity).days
+            if days_inactive >= inactive_days:
+                severity_level = "high" if days_inactive >= inactive_days * 2 else "medium"
+                if include_severity(severity_level):
+                    alerts.append(
+                        {
+                            "worker": worker,
+                            "type": "Inactive worker",
+                            "severity": severity_level,
+                            "details": (
+                                "No bookings yet"
+                                if last_booking_end is None
+                                else f"Last booking ended {_format_dt(last_booking_end)}"
+                            ),
+                            "timestamp": last_activity,
+                        }
+                    )
+                    inactive_count += 1
+
+        reviews = reviews_by_worker.get(worker.worker_id, [])
+        if rating_drop_window > 0 and len(reviews) >= rating_drop_window * 2:
+            recent = reviews[:rating_drop_window]
+            previous = reviews[rating_drop_window : rating_drop_window * 2]
+            recent_avg = sum(score for score, _ in recent) / rating_drop_window
+            prev_avg = sum(score for score, _ in previous) / rating_drop_window
+            drop = prev_avg - recent_avg
+            if drop >= rating_drop_threshold:
+                severity_level = "high" if drop >= rating_drop_threshold * 2 else "medium"
+                if include_severity(severity_level):
+                    alerts.append(
+                        {
+                            "worker": worker,
+                            "type": "Rating drop",
+                            "severity": severity_level,
+                            "details": (
+                                f"Last {rating_drop_window} avg {recent_avg:.2f} vs "
+                                f"prev {prev_avg:.2f} (drop {drop:.2f})"
+                            ),
+                            "timestamp": recent[0][1],
+                        }
+                    )
+                    rating_drop_count += 1
+
+    alert_rows: list[str] = []
+    for alert in alerts:
+        worker = alert["worker"]
+        skills_display = ", ".join(worker.skills or []) or "-"
+        alert_rows.append(
+            """
+            <tr>
+              <td>
+                <div class="title"><a href="/v1/admin/ui/workers/{worker_id}">{name}</a></div>
+                <div class="muted small">{skills}</div>
+              </td>
+              <td>{alert_type}</td>
+              <td>{severity}</td>
+              <td>{details}</td>
+              <td class="muted">{timestamp}</td>
+            </tr>
+            """.format(
+                worker_id=worker.worker_id,
+                name=html.escape(worker.name),
+                skills=html.escape(skills_display),
+                alert_type=html.escape(str(alert["type"])),
+                severity=_alert_severity_badge(str(alert["severity"])),
+                details=html.escape(str(alert["details"])),
+                timestamp=html.escape(_format_dt(alert.get("timestamp"))),
+            )
+        )
+
+    alerts_table = (
+        "<table class=\"table\">"
+        "<thead><tr>"
+        "<th>Worker</th><th>Alert</th><th>Severity</th><th>Details</th><th>Last activity</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(alert_rows)}</tbody>"
+        "</table>"
+        if alert_rows
+        else _render_empty("No alerts match the current filters.")
+    )
+
+    content = "".join(
+        [
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div>",
+            f"<div class=\"title with-icon\">{_icon('warning')}Worker alerts</div>",
+            "<div class=\"muted\">Operational alerts for inactivity, rating shifts, and messages.</div>",
+            "</div>",
+            "<div class=\"actions\">",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers\">All workers</a>",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/dashboard\">Dashboard</a>",
+            "</div>",
+            "</div>",
+            "<form class=\"filters\" method=\"get\">",
+            "<div class=\"form-group\"><label>Skills</label>",
+            f"<select class=\"input\" name=\"skill\" multiple size=\"3\">{skill_filter_options}</select></div>",
+            "<div class=\"form-group\"><label>Severity</label>",
+            f"<select class=\"input\" name=\"severity\" multiple size=\"3\">{severity_filter_options}</select></div>",
+            "<div class=\"form-group\"><label>&nbsp;</label><div class=\"actions\">",
+            "<button class=\"btn\" type=\"submit\">Apply</button>",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/alerts\">Reset</a>",
+            "</div></div>",
+            "</form>",
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"metric-grid\">",
+            "<div class=\"metric\">",
+            "<div class=\"label\">Inactive workers</div>",
+            f"<div class=\"value\">{html.escape(str(inactive_count))}</div>",
+            "</div>",
+            "<div class=\"metric\">",
+            "<div class=\"label\">Rating drop</div>",
+            f"<div class=\"value\">{html.escape(str(rating_drop_count))}</div>",
+            "</div>",
+            "<div class=\"metric\">",
+            "<div class=\"label\">Unread messages</div>",
+            f"<div class=\"value\">{html.escape(str(unread_messages_count))}</div>",
+            "</div>",
+            "</div>",
+            "<div class=\"muted small\">Unread messages are a placeholder until chat launches.</div>",
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div class=\"title\">Alerts</div>",
+            "</div>",
+            alerts_table,
+            "</div>",
+        ]
+    )
+    return HTMLResponse(
+        _wrap_page(
+            request,
+            content,
+            title="Worker alerts",
+            active="workers",
+            page_lang=lang,
         )
     )
 
@@ -6209,6 +6541,7 @@ async def admin_workers_list(
             "<div class=\"actions\">",
             "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/dashboard\">Dashboard</a>",
             "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/availability\">Availability</a>",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/alerts\">Alerts</a>",
             f"<a class=\"btn\" href=\"/v1/admin/ui/workers/new\">{_icon('plus')}{html.escape(tr(lang, 'admin.workers.create'))}</a>",
             "</div></div>",
             "<form class=\"filters\" method=\"get\">",

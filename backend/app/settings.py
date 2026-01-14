@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     retention_lead_days: int = Field(365)
     retention_enable_leads: bool = Field(False)
     default_worker_hourly_rate_cents: int = Field(2500)
+    worker_alert_inactive_days: int = Field(30)
+    worker_alert_rating_drop_threshold: float = Field(0.5)
+    worker_alert_rating_drop_review_window: int = Field(3)
+    worker_alert_skill_thresholds_raw: str | None = Field(
+        None, validation_alias="worker_alert_skill_thresholds"
+    )
     slot_provider_mode: Literal["stub", "db"] = Field("db")
     stripe_secret_key: str | None = Field(None)
     stripe_webhook_secret: str | None = Field(None)
@@ -388,6 +394,29 @@ class Settings(BaseSettings):
     @dlq_auto_replay_allow_export_modes.setter
     def dlq_auto_replay_allow_export_modes(self, value: list[str] | str | None) -> None:
         self.dlq_auto_replay_allow_export_modes_raw = self._normalize_raw_list(value)
+
+    @property
+    def worker_alert_skill_thresholds(self) -> dict[str, dict[str, object]]:
+        raw = self.worker_alert_skill_thresholds_raw
+        if raw is None:
+            return {}
+        stripped = raw.strip()
+        if not stripped:
+            return {}
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        normalized: dict[str, dict[str, object]] = {}
+        for key, value in parsed.items():
+            if not isinstance(key, str):
+                continue
+            if not isinstance(value, dict):
+                continue
+            normalized[key.strip().lower()] = value
+        return normalized
 
     @property
     def email_sender(self) -> str | None:
