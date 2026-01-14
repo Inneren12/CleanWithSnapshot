@@ -78,6 +78,7 @@ from app.domain.checklists.db_models import ChecklistRun, ChecklistRunItem
 from app.domain.chat_threads import schemas as chat_schemas
 from app.domain.chat_threads import service as chat_service
 from app.domain.chat_threads.service import PARTICIPANT_ADMIN
+from app.domain.message_templates import service as message_template_service
 from app.domain.disputes.db_models import Dispute, FinancialAdjustmentEvent
 from app.domain.invoices.db_models import Invoice, InvoiceItem, InvoicePublicToken, Payment
 from app.domain.leads import statuses as lead_statuses
@@ -714,6 +715,11 @@ def _icon(name: str) -> str:
         <svg class=\"icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\">
           <path d=\"M4 20h4l11-11-4-4L4 16v4Z\" />
           <path d=\"M14 5 19 10\" />
+        </svg>
+        """,
+        "message-circle": """
+        <svg class=\"icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\">
+          <path d=\"M21 11.5a7.5 7.5 0 0 1-7.5 7.5H8l-4 3v-6A7.5 7.5 0 1 1 21 11.5Z\" />
         </svg>
         """,
         "plus": """
@@ -6771,6 +6777,11 @@ async def admin_workers_list(
         f'<option value="{html.escape(skill_option)}" {"selected" if skill_option in selected_skills else ""}>{html.escape(skill_option)}</option>'
         for skill_option in skill_options
     )
+    templates = await message_template_service.list_templates(session, org_id=org_id)
+    template_options = "".join(
+        f'<option value="{template.template_id}">{html.escape(template.name)}</option>'
+        for template in templates
+    )
     csrf_token = get_csrf_token(request)
     csrf_input = render_csrf_input(csrf_token)
     export_query = _build_workers_export_query(
@@ -6802,6 +6813,20 @@ async def admin_workers_list(
             "<div class=\"card-row\">"
             f"<div class=\"note\">{html.escape(action_label)} complete: "
             f"{html.escape(updated_label)} updated, {html.escape(skipped_label)} skipped.</div>"
+            "</div>"
+            "</div>"
+        )
+    broadcast_sent = request.query_params.get("broadcast_sent")
+    broadcast_skipped = request.query_params.get("broadcast_skipped")
+    broadcast_note = ""
+    if broadcast_sent is not None:
+        sent_label = broadcast_sent or "0"
+        skipped_label = broadcast_skipped or "0"
+        broadcast_note = (
+            "<div class=\"card\">"
+            "<div class=\"card-row\">"
+            f"<div class=\"note\">Announcement sent: "
+            f"{html.escape(sent_label)} delivered, {html.escape(skipped_label)} skipped.</div>"
             "</div>"
             "</div>"
         )
@@ -6911,6 +6936,7 @@ async def admin_workers_list(
             "</form>",
             "</div>",
             bulk_note,
+            broadcast_note,
             (
                 "<form method=\"post\">"
                 f"{csrf_input}"
@@ -6923,6 +6949,23 @@ async def admin_workers_list(
                 "<button class=\"btn secondary\" type=\"submit\" formaction=\"/v1/admin/ui/workers/bulk/unarchive\">Unarchive selected</button>"
                 "<button class=\"btn secondary\" type=\"submit\" formaction=\"/v1/admin/ui/workers/export_selected\">Export selected CSV</button>"
                 f"<a class=\"btn secondary\" href=\"{html.escape(export_filtered_url)}\">Export filtered CSV</a>"
+                "<a class=\"btn secondary\" href=\"/v1/admin/ui/message-templates\">Message templates</a>"
+                "</div>"
+                "</div>"
+                "<div class=\"card-row\">"
+                "<div class=\"stack\" style=\"flex: 1; min-width: 260px;\">"
+                "<div class=\"title\">Team announcement</div>"
+                "<div class=\"muted small\">Send a broadcast to selected workers using a template or custom text.</div>"
+                "</div>"
+                "<div class=\"stack\" style=\"flex: 2; min-width: 260px;\">"
+                "<div class=\"form-group\"><label>Template</label>"
+                "<select class=\"input\" name=\"template_id\"><option value=\"\">Custom message</option>"
+                f"{template_options}</select></div>"
+                "<div class=\"form-group\"><label>Message</label>"
+                "<textarea class=\"input\" name=\"announcement_body\" rows=\"3\" placeholder=\"Add a short update...\"></textarea></div>"
+                "</div>"
+                "<div class=\"actions\" style=\"align-self: flex-end;\">"
+                "<button class=\"btn\" type=\"submit\" formaction=\"/v1/admin/ui/workers/bulk/announce\">Send announcement</button>"
                 "</div>"
                 "</div>"
                 "</div>"
@@ -6958,6 +7001,217 @@ async def admin_workers_list(
     response = HTMLResponse(_wrap_page(request, content, title="Admin — Workers", active="workers", page_lang=lang))
     issue_csrf_token(request, response, csrf_token)
     return response
+
+
+@router.get("/v1/admin/ui/message-templates", response_class=HTMLResponse)
+async def admin_message_templates_list(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = _resolve_admin_org(request, identity)
+    templates = await message_template_service.list_templates(session, org_id=org_id)
+    csrf_token = get_csrf_token(request)
+    csrf_input = render_csrf_input(csrf_token)
+
+    rows: list[str] = []
+    for template in templates:
+        preview = template.body if len(template.body) <= 140 else f"{template.body[:137]}..."
+        rows.append(
+            "".join(
+                [
+                    "<div class=\"card\">",
+                    "<div class=\"card-row\">",
+                    f"<div><div class=\"title\">{html.escape(template.name)}</div>",
+                    f"<div class=\"muted small\">{html.escape(preview)}</div></div>",
+                    "<div class=\"actions\">",
+                    f"<a class=\"btn secondary\" href=\"/v1/admin/ui/message-templates/{template.template_id}/edit\">Edit</a>",
+                    "<form method=\"post\" action=\"/v1/admin/ui/message-templates/"
+                    f"{template.template_id}/delete\">",
+                    csrf_input,
+                    "<button class=\"btn danger\" type=\"submit\">Delete</button>",
+                    "</form>",
+                    "</div>",
+                    "</div>",
+                    "</div>",
+                ]
+            )
+        )
+
+    create_form = "".join(
+        [
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div>",
+            "<div class=\"title\">New template</div>",
+            "<div class=\"muted small\">Reusable messages for team announcements.</div>",
+            "</div>",
+            "</div>",
+            "<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/message-templates\">",
+            csrf_input,
+            "<div class=\"form-group\"><label>Name</label>"
+            "<input class=\"input\" type=\"text\" name=\"name\" required /></div>",
+            "<div class=\"form-group\"><label>Message</label>"
+            "<textarea class=\"input\" name=\"body\" rows=\"4\" required></textarea></div>",
+            "<div class=\"actions\"><button class=\"btn\" type=\"submit\">Create template</button></div>",
+            "</form>",
+            "</div>",
+        ]
+    )
+
+    content = "".join(
+        [
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div>",
+            "<div class=\"title with-icon\">",
+            _icon("message-circle"),
+            "Message templates</div>",
+            "<div class=\"muted\">Manage reusable announcements for workers.</div>",
+            "</div>",
+            "<div class=\"actions\">",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers\">Back to workers</a>",
+            "</div>",
+            "</div>",
+            "</div>",
+            create_form,
+            "".join(rows) if rows else _render_empty("No templates yet."),
+        ]
+    )
+    response = HTMLResponse(
+        _wrap_page(
+            request,
+            content,
+            title="Message templates",
+            active="workers",
+            page_lang=lang,
+        )
+    )
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
+@router.post("/v1/admin/ui/message-templates", response_class=HTMLResponse)
+async def admin_message_templates_create(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    body = str(form.get("body") or "").strip()
+    if not name or not body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name and body required")
+    await message_template_service.create_template(session, org_id=org_id, name=name, body=body)
+    await session.commit()
+    return RedirectResponse(
+        "/v1/admin/ui/message-templates",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.get("/v1/admin/ui/message-templates/{template_id}/edit", response_class=HTMLResponse)
+async def admin_message_templates_edit_form(
+    request: Request,
+    template_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = _resolve_admin_org(request, identity)
+    template = await message_template_service.get_template(
+        session, org_id=org_id, template_id=template_id
+    )
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    csrf_token = get_csrf_token(request)
+    csrf_input = render_csrf_input(csrf_token)
+
+    content = "".join(
+        [
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div>",
+            "<div class=\"title\">Edit template</div>",
+            f"<div class=\"muted\">{html.escape(template.name)}</div>",
+            "</div>",
+            "<div class=\"actions\">",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/message-templates\">Back</a>",
+            "</div>",
+            "</div>",
+            "<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/message-templates/"
+            f"{template.template_id}\">",
+            csrf_input,
+            "<div class=\"form-group\"><label>Name</label>"
+            f"<input class=\"input\" type=\"text\" name=\"name\" value=\"{html.escape(template.name)}\" required /></div>",
+            "<div class=\"form-group\"><label>Message</label>"
+            f"<textarea class=\"input\" name=\"body\" rows=\"4\" required>{html.escape(template.body)}</textarea></div>",
+            "<div class=\"actions\"><button class=\"btn\" type=\"submit\">Save changes</button></div>",
+            "</form>",
+            "</div>",
+        ]
+    )
+    response = HTMLResponse(
+        _wrap_page(
+            request,
+            content,
+            title="Edit template",
+            active="workers",
+            page_lang=lang,
+        )
+    )
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
+@router.post("/v1/admin/ui/message-templates/{template_id}", response_class=HTMLResponse)
+async def admin_message_templates_update(
+    request: Request,
+    template_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    body = str(form.get("body") or "").strip()
+    if not name or not body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name and body required")
+    template = await message_template_service.update_template(
+        session, org_id=org_id, template_id=template_id, name=name, body=body
+    )
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    await session.commit()
+    return RedirectResponse(
+        "/v1/admin/ui/message-templates",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/v1/admin/ui/message-templates/{template_id}/delete", response_class=HTMLResponse)
+async def admin_message_templates_delete(
+    request: Request,
+    template_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    deleted = await message_template_service.delete_template(
+        session, org_id=org_id, template_id=template_id
+    )
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    await session.commit()
+    return RedirectResponse(
+        "/v1/admin/ui/message-templates",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @router.get("/v1/admin/ui/workers/availability", response_class=HTMLResponse)
@@ -7317,6 +7571,80 @@ async def admin_workers_bulk_unarchive(
     query_parts = parse_qs(parsed.query)
     query_parts.update(
         {"bulk_action": ["unarchive"], "updated": [str(updated)], "skipped": [str(skipped)]}
+    )
+    redirect_url = redirect_target
+    if query_parts:
+        redirect_url = f"{redirect_target}?{urlencode(query_parts, doseq=True)}"
+    return RedirectResponse(redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/workers/bulk/announce", response_class=HTMLResponse)
+async def admin_workers_bulk_announce(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
+    form = await request.form()
+    worker_ids = _parse_worker_ids(form)
+    if not worker_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No workers selected")
+
+    template_id = form.get("template_id")
+    announcement_body = str(form.get("announcement_body") or "").strip()
+    if template_id:
+        try:
+            template_id_value = int(template_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid template") from exc
+        template = await message_template_service.get_template(
+            session, org_id=org_id, template_id=template_id_value
+        )
+        if template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+        announcement_body = template.body
+    if not announcement_body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message is required")
+
+    workers = (
+        await session.execute(
+            select(Worker)
+            .where(Worker.org_id == org_id, Worker.worker_id.in_(worker_ids))
+            .order_by(Worker.created_at.desc())
+        )
+    ).scalars().all()
+    if not workers:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No matching workers found")
+
+    selected_ids = [worker.worker_id for worker in workers]
+    thread = await chat_service.create_group_thread(
+        session,
+        org_id=org_id,
+        worker_ids=selected_ids,
+        admin_membership_id=admin_membership_id,
+    )
+    await chat_service.send_message(
+        session,
+        org_id=org_id,
+        thread=thread,
+        sender_type=PARTICIPANT_ADMIN,
+        body=announcement_body,
+        admin_membership_id=admin_membership_id,
+    )
+    await session.commit()
+
+    skipped = len(set(worker_ids)) - len(selected_ids)
+    return_to = form.get("return_to") or "/v1/admin/ui/workers"
+    parsed = urlparse(str(return_to))
+    redirect_target = parsed.path if parsed.path else "/v1/admin/ui/workers"
+    query_parts = parse_qs(parsed.query)
+    query_parts.update(
+        {
+            "broadcast_sent": [str(len(selected_ids))],
+            "broadcast_skipped": [str(skipped)],
+        }
     )
     redirect_url = redirect_target
     if query_parts:

@@ -63,6 +63,7 @@ from app.domain.admin_idempotency import db_models as admin_idempotency_db_model
 from app.domain.documents import db_models as document_db_models  # noqa: F401
 from app.domain.break_glass import db_models as break_glass_db_models  # noqa: F401
 from app.domain.chat_threads import db_models as chat_threads_db_models  # noqa: F401
+from app.domain.message_templates import db_models as message_templates_db_models  # noqa: F401
 from app.domain.saas import db_models as saas_db_models  # noqa: F401
 from app.domain.outbox import db_models as outbox_db_models  # noqa: F401
 from app.domain.saas.service import ensure_default_org_and_team

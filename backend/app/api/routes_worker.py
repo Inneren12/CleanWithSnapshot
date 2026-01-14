@@ -1064,12 +1064,17 @@ async def worker_chat_page(
         last_message = summary.last_message.body if summary.last_message else "No messages yet."
         unread_badge = f" · {summary.unread_count} unread" if summary.unread_count else ""
         active_marker = " (active)" if summary.thread.thread_id == selected_thread_id else ""
+        thread_label = (
+            "Team announcement"
+            if summary.thread.thread_type == chat_service.THREAD_TYPE_GROUP
+            else "Conversation"
+        )
         thread_cards.append(
             "".join(
                 [
                     "<div class=\"card\">",
                     f"<div class=\"title\"><a href=\"/worker/chat?thread_id={summary.thread.thread_id}\">",
-                    "Conversation",
+                    thread_label,
                     "</a>",
                     f"{html.escape(active_marker)}</div>",
                     f"<div class=\"muted\">{html.escape(last_message)}{html.escape(unread_badge)}</div>",
