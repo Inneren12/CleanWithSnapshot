@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -48,3 +49,16 @@ class DispatcherBoardResponse(BaseModel):
     workers: list[DispatcherBoardWorkerSummary] = Field(default_factory=list)
     server_time: datetime
     data_version: int
+
+
+class DispatcherAlert(BaseModel):
+    type: Literal["DOUBLE_BOOKING", "LATE_WORKER", "CLIENT_CANCELLED_TODAY", "WORKER_SHORTAGE"]
+    severity: Literal["info", "warn", "critical"]
+    message: str
+    action: str
+    booking_ids: list[str] = Field(default_factory=list)
+    worker_ids: list[int] = Field(default_factory=list)
+
+
+class DispatcherAlertsResponse(BaseModel):
+    alerts: list[DispatcherAlert] = Field(default_factory=list)

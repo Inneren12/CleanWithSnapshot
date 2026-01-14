@@ -58,3 +58,35 @@ async def get_dispatcher_board(
         server_time=result.server_time,
         data_version=result.data_version,
     )
+
+
+@router.get(
+    "/v1/admin/dispatcher/alerts",
+    response_model=schemas.DispatcherAlertsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_dispatcher_alerts(
+    board_date: date = Query(..., alias="date", description="Target date in YYYY-MM-DD"),
+    tz: str = Query("America/Edmonton", description="IANA timezone, e.g. America/Edmonton"),
+    session: AsyncSession = Depends(get_db_session),
+    org_id=Depends(require_org_context),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> schemas.DispatcherAlertsResponse:
+    """Fetch dispatcher alerts for a single day.
+
+    Requires: DISPATCH permission (dispatcher/admin/owner roles).
+    """
+    del identity
+    try:
+        ZoneInfo(tz)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+
+    result = await dispatcher_service.fetch_dispatcher_alerts(
+        session,
+        org_id=org_id,
+        target_date=board_date,
+        tz_name=tz,
+    )
+
+    return schemas.DispatcherAlertsResponse(alerts=result.alerts)
