@@ -1,7 +1,12 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
 
-from app.domain.workers.compliance import CertificateSnapshot, missing_required_certificates, onboarding_progress
+from app.domain.workers.compliance import (
+    CertificateSnapshot,
+    missing_required_certificates,
+    onboarding_progress,
+    required_certificates_for_skills,
+)
 
 
 def test_missing_required_certificates_clears_after_addition():
@@ -18,6 +23,19 @@ def test_missing_required_certificates_clears_after_addition():
     ]
     missing_after_add = missing_required_certificates(skills, certificates, reference_date=date.today())
     assert missing_after_add == []
+
+
+def test_required_certificates_for_skills_normalizes_skill_names():
+    requirements = {"window_cleaning": ["Ladder Safety"]}
+    for skill in ["Window Cleaning", "window_cleaning", "WINDOW_CLEANING"]:
+        required = required_certificates_for_skills([skill], requirements)
+        assert required == ["Ladder Safety"]
+
+
+def test_missing_required_certificates_handles_mixed_case_skills():
+    requirements = {"window_cleaning": ["Ladder Safety"]}
+    missing = missing_required_certificates(["Window Cleaning"], [], requirements=requirements)
+    assert missing == ["Ladder Safety"]
 
 
 def test_onboarding_progress_counts_completed_items():
