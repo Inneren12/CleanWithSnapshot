@@ -28,6 +28,7 @@ from app.settings import settings
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.domain.workers.db_models import Worker
+    from app.domain.workers.db_models import WorkerNote, WorkerReview
     from app.domain.invoices.db_models import Invoice
 
 
@@ -163,6 +164,16 @@ class Booking(Base):
     order_addons: Mapped[list["OrderAddon"]] = relationship(
         "OrderAddon",
         back_populates="order",
+        cascade="all, delete-orphan",
+    )
+    worker_reviews: Mapped[list["WorkerReview"]] = relationship(
+        "WorkerReview",
+        back_populates="booking",
+        cascade="all, delete-orphan",
+    )
+    worker_notes: Mapped[list["WorkerNote"]] = relationship(
+        "WorkerNote",
+        back_populates="booking",
         cascade="all, delete-orphan",
     )
 

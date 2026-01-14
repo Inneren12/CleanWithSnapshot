@@ -124,7 +124,7 @@ from app.domain.subscriptions import service as subscription_service
 from app.domain.subscriptions.db_models import Subscription
 from app.domain.time_tracking.db_models import WorkTimeEntry
 from app.domain.admin_audit import service as audit_service
-from app.domain.workers.db_models import Worker
+from app.domain.workers.db_models import Worker, WorkerNote, WorkerReview
 from app.infra.auth import hash_password
 from app.infra.export import send_export_with_retry, validate_webhook_url
 from app.infra.logging import update_log_context
@@ -5791,6 +5791,40 @@ async def admin_workers_dashboard(
     )
     revenue_rows = (await session.execute(revenue_stmt)).all()
 
+    incident_stmt = (
+        select(WorkerNote.worker_id, Worker.skills)
+        .join(Worker, Worker.worker_id == WorkerNote.worker_id)
+        .where(
+            WorkerNote.org_id == org_id,
+            WorkerNote.note_type == "incident",
+            WorkerNote.created_at >= range_start,
+            WorkerNote.created_at <= now,
+            Worker.archived_at.is_(None),
+            *worker_skill_filters,
+        )
+    )
+    incident_rows = (await session.execute(incident_stmt)).all()
+    incident_skill_counts: dict[str, int] = {}
+    for _worker_id, skills in incident_rows:
+        for skill_entry in skills or []:
+            if not isinstance(skill_entry, str) or not skill_entry:
+                continue
+            incident_skill_counts[skill_entry] = incident_skill_counts.get(skill_entry, 0) + 1
+    incident_skill_table_rows = [
+        """
+        <tr>
+          <td>{skill}</td>
+          <td>{count}</td>
+        </tr>
+        """.format(
+            skill=html.escape(skill),
+            count=html.escape(str(count)),
+        )
+        for skill, count in sorted(
+            incident_skill_counts.items(), key=lambda item: (-item[1], item[0])
+        )[:5]
+    ]
+
     top_rated_table_rows = [
         """
         <tr>
@@ -5965,6 +5999,16 @@ async def admin_workers_dashboard(
                 headers=["Worker", "Revenue", "Bookings"],
                 rows=revenue_table_rows,
                 empty_label="No revenue in range.",
+            ),
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            f"<div class=\"title\">Incidents by skill (last {range_delta.days} days)</div>",
+            "</div>",
+            _render_worker_table(
+                headers=["Skill", "Incidents"],
+                rows=incident_skill_table_rows,
+                empty_label="No incidents recorded.",
             ),
             "</div>",
             "</div>",
@@ -6875,6 +6919,67 @@ async def _worker_upcoming_bookings(
     return result.scalars().all()
 
 
+async def _worker_recent_reviews(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    worker_id: int,
+    limit: int = 5,
+) -> list[WorkerReview]:
+    stmt = (
+        select(WorkerReview)
+        .options(selectinload(WorkerReview.booking))
+        .where(WorkerReview.org_id == org_id, WorkerReview.worker_id == worker_id)
+        .order_by(WorkerReview.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def _worker_recent_notes(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    worker_id: int,
+    limit: int = 5,
+) -> list[WorkerNote]:
+    stmt = (
+        select(WorkerNote)
+        .options(selectinload(WorkerNote.booking))
+        .where(WorkerNote.org_id == org_id, WorkerNote.worker_id == worker_id)
+        .order_by(WorkerNote.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def _resolve_worker_booking(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    worker_id: int,
+    booking_id: str,
+) -> Booking:
+    stmt = (
+        select(Booking)
+        .outerjoin(BookingWorker, BookingWorker.booking_id == Booking.booking_id)
+        .where(
+            Booking.booking_id == booking_id,
+            Booking.org_id == org_id,
+            or_(Booking.assigned_worker_id == worker_id, BookingWorker.worker_id == worker_id),
+        )
+    )
+    booking = (await session.execute(stmt)).scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    return booking
+
+
+_INCIDENT_SEVERITY_OPTIONS = ("low", "medium", "high")
+
+
 @router.get("/v1/admin/ui/workers/{worker_id}", response_class=HTMLResponse)
 async def admin_worker_detail(
     worker_id: int,
@@ -6925,6 +7030,16 @@ async def admin_worker_detail(
         if avg_ticket_cents is not None
         else "-"
     )
+    recent_reviews = await _worker_recent_reviews(
+        session,
+        org_id=org_id,
+        worker_id=worker.worker_id,
+    )
+    recent_notes = await _worker_recent_notes(
+        session,
+        org_id=org_id,
+        worker_id=worker.worker_id,
+    )
 
     schedule_rows = []
     for booking in schedule_bookings:
@@ -6974,6 +7089,102 @@ async def admin_worker_detail(
         if schedule_rows
         else _render_empty(tr(lang, "admin.workers.schedule_empty"))
     )
+    review_rows = []
+    for review in recent_reviews:
+        review_rows.append(
+            """
+            <tr>
+              <td>{rating}</td>
+              <td>{comment}</td>
+              <td>{booking_id}</td>
+              <td>{created_at}</td>
+            </tr>
+            """.format(
+                rating=html.escape(f"{review.rating}/5"),
+                comment=html.escape(review.comment or "-"),
+                booking_id=html.escape(review.booking_id),
+                created_at=html.escape(_format_dt(review.created_at)),
+            )
+        )
+    reviews_table = (
+        "<table class=\"table\"><thead><tr>"
+        "<th>Rating</th><th>Comment</th><th>Booking</th><th>Created</th>"
+        "</tr></thead><tbody>"
+        f"{''.join(review_rows)}"
+        "</tbody></table>"
+        if review_rows
+        else _render_empty("No reviews yet.")
+    )
+    note_rows = []
+    for note in recent_notes:
+        note_rows.append(
+            """
+            <tr>
+              <td>{note_type}</td>
+              <td>{severity}</td>
+              <td>{text}</td>
+              <td>{booking_id}</td>
+              <td>{created_by}</td>
+              <td>{created_at}</td>
+            </tr>
+            """.format(
+                note_type=html.escape(note.note_type.replace("_", " ").title()),
+                severity=html.escape(note.severity or "-"),
+                text=html.escape(note.text),
+                booking_id=html.escape(note.booking_id or "-"),
+                created_by=html.escape(note.created_by or "-"),
+                created_at=html.escape(_format_dt(note.created_at)),
+            )
+        )
+    notes_table = (
+        "<table class=\"table\"><thead><tr>"
+        "<th>Type</th><th>Severity</th><th>Note</th><th>Booking</th><th>Created by</th><th>Created</th>"
+        "</tr></thead><tbody>"
+        f"{''.join(note_rows)}"
+        "</tbody></table>"
+        if note_rows
+        else _render_empty("No internal notes or incidents yet.")
+    )
+    incident_severity_options = "".join(
+        f"<option value=\"{html.escape(option)}\">{html.escape(option.title())}</option>"
+        for option in _INCIDENT_SEVERITY_OPTIONS
+    )
+    notes_form = "".join(
+        [
+            f"<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}/notes/create\">",
+            csrf_input,
+            "<div class=\"form-group\">",
+            "<label>Internal note</label>",
+            "<textarea class=\"input\" name=\"text\" rows=\"3\" required></textarea>",
+            "</div>",
+            "<div class=\"form-group\">",
+            "<label>Booking ID (optional)</label>",
+            "<input class=\"input\" type=\"text\" name=\"booking_id\" />",
+            "</div>",
+            "<button class=\"btn secondary\" type=\"submit\">Add internal note</button>",
+            "</form>",
+        ]
+    )
+    incident_form = "".join(
+        [
+            f"<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}/incidents/create\">",
+            csrf_input,
+            "<div class=\"form-group\">",
+            "<label>Incident details</label>",
+            "<textarea class=\"input\" name=\"text\" rows=\"3\" required></textarea>",
+            "</div>",
+            "<div class=\"form-group\">",
+            "<label>Severity</label>",
+            f"<select class=\"input\" name=\"severity\" required>{incident_severity_options}</select>",
+            "</div>",
+            "<div class=\"form-group\">",
+            "<label>Booking ID (optional)</label>",
+            "<input class=\"input\" type=\"text\" name=\"booking_id\" />",
+            "</div>",
+            "<button class=\"btn danger\" type=\"submit\">Report incident</button>",
+            "</form>",
+        ]
+    )
     content = "".join(
         [
             "<div class=\"card\">",
@@ -6996,6 +7207,26 @@ async def admin_worker_detail(
             f"<div class=\"metric\"><div class=\"label\">{html.escape(tr(lang, 'admin.workers.cancelled_bookings'))}</div><div class=\"value\">{cancelled_count}</div></div>",
             f"<div class=\"metric\"><div class=\"label\">{html.escape(tr(lang, 'admin.workers.avg_ticket'))}</div><div class=\"value\">{html.escape(avg_ticket_display)}</div></div>",
             f"<div class=\"metric\"><div class=\"label\">{html.escape(tr(lang, 'admin.workers.working_since'))}</div><div class=\"value\">{html.escape(_format_date(worker.created_at.date()))}</div></div>",
+            "</div>",
+            "</div>",
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div><div class=\"title\">Recent reviews</div>",
+            "<div class=\"muted\">Last 5 client ratings</div></div>",
+            "</div>",
+            reviews_table,
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div><div class=\"title\">Internal notes & incidents</div>",
+            "<div class=\"muted\">Last 5 entries</div></div>",
+            "</div>",
+            notes_table,
+            "<div class=\"card-row\">",
+            "<div class=\"stack\">",
+            notes_form,
+            incident_form,
             "</div>",
             "</div>",
             "</div>",
@@ -7044,6 +7275,107 @@ async def admin_worker_detail(
     )
     issue_csrf_token(request, response, csrf_token)
     return response
+
+
+@router.post("/v1/admin/ui/workers/{worker_id}/notes/create", response_class=HTMLResponse)
+async def admin_worker_note_create(
+    worker_id: int,
+    request: Request,
+    text: str = Form(...),
+    booking_id: str | None = Form(None),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+
+    note_text = (text or "").strip()
+    if not note_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Note text is required")
+
+    booking_value = (booking_id or "").strip() or None
+    if booking_value:
+        await _resolve_worker_booking(
+            session,
+            org_id=org_id,
+            worker_id=worker.worker_id,
+            booking_id=booking_value,
+        )
+
+    note = WorkerNote(
+        org_id=org_id,
+        worker_id=worker.worker_id,
+        booking_id=booking_value,
+        note_type="note",
+        text=note_text,
+        created_by=identity.username,
+    )
+    session.add(note)
+    await session.commit()
+    return RedirectResponse(
+        f"/v1/admin/ui/workers/{worker.worker_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/v1/admin/ui/workers/{worker_id}/incidents/create", response_class=HTMLResponse)
+async def admin_worker_incident_create(
+    worker_id: int,
+    request: Request,
+    text: str = Form(...),
+    severity: str = Form(...),
+    booking_id: str | None = Form(None),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+
+    note_text = (text or "").strip()
+    if not note_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Incident details are required"
+        )
+    severity_value = (severity or "").strip().lower()
+    if severity_value not in _INCIDENT_SEVERITY_OPTIONS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid severity")
+
+    booking_value = (booking_id or "").strip() or None
+    if booking_value:
+        await _resolve_worker_booking(
+            session,
+            org_id=org_id,
+            worker_id=worker.worker_id,
+            booking_id=booking_value,
+        )
+
+    note = WorkerNote(
+        org_id=org_id,
+        worker_id=worker.worker_id,
+        booking_id=booking_value,
+        note_type="incident",
+        severity=severity_value,
+        text=note_text,
+        created_by=identity.username,
+    )
+    session.add(note)
+    await session.commit()
+    return RedirectResponse(
+        f"/v1/admin/ui/workers/{worker.worker_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.get("/v1/admin/ui/workers/{worker_id}/edit", response_class=HTMLResponse)
