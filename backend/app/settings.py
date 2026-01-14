@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     worker_alert_skill_thresholds_raw: str | None = Field(
         None, validation_alias="worker_alert_skill_thresholds"
     )
+    worker_skill_cert_requirements_raw: str | None = Field(
+        None, validation_alias="worker_skill_cert_requirements"
+    )
     slot_provider_mode: Literal["stub", "db"] = Field("db")
     stripe_secret_key: str | None = Field(None)
     stripe_webhook_secret: str | None = Field(None)

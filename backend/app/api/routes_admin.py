@@ -124,7 +124,20 @@ from app.domain.subscriptions import service as subscription_service
 from app.domain.subscriptions.db_models import Subscription
 from app.domain.time_tracking.db_models import WorkTimeEntry
 from app.domain.admin_audit import service as audit_service
-from app.domain.workers.db_models import Worker, WorkerNote, WorkerReview
+from app.domain.workers.compliance import (
+    CertificateSnapshot,
+    ONBOARDING_CHECKLIST_FIELDS,
+    get_skill_cert_requirements,
+    missing_required_certificates,
+    onboarding_progress,
+)
+from app.domain.workers.db_models import (
+    Worker,
+    WorkerCertificate,
+    WorkerNote,
+    WorkerOnboarding,
+    WorkerReview,
+)
 from app.infra.auth import hash_password
 from app.infra.export import send_export_with_retry, validate_webhook_url
 from app.infra.logging import update_log_context
@@ -717,6 +730,9 @@ def _wrap_page(
           .note {{ padding: 10px 12px; background: #f9fafb; border: 1px dashed #d1d5db; border-radius: 10px; }}
           .with-icon {{ display: inline-flex; align-items: center; gap: 8px; }}
           .icon {{ width: 18px; height: 18px; display: block; }}
+          .progress {{ width: 100%; height: 10px; background: #e5e7eb; border-radius: 999px; overflow: hidden; }}
+          .progress-fill {{ height: 100%; background: #2563eb; }}
+          .progress-meta {{ display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; }}
         </style>
       </head>
       <body>
@@ -5306,6 +5322,7 @@ def _build_workers_export_query(
     rating_max: float | None,
     availability: str | None,
     skills: list[str],
+    has_expiring_certs: bool = False,
 ) -> str:
     params: dict[str, str | list[str]] = {}
     if q:
@@ -5326,6 +5343,8 @@ def _build_workers_export_query(
         params["availability"] = availability
     if skills:
         params["skill"] = skills
+    if has_expiring_certs:
+        params["has_expiring_certs"] = "1"
     return urlencode(params, doseq=True)
 
 
@@ -5552,6 +5571,7 @@ async def _list_workers(
     rating_min: float | None,
     rating_max: float | None,
     skills: list[str],
+    has_expiring_certs: bool = False,
     worker_ids: list[int] | None = None,
 ) -> list[Worker]:
     filters = [Worker.org_id == org_id]
@@ -5585,6 +5605,21 @@ async def _list_workers(
     filters.extend(_worker_skill_filters(skills))
     if worker_ids:
         filters.append(Worker.worker_id.in_(worker_ids))
+    if has_expiring_certs:
+        today = datetime.now(timezone.utc).date()
+        cutoff = today + timedelta(days=_CERT_EXPIRY_WARNING_DAYS)
+        expiring_subquery = (
+            select(WorkerCertificate.worker_id)
+            .where(
+                WorkerCertificate.org_id == org_id,
+                WorkerCertificate.archived_at.is_(None),
+                WorkerCertificate.expires_at.is_not(None),
+                WorkerCertificate.expires_at <= cutoff,
+            )
+            .distinct()
+            .subquery()
+        )
+        filters.append(Worker.worker_id.in_(select(expiring_subquery.c.worker_id)))
     stmt = select(Worker).where(*filters).options(selectinload(Worker.team)).order_by(Worker.created_at.desc())
     result = await session.execute(stmt)
     return result.scalars().all()
@@ -6370,6 +6405,7 @@ async def admin_workers_list(
     availability: str | None = Query(default=None),
     skill: list[str] | None = Query(default=None),
     worker_id: list[int] | None = Query(default=None),
+    has_expiring_certs: bool = Query(default=False),
     session: AsyncSession = Depends(get_db_session),
     identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
@@ -6395,6 +6431,7 @@ async def admin_workers_list(
         rating_min=rating_min,
         rating_max=rating_max,
         skills=selected_skills,
+        has_expiring_certs=has_expiring_certs,
         worker_ids=worker_id,
     )
     busy_until_map = await _worker_busy_until_map(
@@ -6446,6 +6483,7 @@ async def admin_workers_list(
         rating_max=rating_max,
         availability=availability_value,
         skills=selected_skills,
+        has_expiring_certs=has_expiring_certs,
     )
     export_filtered_url = "/v1/admin/ui/workers/export?format=csv"
     if export_query:
@@ -6565,6 +6603,10 @@ async def admin_workers_list(
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.rating_min'))}</label><input class=\"input\" type=\"number\" name=\"rating_min\" min=\"0\" max=\"5\" step=\"0.1\" value=\"{'' if rating_min is None else rating_min}\" /></div>",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.rating_max'))}</label><input class=\"input\" type=\"number\" name=\"rating_max\" min=\"0\" max=\"5\" step=\"0.1\" value=\"{'' if rating_max is None else rating_max}\" /></div>",
             f"<div class=\"form-group\"><label>{html.escape(tr(lang, 'admin.workers.skills'))}</label><select class=\"input\" name=\"skill\" multiple size=\"3\">{skill_filter_options}</select></div>",
+            "<div class=\"form-group\">"
+            "<label>Expiring certs</label>"
+            f"<label class=\"with-icon\"><input type=\"checkbox\" name=\"has_expiring_certs\" value=\"1\" {'checked' if has_expiring_certs else ''} />Within {_CERT_EXPIRY_WARNING_DAYS} days</label>"
+            "</div>",
             "<div class=\"form-group\"><label>&nbsp;</label><div class=\"actions\"><button class=\"btn\" type=\"submit\">Apply</button><a class=\"btn secondary\" href=\"/v1/admin/ui/workers\">Reset</a></div></div>",
             "</form>",
             "</div>",
@@ -6996,6 +7038,7 @@ async def admin_workers_export_filtered(
     rating_max: float | None = Query(default=None),
     availability: str | None = Query(default=None),
     skill: list[str] | None = Query(default=None),
+    has_expiring_certs: bool = Query(default=False),
     session: AsyncSession = Depends(get_db_session),
     identity: AdminIdentity = Depends(require_dispatch),
 ) -> Response:
@@ -7022,6 +7065,7 @@ async def admin_workers_export_filtered(
         rating_min=rating_min,
         rating_max=rating_max,
         skills=selected_skills,
+        has_expiring_certs=has_expiring_certs,
     )
     if availability_value != "all":
         busy_until_map = await _worker_busy_until_map(
@@ -7311,6 +7355,34 @@ async def _resolve_worker_booking(
 
 
 _INCIDENT_SEVERITY_OPTIONS = ("low", "medium", "high")
+_CERT_STATUS_OPTIONS = ("active", "pending", "expired", "revoked")
+_CERT_EXPIRY_WARNING_DAYS = 30
+_CERT_EXPIRY_CRITICAL_DAYS = 7
+
+
+def _parse_date_input(value: str | None, field_name: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {field_name} date",
+        ) from exc
+
+
+def _certificate_expiry_badge(expires_at: date | None, today: date) -> tuple[str, str] | None:
+    if not expires_at:
+        return None
+    days_remaining = (expires_at - today).days
+    if days_remaining < 0:
+        return ("Expired", "badge-high")
+    if days_remaining <= _CERT_EXPIRY_CRITICAL_DAYS:
+        return (f"Expires in {days_remaining} days", "badge-high")
+    if days_remaining <= _CERT_EXPIRY_WARNING_DAYS:
+        return (f"Expires in {days_remaining} days", "badge-medium")
+    return (f"Expires in {days_remaining} days", "badge-low")
 
 
 @router.get("/v1/admin/ui/workers/{worker_id}", response_class=HTMLResponse)
@@ -7373,6 +7445,25 @@ async def admin_worker_detail(
         org_id=org_id,
         worker_id=worker.worker_id,
     )
+    onboarding = (
+        await session.execute(
+            select(WorkerOnboarding).where(
+                WorkerOnboarding.worker_id == worker.worker_id,
+                WorkerOnboarding.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    certificates = (
+        await session.execute(
+            select(WorkerCertificate)
+            .where(
+                WorkerCertificate.worker_id == worker.worker_id,
+                WorkerCertificate.org_id == org_id,
+                WorkerCertificate.archived_at.is_(None),
+            )
+            .order_by(WorkerCertificate.expires_at.asc().nulls_last(), WorkerCertificate.name.asc())
+        )
+    ).scalars().all()
 
     schedule_rows = []
     for booking in schedule_bookings:
@@ -7518,6 +7609,153 @@ async def admin_worker_detail(
             "</form>",
         ]
     )
+    onboarding_completed, onboarding_total = onboarding_progress(onboarding)
+    onboarding_percent = int(round((onboarding_completed / onboarding_total) * 100)) if onboarding_total else 0
+    onboarding_checkboxes = "".join(
+        [
+            "<label class=\"with-icon\">"
+            f"<input type=\"checkbox\" name=\"{html.escape(field_name)}\" "
+            f"{'checked' if onboarding and getattr(onboarding, field_name, False) else ''} />"
+            f"{html.escape(label)}</label>"
+            for field_name, label in ONBOARDING_CHECKLIST_FIELDS
+        ]
+    )
+    today = now.date()
+    certificate_snapshots = [
+        CertificateSnapshot(name=cert.name, status=cert.status, expires_at=cert.expires_at)
+        for cert in certificates
+    ]
+    missing_required = missing_required_certificates(
+        worker.skills or [],
+        certificate_snapshots,
+        requirements=get_skill_cert_requirements(),
+        reference_date=today,
+    )
+    missing_required_html = (
+        "<div class=\"note\"><div class=\"danger\"><strong>Missing required certificates:</strong> "
+        f"{', '.join(html.escape(name) for name in missing_required)}</div></div>"
+        if missing_required
+        else "<div class=\"note\"><div class=\"success\">All required certificates are on file.</div></div>"
+    )
+    cert_status_options = list(_CERT_STATUS_OPTIONS)
+    certificate_cards: list[str] = []
+    for cert in certificates:
+        expiry_badge = _certificate_expiry_badge(cert.expires_at, today)
+        expiry_html = ""
+        if expiry_badge:
+            label, badge_class = expiry_badge
+            expiry_html = f"<span class=\"badge {badge_class}\">{html.escape(label)}</span>"
+        status_value = (cert.status or "").strip().lower()
+        status_choices = list(cert_status_options)
+        if status_value and status_value not in status_choices:
+            status_choices.append(status_value)
+        status_options_html = "".join(
+            f"<option value=\"{html.escape(option)}\" {'selected' if option == status_value else ''}>"
+            f"{html.escape(option.title() or option)}</option>"
+            for option in status_choices
+        )
+        certificate_cards.append(
+            "".join(
+                [
+                    "<div class=\"card\">",
+                    f"<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}/certificates\">",
+                    csrf_input,
+                    f"<input type=\"hidden\" name=\"cert_id\" value=\"{cert.cert_id}\" />",
+                    "<div class=\"card-row\">",
+                    f"<div><div class=\"title\">{html.escape(cert.name)}</div>",
+                    f"<div class=\"muted\">{expiry_html or 'No expiry date'}</div></div>",
+                    "</div>",
+                    "<div class=\"form-group\">",
+                    "<label>Certificate name</label>",
+                    f"<input class=\"input\" type=\"text\" name=\"name\" value=\"{html.escape(cert.name)}\" required />",
+                    "</div>",
+                    "<div class=\"form-group\">",
+                    "<label>Status</label>",
+                    f"<select class=\"input\" name=\"status\">{status_options_html}</select>",
+                    "</div>",
+                    "<div class=\"form-group\">",
+                    "<label>Issued at</label>",
+                    f"<input class=\"input\" type=\"date\" name=\"issued_at\" value=\"{html.escape(cert.issued_at.isoformat() if cert.issued_at else '')}\" />",
+                    "</div>",
+                    "<div class=\"form-group\">",
+                    "<label>Expires at</label>",
+                    f"<input class=\"input\" type=\"date\" name=\"expires_at\" value=\"{html.escape(cert.expires_at.isoformat() if cert.expires_at else '')}\" />",
+                    "</div>",
+                    "<div class=\"actions\">",
+                    "<button class=\"btn secondary\" type=\"submit\">Update certificate</button>",
+                    "</div>",
+                    "</form>",
+                    f"<form method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}/certificates/{cert.cert_id}/archive\">",
+                    csrf_input,
+                    "<button class=\"btn danger small\" type=\"submit\">Archive</button>",
+                    "</form>",
+                    "</div>",
+                ]
+            )
+        )
+    certificates_section = "".join(
+        [
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div><div class=\"title\">Training & certificates</div>",
+            "<div class=\"muted\">Track required certifications tied to skills.</div></div>",
+            "</div>",
+            missing_required_html,
+            "<div class=\"section\">",
+            "".join(certificate_cards) if certificate_cards else _render_empty("No certificates on file."),
+            "</div>",
+            "<div class=\"card-row\">",
+            "<div><div class=\"title\">Add certificate</div></div>",
+            "</div>",
+            f"<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}/certificates\">",
+            csrf_input,
+            "<div class=\"form-group\">",
+            "<label>Certificate name</label>",
+            "<input class=\"input\" type=\"text\" name=\"name\" required />",
+            "</div>",
+            "<div class=\"form-group\">",
+            "<label>Status</label>",
+            "<select class=\"input\" name=\"status\">"
+            + "".join(
+                f"<option value=\"{html.escape(option)}\">{html.escape(option.title() or option)}</option>"
+                for option in cert_status_options
+            )
+            + "</select>",
+            "</div>",
+            "<div class=\"form-group\">",
+            "<label>Issued at</label>",
+            "<input class=\"input\" type=\"date\" name=\"issued_at\" />",
+            "</div>",
+            "<div class=\"form-group\">",
+            "<label>Expires at</label>",
+            "<input class=\"input\" type=\"date\" name=\"expires_at\" />",
+            "</div>",
+            "<button class=\"btn\" type=\"submit\">Add certificate</button>",
+            "</form>",
+            "</div>",
+        ]
+    )
+    onboarding_section = "".join(
+        [
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div><div class=\"title\">Onboarding checklist</div>",
+            "<div class=\"muted\">Docs, background checks, and training status.</div></div>",
+            "</div>",
+            f"<div class=\"progress\" role=\"progressbar\" aria-valuenow=\"{onboarding_percent}\" aria-valuemin=\"0\" aria-valuemax=\"100\">",
+            f"<div class=\"progress-fill\" style=\"width: {onboarding_percent}%;\"></div>",
+            "</div>",
+            f"<div class=\"progress-meta\"><span>{onboarding_completed} of {onboarding_total} complete</span><span>{onboarding_percent}%</span></div>",
+            f"<form class=\"stack\" method=\"post\" action=\"/v1/admin/ui/workers/{worker.worker_id}/onboarding\">",
+            csrf_input,
+            "<div class=\"stack\">",
+            onboarding_checkboxes,
+            "</div>",
+            "<button class=\"btn\" type=\"submit\">Save checklist</button>",
+            "</form>",
+            "</div>",
+        ]
+    )
     content = "".join(
         [
             "<div class=\"card\">",
@@ -7543,6 +7781,8 @@ async def admin_worker_detail(
             "</div>",
             "</div>",
             "</div>",
+            onboarding_section,
+            certificates_section,
             "<div class=\"card\">",
             "<div class=\"card-row\">",
             "<div><div class=\"title\">Recent reviews</div>",
@@ -7608,6 +7848,148 @@ async def admin_worker_detail(
     )
     issue_csrf_token(request, response, csrf_token)
     return response
+
+
+@router.post("/v1/admin/ui/workers/{worker_id}/onboarding", response_class=HTMLResponse)
+async def admin_worker_onboarding_update(
+    worker_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+    form = await request.form()
+    checklist_values = {
+        field_name: form.get(field_name) == "on"
+        for field_name, _label in ONBOARDING_CHECKLIST_FIELDS
+    }
+    onboarding = (
+        await session.execute(
+            select(WorkerOnboarding).where(
+                WorkerOnboarding.worker_id == worker.worker_id,
+                WorkerOnboarding.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if onboarding is None:
+        onboarding = WorkerOnboarding(
+            worker_id=worker.worker_id,
+            org_id=org_id,
+            **checklist_values,
+        )
+        session.add(onboarding)
+    else:
+        for field_name, value in checklist_values.items():
+            setattr(onboarding, field_name, value)
+    await session.commit()
+    return RedirectResponse(
+        f"/v1/admin/ui/workers/{worker.worker_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/v1/admin/ui/workers/{worker_id}/certificates", response_class=HTMLResponse)
+async def admin_worker_certificate_upsert(
+    worker_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.worker_id == worker_id, Worker.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if worker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+    form = await request.form()
+    cert_id = form.get("cert_id")
+    name = (form.get("name") or "").strip()
+    status_value = (form.get("status") or "").strip().lower()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Certificate name is required")
+    if status_value not in _CERT_STATUS_OPTIONS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid certificate status")
+    issued_at = _parse_date_input(form.get("issued_at"), "issued_at")
+    expires_at = _parse_date_input(form.get("expires_at"), "expires_at")
+    cert_id_value = None
+    if cert_id:
+        try:
+            cert_id_value = int(cert_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid certificate id"
+            ) from exc
+    if cert_id_value is not None:
+        certificate = (
+            await session.execute(
+                select(WorkerCertificate).where(
+                    WorkerCertificate.cert_id == cert_id_value,
+                    WorkerCertificate.worker_id == worker.worker_id,
+                    WorkerCertificate.org_id == org_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if certificate is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate not found")
+        certificate.name = name
+        certificate.status = status_value
+        certificate.issued_at = issued_at
+        certificate.expires_at = expires_at
+    else:
+        certificate = WorkerCertificate(
+            org_id=org_id,
+            worker_id=worker.worker_id,
+            name=name,
+            status=status_value,
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+        session.add(certificate)
+    await session.commit()
+    return RedirectResponse(
+        f"/v1/admin/ui/workers/{worker.worker_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post(
+    "/v1/admin/ui/workers/{worker_id}/certificates/{cert_id}/archive",
+    response_class=HTMLResponse,
+)
+async def admin_worker_certificate_archive(
+    worker_id: int,
+    cert_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    certificate = (
+        await session.execute(
+            select(WorkerCertificate).where(
+                WorkerCertificate.cert_id == cert_id,
+                WorkerCertificate.worker_id == worker_id,
+                WorkerCertificate.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if certificate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate not found")
+    certificate.archived_at = datetime.now(timezone.utc)
+    await session.commit()
+    return RedirectResponse(
+        f"/v1/admin/ui/workers/{worker_id}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @router.post("/v1/admin/ui/workers/{worker_id}/notes/create", response_class=HTMLResponse)
