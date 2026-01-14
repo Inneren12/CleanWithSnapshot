@@ -76,6 +76,7 @@ from app.domain.clients.db_models import (
     normalize_tags,
     parse_tags_json,
 )
+from app.domain.clients import service as client_service
 from app.domain.export_events import schemas as export_schemas
 from app.domain.export_events.db_models import ExportEvent
 from app.domain.export_events.schemas import ExportEventResponse, ExportReplayResponse
@@ -4183,10 +4184,25 @@ def _format_date(value: date | None) -> str:
     return value.strftime("%Y-%m-%d")
 
 
+def _ensure_timezone(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
 def _status_badge(value: str) -> str:
     normalized = value.lower()
     warning = _icon("warning") if normalized == invoice_statuses.INVOICE_STATUS_OVERDUE.lower() else ""
     return f'<span class="badge badge-status status-{normalized}"><span class="with-icon">{warning}{html.escape(value)}</span></span>'
+
+
+def _churn_badge(band: str) -> str:
+    normalized = band.strip().upper()
+    class_map = {
+        "LOW": "badge-low",
+        "MEDIUM": "badge-medium",
+        "HIGH": "badge-high",
+    }
+    badge_class = class_map.get(normalized, "badge-low")
+    return f'<span class="badge {badge_class}">Churn: {html.escape(normalized)}</span>'
 
 
 def _note_type_label(note_type: str, lang: str | None) -> str:
@@ -9646,6 +9662,13 @@ async def _client_booking_frequency_stats(
     last_booking_at = (
         await session.execute(select(func.max(Booking.starts_at)).where(*base_filters))
     ).scalar_one()
+    last_completed_at = (
+        await session.execute(
+            select(func.max(Booking.starts_at)).where(
+                *base_filters, Booking.status.in_(_COMPLETED_BOOKING_STATUSES)
+            )
+        )
+    ).scalar_one()
 
     completed_rows = (
         await session.execute(
@@ -9668,7 +9691,180 @@ async def _client_booking_frequency_stats(
         "last_90": int(last_90_count or 0),
         "avg_gap_days": float(avg_gap_days) if avg_gap_days is not None else None,
         "last_booking_at": last_booking_at,
+        "last_completed_at": last_completed_at,
     }
+
+
+def _resolve_service_type(
+    booking_snapshot: dict | None,
+    lead_snapshot: dict | None,
+) -> str | None:
+    structured = booking_snapshot or {}
+    service_type = structured.get("service_type") or structured.get("cleaning_type")
+    if not service_type and lead_snapshot:
+        service_type = lead_snapshot.get("service_type") or lead_snapshot.get("cleaning_type")
+    return service_type if isinstance(service_type, str) and service_type else None
+
+
+async def _client_service_preferences(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+    limit: int = 3,
+) -> dict[str, list[dict[str, int | str]]]:
+    service_counts: dict[str, int] = {}
+    service_rows = (
+        await session.execute(
+            select(Booking.policy_snapshot, Lead.structured_inputs)
+            .outerjoin(Lead, and_(Lead.lead_id == Booking.lead_id, Lead.org_id == org_id))
+            .where(Booking.client_id == client_id, Booking.org_id == org_id)
+        )
+    ).all()
+    for policy_snapshot, lead_snapshot in service_rows:
+        service_type = _resolve_service_type(policy_snapshot, lead_snapshot)
+        if service_type:
+            service_counts[service_type] = service_counts.get(service_type, 0) + 1
+
+    service_types = [
+        {"label": label, "count": count}
+        for label, count in sorted(service_counts.items(), key=lambda item: (-item[1], item[0]))
+    ][:limit]
+
+    addon_rows = (
+        await session.execute(
+            select(
+                AddonDefinition.name,
+                func.coalesce(func.sum(OrderAddon.qty), 0).label("total_qty"),
+            )
+            .join(OrderAddon, OrderAddon.addon_id == AddonDefinition.addon_id)
+            .join(Booking, Booking.booking_id == OrderAddon.order_id)
+            .where(Booking.client_id == client_id, Booking.org_id == org_id)
+            .group_by(AddonDefinition.addon_id, AddonDefinition.name)
+            .order_by(sa.desc("total_qty"), AddonDefinition.name.asc())
+        )
+    ).all()
+    addons = [
+        {"label": str(name), "count": int(total_qty or 0)}
+        for name, total_qty in addon_rows
+        if name
+    ][:limit]
+
+    return {"service_types": service_types, "addons": addons}
+
+
+async def _client_churn_inputs_for_clients(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_ids: list[str],
+) -> dict[str, dict[str, float | int | datetime | None]]:
+    if not client_ids:
+        return {}
+    now = datetime.now(tz=timezone.utc)
+    complaints_cutoff = now - timedelta(days=settings.client_risk_complaints_window_days)
+    feedback_cutoff = now - timedelta(days=settings.client_risk_feedback_window_days)
+
+    complaints_rows = (
+        await session.execute(
+            select(
+                ClientNote.client_id,
+                func.count(ClientNote.note_id).label("complaint_count"),
+            )
+            .where(
+                ClientNote.org_id == org_id,
+                ClientNote.client_id.in_(client_ids),
+                ClientNote.note_type == ClientNote.NOTE_TYPE_COMPLAINT,
+                ClientNote.created_at >= complaints_cutoff,
+            )
+            .group_by(ClientNote.client_id)
+        )
+    ).all()
+    feedback_rows = (
+        await session.execute(
+            select(
+                ClientFeedback.client_id,
+                func.avg(ClientFeedback.rating).label("avg_rating"),
+                func.coalesce(
+                    func.sum(
+                        sa.case(
+                            (ClientFeedback.rating <= settings.client_risk_low_rating_threshold, 1),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("low_rating_count"),
+            )
+            .where(
+                ClientFeedback.org_id == org_id,
+                ClientFeedback.client_id.in_(client_ids),
+                ClientFeedback.created_at >= feedback_cutoff,
+            )
+            .group_by(ClientFeedback.client_id)
+        )
+    ).all()
+    last_completed_rows = (
+        await session.execute(
+            select(
+                Booking.client_id,
+                func.max(Booking.starts_at).label("last_completed_at"),
+            )
+            .where(
+                Booking.org_id == org_id,
+                Booking.client_id.in_(client_ids),
+                Booking.status.in_(_COMPLETED_BOOKING_STATUSES),
+            )
+            .group_by(Booking.client_id)
+        )
+    ).all()
+    completed_rows = (
+        await session.execute(
+            select(Booking.client_id, Booking.starts_at)
+            .where(
+                Booking.org_id == org_id,
+                Booking.client_id.in_(client_ids),
+                Booking.status.in_(_COMPLETED_BOOKING_STATUSES),
+            )
+            .order_by(Booking.client_id.asc(), Booking.starts_at.asc())
+        )
+    ).all()
+
+    complaint_map = {row.client_id: int(row.complaint_count or 0) for row in complaints_rows}
+    feedback_map = {
+        row.client_id: {
+            "avg_rating": float(row.avg_rating) if row.avg_rating is not None else None,
+            "low_rating_count": int(row.low_rating_count or 0),
+        }
+        for row in feedback_rows
+    }
+    last_completed_map = {
+        row.client_id: row.last_completed_at for row in last_completed_rows
+    }
+
+    avg_gap_map: dict[str, float | None] = {}
+    grouped: dict[str, list[datetime]] = {}
+    for client_id, starts_at in completed_rows:
+        grouped.setdefault(client_id, []).append(starts_at)
+    for client_id, dates in grouped.items():
+        if len(dates) < 2:
+            avg_gap_map[client_id] = None
+            continue
+        gaps = [
+            (current - previous).total_seconds() / 86400
+            for previous, current in zip(dates, dates[1:])
+        ]
+        avg_gap_map[client_id] = sum(gaps) / len(gaps) if gaps else None
+
+    churn_inputs: dict[str, dict[str, float | int | datetime | None]] = {}
+    for client_id in client_ids:
+        churn_inputs[client_id] = {
+            "last_completed_at": last_completed_map.get(client_id),
+            "avg_gap_days": avg_gap_map.get(client_id),
+            "complaint_count": complaint_map.get(client_id, 0),
+            "avg_rating": feedback_map.get(client_id, {}).get("avg_rating"),
+            "low_rating_count": feedback_map.get(client_id, {}).get("low_rating_count", 0),
+        }
+    return churn_inputs
 
 
 async def _client_favorite_workers(
@@ -10310,6 +10506,7 @@ async def admin_clients_list(
     q: str | None = Query(default=None),
     show: str | None = Query(default=None),
     risk: str | None = Query(default=None),
+    churn: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_admin),
 ) -> HTMLResponse:
@@ -10322,6 +10519,41 @@ async def admin_clients_list(
     risk_value = (risk or "all").strip().lower()
     if risk_value not in {"all", "frequent_complaints", "low_rater", "any"}:
         risk_value = "all"
+    churn_value = (churn or "any").strip().lower()
+    if churn_value not in {"any", "low", "medium", "high"}:
+        churn_value = "any"
+    churn_assessments: dict[str, client_service.ChurnAssessment] = {}
+    if clients:
+        churn_inputs = await _client_churn_inputs_for_clients(
+            session,
+            org_id=org_id,
+            client_ids=[client.client_id for client in clients],
+        )
+        now = datetime.now(tz=timezone.utc)
+        for client in clients:
+            inputs = churn_inputs.get(client.client_id, {})
+            last_completed_at = inputs.get("last_completed_at")
+            if isinstance(last_completed_at, datetime):
+                last_completed_at = _ensure_timezone(last_completed_at)
+            days_since_last = (
+                int((now - last_completed_at).total_seconds() / 86400)
+                if isinstance(last_completed_at, datetime)
+                else None
+            )
+            churn_assessments[client.client_id] = client_service.evaluate_churn(
+                days_since_last_completed=days_since_last,
+                avg_gap_days=inputs.get("avg_gap_days"),
+                complaint_count=int(inputs.get("complaint_count") or 0),
+                avg_rating=inputs.get("avg_rating"),
+                low_rating_count=int(inputs.get("low_rating_count") or 0),
+            )
+        if churn_value != "any":
+            clients = [
+                client
+                for client in clients
+                if churn_assessments.get(client.client_id)
+                and churn_assessments[client.client_id].risk_band.lower() == churn_value
+            ]
     csrf_token = get_csrf_token(request)
     csrf_input = render_csrf_input(csrf_token)
     search_form = f"""
@@ -10344,6 +10576,15 @@ async def admin_clients_list(
           <option value="frequent_complaints" {"selected" if risk_value == "frequent_complaints" else ""}>Frequent complaints</option>
           <option value="low_rater" {"selected" if risk_value == "low_rater" else ""}>Low ratings</option>
           <option value="any" {"selected" if risk_value == "any" else ""}>Any risk</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Churn risk</label>
+        <select class="input" name="churn">
+          <option value="any" {"selected" if churn_value == "any" else ""}>Any churn</option>
+          <option value="low" {"selected" if churn_value == "low" else ""}>Low churn</option>
+          <option value="medium" {"selected" if churn_value == "medium" else ""}>Medium churn</option>
+          <option value="high" {"selected" if churn_value == "high" else ""}>High churn</option>
         </select>
       </div>
       <button class="btn" type="submit">Search</button>
@@ -10376,12 +10617,15 @@ async def admin_clients_list(
             """
         else:
             action_html = f"<span class=\"badge\">{html.escape(tr(lang, 'admin.clients.status_archived'))}</span>"
+        churn_assessment = churn_assessments.get(client.client_id)
+        churn_badge = _churn_badge(churn_assessment.risk_band if churn_assessment else "LOW")
         rows.append(f"""
         <tr>
           <td><a href="/v1/admin/ui/clients/{html.escape(client.client_id)}">{html.escape(client.name or '—')}</a></td>
           <td>{html.escape(client.email or '—')}</td>
           <td>{html.escape(client.phone or '—')}</td>
           <td>{html.escape(client.address or '—')}</td>
+          <td>{churn_badge}</td>
           <td>{status_label}</td>
           <td>{action_html}</td>
         </tr>
@@ -10395,12 +10639,13 @@ async def admin_clients_list(
           <th>{html.escape(tr(lang, 'admin.clients.email'))}</th>
           <th>{html.escape(tr(lang, 'admin.clients.phone'))}</th>
           <th>{html.escape(tr(lang, 'admin.clients.address'))}</th>
+          <th>Churn risk</th>
           <th>{html.escape(tr(lang, 'admin.clients.status_label'))}</th>
           <th>{html.escape(tr(lang, 'admin.clients.actions'))}</th>
         </tr>
       </thead>
       <tbody>
-        {''.join(rows) if rows else f'<tr><td colspan="6">{html.escape(tr(lang, "admin.clients.none"))}</td></tr>'}
+        {''.join(rows) if rows else f'<tr><td colspan="7">{html.escape(tr(lang, "admin.clients.none"))}</td></tr>'}
       </tbody>
     </table>
     """ if clients else f'<p class="muted">{html.escape(tr(lang, "admin.clients.none"))}</p>'
@@ -10539,6 +10784,7 @@ async def admin_clients_edit_form(
     feedback_summary = await _client_feedback_summary(session, org_id=org_id, client_id=client_id)
     risk_summary = await _client_risk_summary(session, org_id=org_id, client_id=client_id)
     recent_feedback = await _client_recent_feedback(session, org_id=org_id, client_id=client_id)
+    service_preferences = await _client_service_preferences(session, org_id=org_id, client_id=client_id)
     finance_summary = await _client_finance_aggregates(session, org_id=org_id, client_id=client_id)
     invoice_history = await _client_invoice_history(session, org_id=org_id, client_id=client_id)
     payment_history = await _client_payment_history(session, org_id=org_id, client_id=client_id)
@@ -10663,6 +10909,27 @@ async def admin_clients_edit_form(
     complaint_count = risk_summary["complaint_count"]
     avg_recent_rating = risk_summary["avg_rating"]
     low_rating_count_recent = risk_summary["low_rating_count"]
+    last_completed_at = frequency_stats["last_completed_at"]
+    if isinstance(last_completed_at, datetime):
+        last_completed_at = _ensure_timezone(last_completed_at)
+    days_since_last_completed = (
+        int((datetime.now(tz=timezone.utc) - last_completed_at).total_seconds() / 86400)
+        if isinstance(last_completed_at, datetime)
+        else None
+    )
+    churn_assessment = client_service.evaluate_churn(
+        days_since_last_completed=days_since_last_completed,
+        avg_gap_days=frequency_stats["avg_gap_days"],
+        complaint_count=int(complaint_count or 0),
+        avg_rating=avg_recent_rating,
+        low_rating_count=int(low_rating_count_recent or 0),
+    )
+    churn_badge = _churn_badge(churn_assessment.risk_band)
+    churn_reasons_html = (
+        "<ul>" + "".join(f"<li>{html.escape(reason)}</li>" for reason in churn_assessment.reasons) + "</ul>"
+        if churn_assessment.reasons
+        else '<div class="muted">No churn signals yet.</div>'
+    )
     frequent_complaints = complaint_count >= settings.client_risk_complaints_threshold
     low_rater = (
         (avg_recent_rating is not None and avg_recent_rating <= settings.client_risk_avg_rating_threshold)
@@ -11046,6 +11313,19 @@ async def admin_clients_edit_form(
         </div>
         """
 
+    preference_sections = []
+    if service_preferences["service_types"]:
+        preference_sections.append(
+            _render_time_series("Top service types", service_preferences["service_types"])
+        )
+    if service_preferences["addons"]:
+        preference_sections.append(_render_time_series("Top add-ons", service_preferences["addons"]))
+    preferences_html = (
+        "".join(preference_sections)
+        if preference_sections
+        else '<div class="muted">Preferences unavailable (data not collected yet).</div>'
+    )
+
     avg_gap_days = frequency_stats["avg_gap_days"]
     avg_gap_display = "—" if avg_gap_days is None else f"{avg_gap_days:.1f} days"
     last_booking_display = (
@@ -11116,6 +11396,19 @@ async def admin_clients_edit_form(
               <div class="muted">Last booking date</div>
               <div class="title">{last_booking_display}</div>
             </div>
+          </div>
+        </div>
+        <div>
+          <div class="title">Churn risk</div>
+          <div class="stack">
+            <div>{churn_badge}</div>
+            {churn_reasons_html}
+          </div>
+        </div>
+        <div>
+          <div class="title">Service preferences</div>
+          <div class="stack">
+            {preferences_html}
           </div>
         </div>
         <div>
