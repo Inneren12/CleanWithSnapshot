@@ -65,7 +65,7 @@ from app.domain.bookings.db_models import (
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
-from app.domain.clients.db_models import ClientUser
+from app.domain.clients.db_models import ClientNote, ClientUser, normalize_tags, parse_tags_json
 from app.domain.export_events import schemas as export_schemas
 from app.domain.export_events.db_models import ExportEvent
 from app.domain.export_events.schemas import ExportEventResponse, ExportReplayResponse
@@ -8588,6 +8588,50 @@ async def admin_workers_delete(
 # ============================================================
 
 
+def _format_client_tags(tags: list[str], lang: str | None) -> str:
+    if not tags:
+        return f'<div class="muted">{html.escape(tr(lang, "admin.clients.tags_none"))}</div>'
+    chips = "".join(f'<span class="badge">{html.escape(tag)}</span>' for tag in tags)
+    return f'<div class="stack" style="flex-direction: row; flex-wrap: wrap; gap: var(--space-xs);">{chips}</div>'
+
+
+def _format_booking_workers(booking: Booking) -> str:
+    names: list[str] = []
+    seen: set[str] = set()
+    if booking.assigned_worker and booking.assigned_worker.name:
+        name = booking.assigned_worker.name
+        seen.add(name)
+        names.append(name)
+    for assignment in booking.worker_assignments:
+        worker = assignment.worker
+        if worker and worker.name and worker.name not in seen:
+            seen.add(worker.name)
+            names.append(worker.name)
+    return ", ".join(names) if names else "—"
+
+
+async def _client_booking_stats(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+) -> dict[str, int]:
+    rows = (
+        await session.execute(
+            select(Booking.status, func.count())
+            .where(Booking.client_id == client_id, Booking.org_id == org_id)
+            .group_by(Booking.status)
+        )
+    ).all()
+    counts = {status: int(count) for status, count in rows}
+    total = sum(counts.values())
+    return {
+        "total": total,
+        "completed": counts.get("COMPLETED", 0),
+        "cancelled": counts.get("CANCELLED", 0),
+    }
+
+
 def _render_client_form(client: ClientUser | None, lang: str | None, csrf_input: str) -> str:
     return f"""
     <div class="card">
@@ -8911,9 +8955,168 @@ async def admin_clients_edit_form(
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
 
+    tags = parse_tags_json(client.tags_json)
+    bookings = (
+        await session.execute(
+            select(Booking)
+            .where(Booking.client_id == client_id, Booking.org_id == org_id)
+            .options(
+                selectinload(Booking.team),
+                selectinload(Booking.assigned_worker),
+                selectinload(Booking.worker_assignments).selectinload(BookingWorker.worker),
+            )
+            .order_by(Booking.starts_at.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    booking_stats = await _client_booking_stats(session, org_id=org_id, client_id=client_id)
+    last_booking = bookings[0].starts_at if bookings else None
+    notes = (
+        await session.execute(
+            select(ClientNote)
+            .where(ClientNote.client_id == client_id, ClientNote.org_id == org_id)
+            .order_by(ClientNote.created_at.desc())
+            .limit(10)
+        )
+    ).scalars().all()
+
     csrf_token = get_csrf_token(request)
-    content = _render_client_form(client, lang, render_csrf_input(csrf_token)) + _render_client_danger_zone(
-        client, lang, render_csrf_input(csrf_token)
+    csrf_input = render_csrf_input(csrf_token)
+    status_label = (
+        html.escape(tr(lang, "admin.clients.status_active"))
+        if client.is_active
+        else html.escape(tr(lang, "admin.clients.status_archived"))
+    )
+    blocked_label = (
+        html.escape(tr(lang, "admin.clients.status_blocked"))
+        if client.is_blocked
+        else html.escape(tr(lang, "admin.clients.status_unblocked"))
+    )
+    block_action = "unblock" if client.is_blocked else "block"
+    block_label = (
+        html.escape(tr(lang, "admin.clients.unblock"))
+        if client.is_blocked
+        else html.escape(tr(lang, "admin.clients.block"))
+    )
+    tags_input_value = html.escape(", ".join(tags))
+    bookings_rows = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(_format_dt(booking.starts_at))}</td>
+          <td>{html.escape(booking.status)}</td>
+          <td>{html.escape(str(booking.duration_minutes))}</td>
+          <td>{html.escape(_format_money(booking.base_charge_cents, settings.deposit_currency.upper())) if booking.base_charge_cents else "—"}</td>
+          <td>{html.escape(booking.team.name if booking.team else "—")}</td>
+          <td>{html.escape(_format_booking_workers(booking))}</td>
+          <td><a class="btn small" href="/v1/admin/ui/bookings/{html.escape(booking.booking_id)}/edit">{html.escape(tr(lang, "admin.clients.bookings_view"))}</a></td>
+        </tr>
+        """
+        for booking in bookings
+    )
+    bookings_table = (
+        f"""
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{html.escape(tr(lang, "admin.clients.bookings_date"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.bookings_status"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.bookings_duration"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.bookings_amount"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.bookings_team"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.bookings_workers"))}</th>
+              <th>{html.escape(tr(lang, "admin.clients.bookings_actions"))}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bookings_rows}
+          </tbody>
+        </table>
+        """
+        if bookings_rows
+        else f"<div class=\"muted\">{html.escape(tr(lang, 'admin.clients.bookings_none'))}</div>"
+    )
+    notes_list = "".join(
+        f"""
+        <div class="card" style="padding: var(--space-md);">
+          <div class="muted">{html.escape(_format_dt(note.created_at))}{' · ' + html.escape(note.created_by) if note.created_by else ''}</div>
+          <div>{html.escape(note.note_text)}</div>
+        </div>
+        """
+        for note in notes
+    )
+    notes_block = notes_list or f"<div class=\"muted\">{html.escape(tr(lang, 'admin.clients.notes_none'))}</div>"
+    overview_card = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title with-icon">{_icon('users')}{html.escape(tr(lang, "admin.clients.details_title"))}</div>
+          <div class="muted">{status_label} · {blocked_label}</div>
+        </div>
+        <div class="actions">
+          <a class="btn" href="/v1/admin/ui/bookings/new?client_id={html.escape(client.client_id)}">{html.escape(tr(lang, "admin.clients.create_booking"))}</a>
+          <form method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/{block_action}">
+            {csrf_input}
+            <button class="btn secondary" type="submit">{block_label}</button>
+          </form>
+          <a class="btn secondary" href="#client-notes">{html.escape(tr(lang, "admin.clients.notes_add"))}</a>
+        </div>
+      </div>
+      <div class="stack">
+        <div><strong>{html.escape(tr(lang, "admin.clients.name"))}:</strong> {html.escape(client.name or "—")}</div>
+        <div><strong>{html.escape(tr(lang, "admin.clients.phone"))}:</strong> {html.escape(client.phone or "—")}</div>
+        <div><strong>{html.escape(tr(lang, "admin.clients.email"))}:</strong> {html.escape(client.email or "—")}</div>
+        <div><strong>{html.escape(tr(lang, "admin.clients.registered_at"))}:</strong> {html.escape(_format_dt(client.created_at))}</div>
+        <div><strong>{html.escape(tr(lang, "admin.clients.last_booking"))}:</strong> {html.escape(_format_dt(last_booking))}</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.tags_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.tags_hint"))}</div>
+        </div>
+      </div>
+      {_format_client_tags(tags, lang)}
+      <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/tags/update">
+        <input class="input" type="text" name="tags" value="{tags_input_value}" />
+        {csrf_input}
+        <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.tags_save"))}</button>
+      </form>
+    </div>
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.bookings_title"))}</div>
+          <div class="muted">
+            {html.escape(tr(lang, "admin.clients.bookings_total"))}: {booking_stats["total"]}
+            · {html.escape(tr(lang, "admin.clients.bookings_completed"))}: {booking_stats["completed"]}
+            · {html.escape(tr(lang, "admin.clients.bookings_cancelled"))}: {booking_stats["cancelled"]}
+          </div>
+        </div>
+      </div>
+      {bookings_table}
+    </div>
+    <div class="card" id="client-notes">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.notes_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.notes_hint"))}</div>
+        </div>
+      </div>
+      <div class="stack">
+        {notes_block}
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/notes/create">
+        <textarea class="input" name="note_text" rows="3" placeholder="{html.escape(tr(lang, "admin.clients.notes_placeholder"))}"></textarea>
+        {csrf_input}
+        <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.notes_add"))}</button>
+      </form>
+    </div>
+    """
+    content = (
+        overview_card
+        + _render_client_form(client, lang, csrf_input)
+        + _render_client_danger_zone(client, lang, csrf_input)
     )
     response = HTMLResponse(
         _wrap_page(
@@ -8980,6 +9183,153 @@ async def admin_clients_update(
     )
     await session.commit()
     return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/tags/update", response_class=HTMLResponse)
+async def admin_clients_update_tags(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    form = await request.form()
+    tags = normalize_tags(form.get("tags"))
+    before = {"tags_json": client.tags_json}
+    client.tags_json = json.dumps(tags, ensure_ascii=False)
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UPDATE_CLIENT_TAGS",
+        resource_type="client",
+        resource_id=client_id,
+        before=before,
+        after={"tags_json": client.tags_json},
+    )
+    await session.commit()
+    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/notes/create", response_class=HTMLResponse)
+async def admin_clients_add_note(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    form = await request.form()
+    note_text = (form.get("note_text") or "").strip()
+    if not note_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Note text is required")
+
+    note = ClientNote(
+        org_id=org_id,
+        client_id=client_id,
+        note_text=note_text,
+        created_by=identity.username,
+    )
+    session.add(note)
+    await session.flush()
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="CREATE_CLIENT_NOTE",
+        resource_type="client_note",
+        resource_id=str(note.note_id),
+        before=None,
+        after={"client_id": client_id},
+    )
+    await session.commit()
+    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/block", response_class=HTMLResponse)
+async def admin_clients_block(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    before = {"is_blocked": client.is_blocked}
+    if not client.is_blocked:
+        client.is_blocked = True
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="BLOCK_CLIENT",
+        resource_type="client",
+        resource_id=client_id,
+        before=before,
+        after={"is_blocked": client.is_blocked},
+    )
+    await session.commit()
+    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/unblock", response_class=HTMLResponse)
+async def admin_clients_unblock(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    before = {"is_blocked": client.is_blocked}
+    if client.is_blocked:
+        client.is_blocked = False
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UNBLOCK_CLIENT",
+        resource_type="client",
+        resource_id=client_id,
+        before=before,
+        after={"is_blocked": client.is_blocked},
+    )
+    await session.commit()
+    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/v1/admin/ui/clients/{client_id}/archive", response_class=HTMLResponse)
@@ -9232,9 +9582,11 @@ def _render_booking_form(
     action: str,
     booking: Booking | None = None,
     selected_worker_ids: list[int] | None = None,
+    selected_client_id: str | None = None,
 ) -> str:
     selected_team_id = getattr(booking, "team_id", None)
-    selected_client_id = getattr(booking, "client_id", None)
+    if selected_client_id is None:
+        selected_client_id = getattr(booking, "client_id", None)
     selected_worker_ids = list(dict.fromkeys(selected_worker_ids or []))
     starts_at_value = ""
     if getattr(booking, "starts_at", None):
@@ -9637,6 +9989,7 @@ async def hard_delete_booking(session: AsyncSession, booking_id: uuid.UUID) -> N
 @router.get("/v1/admin/ui/bookings/new", response_class=HTMLResponse)
 async def admin_bookings_new_form(
     request: Request,
+    client_id: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
@@ -9676,6 +10029,7 @@ async def admin_bookings_new_form(
         lang,
         render_csrf_input(csrf_token),
         action="/v1/admin/ui/bookings/create",
+        selected_client_id=client_id,
     )
     response = HTMLResponse(_wrap_page(request, content, title="Admin — Create Booking", active="dispatch", page_lang=lang))
     issue_csrf_token(request, response, csrf_token)
