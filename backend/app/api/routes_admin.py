@@ -5154,6 +5154,21 @@ def _resolve_worker_filters(
     return status_value, availability_value, selected_skills
 
 
+def _normalize_skill_filters(skill: list[str] | None) -> list[str]:
+    return [entry.strip() for entry in (skill or []) if entry and entry.strip()]
+
+
+def _worker_skill_filters(skills: list[str]) -> list[sa.ColumnElement[bool]]:
+    filters: list[sa.ColumnElement[bool]] = []
+    for skill in skills:
+        normalized = skill.strip().lower()
+        if not normalized:
+            continue
+        pattern = f'%"{normalized}"%'
+        filters.append(func.lower(sa.cast(Worker.skills, sa.String)).like(pattern))
+    return filters
+
+
 def _build_workers_export_query(
     *,
     q: str | None,
@@ -5407,6 +5422,7 @@ async def _list_workers(
     rating_min: float | None,
     rating_max: float | None,
     skills: list[str],
+    worker_ids: list[int] | None = None,
 ) -> list[Worker]:
     filters = [Worker.org_id == org_id]
     if status == "archived":
@@ -5432,12 +5448,9 @@ async def _list_workers(
         filters.append(Worker.rating_avg >= rating_min)
     if rating_max is not None:
         filters.append(Worker.rating_avg <= rating_max)
-    for skill in skills:
-        normalized = skill.strip().lower()
-        if not normalized:
-            continue
-        pattern = f'%"{normalized}"%'
-        filters.append(func.lower(sa.cast(Worker.skills, sa.String)).like(pattern))
+    filters.extend(_worker_skill_filters(skills))
+    if worker_ids:
+        filters.append(Worker.worker_id.in_(worker_ids))
     stmt = select(Worker).where(*filters).options(selectinload(Worker.team)).order_by(Worker.created_at.desc())
     result = await session.execute(stmt)
     return result.scalars().all()
@@ -5489,6 +5502,427 @@ async def _worker_busy_until_map(
     return busy_until_map
 
 
+_DASHBOARD_DATE_RANGES = {"last7": 7, "last30": 30}
+_DASHBOARD_NEWBIE_DAYS = 14
+_DASHBOARD_NEWBIE_COMPLETED_MAX = 1
+_DASHBOARD_CANCELLATION_RATE_THRESHOLD = 0.3
+_DASHBOARD_CANCELLATION_COUNT_THRESHOLD = 2
+_DASHBOARD_CANCELLATION_MIN_TOTAL = 3
+
+
+def _resolve_dashboard_range(preset: str | None) -> tuple[str, timedelta]:
+    if preset not in _DASHBOARD_DATE_RANGES:
+        preset = "last7"
+    return preset, timedelta(days=_DASHBOARD_DATE_RANGES[preset])
+
+
+def _booking_worker_assignments_subquery() -> sa.Subquery:
+    assigned_stmt = select(
+        Booking.booking_id.label("booking_id"),
+        Booking.assigned_worker_id.label("worker_id"),
+    ).where(Booking.assigned_worker_id.is_not(None))
+    crew_stmt = select(
+        BookingWorker.booking_id.label("booking_id"),
+        BookingWorker.worker_id.label("worker_id"),
+    )
+    assignment_union = assigned_stmt.union_all(crew_stmt).subquery()
+    return (
+        select(assignment_union.c.booking_id, assignment_union.c.worker_id)
+        .distinct()
+        .subquery()
+    )
+
+
+def _workers_list_url(*, worker_ids: list[int], skills: list[str]) -> str:
+    params: dict[str, list[str] | list[int]] = {}
+    if worker_ids:
+        params["worker_id"] = worker_ids
+    if skills:
+        params["skill"] = skills
+    query = urlencode(params, doseq=True)
+    if not query:
+        return "/v1/admin/ui/workers"
+    return f"/v1/admin/ui/workers?{query}"
+
+
+def _render_worker_table(
+    *,
+    headers: list[str],
+    rows: list[str],
+    empty_label: str,
+) -> str:
+    if not rows:
+        rows = [f"<tr><td colspan=\"{len(headers)}\" class=\"muted\">{html.escape(empty_label)}</td></tr>"]
+    header_html = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+    return f"""
+    <table class="table">
+      <thead><tr>{header_html}</tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
+    """
+
+
+@router.get("/v1/admin/ui/workers/dashboard", response_class=HTMLResponse)
+async def admin_workers_dashboard(
+    request: Request,
+    skill: list[str] | None = Query(default=None),
+    date_range: str | None = Query(default=None, alias="date_range"),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = _resolve_admin_org(request, identity)
+    selected_skills = _normalize_skill_filters(skill)
+    range_value, range_delta = _resolve_dashboard_range(date_range)
+    now = datetime.now(timezone.utc)
+    range_start = now - range_delta
+    assignment_subquery = _booking_worker_assignments_subquery()
+
+    worker_skill_filters = _worker_skill_filters(selected_skills)
+    base_worker_filters = [
+        Worker.org_id == org_id,
+        Worker.archived_at.is_(None),
+        *worker_skill_filters,
+    ]
+
+    skill_rows = (
+        await session.execute(select(Worker.skills).where(Worker.org_id == org_id))
+    ).scalars().all()
+    all_skills = sorted(
+        {
+            skill_entry
+            for skill_list in skill_rows
+            if skill_list
+            for skill_entry in skill_list
+            if isinstance(skill_entry, str) and skill_entry
+        }
+    )
+    skill_options = sorted(set(all_skills).union(selected_skills))
+    skill_filter_options = "".join(
+        f'<option value="{html.escape(skill_option)}" {"selected" if skill_option in selected_skills else ""}>{html.escape(skill_option)}</option>'
+        for skill_option in skill_options
+    )
+
+    top_rated_stmt = (
+        select(Worker)
+        .where(*base_worker_filters, Worker.rating_avg.is_not(None))
+        .order_by(sa.desc(Worker.rating_avg).nullslast(), sa.desc(Worker.rating_count))
+        .limit(5)
+    )
+    top_rated = (await session.execute(top_rated_stmt)).scalars().all()
+
+    busiest_stmt = (
+        select(
+            Worker.worker_id,
+            Worker.name,
+            func.coalesce(func.sum(Booking.duration_minutes), 0).label("minutes"),
+            func.count(sa.distinct(Booking.booking_id)).label("booking_count"),
+        )
+        .select_from(assignment_subquery)
+        .join(Booking, Booking.booking_id == assignment_subquery.c.booking_id)
+        .join(Worker, Worker.worker_id == assignment_subquery.c.worker_id)
+        .where(
+            Booking.org_id == org_id,
+            Booking.starts_at >= range_start,
+            Booking.starts_at <= now,
+            Booking.status.in_({"CONFIRMED", "DONE"}),
+            Worker.archived_at.is_(None),
+            *worker_skill_filters,
+        )
+        .group_by(Worker.worker_id)
+        .order_by(sa.desc("minutes"))
+        .limit(5)
+    )
+    busiest_rows = (await session.execute(busiest_stmt)).all()
+
+    completed_count_expr = func.coalesce(
+        func.sum(sa.case((Booking.status == "DONE", 1), else_=0)),
+        0,
+    )
+    newbie_cutoff = now - timedelta(days=_DASHBOARD_NEWBIE_DAYS)
+    newbie_stmt = (
+        select(
+            Worker.worker_id,
+            Worker.name,
+            Worker.created_at,
+            completed_count_expr.label("completed_count"),
+        )
+        .select_from(Worker)
+        .outerjoin(assignment_subquery, assignment_subquery.c.worker_id == Worker.worker_id)
+        .outerjoin(
+            Booking,
+            sa.and_(
+                Booking.booking_id == assignment_subquery.c.booking_id,
+                Booking.org_id == org_id,
+            ),
+        )
+        .where(*base_worker_filters, Worker.created_at >= newbie_cutoff)
+        .group_by(Worker.worker_id)
+        .having(completed_count_expr <= _DASHBOARD_NEWBIE_COMPLETED_MAX)
+        .order_by(Worker.created_at.desc())
+        .limit(5)
+    )
+    newbie_rows = (await session.execute(newbie_stmt)).all()
+
+    total_count_expr = func.coalesce(
+        func.sum(
+            sa.case((Booking.status.in_({"DONE", "CANCELLED", "CONFIRMED"}), 1), else_=0)
+        ),
+        0,
+    )
+    cancellation_count_expr = func.coalesce(
+        func.sum(sa.case((Booking.status == "CANCELLED", 1), else_=0)),
+        0,
+    )
+    cancellation_rate_expr = cancellation_count_expr / func.nullif(total_count_expr, 0)
+    problematic_stmt = (
+        select(
+            Worker.worker_id,
+            Worker.name,
+            cancellation_count_expr.label("cancellations"),
+            total_count_expr.label("total"),
+            cancellation_rate_expr.label("rate"),
+        )
+        .select_from(Worker)
+        .outerjoin(assignment_subquery, assignment_subquery.c.worker_id == Worker.worker_id)
+        .outerjoin(
+            Booking,
+            sa.and_(
+                Booking.booking_id == assignment_subquery.c.booking_id,
+                Booking.org_id == org_id,
+                Booking.starts_at >= range_start,
+                Booking.starts_at <= now,
+            ),
+        )
+        .where(*base_worker_filters)
+        .group_by(Worker.worker_id)
+        .having(
+            or_(
+                cancellation_count_expr >= _DASHBOARD_CANCELLATION_COUNT_THRESHOLD,
+                sa.and_(
+                    total_count_expr >= _DASHBOARD_CANCELLATION_MIN_TOTAL,
+                    cancellation_rate_expr >= _DASHBOARD_CANCELLATION_RATE_THRESHOLD,
+                ),
+            )
+        )
+        .order_by(sa.desc(cancellation_count_expr), sa.desc(cancellation_rate_expr))
+        .limit(5)
+    )
+    problematic_rows = (await session.execute(problematic_stmt)).all()
+
+    revenue_stmt = (
+        select(
+            Worker.worker_id,
+            Worker.name,
+            func.coalesce(func.sum(Booking.base_charge_cents), 0).label("revenue_cents"),
+            func.count(sa.distinct(Booking.booking_id)).label("booking_count"),
+        )
+        .select_from(assignment_subquery)
+        .join(Booking, Booking.booking_id == assignment_subquery.c.booking_id)
+        .join(Worker, Worker.worker_id == assignment_subquery.c.worker_id)
+        .where(
+            Booking.org_id == org_id,
+            Booking.starts_at >= range_start,
+            Booking.starts_at <= now,
+            Booking.status == "DONE",
+            Worker.archived_at.is_(None),
+            *worker_skill_filters,
+        )
+        .group_by(Worker.worker_id)
+        .order_by(sa.desc("revenue_cents"))
+        .limit(5)
+    )
+    revenue_rows = (await session.execute(revenue_stmt)).all()
+
+    top_rated_table_rows = [
+        """
+        <tr>
+          <td><a href="/v1/admin/ui/workers/{worker_id}">{name}</a></td>
+          <td>{rating}</td>
+          <td>{skills}</td>
+        </tr>
+        """.format(
+            worker_id=worker.worker_id,
+            name=html.escape(worker.name),
+            rating=html.escape(f"{worker.rating_avg:.1f} ({worker.rating_count})"),
+            skills=html.escape(", ".join(worker.skills or []) or "-"),
+        )
+        for worker in top_rated
+    ]
+
+    busiest_table_rows = [
+        """
+        <tr>
+          <td><a href="/v1/admin/ui/workers/{worker_id}">{name}</a></td>
+          <td>{minutes}</td>
+          <td>{count}</td>
+        </tr>
+        """.format(
+            worker_id=row.worker_id,
+            name=html.escape(row.name),
+            minutes=html.escape(str(row.minutes)),
+            count=html.escape(str(row.booking_count)),
+        )
+        for row in busiest_rows
+    ]
+
+    newbie_table_rows = [
+        """
+        <tr>
+          <td><a href="/v1/admin/ui/workers/{worker_id}">{name}</a></td>
+          <td>{created_at}</td>
+          <td>{completed}</td>
+        </tr>
+        """.format(
+            worker_id=row.worker_id,
+            name=html.escape(row.name),
+            created_at=html.escape(_format_dt(row.created_at)),
+            completed=html.escape(str(row.completed_count)),
+        )
+        for row in newbie_rows
+    ]
+
+    problematic_table_rows = [
+        """
+        <tr>
+          <td><a href="/v1/admin/ui/workers/{worker_id}">{name}</a></td>
+          <td>{cancellations}</td>
+          <td>{total}</td>
+          <td>{rate}</td>
+        </tr>
+        """.format(
+            worker_id=row.worker_id,
+            name=html.escape(row.name),
+            cancellations=html.escape(str(row.cancellations)),
+            total=html.escape(str(row.total)),
+            rate=html.escape("-" if row.rate is None else f"{row.rate:.0%}"),
+        )
+        for row in problematic_rows
+    ]
+
+    revenue_table_rows = [
+        """
+        <tr>
+          <td><a href="/v1/admin/ui/workers/{worker_id}">{name}</a></td>
+          <td class="align-right">{revenue}</td>
+          <td>{count}</td>
+        </tr>
+        """.format(
+            worker_id=row.worker_id,
+            name=html.escape(row.name),
+            revenue=html.escape(_format_money(row.revenue_cents, settings.deposit_currency.upper())),
+            count=html.escape(str(row.booking_count)),
+        )
+        for row in revenue_rows
+    ]
+
+    content = "".join(
+        [
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div>",
+            "<div class=\"title with-icon\">",
+            _icon("users"),
+            "Workers dashboard</div>",
+            "<div class=\"muted\">Operational segments for staffing, quality, and revenue.</div>",
+            "</div>",
+            "<div class=\"actions\">",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers\">All workers</a>",
+            "</div>",
+            "</div>",
+            "<form class=\"filters\" method=\"get\">",
+            "<div class=\"form-group\"><label>Skills</label>",
+            f"<select class=\"input\" name=\"skill\" multiple size=\"3\">{skill_filter_options}</select></div>",
+            "<div class=\"form-group\"><label>Date range</label>",
+            "<select class=\"input\" name=\"date_range\">"
+            f"<option value=\"last7\" {'selected' if range_value == 'last7' else ''}>Last 7 days</option>"
+            f"<option value=\"last30\" {'selected' if range_value == 'last30' else ''}>Last 30 days</option>"
+            "</select></div>",
+            "<div class=\"form-group\"><label>&nbsp;</label><div class=\"actions\">",
+            "<button class=\"btn\" type=\"submit\">Apply</button>",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/dashboard\">Reset</a>",
+            "</div></div>",
+            "</form>",
+            "</div>",
+            "<div class=\"section\">",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            "<div class=\"title\">Top rated</div>",
+            "<div class=\"actions\">",
+            f"<a class=\"btn secondary small\" href=\"{html.escape(_workers_list_url(worker_ids=[worker.worker_id for worker in top_rated], skills=selected_skills))}\">View list</a>",
+            "</div>",
+            "</div>",
+            _render_worker_table(
+                headers=["Worker", "Rating", "Skills"],
+                rows=top_rated_table_rows,
+                empty_label="No rated workers found.",
+            ),
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            f"<div class=\"title\">Busiest ({'Last 7 days' if range_value == 'last7' else 'Last 30 days'})</div>",
+            "<div class=\"actions\">",
+            f"<a class=\"btn secondary small\" href=\"{html.escape(_workers_list_url(worker_ids=[row.worker_id for row in busiest_rows], skills=selected_skills))}\">View list</a>",
+            "</div>",
+            "</div>",
+            _render_worker_table(
+                headers=["Worker", "Minutes booked", "Bookings"],
+                rows=busiest_table_rows,
+                empty_label="No bookings in range.",
+            ),
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            f"<div class=\"title\">New workers needing attention (last {_DASHBOARD_NEWBIE_DAYS} days)</div>",
+            "<div class=\"actions\">",
+            f"<a class=\"btn secondary small\" href=\"{html.escape(_workers_list_url(worker_ids=[row.worker_id for row in newbie_rows], skills=selected_skills))}\">View list</a>",
+            "</div>",
+            "</div>",
+            _render_worker_table(
+                headers=["Worker", "Created", "Completed jobs"],
+                rows=newbie_table_rows,
+                empty_label="No new workers need attention.",
+            ),
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            f"<div class=\"title\">Problematic (last {range_delta.days} days)</div>",
+            "<div class=\"actions\">",
+            f"<a class=\"btn secondary small\" href=\"{html.escape(_workers_list_url(worker_ids=[row.worker_id for row in problematic_rows], skills=selected_skills))}\">View list</a>",
+            "</div>",
+            "</div>",
+            _render_worker_table(
+                headers=["Worker", "Cancellations", "Total", "Rate"],
+                rows=problematic_table_rows,
+                empty_label="No problematic workers in range.",
+            ),
+            "</div>",
+            "<div class=\"card\">",
+            "<div class=\"card-row\">",
+            f"<div class=\"title\">Top revenue (last {range_delta.days} days)</div>",
+            "<div class=\"actions\">",
+            f"<a class=\"btn secondary small\" href=\"{html.escape(_workers_list_url(worker_ids=[row.worker_id for row in revenue_rows], skills=selected_skills))}\">View list</a>",
+            "</div>",
+            "</div>",
+            _render_worker_table(
+                headers=["Worker", "Revenue", "Bookings"],
+                rows=revenue_table_rows,
+                empty_label="No revenue in range.",
+            ),
+            "</div>",
+            "</div>",
+        ]
+    )
+    return HTMLResponse(
+        _wrap_page(
+            request,
+            content,
+            title="Workers dashboard",
+            active="workers",
+        )
+    )
+
+
 @router.get("/v1/admin/ui/workers", response_class=HTMLResponse)
 async def admin_workers_list(
     request: Request,
@@ -5501,6 +5935,7 @@ async def admin_workers_list(
     rating_max: float | None = Query(default=None),
     availability: str | None = Query(default=None),
     skill: list[str] | None = Query(default=None),
+    worker_id: list[int] | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
@@ -5522,6 +5957,7 @@ async def admin_workers_list(
         rating_min=rating_min,
         rating_max=rating_max,
         skills=selected_skills,
+        worker_ids=worker_id,
     )
     busy_until_map = await _worker_busy_until_map(
         session,
@@ -5664,6 +6100,7 @@ async def admin_workers_list(
             f"<div><div class=\"title with-icon\">{_icon('users')}{html.escape(tr(lang, 'admin.workers.title'))}</div>",
             f"<div class=\"muted\">{html.escape(tr(lang, 'admin.workers.subtitle'))}</div></div>",
             "<div class=\"actions\">",
+            "<a class=\"btn secondary\" href=\"/v1/admin/ui/workers/dashboard\">Dashboard</a>",
             f"<a class=\"btn\" href=\"/v1/admin/ui/workers/new\">{_icon('plus')}{html.escape(tr(lang, 'admin.workers.create'))}</a>",
             "</div></div>",
             "<form class=\"filters\" method=\"get\">",
