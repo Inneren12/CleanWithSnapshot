@@ -9583,6 +9583,9 @@ def _render_booking_form(
     booking: Booking | None = None,
     selected_worker_ids: list[int] | None = None,
     selected_client_id: str | None = None,
+    address_value: str | None = None,
+    banner_message: str | None = None,
+    banner_is_error: bool = False,
 ) -> str:
     selected_team_id = getattr(booking, "team_id", None)
     if selected_client_id is None:
@@ -9617,7 +9620,20 @@ def _render_booking_form(
         for worker in workers
     )
 
+    banner_block = ""
+    if banner_message:
+        banner_color = "#b91c1c" if banner_is_error else "#1d4ed8"
+        banner_background = "#fef2f2" if banner_is_error else "#eff6ff"
+        banner_border = "#fecaca" if banner_is_error else "#bfdbfe"
+        banner_block = f"""
+      <div class="card" style="border-color:{banner_border};background:{banner_background};color:{banner_color};">
+        <strong>{html.escape(banner_message)}</strong>
+      </div>
+        """
+    address_value = address_value or ""
+
     return f"""
+    {banner_block}
     <div class="card">
       <div class="card-row">
         <div>
@@ -9634,6 +9650,10 @@ def _render_booking_form(
           <label>{html.escape(tr(lang, 'admin.bookings.client'))}</label>
           <select class="input" name="client_id" required>{client_options}</select>
           <div class="muted">{html.escape(tr(lang, 'admin.bookings.select_client'))}</div>
+        </div>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, 'admin.bookings.address'))}</label>
+          <input class="input" type="text" name="address" value="{html.escape(address_value)}" />
         </div>
         <div class="form-group">
           <label>{html.escape(tr(lang, 'admin.bookings.worker'))} (crew)</label>
@@ -10021,6 +10041,29 @@ async def admin_bookings_new_form(
         )
     ).scalars().all()
 
+    prefill_client_id = None
+    prefill_address = ""
+    banner_message = None
+    banner_is_error = False
+    if client_id:
+        client = (
+            await session.execute(
+                select(ClientUser).where(
+                    ClientUser.client_id == client_id,
+                    ClientUser.org_id == org_id,
+                    ClientUser.is_active.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if client is None:
+            banner_message = "Selected client not found. Please choose a client."
+            banner_is_error = True
+        else:
+            prefill_client_id = client.client_id
+            prefill_address = client.address or ""
+            client_label = client.name or client.email or "client"
+            banner_message = f"Creating booking for {client_label}"
+
     csrf_token = get_csrf_token(request)
     content = _render_booking_form(
         teams,
@@ -10029,7 +10072,10 @@ async def admin_bookings_new_form(
         lang,
         render_csrf_input(csrf_token),
         action="/v1/admin/ui/bookings/create",
-        selected_client_id=client_id,
+        selected_client_id=prefill_client_id,
+        address_value=prefill_address,
+        banner_message=banner_message,
+        banner_is_error=banner_is_error,
     )
     response = HTMLResponse(_wrap_page(request, content, title="Admin — Create Booking", active="dispatch", page_lang=lang))
     issue_csrf_token(request, response, csrf_token)
@@ -10204,6 +10250,13 @@ async def admin_bookings_edit_form(
     if booking.assigned_worker_id and booking.assigned_worker_id not in assigned_worker_ids:
         assigned_worker_ids = [booking.assigned_worker_id, *assigned_worker_ids]
 
+    selected_address = ""
+    if booking.client_id:
+        for client in clients:
+            if client.client_id == booking.client_id:
+                selected_address = client.address or ""
+                break
+
     csrf_token = get_csrf_token(request)
     form_html = _render_booking_form(
         teams,
@@ -10214,6 +10267,7 @@ async def admin_bookings_edit_form(
         action=f"/v1/admin/ui/bookings/{booking_id}/update",
         booking=booking,
         selected_worker_ids=assigned_worker_ids,
+        address_value=selected_address,
     )
     archive_action = "unarchive" if booking.archived_at else "archive"
     archive_label = "Unarchive Booking" if booking.archived_at else "Archive Booking"
