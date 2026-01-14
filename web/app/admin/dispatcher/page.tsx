@@ -111,6 +111,27 @@ type RouteEstimateResponse = {
   cached: boolean;
 };
 
+type DispatcherSuggestionScoreParts = {
+  availability: number;
+  distance: number;
+  skill: number;
+  rating: number;
+  workload: number;
+};
+
+type DispatcherAssignmentSuggestion = {
+  worker_id: number;
+  display_name: string | null;
+  score_total: number;
+  score_parts: DispatcherSuggestionScoreParts;
+  eta_min: number | null;
+  reasons: string[];
+};
+
+type DispatcherAssignmentSuggestionsResponse = {
+  suggestions: DispatcherAssignmentSuggestion[];
+};
+
 const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, index) => START_HOUR + index);
 const RANGE_START_MINUTES = START_HOUR * 60;
 const RANGE_END_MINUTES = END_HOUR * 60;
@@ -296,6 +317,9 @@ export default function DispatcherPage() {
   const [reassignRouteEstimate, setReassignRouteEstimate] = useState<RouteEstimateResponse | null>(null);
   const [reassignRouteError, setReassignRouteError] = useState<string | null>(null);
   const [reassignRoutePending, setReassignRoutePending] = useState(false);
+  const [suggestions, setSuggestions] = useState<DispatcherAssignmentSuggestion[]>([]);
+  const [suggestionsPending, setSuggestionsPending] = useState(false);
+  const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
   const [draggingBookingId, setDraggingBookingId] = useState<string | null>(null);
   const [dragOverWorkerId, setDragOverWorkerId] = useState<number | null>(null);
   const [selectedZone, setSelectedZone] = useState<string>("All");
@@ -342,6 +366,12 @@ export default function DispatcherPage() {
     setCommTarget("client");
     setCommChannel("sms");
     setCommTemplateId(DISPATCHER_TEMPLATES[1]?.id ?? "");
+  }, [selectedBooking]);
+
+  useEffect(() => {
+    setSuggestions([]);
+    setSuggestionsError(null);
+    setSuggestionsPending(false);
   }, [selectedBooking]);
 
   const fetchBoard = useCallback(async () => {
@@ -660,6 +690,34 @@ export default function DispatcherPage() {
     },
     [authHeaders]
   );
+
+  const fetchSuggestions = useCallback(async () => {
+    if (!selectedBooking || !isAuthenticated) return;
+    setSuggestionsPending(true);
+    setSuggestionsError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE}/v1/admin/dispatcher/assign/suggest?booking_id=${encodeURIComponent(
+          selectedBooking.booking_id
+        )}&limit=5`,
+        {
+          headers: authHeaders,
+        }
+      );
+      const payload = await response.json();
+      if (!response.ok) {
+        const message =
+          typeof payload?.detail === "string" ? payload.detail : `Request failed (${response.status})`;
+        throw new Error(message);
+      }
+      setSuggestions((payload as DispatcherAssignmentSuggestionsResponse).suggestions ?? []);
+    } catch (requestError) {
+      setSuggestions([]);
+      setSuggestionsError(requestError instanceof Error ? requestError.message : "Unable to load suggestions");
+    } finally {
+      setSuggestionsPending(false);
+    }
+  }, [authHeaders, isAuthenticated, selectedBooking]);
 
   useEffect(() => {
     if (!selectedBooking || !isAuthenticated) {
@@ -1647,6 +1705,63 @@ export default function DispatcherPage() {
                       Reassign
                     </button>
                   </div>
+                </div>
+                <div className="dispatcher-action-group">
+                  <span className="detail-label">Smart Assignment</span>
+                  <div className="dispatcher-action-row dispatcher-smart-actions">
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={() => void fetchSuggestions()}
+                      disabled={!isAuthenticated || selectedPending || suggestionsPending}
+                    >
+                      {suggestionsPending ? "Suggesting..." : "Suggest"}
+                    </button>
+                    {suggestionsError ? <span className="muted">{suggestionsError}</span> : null}
+                  </div>
+                  {suggestions.length ? (
+                    <ul className="dispatcher-smart-list">
+                      {suggestions.map((suggestion) => {
+                        const isAssigned = suggestion.worker_id === selectedBooking.assigned_worker?.id;
+                        return (
+                          <li key={suggestion.worker_id} className="dispatcher-smart-card">
+                            <div className="dispatcher-smart-main">
+                              <div>
+                                <strong>{suggestion.display_name ?? `Worker ${suggestion.worker_id}`}</strong>
+                                <div className="dispatcher-smart-meta">
+                                  <span className="muted">
+                                    {suggestion.eta_min != null
+                                      ? `ETA ${formatDurationMinutes(suggestion.eta_min)}`
+                                      : "ETA unknown"}
+                                  </span>
+                                  <span className="dispatcher-smart-score">
+                                    Score {suggestion.score_total.toFixed(2)}
+                                  </span>
+                                </div>
+                                <div className="dispatcher-smart-reasons">
+                                  {suggestion.reasons.map((reason) => (
+                                    <span key={reason} className="dispatcher-smart-reason">
+                                      {reason}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                              <button
+                                className="btn"
+                                type="button"
+                                disabled={!isAuthenticated || selectedPending || isAssigned}
+                                onClick={() => void handleReassign(selectedBooking.booking_id, suggestion.worker_id)}
+                              >
+                                {isAssigned ? "Assigned" : "Assign"}
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="muted">Select suggest to see top available workers.</p>
+                  )}
                 </div>
                 <div className="dispatcher-action-group">
                   <span className="detail-label">Reschedule</span>

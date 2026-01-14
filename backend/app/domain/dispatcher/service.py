@@ -10,12 +10,16 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Booking
+from app.domain.bookings.service import BLOCKING_STATUSES
 from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.dispatcher.db_models import DispatcherCommunicationAudit
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.dispatcher import schemas
+from app.domain.dispatcher import route_estimates
+from app.domain.leads.db_models import Lead
 from app.domain.notifications.email_service import LOCAL_TZ
+from app.domain.ops import service as ops_service
 from app.domain.workers.db_models import Worker
 from app.infra.communication import CommunicationResult, NoopCommunicationAdapter, TwilioCommunicationAdapter
 
@@ -45,6 +49,11 @@ class DispatcherStatsResult:
 
 
 @dataclass(frozen=True)
+class DispatcherAssignmentSuggestionsResult:
+    suggestions: list[schemas.DispatcherAssignmentSuggestion]
+
+
+@dataclass(frozen=True)
 class _ZoneBox:
     name: str
     lat_min: float
@@ -69,6 +78,15 @@ _ZONE_ALIASES = {
     "old strathcona": "whyte/old strathcona",
     "st albert": "st. albert",
 }
+
+SUGGEST_DISTANCE_WEIGHT = 0.45
+SUGGEST_SKILL_WEIGHT = 0.2
+SUGGEST_RATING_WEIGHT = 0.2
+SUGGEST_WORKLOAD_WEIGHT = 0.15
+SUGGEST_DISTANCE_MAX_MIN = 60
+SUGGEST_CLOSEST_THRESHOLD_MIN = 20
+SUGGEST_HIGH_RATING_THRESHOLD = 0.8
+SUGGEST_LIGHT_WORKLOAD_THRESHOLD = 0.7
 
 
 def resolve_zone(zone: str | None) -> _ZoneBox | None:
@@ -160,6 +178,17 @@ def _cancellation_timestamp(booking: Booking) -> datetime | None:
     if booking.updated_at:
         return _ensure_aware(booking.updated_at)
     return None
+
+
+def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _normalize_skill_value(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = value.strip().lower()
+    return cleaned or None
 
 
 def _make_alert(
@@ -394,6 +423,195 @@ async def fetch_dispatcher_stats(
         avg_duration_hours=avg_hours,
         revenue_today_cents=revenue_cents,
     )
+
+
+async def fetch_dispatcher_assignment_suggestions(
+    session: AsyncSession,
+    *,
+    org_id,
+    booking_id: str,
+    limit: int = 5,
+) -> DispatcherAssignmentSuggestionsResult:
+    stmt = (
+        select(Booking, ClientAddress, Lead)
+        .select_from(Booking)
+        .join(ClientAddress, ClientAddress.address_id == Booking.address_id, isouter=True)
+        .join(Lead, Lead.lead_id == Booking.lead_id, isouter=True)
+        .where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+    )
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        raise LookupError("booking_not_found")
+    booking, address, lead = row
+
+    starts_at = _ensure_aware(booking.starts_at)
+    ends_at = _booking_end(booking)
+    target_lat = getattr(address, "lat", None)
+    target_lng = getattr(address, "lng", None)
+    service_type = None
+    if lead and getattr(lead, "structured_inputs", None):
+        service_type = _normalize_skill_value((lead.structured_inputs or {}).get("cleaning_type"))
+
+    workers_stmt = select(Worker).where(
+        Worker.org_id == org_id,
+        Worker.team_id == booking.team_id,
+        Worker.is_active.is_(True),
+        Worker.archived_at.is_(None),
+    )
+    workers = (await session.execute(workers_stmt)).scalars().all()
+    if not workers:
+        return DispatcherAssignmentSuggestionsResult(suggestions=[])
+
+    worker_ids = [worker.worker_id for worker in workers]
+    day_start = datetime.combine(starts_at.date(), datetime.min.time(), tzinfo=starts_at.tzinfo)
+    day_end = day_start + timedelta(days=1)
+    workload_stmt = (
+        select(Booking.assigned_worker_id, func.count(Booking.booking_id).label("count"))
+        .where(
+            Booking.assigned_worker_id.in_(worker_ids),
+            Booking.org_id == org_id,
+            Booking.starts_at >= day_start,
+            Booking.starts_at < day_end,
+            Booking.status.in_(BLOCKING_STATUSES),
+        )
+        .group_by(Booking.assigned_worker_id)
+    )
+    workload_counts = {
+        row.assigned_worker_id: int(row.count or 0)
+        for row in (await session.execute(workload_stmt)).all()
+        if row.assigned_worker_id is not None
+    }
+    max_workload = max(workload_counts.values(), default=0)
+
+    origin_stmt = (
+        select(
+            Booking.assigned_worker_id.label("worker_id"),
+            ClientAddress.lat.label("lat"),
+            ClientAddress.lng.label("lng"),
+            func.row_number()
+            .over(
+                partition_by=Booking.assigned_worker_id,
+                order_by=Booking.starts_at.desc(),
+            )
+            .label("rn"),
+        )
+        .select_from(Booking)
+        .join(ClientAddress, ClientAddress.address_id == Booking.address_id, isouter=True)
+        .where(
+            Booking.org_id == org_id,
+            Booking.assigned_worker_id.in_(worker_ids),
+            Booking.starts_at < starts_at,
+            Booking.archived_at.is_(None),
+        )
+        .subquery()
+    )
+    origin_rows = await session.execute(
+        select(origin_stmt.c.worker_id, origin_stmt.c.lat, origin_stmt.c.lng).where(
+            origin_stmt.c.rn == 1
+        )
+    )
+    origins = {row.worker_id: (row.lat, row.lng) for row in origin_rows if row.worker_id}
+
+    suggestions: list[schemas.DispatcherAssignmentSuggestion] = []
+
+    for worker in workers:
+        conflicts = await ops_service.check_schedule_conflicts(
+            session,
+            org_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            team_id=booking.team_id,
+            booking_id=booking.booking_id,
+            worker_id=worker.worker_id,
+        )
+        blocking_conflict = any(
+            conflict.get("kind") in {"worker_booking", "blackout"} for conflict in conflicts
+        )
+        if blocking_conflict:
+            continue
+
+        eta_min = None
+        if target_lat is not None and target_lng is not None:
+            origin = origins.get(worker.worker_id)
+            if origin and origin[0] is not None and origin[1] is not None:
+                estimate, _cached = await route_estimates.estimate_route(
+                    origin_lat=origin[0],
+                    origin_lng=origin[1],
+                    dest_lat=target_lat,
+                    dest_lng=target_lng,
+                    depart_at=starts_at,
+                    mode="driving",
+                )
+                eta_min = estimate.duration_in_traffic_min or estimate.duration_min
+
+        if eta_min is None:
+            distance_score = 0.5
+        else:
+            distance_score = _clamp(1 - min(eta_min, SUGGEST_DISTANCE_MAX_MIN) / SUGGEST_DISTANCE_MAX_MIN)
+
+        worker_skills = [
+            normalized
+            for normalized in (_normalize_skill_value(skill) for skill in (worker.skills or []))
+            if normalized
+        ]
+        skill_score = 0.0
+        if service_type and worker_skills:
+            skill_score = 1.0 if service_type in worker_skills else 0.0
+
+        rating_avg = worker.rating_avg or 0.0
+        rating_score = _clamp((rating_avg - 1) / 4) if rating_avg else 0.0
+
+        workload_count = workload_counts.get(worker.worker_id, 0)
+        workload_score = (
+            _clamp(1 - (workload_count / max_workload)) if max_workload > 0 else 1.0
+        )
+
+        score_total = (
+            distance_score * SUGGEST_DISTANCE_WEIGHT
+            + skill_score * SUGGEST_SKILL_WEIGHT
+            + rating_score * SUGGEST_RATING_WEIGHT
+            + workload_score * SUGGEST_WORKLOAD_WEIGHT
+        )
+
+        reasons = ["available"]
+        if eta_min is None:
+            reasons.append("location unknown")
+        elif eta_min <= SUGGEST_CLOSEST_THRESHOLD_MIN:
+            reasons.append("closest")
+        if skill_score >= 1.0:
+            reasons.append("skill match")
+        if rating_score >= SUGGEST_HIGH_RATING_THRESHOLD:
+            reasons.append("high rating")
+        if workload_score >= SUGGEST_LIGHT_WORKLOAD_THRESHOLD and max_workload > 0:
+            reasons.append("light workload")
+
+        suggestions.append(
+            schemas.DispatcherAssignmentSuggestion(
+                worker_id=worker.worker_id,
+                display_name=worker.name,
+                score_total=round(score_total, 4),
+                score_parts=schemas.DispatcherSuggestionScoreParts(
+                    availability=1.0,
+                    distance=round(distance_score, 4),
+                    skill=round(skill_score, 4),
+                    rating=round(rating_score, 4),
+                    workload=round(workload_score, 4),
+                ),
+                eta_min=eta_min,
+                reasons=reasons,
+            )
+        )
+
+    suggestions.sort(
+        key=lambda item: (
+            -item.score_total,
+            item.eta_min if item.eta_min is not None else 10**9,
+            -item.score_parts.rating,
+            item.worker_id,
+        )
+    )
+
+    return DispatcherAssignmentSuggestionsResult(suggestions=suggestions[:limit])
 
 
 _DISPATCHER_TEMPLATES: dict[str, dict[str, str]] = {

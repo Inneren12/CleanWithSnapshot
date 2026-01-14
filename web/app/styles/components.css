@@ -1408,6 +1408,61 @@ button:focus-visible {
   align-items: center;
 }
 
+.dispatcher-smart-actions {
+  align-items: center;
+}
+
+.dispatcher-smart-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dispatcher-smart-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.dispatcher-smart-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.dispatcher-smart-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--type-sizes-xs);
+}
+
+.dispatcher-smart-score {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dispatcher-smart-reasons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.dispatcher-smart-reason {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: var(--type-sizes-xs);
+  color: var(--muted);
+}
+
 .dispatcher-action-row .field {
   flex: 1 1 160px;
 }

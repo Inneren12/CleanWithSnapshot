@@ -94,6 +94,27 @@ class DispatcherRouteEstimateResponse(BaseModel):
     cached: bool
 
 
+class DispatcherSuggestionScoreParts(BaseModel):
+    availability: float
+    distance: float
+    skill: float
+    rating: float
+    workload: float
+
+
+class DispatcherAssignmentSuggestion(BaseModel):
+    worker_id: int
+    display_name: str | None
+    score_total: float
+    score_parts: DispatcherSuggestionScoreParts
+    eta_min: int | None = None
+    reasons: list[str] = Field(default_factory=list)
+
+
+class DispatcherAssignmentSuggestionsResponse(BaseModel):
+    suggestions: list[DispatcherAssignmentSuggestion] = Field(default_factory=list)
+
+
 class DispatcherReassignRequest(BaseModel):
     worker_id: int = Field(gt=0)
 
