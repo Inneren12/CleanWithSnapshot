@@ -74,6 +74,26 @@ class DispatcherStatsResponse(BaseModel):
     revenue_today: int
 
 
+class DispatcherRoutePoint(BaseModel):
+    lat: float
+    lng: float
+
+
+class DispatcherRouteEstimateRequest(BaseModel):
+    origin: DispatcherRoutePoint
+    dest: DispatcherRoutePoint
+    depart_at: datetime | None = None
+    mode: Literal["driving"] = "driving"
+
+
+class DispatcherRouteEstimateResponse(BaseModel):
+    distance_km: float
+    duration_min: int
+    duration_in_traffic_min: int | None = None
+    provider: Literal["google", "heuristic"]
+    cached: bool
+
+
 class DispatcherReassignRequest(BaseModel):
     worker_id: int = Field(gt=0)
 

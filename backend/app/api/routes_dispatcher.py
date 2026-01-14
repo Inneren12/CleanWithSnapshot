@@ -17,6 +17,7 @@ from app.domain.admin_audit import service as audit_service
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.db_models import Booking, BookingWorker
 from app.domain.clients.db_models import ClientAddress, ClientUser
+from app.domain.dispatcher import route_estimates
 from app.domain.dispatcher import schemas
 from app.domain.dispatcher import service as dispatcher_service
 from app.domain.ops import service as ops_service
@@ -200,6 +201,33 @@ async def get_dispatcher_alerts(
     )
 
     return schemas.DispatcherAlertsResponse(alerts=result.alerts)
+
+
+@router.post(
+    "/v1/admin/dispatcher/routes/estimate",
+    response_model=schemas.DispatcherRouteEstimateResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def estimate_dispatcher_route(
+    payload: schemas.DispatcherRouteEstimateRequest,
+    org_id=Depends(require_org_context),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> schemas.DispatcherRouteEstimateResponse:
+    """Estimate travel distance/time between two coordinates.
+
+    Requires: DISPATCH permission (dispatcher/admin/owner roles).
+    """
+    del org_id
+    del identity
+    estimate, cached = await route_estimates.estimate_route(
+        origin_lat=payload.origin.lat,
+        origin_lng=payload.origin.lng,
+        dest_lat=payload.dest.lat,
+        dest_lng=payload.dest.lng,
+        depart_at=payload.depart_at,
+        mode=payload.mode,
+    )
+    return schemas.DispatcherRouteEstimateResponse(**estimate.as_payload(), cached=cached)
 
 
 @router.post(
