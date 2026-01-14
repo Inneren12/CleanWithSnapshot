@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   QuickChips,
   type ChipOption,
@@ -153,26 +153,10 @@ const includedItems = [
   'Trash removal and tidy reset'
 ];
 
-const addonItems = [
-  { name: 'Inside oven', price: '$30' },
-  { name: 'Inside fridge', price: '$20' },
-  { name: 'Inside microwave', price: '$10' },
-  { name: 'Inside kitchen cabinets (up to 10)', price: '$40' },
-  { name: 'Interior windows (up to 5)', price: '$30' },
-  { name: 'Balcony basic sweep', price: '$25' },
-  { name: 'Bed linen change (per bed)', price: '$10' },
-  { name: 'Steam armchair', price: '$45' },
-  { name: 'Steam sofa (2-seat)', price: '$90' },
-  { name: 'Steam sofa (3-seat)', price: '$110' },
-  { name: 'Steam sectional', price: '$150' },
-  { name: 'Steam mattress', price: '$110' },
-  { name: 'Carpet spot treatment', price: '$35' }
-];
-
 const faqs = [
   {
     q: 'How do you price cleaning?',
-    a: 'We calculate cleaner-hours deterministically from your beds, baths, cleaning type, and add-ons. No dynamic or AI pricing.'
+    a: 'We calculate cleaner-hours deterministically from your beds, baths, and cleaning type. No dynamic or AI pricing.'
   },
   {
     q: 'Is there a minimum booking?',
@@ -201,11 +185,9 @@ export default function HomePage() {
   const [proposedQuestions, setProposedQuestions] = useState<string[]>([]);
   const [estimate, setEstimate] = useState<EstimateResponse | null>(null);
   const [structuredInputs, setStructuredInputs] = useState<Record<string, unknown>>({});
-  const [showLeadForm, setShowLeadForm] = useState(false);
   const [leadSubmitting, setLeadSubmitting] = useState(false);
   const [leadError, setLeadError] = useState<string | null>(null);
   const [leadSuccess, setLeadSuccess] = useState(false);
-  const [leadId, setLeadId] = useState<string | null>(null);
   const [issuedReferralCode, setIssuedReferralCode] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [leadForm, setLeadForm] = useState({
@@ -214,7 +196,6 @@ export default function HomePage() {
     email: '',
     postal_code: '',
     address: '',
-    preferred_dates: ['', '', ''],
     access_notes: '',
     parking: '',
     pets: '',
@@ -222,15 +203,20 @@ export default function HomePage() {
     notes: '',
     referral_code: ''
   });
+  const [leadTouched, setLeadTouched] = useState({
+    name: false,
+    phone: false,
+    address: false
+  });
+  const [leadSubmitAttempted, setLeadSubmitAttempted] = useState(false);
   const [utmParams, setUtmParams] = useState<Record<string, string>>({});
   const [referrer, setReferrer] = useState<string | null>(null);
   const [slotsByDate, setSlotsByDate] = useState<SlotAvailability[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [slotsError, setSlotsError] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
-  const [bookingSubmitting, setBookingSubmitting] = useState(false);
-  const [bookingSuccess, setBookingSuccess] = useState<string | null>(null);
-  const [bookingError, setBookingError] = useState<string | null>(null);
+
+  const leadNameRef = useRef<HTMLInputElement | null>(null);
 
   // UI Contract Extension State (S2-A)
   const [choices, setChoices] = useState<ChoicesConfig | null>(null);
@@ -320,8 +306,6 @@ export default function HomePage() {
     }
     setSlotsLoading(true);
     setSlotsError(null);
-    setBookingSuccess(null);
-    setBookingError(null);
     setSelectedSlot(null);
     try {
       const upcomingDates = getNextThreeDates();
@@ -357,6 +341,16 @@ export default function HomePage() {
   useEffect(() => {
     void loadSlots();
   }, [loadSlots]);
+
+  useEffect(() => {
+    if (!selectedSlot || leadSuccess) {
+      return;
+    }
+    if (leadNameRef.current) {
+      leadNameRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      leadNameRef.current.focus();
+    }
+  }, [leadSuccess, selectedSlot]);
 
   const submitMessage = useCallback(
     async (text: string) => {
@@ -406,9 +400,9 @@ export default function HomePage() {
         setSelectedChoices([]); // Reset selections on new message
 
         if (data.estimate) {
-          setLeadId(null);
           setLeadSuccess(false);
-          setShowLeadForm(true);
+          setLeadError(null);
+          setLeadSubmitAttempted(false);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unexpected error';
@@ -427,19 +421,41 @@ export default function HomePage() {
 
   const handleLeadFieldChange = (field: string, value: string, index?: number) => {
     setLeadForm((prev) => {
-      if (field === 'preferred_dates' && typeof index === 'number') {
-        const nextDates = [...prev.preferred_dates];
-        nextDates[index] = value;
-        return { ...prev, preferred_dates: nextDates };
-      }
       return { ...prev, [field]: value };
     });
   };
 
+  const leadValidation = useMemo(
+    () => ({
+      name: leadForm.name.trim().length > 1,
+      phone: leadForm.phone.trim().length >= 7,
+      address: leadForm.address.trim().length > 4
+    }),
+    [leadForm.address, leadForm.name, leadForm.phone]
+  );
+
+  const leadFormComplete =
+    leadValidation.name &&
+    leadValidation.phone &&
+    leadValidation.address &&
+    Boolean(selectedSlot);
+
+  const shouldShowFieldError = (field: keyof typeof leadValidation) =>
+    (leadTouched[field] || leadSubmitAttempted) && !leadValidation[field];
+
   const submitLead = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setLeadSubmitAttempted(true);
+    if (!leadFormComplete) {
+      setLeadError('Please complete the required details and select a time slot.');
+      return;
+    }
     if (!estimate) {
       setLeadError('Please request an estimate before booking.');
+      return;
+    }
+    if (!selectedSlot) {
+      setLeadError('Please select a time slot to continue.');
       return;
     }
     setLeadSubmitting(true);
@@ -453,7 +469,7 @@ export default function HomePage() {
         email: leadForm.email || undefined,
         postal_code: leadForm.postal_code || undefined,
         address: leadForm.address,
-        preferred_dates: leadForm.preferred_dates.filter((value) => value.trim().length > 0),
+        preferred_dates: [selectedSlot],
         access_notes: leadForm.access_notes || undefined,
         parking: leadForm.parking || undefined,
         pets: leadForm.pets || undefined,
@@ -482,8 +498,6 @@ export default function HomePage() {
       const leadResponse = (await response.json()) as { lead_id: string; referral_code?: string };
 
       setLeadSuccess(true);
-      setShowLeadForm(false);
-      setLeadId(leadResponse.lead_id);
       setIssuedReferralCode(leadResponse.referral_code ?? null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unexpected error';
@@ -493,46 +507,7 @@ export default function HomePage() {
     }
   };
 
-  const bookSelectedSlot = useCallback(async () => {
-    if (!estimate || !selectedSlot) {
-      setBookingError('Please select a slot to book.');
-      return;
-    }
-    if (!leadId) {
-      setBookingError('Please submit your booking request with name, phone, address, and preferred time first.');
-      return;
-    }
-    setBookingSubmitting(true);
-    setBookingError(null);
-    setBookingSuccess(null);
-    try {
-      const response = await fetch(`${apiBaseUrl}/v1/bookings`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          starts_at: selectedSlot,
-          time_on_site_hours: estimate.time_on_site_hours,
-          lead_id: leadId
-        })
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Booking failed: ${response.status}`);
-      }
-
-      const booking = (await response.json()) as { booking_id: string; starts_at: string };
-      setBookingSuccess(`Booked slot for ${formatSlotTime(booking.starts_at)}`);
-      await loadSlots();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unexpected booking error';
-      setBookingError(message);
-    } finally {
-      setBookingSubmitting(false);
-    }
-  }, [apiBaseUrl, estimate, leadId, loadSlots, selectedSlot]);
+  const leadSubmitDisabled = leadSubmitting || !leadFormComplete;
 
   return (
     <div className="page">
@@ -619,7 +594,7 @@ export default function HomePage() {
             <div className="step-card card">
               <span className="step-number">1</span>
               <h3>Tell us about your home</h3>
-              <p>Share beds, baths, cleaning type, and add-ons. The bot captures the details.</p>
+              <p>Share beds, baths, and cleaning type. The bot captures the details.</p>
             </div>
             <div className="step-card card">
               <span className="step-number">2</span>
@@ -657,7 +632,7 @@ export default function HomePage() {
         <section className="section" aria-labelledby="included-title">
           <div className="section-heading">
             <h2 id="included-title">What’s included</h2>
-            <p className="muted">Economy clean covers the essentials. Add extras as needed.</p>
+            <p className="muted">Economy clean covers the essentials for a reset.</p>
           </div>
           <ul className="included-list">
             {includedItems.map((item) => (
@@ -669,21 +644,6 @@ export default function HomePage() {
               </li>
             ))}
           </ul>
-        </section>
-
-        <section className="section" aria-labelledby="addons-title">
-          <div className="section-heading">
-            <h2 id="addons-title">Add-ons</h2>
-            <p className="muted">Fixed prices on top of labor. Choose only what you need.</p>
-          </div>
-          <div className="addon-grid">
-            {addonItems.map((addon) => (
-              <div key={addon.name} className="addon-row card">
-                <span>{addon.name}</span>
-                <span className="addon-price">{addon.price}</span>
-              </div>
-            ))}
-          </div>
         </section>
 
         <section className="section chat-wrapper" id="chat" aria-labelledby="chat-title">
@@ -840,10 +800,6 @@ export default function HomePage() {
                         <span>{formatCurrency(estimate.labor_cost)}</span>
                       </div>
                       <div className="line">
-                        <span>Add-ons</span>
-                        <span>{formatCurrency(estimate.add_ons_cost)}</span>
-                      </div>
-                      <div className="line">
                         <span>Discounts</span>
                         <span>-{formatCurrency(estimate.discount_amount)}</span>
                       </div>
@@ -952,18 +908,6 @@ export default function HomePage() {
                       ))}
                     </div>
                   ) : null}
-                  <div className="booking-actions">
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={() => void bookSelectedSlot()}
-                      disabled={bookingSubmitting || !selectedSlot || slotsLoading || !leadId}
-                    >
-                      {bookingSubmitting ? 'Booking...' : 'Book selected time'}
-                    </button>
-                    {bookingSuccess ? <p className="alert alert-success">{bookingSuccess}</p> : null}
-                    {bookingError ? <p className="alert alert-error">{bookingError}</p> : null}
-                  </div>
                 </div>
               </div>
 
@@ -974,23 +918,7 @@ export default function HomePage() {
                       <p className="eyebrow">Required</p>
                       <h3>Share details to confirm your booking</h3>
                     </div>
-                    {!showLeadForm ? (
-                      <button className="btn btn-secondary" type="button" onClick={() => setShowLeadForm(true)}>
-                        Add your info
-                      </button>
-                    ) : null}
                   </div>
-                  {!showLeadForm && !leadSuccess ? (
-                    <div className="card-body">
-                      <p className="muted">Add your contact details and preferred time so we can lock in your booking.</p>
-                      <div className="lead-actions">
-                        <button className="btn btn-primary" type="button" onClick={() => setShowLeadForm(true)}>
-                          Submit booking request
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-
                   {leadSuccess ? (
                     <div className="card-body lead-confirmation">
                       <p className="eyebrow">Submitted</p>
@@ -1012,26 +940,48 @@ export default function HomePage() {
                     </div>
                   ) : null}
 
-                  {showLeadForm && !leadSuccess ? (
+                  {!leadSuccess ? (
                     <form className="card-body lead-form" onSubmit={submitLead}>
+                      <div className="slot-summary">
+                        <p className="label">Selected slot</p>
+                        <p className="value">
+                          {selectedSlot
+                            ? `${formatSlotDateLabel(selectedSlot)} · ${formatSlotTime(selectedSlot)}`
+                            : 'Pick a time to continue.'}
+                        </p>
+                      </div>
+                      {!selectedSlot && leadSubmitAttempted ? (
+                        <p className="alert alert-error">Select a time slot above before submitting.</p>
+                      ) : null}
                       <div className="form-grid">
                         <label>
                           <span>Full name *</span>
                           <input
                             type="text"
                             required
+                            ref={leadNameRef}
+                            className={shouldShowFieldError('name') ? 'input-error' : undefined}
                             value={leadForm.name}
                             onChange={(event) => handleLeadFieldChange('name', event.target.value)}
+                            onBlur={() => setLeadTouched((prev) => ({ ...prev, name: true }))}
                           />
+                          {shouldShowFieldError('name') ? (
+                            <span className="field-error">Enter your full name.</span>
+                          ) : null}
                         </label>
                         <label>
                           <span>Phone *</span>
                           <input
                             type="tel"
                             required
+                            className={shouldShowFieldError('phone') ? 'input-error' : undefined}
                             value={leadForm.phone}
                             onChange={(event) => handleLeadFieldChange('phone', event.target.value)}
+                            onBlur={() => setLeadTouched((prev) => ({ ...prev, phone: true }))}
                           />
+                          {shouldShowFieldError('phone') ? (
+                            <span className="field-error">Enter a valid phone number.</span>
+                          ) : null}
                         </label>
                         <label>
                           <span>Email</span>
@@ -1054,28 +1004,15 @@ export default function HomePage() {
                           <input
                             type="text"
                             required
+                            className={shouldShowFieldError('address') ? 'input-error' : undefined}
                             value={leadForm.address}
                             onChange={(event) => handleLeadFieldChange('address', event.target.value)}
+                            onBlur={() => setLeadTouched((prev) => ({ ...prev, address: true }))}
                           />
+                          {shouldShowFieldError('address') ? (
+                            <span className="field-error">Enter your service address.</span>
+                          ) : null}
                         </label>
-                      </div>
-
-                      <div className="form-grid">
-                        {leadForm.preferred_dates.map((value, index) => (
-                          <label key={`date-${index}`}>
-                            <span>
-                              Preferred date option {index + 1}
-                              {index === 0 ? ' *' : ''}
-                            </span>
-                            <input
-                              type="text"
-                              placeholder="Sat afternoon"
-                              value={value}
-                              required={index === 0}
-                              onChange={(event) => handleLeadFieldChange('preferred_dates', event.target.value, index)}
-                            />
-                          </label>
-                        ))}
                       </div>
 
                       <div className="form-grid">
@@ -1130,7 +1067,7 @@ export default function HomePage() {
                       </div>
 
                       {leadError ? <p className="alert alert-error">{leadError}</p> : null}
-                      <button className="btn btn-primary" type="submit" disabled={leadSubmitting}>
+                      <button className="btn btn-primary" type="submit" disabled={leadSubmitDisabled}>
                         {leadSubmitting ? 'Submitting...' : 'Submit booking request'}
                       </button>
                     </form>
@@ -1222,6 +1159,16 @@ function formatSlotTime(slot: string): string {
 
 function formatSlotDateHeading(day: string): string {
   const date = dateFromYMDInUtc(day);
+  return date.toLocaleDateString('en-CA', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'America/Edmonton'
+  });
+}
+
+function formatSlotDateLabel(slot: string): string {
+  const date = new Date(slot);
   return date.toLocaleDateString('en-CA', {
     weekday: 'short',
     month: 'short',
