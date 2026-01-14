@@ -2,7 +2,7 @@ import asyncio
 import base64
 import json
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 
 import sqlalchemy as sa
@@ -323,6 +323,229 @@ def _seed_client_with_feedback(async_session_maker):
             session.add_all(feedback_rows)
             await session.commit()
             return client.client_id, booking_one.booking_id, booking_two.booking_id
+
+    return asyncio.run(create())
+
+
+def _seed_clients_with_risk_flags(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            team = Team(name=f"Risk Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id)
+            session.add(team)
+            await session.flush()
+
+            now = datetime.now(tz=timezone.utc)
+
+            risky_client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Risky Client",
+                email=f"risky-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-222-3333",
+                address="901 Risk Way",
+                is_active=True,
+            )
+            complaints_only = ClientUser(
+                org_id=settings.default_org_id,
+                name="Complaints Only",
+                email=f"complaints-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-222-4444",
+                address="902 Risk Way",
+                is_active=True,
+            )
+            low_ratings_only = ClientUser(
+                org_id=settings.default_org_id,
+                name="Low Ratings Only",
+                email=f"low-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-222-5555",
+                address="903 Risk Way",
+                is_active=True,
+            )
+            safe_client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Safe Client",
+                email=f"safe-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-222-6666",
+                address="904 Risk Way",
+                is_active=True,
+            )
+            session.add_all([risky_client, complaints_only, low_ratings_only, safe_client])
+            await session.flush()
+
+            complaints = [
+                ClientNote(
+                    org_id=settings.default_org_id,
+                    client_id=risky_client.client_id,
+                    note_text="Complaint A",
+                    note_type=ClientNote.NOTE_TYPE_COMPLAINT,
+                    created_by="admin",
+                    created_at=now - timedelta(days=5),
+                ),
+                ClientNote(
+                    org_id=settings.default_org_id,
+                    client_id=risky_client.client_id,
+                    note_text="Complaint B",
+                    note_type=ClientNote.NOTE_TYPE_COMPLAINT,
+                    created_by="admin",
+                    created_at=now - timedelta(days=3),
+                ),
+                ClientNote(
+                    org_id=settings.default_org_id,
+                    client_id=risky_client.client_id,
+                    note_text="Complaint C",
+                    note_type=ClientNote.NOTE_TYPE_COMPLAINT,
+                    created_by="admin",
+                    created_at=now - timedelta(days=2),
+                ),
+                ClientNote(
+                    org_id=settings.default_org_id,
+                    client_id=complaints_only.client_id,
+                    note_text="Complaint only",
+                    note_type=ClientNote.NOTE_TYPE_COMPLAINT,
+                    created_by="admin",
+                    created_at=now - timedelta(days=4),
+                ),
+                ClientNote(
+                    org_id=settings.default_org_id,
+                    client_id=complaints_only.client_id,
+                    note_text="Complaint only 2",
+                    note_type=ClientNote.NOTE_TYPE_COMPLAINT,
+                    created_by="admin",
+                    created_at=now - timedelta(days=1),
+                ),
+            ]
+            session.add_all(complaints)
+
+            risky_booking_one = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=risky_client.client_id,
+                team_id=team.team_id,
+                starts_at=now - timedelta(days=6),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            risky_booking_two = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=risky_client.client_id,
+                team_id=team.team_id,
+                starts_at=now - timedelta(days=2),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            low_booking_one = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=low_ratings_only.client_id,
+                team_id=team.team_id,
+                starts_at=now - timedelta(days=7),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            low_booking_two = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=low_ratings_only.client_id,
+                team_id=team.team_id,
+                starts_at=now - timedelta(days=4),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            safe_booking = Booking(
+                booking_id=str(uuid.uuid4()),
+                org_id=settings.default_org_id,
+                client_id=safe_client.client_id,
+                team_id=team.team_id,
+                starts_at=now - timedelta(days=2),
+                duration_minutes=90,
+                status="COMPLETED",
+                deposit_cents=0,
+                base_charge_cents=0,
+                refund_total_cents=0,
+                credit_note_total_cents=0,
+            )
+            session.add_all(
+                [
+                    risky_booking_one,
+                    risky_booking_two,
+                    low_booking_one,
+                    low_booking_two,
+                    safe_booking,
+                ]
+            )
+            await session.flush()
+
+            feedback_rows = [
+                ClientFeedback(
+                    org_id=settings.default_org_id,
+                    client_id=risky_client.client_id,
+                    booking_id=risky_booking_one.booking_id,
+                    rating=1,
+                    comment="Very bad",
+                    channel="admin",
+                    created_at=now - timedelta(days=5),
+                ),
+                ClientFeedback(
+                    org_id=settings.default_org_id,
+                    client_id=risky_client.client_id,
+                    booking_id=risky_booking_two.booking_id,
+                    rating=2,
+                    comment="Bad",
+                    channel="admin",
+                    created_at=now - timedelta(days=2),
+                ),
+                ClientFeedback(
+                    org_id=settings.default_org_id,
+                    client_id=low_ratings_only.client_id,
+                    booking_id=low_booking_one.booking_id,
+                    rating=2,
+                    comment="Low",
+                    channel="admin",
+                    created_at=now - timedelta(days=6),
+                ),
+                ClientFeedback(
+                    org_id=settings.default_org_id,
+                    client_id=low_ratings_only.client_id,
+                    booking_id=low_booking_two.booking_id,
+                    rating=1,
+                    comment="Low again",
+                    channel="admin",
+                    created_at=now - timedelta(days=3),
+                ),
+                ClientFeedback(
+                    org_id=settings.default_org_id,
+                    client_id=safe_client.client_id,
+                    booking_id=safe_booking.booking_id,
+                    rating=5,
+                    comment="Great",
+                    channel="admin",
+                    created_at=now - timedelta(days=1),
+                ),
+            ]
+            session.add_all(feedback_rows)
+            await session.commit()
+            return (
+                risky_client.client_id,
+                complaints_only.client_id,
+                low_ratings_only.client_id,
+                safe_client.client_id,
+            )
 
     return asyncio.run(create())
 
@@ -847,6 +1070,70 @@ def test_admin_client_notes_filter_by_type(client, async_session_maker):
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
+
+
+def test_admin_client_risk_flags_and_filters(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    previous_complaints_window = settings.client_risk_complaints_window_days
+    previous_complaints_threshold = settings.client_risk_complaints_threshold
+    previous_feedback_window = settings.client_risk_feedback_window_days
+    previous_avg_threshold = settings.client_risk_avg_rating_threshold
+    previous_low_rating_threshold = settings.client_risk_low_rating_threshold
+    previous_low_rating_count_threshold = settings.client_risk_low_rating_count_threshold
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    settings.client_risk_complaints_window_days = 90
+    settings.client_risk_complaints_threshold = 2
+    settings.client_risk_feedback_window_days = 30
+    settings.client_risk_avg_rating_threshold = 3.0
+    settings.client_risk_low_rating_threshold = 2
+    settings.client_risk_low_rating_count_threshold = 2
+
+    try:
+        risky_id, complaints_id, low_ratings_id, safe_id = _seed_clients_with_risk_flags(
+            async_session_maker
+        )
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(f"/v1/admin/ui/clients/{risky_id}", headers=headers)
+        assert response.status_code == 200
+        assert "⚠️ Frequent complaints" in response.text
+        assert "⭐ Low ratings" in response.text
+        assert "Complaints last 90 days: 3" in response.text
+        assert "Low ratings (≤2) last 30 days: 2" in response.text
+
+        complaints_response = client.get(
+            "/v1/admin/ui/clients?risk=frequent_complaints", headers=headers
+        )
+        assert complaints_response.status_code == 200
+        assert "Risky Client" in complaints_response.text
+        assert "Complaints Only" in complaints_response.text
+        assert "Low Ratings Only" not in complaints_response.text
+        assert "Safe Client" not in complaints_response.text
+
+        low_ratings_response = client.get("/v1/admin/ui/clients?risk=low_rater", headers=headers)
+        assert low_ratings_response.status_code == 200
+        assert "Risky Client" in low_ratings_response.text
+        assert "Low Ratings Only" in low_ratings_response.text
+        assert "Complaints Only" not in low_ratings_response.text
+        assert "Safe Client" not in low_ratings_response.text
+
+        any_response = client.get("/v1/admin/ui/clients?risk=any", headers=headers)
+        assert any_response.status_code == 200
+        assert "Risky Client" in any_response.text
+        assert "Complaints Only" in any_response.text
+        assert "Low Ratings Only" in any_response.text
+        assert "Safe Client" not in any_response.text
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+        settings.client_risk_complaints_window_days = previous_complaints_window
+        settings.client_risk_complaints_threshold = previous_complaints_threshold
+        settings.client_risk_feedback_window_days = previous_feedback_window
+        settings.client_risk_avg_rating_threshold = previous_avg_threshold
+        settings.client_risk_low_rating_threshold = previous_low_rating_threshold
+        settings.client_risk_low_rating_count_threshold = previous_low_rating_count_threshold
 
 
 def test_admin_client_finance_section_is_org_scoped(client, async_session_maker):

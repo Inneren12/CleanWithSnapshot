@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     worker_skill_cert_requirements_raw: str | None = Field(
         None, validation_alias="worker_skill_cert_requirements"
     )
+    client_risk_complaints_window_days: int = Field(90)
+    client_risk_complaints_threshold: int = Field(3)
+    client_risk_feedback_window_days: int = Field(90)
+    client_risk_avg_rating_threshold: float = Field(3.0)
+    client_risk_low_rating_threshold: int = Field(2)
+    client_risk_low_rating_count_threshold: int = Field(2)
     slot_provider_mode: Literal["stub", "db"] = Field("db")
     stripe_secret_key: str | None = Field(None)
     stripe_webhook_secret: str | None = Field(None)
