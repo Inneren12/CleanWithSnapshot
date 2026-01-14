@@ -11560,6 +11560,87 @@ async def admin_clients_edit_form(
     return response
 
 
+def _render_client_quick_action_page(
+    request: Request,
+    *,
+    title: str,
+    heading: str,
+    message: str,
+    back_label: str,
+    client_id: str,
+    lang: str,
+    csrf_token: str,
+) -> HTMLResponse:
+    content = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{html.escape(heading)}</div>
+          <div class="muted">{html.escape(message)}</div>
+        </div>
+        <a class="btn secondary" href="/v1/admin/ui/clients/{html.escape(client_id)}">{html.escape(back_label)}</a>
+      </div>
+    </div>
+    """
+    response = HTMLResponse(_wrap_page(request, content, title=title, active="clients", page_lang=lang))
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
+@router.get("/v1/admin/ui/clients/{client_id}/chat", response_class=HTMLResponse)
+async def admin_client_chat_stub(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_admin),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = await session.scalar(
+        select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+    )
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+    csrf_token = get_csrf_token(request)
+    return _render_client_quick_action_page(
+        request,
+        title=f"Admin — {tr(lang, 'admin.clients.chat_title')}",
+        heading=tr(lang, "admin.clients.chat_title"),
+        message=tr(lang, "admin.clients.chat_coming_soon"),
+        back_label=tr(lang, "admin.clients.back_to_client"),
+        client_id=client.client_id,
+        lang=lang,
+        csrf_token=csrf_token,
+    )
+
+
+@router.get("/v1/admin/ui/clients/{client_id}/promos", response_class=HTMLResponse)
+async def admin_client_promos_stub(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_admin),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = await session.scalar(
+        select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+    )
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+    csrf_token = get_csrf_token(request)
+    return _render_client_quick_action_page(
+        request,
+        title=f"Admin — {tr(lang, 'admin.clients.promos_title')}",
+        heading=tr(lang, "admin.clients.promos_title"),
+        message=tr(lang, "admin.clients.promos_not_configured"),
+        back_label=tr(lang, "admin.clients.back_to_client"),
+        client_id=client.client_id,
+        lang=lang,
+        csrf_token=csrf_token,
+    )
+
+
 @router.post("/v1/admin/ui/clients/{client_id}", response_class=HTMLResponse)
 async def admin_clients_update(
     client_id: str,
