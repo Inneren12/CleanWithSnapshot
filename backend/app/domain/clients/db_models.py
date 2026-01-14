@@ -82,6 +82,15 @@ class ClientUser(Base):
 class ClientNote(Base):
     __tablename__ = "client_notes"
 
+    NOTE_TYPE_NOTE = "NOTE"
+    NOTE_TYPE_COMPLAINT = "COMPLAINT"
+    NOTE_TYPE_PRAISE = "PRAISE"
+    NOTE_TYPES = {
+        NOTE_TYPE_NOTE,
+        NOTE_TYPE_COMPLAINT,
+        NOTE_TYPE_PRAISE,
+    }
+
     note_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID_TYPE,
@@ -95,6 +104,11 @@ class ClientNote(Base):
         nullable=False,
     )
     note_text: Mapped[str] = mapped_column(Text(), nullable=False)
+    note_type: Mapped[str] = mapped_column(
+        Text(),
+        nullable=False,
+        server_default=NOTE_TYPE_NOTE,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -104,3 +118,12 @@ class ClientNote(Base):
         Index("ix_client_notes_org_id", "org_id"),
         Index("ix_client_notes_client_id", "client_id"),
     )
+
+
+def normalize_note_type(raw: str | None) -> str:
+    if not raw:
+        return ClientNote.NOTE_TYPE_NOTE
+    normalized = str(raw).strip().upper()
+    if normalized in ClientNote.NOTE_TYPES:
+        return normalized
+    raise ValueError("Invalid note type")

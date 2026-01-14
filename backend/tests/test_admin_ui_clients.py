@@ -184,13 +184,30 @@ def _seed_client_with_notes_and_bookings(async_session_maker):
             session.add(booking)
             session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker.worker_id))
 
-            note = ClientNote(
-                org_id=settings.default_org_id,
-                client_id=client.client_id,
-                note_text="First note",
-                created_by="admin",
-            )
-            session.add(note)
+            notes = [
+                ClientNote(
+                    org_id=settings.default_org_id,
+                    client_id=client.client_id,
+                    note_text="General note",
+                    note_type=ClientNote.NOTE_TYPE_NOTE,
+                    created_by="admin",
+                ),
+                ClientNote(
+                    org_id=settings.default_org_id,
+                    client_id=client.client_id,
+                    note_text="Complaint note",
+                    note_type=ClientNote.NOTE_TYPE_COMPLAINT,
+                    created_by="admin",
+                ),
+                ClientNote(
+                    org_id=settings.default_org_id,
+                    client_id=client.client_id,
+                    note_text="Praise note",
+                    note_type=ClientNote.NOTE_TYPE_PRAISE,
+                    created_by="admin",
+                ),
+            ]
+            session.add_all(notes)
             await session.commit()
             return client.client_id, booking.booking_id
 
@@ -500,8 +517,35 @@ def test_admin_client_detail_shows_bookings_and_notes(client, async_session_make
         assert "Bookings history" in response.text
         assert "COMPLETED" in response.text
         assert "Assigned Worker" in response.text
-        assert "First note" in response.text
+        assert "General note" in response.text
+        assert "Complaint note" in response.text
+        assert "Praise note" in response.text
+        assert "Complaint" in response.text
+        assert "Praise" in response.text
         assert booking_id in response.text
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_client_notes_filter_by_type(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, _booking_id = _seed_client_with_notes_and_bookings(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(
+            f"/v1/admin/ui/clients/{client_id}?note_type=complaint",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert "Complaint note" in response.text
+        assert "General note" not in response.text
+        assert "Praise note" not in response.text
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
@@ -659,7 +703,7 @@ def test_admin_can_add_client_note(client, async_session_maker):
         response = client.post(
             f"/v1/admin/ui/clients/{client_id}/notes/create",
             headers=headers,
-            data={"note_text": "Added note"},
+            data={"note_text": "Added note", "note_type": "COMPLAINT"},
             follow_redirects=False,
         )
         assert response.status_code == 303
@@ -675,6 +719,7 @@ def test_admin_can_add_client_note(client, async_session_maker):
                     )
                 ).scalars().all()
                 assert [note.note_text for note in notes] == ["Added note"]
+                assert [note.note_type for note in notes] == [ClientNote.NOTE_TYPE_COMPLAINT]
 
         asyncio.run(verify_note())
     finally:

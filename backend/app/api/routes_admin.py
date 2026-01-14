@@ -67,7 +67,13 @@ from app.domain.bookings.db_models import (
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
-from app.domain.clients.db_models import ClientNote, ClientUser, normalize_tags, parse_tags_json
+from app.domain.clients.db_models import (
+    ClientNote,
+    ClientUser,
+    normalize_note_type,
+    normalize_tags,
+    parse_tags_json,
+)
 from app.domain.export_events import schemas as export_schemas
 from app.domain.export_events.db_models import ExportEvent
 from app.domain.export_events.schemas import ExportEventResponse, ExportReplayResponse
@@ -990,6 +996,10 @@ def _wrap_page(
           .badge-high {{ background: #fef2f2; color: #b91c1c; border-color: #fecaca; }}
           .badge-active {{ background: #2563eb; color: #fff; border-color: #2563eb; }}
           .badge-status {{ font-weight: 600; }}
+          .note-badge {{ font-weight: 600; }}
+          .note-badge-note {{ background: #f3f4f6; color: #374151; border-color: #e5e7eb; }}
+          .note-badge-complaint {{ background: #fef2f2; color: #b91c1c; border-color: #fecaca; }}
+          .note-badge-praise {{ background: #ecfdf3; color: #065f46; border-color: #a7f3d0; }}
           .status-draft {{ background: #f3f4f6; }}
           .status-sent {{ background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }}
           .status-partial {{ background: #fffbeb; color: #92400e; border-color: #fcd34d; }}
@@ -4175,6 +4185,23 @@ def _status_badge(value: str) -> str:
     normalized = value.lower()
     warning = _icon("warning") if normalized == invoice_statuses.INVOICE_STATUS_OVERDUE.lower() else ""
     return f'<span class="badge badge-status status-{normalized}"><span class="with-icon">{warning}{html.escape(value)}</span></span>'
+
+
+def _note_type_label(note_type: str, lang: str | None) -> str:
+    mapping = {
+        ClientNote.NOTE_TYPE_NOTE: tr(lang, "admin.clients.note_type_note"),
+        ClientNote.NOTE_TYPE_COMPLAINT: tr(lang, "admin.clients.note_type_complaint"),
+        ClientNote.NOTE_TYPE_PRAISE: tr(lang, "admin.clients.note_type_praise"),
+    }
+    return mapping.get(note_type, note_type.title())
+
+
+def _note_type_badge_class(note_type: str) -> str:
+    return {
+        ClientNote.NOTE_TYPE_NOTE: "note-badge note-badge-note",
+        ClientNote.NOTE_TYPE_COMPLAINT: "note-badge note-badge-complaint",
+        ClientNote.NOTE_TYPE_PRAISE: "note-badge note-badge-praise",
+    }.get(note_type, "note-badge note-badge-note")
 
 
 def _addon_response(model: addon_schemas.AddonDefinitionResponse | AddonDefinition) -> addon_schemas.AddonDefinitionResponse:
@@ -10083,6 +10110,15 @@ async def admin_clients_edit_form(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
 
     tags = parse_tags_json(client.tags_json)
+    note_filter_raw = (request.query_params.get("note_type") or "all").strip().lower()
+    note_filter_options = {
+        "all": None,
+        "note": ClientNote.NOTE_TYPE_NOTE,
+        "complaint": ClientNote.NOTE_TYPE_COMPLAINT,
+        "praise": ClientNote.NOTE_TYPE_PRAISE,
+    }
+    note_filter = note_filter_raw if note_filter_raw in note_filter_options else "all"
+    note_type_default = note_filter_options[note_filter] or ClientNote.NOTE_TYPE_NOTE
     bookings = (
         await session.execute(
             select(Booking)
@@ -10101,13 +10137,12 @@ async def admin_clients_edit_form(
     invoice_history = await _client_invoice_history(session, org_id=org_id, client_id=client_id)
     payment_history = await _client_payment_history(session, org_id=org_id, client_id=client_id)
     last_booking = bookings[0].starts_at if bookings else None
+    notes_query = select(ClientNote).where(ClientNote.client_id == client_id, ClientNote.org_id == org_id)
+    note_filter_value = note_filter_options[note_filter]
+    if note_filter_value:
+        notes_query = notes_query.where(ClientNote.note_type == note_filter_value)
     notes = (
-        await session.execute(
-            select(ClientNote)
-            .where(ClientNote.client_id == client_id, ClientNote.org_id == org_id)
-            .order_by(ClientNote.created_at.desc())
-            .limit(10)
-        )
+        await session.execute(notes_query.order_by(ClientNote.created_at.desc()).limit(10))
     ).scalars().all()
 
     csrf_token = get_csrf_token(request)
@@ -10301,12 +10336,29 @@ async def admin_clients_edit_form(
         f"""
         <div class="card" style="padding: var(--space-md);">
           <div class="muted">{html.escape(_format_dt(note.created_at))}{' · ' + html.escape(note.created_by) if note.created_by else ''}</div>
-          <div>{html.escape(note.note_text)}</div>
+          <div class="with-icon">
+            <span class="badge {_note_type_badge_class(note.note_type)}">{html.escape(_note_type_label(note.note_type, lang))}</span>
+            <span>{html.escape(note.note_text)}</span>
+          </div>
         </div>
         """
         for note in notes
     )
     notes_block = notes_list or f"<div class=\"muted\">{html.escape(tr(lang, 'admin.clients.notes_none'))}</div>"
+    notes_filter = f"""
+      <form class="filters" method="get" action="/v1/admin/ui/clients/{html.escape(client.client_id)}">
+        <div class="form-group">
+          <label>{html.escape(tr(lang, "admin.clients.notes_filter_label"))}</label>
+          <select class="input" name="note_type">
+            <option value="all" {'selected' if note_filter == 'all' else ''}>{html.escape(tr(lang, "admin.clients.notes_filter_all"))}</option>
+            <option value="note" {'selected' if note_filter == 'note' else ''}>{html.escape(tr(lang, "admin.clients.notes_filter_note"))}</option>
+            <option value="complaint" {'selected' if note_filter == 'complaint' else ''}>{html.escape(tr(lang, "admin.clients.notes_filter_complaint"))}</option>
+            <option value="praise" {'selected' if note_filter == 'praise' else ''}>{html.escape(tr(lang, "admin.clients.notes_filter_praise"))}</option>
+          </select>
+        </div>
+        <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.notes_filter_apply"))}</button>
+      </form>
+    """
     overview_card = f"""
     <div class="card">
       <div class="card-row">
@@ -10366,11 +10418,25 @@ async def admin_clients_edit_form(
           <div class="muted">{html.escape(tr(lang, "admin.clients.notes_hint"))}</div>
         </div>
       </div>
+      {notes_filter}
       <div class="stack">
         {notes_block}
       </div>
       <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/notes/create">
-        <textarea class="input" name="note_text" rows="3" placeholder="{html.escape(tr(lang, "admin.clients.notes_placeholder"))}"></textarea>
+        <div class="form-group">
+          <label>{html.escape(tr(lang, "admin.clients.note_type_label"))}</label>
+          <select class="input" name="note_type" id="client-note-type">
+            <option value="{ClientNote.NOTE_TYPE_NOTE}" {'selected' if note_type_default == ClientNote.NOTE_TYPE_NOTE else ''}>{html.escape(tr(lang, "admin.clients.note_type_note"))}</option>
+            <option value="{ClientNote.NOTE_TYPE_COMPLAINT}" {'selected' if note_type_default == ClientNote.NOTE_TYPE_COMPLAINT else ''}>{html.escape(tr(lang, "admin.clients.note_type_complaint"))}</option>
+            <option value="{ClientNote.NOTE_TYPE_PRAISE}" {'selected' if note_type_default == ClientNote.NOTE_TYPE_PRAISE else ''}>{html.escape(tr(lang, "admin.clients.note_type_praise"))}</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" type="button" onclick="document.getElementById('client-note-type').value='{ClientNote.NOTE_TYPE_NOTE}';document.getElementById('client-note-text').focus();">{html.escape(tr(lang, "admin.clients.note_type_note"))}</button>
+          <button class="btn secondary" type="button" onclick="document.getElementById('client-note-type').value='{ClientNote.NOTE_TYPE_COMPLAINT}';document.getElementById('client-note-text').focus();">{html.escape(tr(lang, "admin.clients.note_type_complaint"))}</button>
+          <button class="btn secondary" type="button" onclick="document.getElementById('client-note-type').value='{ClientNote.NOTE_TYPE_PRAISE}';document.getElementById('client-note-text').focus();">{html.escape(tr(lang, "admin.clients.note_type_praise"))}</button>
+        </div>
+        <textarea class="input" name="note_text" id="client-note-text" rows="3" placeholder="{html.escape(tr(lang, "admin.clients.notes_placeholder"))}"></textarea>
         {csrf_input}
         <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.notes_add"))}</button>
       </form>
@@ -10502,6 +10568,13 @@ async def admin_clients_add_note(
 
     form = await request.form()
     note_text = (form.get("note_text") or "").strip()
+    try:
+        note_type = normalize_note_type(form.get("note_type"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid note type",
+        ) from exc
     if not note_text:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Note text is required")
 
@@ -10509,6 +10582,7 @@ async def admin_clients_add_note(
         org_id=org_id,
         client_id=client_id,
         note_text=note_text,
+        note_type=note_type,
         created_by=identity.username,
     )
     session.add(note)
