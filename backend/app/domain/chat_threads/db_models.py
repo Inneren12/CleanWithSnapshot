@@ -60,6 +60,7 @@ class ChatParticipant(Base):
     admin_membership_id: Mapped[int | None] = mapped_column(
         sa.ForeignKey("memberships.membership_id", ondelete="CASCADE")
     )
+    participant_key: Mapped[str] = mapped_column(sa.Text(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
@@ -72,11 +73,10 @@ class ChatParticipant(Base):
         sa.Index("ix_chat_participants_worker_id", "worker_id"),
         sa.Index("ix_chat_participants_admin_membership_id", "admin_membership_id"),
         sa.UniqueConstraint(
+            "org_id",
             "thread_id",
-            "participant_type",
-            "worker_id",
-            "admin_membership_id",
-            name="uq_chat_participants_thread_participant",
+            "participant_key",
+            name="uq_chat_participants_thread_key",
         ),
     )
 
@@ -129,6 +129,7 @@ class ChatThreadRead(Base):
     admin_membership_id: Mapped[int | None] = mapped_column(
         sa.ForeignKey("memberships.membership_id", ondelete="CASCADE")
     )
+    participant_key: Mapped[str] = mapped_column(sa.Text(), nullable=False)
     last_read_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
     thread: Mapped["ChatThread"] = relationship("ChatThread", back_populates="reads")
@@ -139,11 +140,9 @@ class ChatThreadRead(Base):
         sa.Index("ix_chat_thread_reads_worker_id", "worker_id"),
         sa.Index("ix_chat_thread_reads_admin_membership_id", "admin_membership_id"),
         sa.UniqueConstraint(
+            "org_id",
             "thread_id",
-            "participant_type",
-            "worker_id",
-            "admin_membership_id",
-            name="uq_chat_thread_reads_participant",
+            "participant_key",
+            name="uq_chat_thread_reads_thread_key",
         ),
     )
-
