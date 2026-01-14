@@ -5174,6 +5174,11 @@ AVAILABILITY_HEAVY_THRESHOLD_MINUTES = 240
 
 
 def _parse_availability_start_date(week: str | None, start: str | None) -> date:
+    if start:
+        try:
+            return date.fromisoformat(start)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid start date") from exc
     if week:
         match = re.match(r"^(?P<year>\d{4})-W(?P<week>\d{2})$", week)
         if not match:
@@ -5184,11 +5189,6 @@ def _parse_availability_start_date(week: str | None, start: str | None) -> date:
             return date.fromisocalendar(year, week_num, 1)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid week value") from exc
-    if start:
-        try:
-            return date.fromisoformat(start)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid start date") from exc
     today = datetime.now(timezone.utc).date()
     return today - timedelta(days=today.weekday())
 
@@ -5711,7 +5711,7 @@ async def admin_workers_dashboard(
         func.sum(sa.case((Booking.status == "CANCELLED", 1), else_=0)),
         0,
     )
-    cancellation_rate_expr = cancellation_count_expr / func.nullif(total_count_expr, 0)
+    cancellation_rate_expr = sa.cast(cancellation_count_expr, sa.Float) / func.nullif(total_count_expr, 0)
     problematic_stmt = (
         select(
             Worker.worker_id,

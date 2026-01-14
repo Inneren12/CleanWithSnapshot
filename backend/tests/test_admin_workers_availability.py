@@ -94,3 +94,28 @@ async def test_admin_workers_availability_heatmap(client, async_session_maker):
     )
     assert "Deep Cleaner" in filtered.text
     assert "Window Cleaner" not in filtered.text
+
+
+@pytest.mark.anyio
+async def test_admin_workers_availability_prefers_start_date(client, async_session_maker):
+    start_date = dt.date(2024, 2, 7)
+    week_value = "2024-W06"
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        session.add(
+            Worker(
+                name="Schedule Check",
+                phone="+1 555-7000",
+                team_id=team.team_id,
+                is_active=True,
+            )
+        )
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    response = client.get(
+        f"/v1/admin/ui/workers/availability?week={week_value}&start={start_date.isoformat()}",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert f"Week of {start_date.isoformat()}" in response.text
