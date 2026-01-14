@@ -32,22 +32,18 @@ def set_csrf_cookie(
     response: Response,
     token: str,
     *,
-    secure: bool | None = None,
-    httponly: bool = True,
-    samesite: str = "lax",
     path: str = "/",
     domain: str | None = None,
 ) -> None:
-    if secure is None:
-        from app.settings import settings
+    from app.settings import settings
 
-        secure = settings.app_env != "dev"
+    secure = settings.app_env != "dev"
 
     response.set_cookie(
         CSRF_COOKIE_NAME,
         token,
-        httponly=httponly,
-        samesite=samesite,
+        httponly=True,
+        samesite="lax",
         secure=secure,
         path=path,
         domain=domain,
