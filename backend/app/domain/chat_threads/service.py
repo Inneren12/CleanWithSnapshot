@@ -34,6 +34,18 @@ class ThreadSummary:
     admin_membership_id: int | None
 
 
+def _participant_key(
+    participant_type: ParticipantType,
+    *,
+    worker_id: int | None = None,
+    admin_membership_id: int | None = None,
+) -> str:
+    participant_id = worker_id if participant_type == PARTICIPANT_WORKER else admin_membership_id
+    if participant_id is None:
+        raise ValueError("participant identifier required")
+    return f"{participant_type}:{participant_id}"
+
+
 async def resolve_worker_for_identity(
     session: AsyncSession, *, org_id: uuid.UUID, name: str, team_id: int
 ) -> Worker:
@@ -125,12 +137,16 @@ async def get_or_create_direct_thread(
                 thread_id=thread.thread_id,
                 participant_type=PARTICIPANT_WORKER,
                 worker_id=worker_id,
+                participant_key=_participant_key(PARTICIPANT_WORKER, worker_id=worker_id),
             ),
             ChatParticipant(
                 org_id=org_id,
                 thread_id=thread.thread_id,
                 participant_type=PARTICIPANT_ADMIN,
                 admin_membership_id=admin_membership_id,
+                participant_key=_participant_key(
+                    PARTICIPANT_ADMIN, admin_membership_id=admin_membership_id
+                ),
             ),
         ]
     )
@@ -157,6 +173,7 @@ async def create_group_thread(
             thread_id=thread.thread_id,
             participant_type=PARTICIPANT_ADMIN,
             admin_membership_id=admin_membership_id,
+            participant_key=_participant_key(PARTICIPANT_ADMIN, admin_membership_id=admin_membership_id),
         ),
         *[
             ChatParticipant(
@@ -164,6 +181,7 @@ async def create_group_thread(
                 thread_id=thread.thread_id,
                 participant_type=PARTICIPANT_WORKER,
                 worker_id=worker_id,
+                participant_key=_participant_key(PARTICIPANT_WORKER, worker_id=worker_id),
             )
             for worker_id in worker_ids
         ],
@@ -422,6 +440,11 @@ async def mark_thread_read(
             participant_type=participant_type,
             worker_id=worker_id,
             admin_membership_id=admin_membership_id,
+            participant_key=_participant_key(
+                participant_type,
+                worker_id=worker_id,
+                admin_membership_id=admin_membership_id,
+            ),
             last_read_at=now,
         )
         session.add(record)

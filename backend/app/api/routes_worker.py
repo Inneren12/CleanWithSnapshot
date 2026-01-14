@@ -24,7 +24,7 @@ from fastapi import (
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.api import entitlements
@@ -36,6 +36,8 @@ from app.api.worker_auth import (
     require_worker,
 )
 from app.dependencies import get_db_session
+from app.infra.db import get_session_factory
+from app.infra.org_context import org_id_context
 from app.domain.addons import schemas as addon_schemas
 from app.domain.addons import service as addon_service
 from app.domain.analytics import service as analytics_service
@@ -107,19 +109,12 @@ def _parse_since_timestamp(since: str | None) -> datetime:
 async def _chat_stream(
     request: Request,
     *,
-    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
     org_id: uuid.UUID,
     thread_id: uuid.UUID,
     participant_type: str,
     worker_id: int | None = None,
 ) -> StreamingResponse:
-    await chat_service.ensure_participant(
-        session,
-        org_id=org_id,
-        thread_id=thread_id,
-        participant_type=participant_type,
-        worker_id=worker_id,
-    )
     last_seen = _parse_since_timestamp(request.query_params.get("since"))
     last_seen_id = 0
 
@@ -128,13 +123,15 @@ async def _chat_stream(
         while True:
             if await request.is_disconnected():
                 break
-            messages = await chat_service.list_messages_since(
-                session,
-                org_id=org_id,
-                thread_id=thread_id,
-                since=last_seen,
-                since_message_id=last_seen_id,
-            )
+            async with session_factory() as stream_session:
+                with org_id_context(org_id):
+                    messages = await chat_service.list_messages_since(
+                        stream_session,
+                        org_id=org_id,
+                        thread_id=thread_id,
+                        since=last_seen,
+                        since_message_id=last_seen_id,
+                    )
             if messages:
                 for message in messages:
                     payload = json.dumps(jsonable_encoder(_chat_message_response(message)))
@@ -143,7 +140,7 @@ async def _chat_stream(
                     last_seen_id = message.message_id
             else:
                 yield ": keep-alive\n\n"
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(2.0)
 
     return StreamingResponse(
         event_stream(),
@@ -948,14 +945,23 @@ async def worker_list_chat_messages(
 async def worker_stream_chat_messages(
     thread_id: uuid.UUID,
     request: Request,
-    session: AsyncSession = Depends(get_db_session),
     identity: WorkerIdentity = Depends(require_worker),
 ) -> StreamingResponse:
-    worker = await _resolve_worker_record(session, identity)
     try:
+        session_factory = getattr(request.app.state, "db_session_factory", None) or get_session_factory()
+        async with session_factory() as session:
+            with org_id_context(identity.org_id):
+                worker = await _resolve_worker_record(session, identity)
+                await chat_service.ensure_participant(
+                    session,
+                    org_id=identity.org_id,
+                    thread_id=thread_id,
+                    participant_type=PARTICIPANT_WORKER,
+                    worker_id=worker.worker_id,
+                )
         return await _chat_stream(
             request,
-            session=session,
+            session_factory=session_factory,
             org_id=identity.org_id,
             thread_id=thread_id,
             participant_type=PARTICIPANT_WORKER,

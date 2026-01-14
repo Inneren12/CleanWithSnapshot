@@ -19,7 +19,7 @@ from pydantic import BaseModel, EmailStr
 import sqlalchemy as sa
 from sqlalchemy import and_, func, select, or_
 from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api import entitlements
 from app.api.idempotency import enforce_org_action_rate_limit, require_idempotency
@@ -54,6 +54,8 @@ from app.domain.analytics.service import (
     log_event,
 )
 from app.dependencies import get_db_session
+from app.infra.db import get_session_factory
+from app.infra.org_context import org_id_context
 from app.domain.bookings.db_models import (
     Booking,
     BookingWorker,
@@ -298,19 +300,12 @@ def _parse_since_timestamp(since: str | None) -> datetime:
 async def _chat_stream(
     request: Request,
     *,
-    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
     org_id: uuid.UUID,
     thread_id: uuid.UUID,
     participant_type: str,
     admin_membership_id: int | None = None,
 ) -> StreamingResponse:
-    await chat_service.ensure_participant(
-        session,
-        org_id=org_id,
-        thread_id=thread_id,
-        participant_type=participant_type,
-        admin_membership_id=admin_membership_id,
-    )
     last_seen = _parse_since_timestamp(request.query_params.get("since"))
     last_seen_id = 0
 
@@ -319,13 +314,15 @@ async def _chat_stream(
         while True:
             if await request.is_disconnected():
                 break
-            messages = await chat_service.list_messages_since(
-                session,
-                org_id=org_id,
-                thread_id=thread_id,
-                since=last_seen,
-                since_message_id=last_seen_id,
-            )
+            async with session_factory() as stream_session:
+                with org_id_context(org_id):
+                    messages = await chat_service.list_messages_since(
+                        stream_session,
+                        org_id=org_id,
+                        thread_id=thread_id,
+                        since=last_seen,
+                        since_message_id=last_seen_id,
+                    )
             if messages:
                 for message in messages:
                     payload = json.dumps(jsonable_encoder(_chat_message_response(message)))
@@ -334,7 +331,7 @@ async def _chat_stream(
                     last_seen_id = message.message_id
             else:
                 yield ": keep-alive\n\n"
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(2.0)
 
     return StreamingResponse(
         event_stream(),
@@ -454,15 +451,26 @@ async def admin_list_chat_messages(
 async def admin_stream_chat_messages(
     thread_id: uuid.UUID,
     request: Request,
-    session: AsyncSession = Depends(get_db_session),
     identity: AdminIdentity = Depends(require_viewer),
 ) -> StreamingResponse:
     org_id = _resolve_admin_org(request, identity)
-    admin_membership_id = await _resolve_admin_membership_id(request, session, org_id, identity)
     try:
+        session_factory = getattr(request.app.state, "db_session_factory", None) or get_session_factory()
+        async with session_factory() as session:
+            with org_id_context(org_id):
+                admin_membership_id = await _resolve_admin_membership_id(
+                    request, session, org_id, identity
+                )
+                await chat_service.ensure_participant(
+                    session,
+                    org_id=org_id,
+                    thread_id=thread_id,
+                    participant_type=PARTICIPANT_ADMIN,
+                    admin_membership_id=admin_membership_id,
+                )
         return await _chat_stream(
             request,
-            session=session,
+            session_factory=session_factory,
             org_id=org_id,
             thread_id=thread_id,
             participant_type=PARTICIPANT_ADMIN,
@@ -483,7 +491,7 @@ async def admin_send_chat_message(
     payload: chat_schemas.ChatMessageCreateRequest,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    identity: AdminIdentity = Depends(require_viewer),
+    identity: AdminIdentity = Depends(require_dispatch),
 ) -> chat_schemas.ChatMessageResponse:
     body = payload.body.strip()
     if not body:

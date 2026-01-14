@@ -36,6 +36,19 @@ def admin_credentials():
         settings.admin_basic_password = original_password
 
 
+@pytest.fixture()
+def viewer_credentials():
+    original_username = settings.viewer_basic_username
+    original_password = settings.viewer_basic_password
+    settings.viewer_basic_username = "viewer@example.com"
+    settings.viewer_basic_password = "viewer-secret"
+    try:
+        yield
+    finally:
+        settings.viewer_basic_username = original_username
+        settings.viewer_basic_password = original_password
+
+
 async def _seed_org(session, org_id: uuid.UUID, admin_email: str) -> tuple[Team, int]:
     org = await saas_service.ensure_org(session, org_id, name=f"Org {org_id}")
     user = await saas_service.create_user(session, admin_email, password=None)
@@ -199,6 +212,37 @@ async def test_unread_count_updates_on_mark_read(client, async_session_maker):
         if item["thread_id"] == str(thread.thread_id)
     )
     assert unread == 0
+
+
+@pytest.mark.anyio
+async def test_viewer_cannot_send_chat_messages(client, async_session_maker, viewer_credentials):
+    org_id = uuid.uuid4()
+    admin_email = settings.admin_basic_username or "admin@example.com"
+    viewer_email = settings.viewer_basic_username or "viewer@example.com"
+    async with async_session_maker() as session:
+        team, admin_membership_id = await _seed_org(session, org_id, admin_email)
+        worker = await _seed_worker(
+            session,
+            org_id=org_id,
+            team_id=team.team_id,
+            name="Worker Viewer",
+            phone="888-888",
+            password="workerviewer",
+        )
+        thread = await chat_service.get_or_create_direct_thread(
+            session,
+            org_id=org_id,
+            worker_id=worker.worker_id,
+            admin_membership_id=admin_membership_id,
+        )
+        await session.commit()
+
+    response = client.post(
+        f"/v1/admin/chat/threads/{thread.thread_id}/messages",
+        json={"body": "Viewer should not send"},
+        headers=_admin_headers(viewer_email, "viewer-secret", org_id),
+    )
+    assert response.status_code == 403
 
 
 @pytest.mark.anyio
