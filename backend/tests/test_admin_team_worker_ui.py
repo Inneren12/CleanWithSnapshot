@@ -4,7 +4,9 @@ import datetime as dt
 import pytest
 import sqlalchemy as sa
 
+from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, BookingWorker, Team
+from app.domain.reason_logs.db_models import ReasonLog
 from app.domain.bookings.service import ensure_default_team
 from app.domain.workers.db_models import Worker
 from app.settings import settings
@@ -146,6 +148,20 @@ async def test_admin_team_cascade_delete(client, async_session_maker):
         session.add(booking)
         await session.flush()
         session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker.worker_id))
+        session.add(
+            EventLog(
+                event_type="booking_created",
+                booking_id=booking.booking_id,
+            )
+        )
+        session.add(
+            ReasonLog(
+                order_id=booking.booking_id,
+                kind="booking",
+                code="cascade-test",
+                note="Cascade delete team",
+            )
+        )
         await session.commit()
 
     headers = _basic_auth("dispatch", "secret")
@@ -164,6 +180,18 @@ async def test_admin_team_cascade_delete(client, async_session_maker):
         assert deleted_worker is None
         deleted_booking = await session.get(Booking, booking.booking_id)
         assert deleted_booking is None
+        reason_logs = (
+            await session.execute(
+                sa.select(ReasonLog).where(ReasonLog.order_id == booking.booking_id)
+            )
+        ).scalars().all()
+        assert reason_logs == []
+        event_logs = (
+            await session.execute(
+                sa.select(EventLog).where(EventLog.booking_id == booking.booking_id)
+            )
+        ).scalars().all()
+        assert event_logs == []
 
 
 @pytest.mark.anyio
@@ -297,6 +325,20 @@ async def test_admin_worker_delete_cascade(client, async_session_maker):
         session.add(booking)
         await session.flush()
         session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker.worker_id))
+        session.add(
+            EventLog(
+                event_type="booking_created",
+                booking_id=booking.booking_id,
+            )
+        )
+        session.add(
+            ReasonLog(
+                order_id=booking.booking_id,
+                kind="booking",
+                code="cascade-test",
+                note="Cascade delete worker",
+            )
+        )
         await session.commit()
 
     headers = _basic_auth("dispatch", "secret")
@@ -313,6 +355,18 @@ async def test_admin_worker_delete_cascade(client, async_session_maker):
         assert deleted_worker is None
         deleted_booking = await session.get(Booking, booking.booking_id)
         assert deleted_booking is None
+        reason_logs = (
+            await session.execute(
+                sa.select(ReasonLog).where(ReasonLog.order_id == booking.booking_id)
+            )
+        ).scalars().all()
+        assert reason_logs == []
+        event_logs = (
+            await session.execute(
+                sa.select(EventLog).where(EventLog.booking_id == booking.booking_id)
+            )
+        ).scalars().all()
+        assert event_logs == []
 
     list_resp = client.get("/v1/admin/ui/workers?active_only=1", headers=headers)
     assert list_resp.status_code == 200

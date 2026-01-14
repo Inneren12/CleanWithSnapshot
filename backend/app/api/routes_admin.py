@@ -5046,6 +5046,13 @@ async def admin_teams_delete(
             after={"deleted": True},
         )
     elif strategy == "cascade":
+        booking_ids = (
+            await session.execute(
+                select(Booking.booking_id).where(Booking.team_id == team_id, Booking.org_id == org_id)
+            )
+        ).scalars().all()
+        for booking_id in booking_ids:
+            await _hard_delete_booking(session, booking_id)
         worker_ids = (
             await session.execute(
                 select(Worker.worker_id).where(Worker.team_id == team_id, Worker.org_id == org_id)
@@ -5060,9 +5067,6 @@ async def admin_teams_delete(
                 .where(Booking.assigned_worker_id.in_(worker_ids), Booking.org_id == org_id)
                 .values(assigned_worker_id=None)
             )
-        await session.execute(
-            sa.delete(Booking).where(Booking.team_id == team_id, Booking.org_id == org_id)
-        )
         await session.execute(
             sa.delete(Worker).where(Worker.team_id == team_id, Worker.org_id == org_id)
         )
@@ -5780,12 +5784,12 @@ async def admin_workers_delete(
     before = {"name": worker.name, "team_id": worker.team_id}
     if strategy == "detach":
         await session.execute(
+            sa.delete(BookingWorker).where(BookingWorker.worker_id == worker.worker_id)
+        )
+        await session.execute(
             sa.update(Booking)
             .where(Booking.assigned_worker_id == worker.worker_id, Booking.org_id == org_id)
             .values(assigned_worker_id=None)
-        )
-        await session.execute(
-            sa.delete(BookingWorker).where(BookingWorker.worker_id == worker.worker_id)
         )
         await audit_service.record_action(
             session,
@@ -5814,13 +5818,8 @@ async def admin_workers_delete(
             )
         ).scalars().all()
         booking_ids.update(crew_booking_ids)
-        if booking_ids:
-            await session.execute(
-                sa.delete(BookingWorker).where(BookingWorker.booking_id.in_(booking_ids))
-            )
-            await session.execute(
-                sa.delete(Booking).where(Booking.booking_id.in_(booking_ids), Booking.org_id == org_id)
-            )
+        for booking_id in booking_ids:
+            await _hard_delete_booking(session, booking_id)
         await audit_service.record_action(
             session,
             identity=identity,
