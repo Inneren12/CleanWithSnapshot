@@ -1,13 +1,14 @@
 import asyncio
 import base64
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import sqlalchemy as sa
 
 from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.clients.db_models import ClientUser
+from app.domain.subscriptions.db_models import Subscription
 from app.settings import settings
 
 
@@ -98,6 +99,37 @@ def _seed_client_with_booking(async_session_maker):
             session.add(event_log)
             await session.commit()
             return client.client_id, booking.booking_id, event_log.event_id
+
+    return asyncio.run(create())
+
+
+def _seed_client_with_subscription(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            client = ClientUser(
+                org_id=settings.default_org_id,
+                name="Subscription Client",
+                email=f"subscription-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-999-0000",
+                address="500 Subscription Way",
+                is_active=True,
+            )
+            session.add(client)
+            await session.flush()
+
+            subscription = Subscription(
+                org_id=settings.default_org_id,
+                client_id=client.client_id,
+                status="active",
+                frequency="monthly",
+                start_date=date.today(),
+                next_run_at=datetime.now(tz=timezone.utc),
+                base_service_type="standard",
+                base_price=15000,
+            )
+            session.add(subscription)
+            await session.commit()
+            return client.client_id, subscription.subscription_id
 
     return asyncio.run(create())
 
@@ -231,6 +263,38 @@ def test_admin_can_delete_client_with_cascade_strategy(client, async_session_mak
                 assert deleted_client is None
 
         asyncio.run(verify_cascade())
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_cannot_delete_client_with_subscriptions(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, subscription_id = _seed_client_with_subscription(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        delete_response = client.post(
+            f"/v1/admin/ui/clients/{client_id}/delete",
+            headers=headers,
+            data={"confirm": "DELETE", "strategy": "detach"},
+            follow_redirects=False,
+        )
+        assert delete_response.status_code == 409
+        assert "Client has subscriptions" in delete_response.text
+
+        async def verify_blocked():
+            async with async_session_maker() as session:
+                existing_client = await session.get(ClientUser, client_id)
+                assert existing_client is not None
+                existing_subscription = await session.get(Subscription, subscription_id)
+                assert existing_subscription is not None
+
+        asyncio.run(verify_blocked())
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
