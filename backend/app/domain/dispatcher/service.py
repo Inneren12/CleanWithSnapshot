@@ -61,6 +61,7 @@ _ZONE_BOXES: list[_ZoneBox] = [
     _ZoneBox("North/Castle Downs", 53.58, 53.68, -113.56, -113.42),
     _ZoneBox("St. Albert", 53.60, 53.70, -113.72, -113.58),
 ]
+# Zone boxes can overlap; zone_for_point resolves by this order and filters follow the label.
 
 _ZONE_LOOKUP = {zone.name.lower(): zone for zone in _ZONE_BOXES}
 _ZONE_ALIASES = {
@@ -90,17 +91,49 @@ def zone_for_point(lat: float | None, lng: float | None) -> str | None:
     return None
 
 
-def _apply_zone_filter(stmt: sa.Select, zone: _ZoneBox | None) -> sa.Select:
+def _matches_zone(lat: float | None, lng: float | None, zone: _ZoneBox | None) -> bool:
     if zone is None:
-        return stmt
-    return stmt.where(
-        ClientAddress.lat.isnot(None),
-        ClientAddress.lng.isnot(None),
-        ClientAddress.lat >= zone.lat_min,
-        ClientAddress.lat <= zone.lat_max,
-        ClientAddress.lng >= zone.lng_min,
-        ClientAddress.lng <= zone.lng_max,
+        return True
+    return zone_for_point(lat, lng) == zone.name
+
+
+def _apply_zone_filter(
+    rows: list[tuple[str, float | None, float | None]],
+    zone: _ZoneBox | None,
+) -> list[tuple[str, float | None, float | None]]:
+    if zone is None:
+        return list(rows)
+    filtered: list[tuple[str, float | None, float | None]] = []
+    for booking_id, lat, lng in rows:
+        if _matches_zone(lat, lng, zone):
+            filtered.append((booking_id, lat, lng))
+    return filtered
+
+
+async def _zone_filtered_booking_ids(
+    session: AsyncSession,
+    *,
+    org_id,
+    start_utc: datetime,
+    end_utc: datetime,
+    zone: _ZoneBox | None,
+) -> set[str] | None:
+    if zone is None:
+        return None
+    stmt = (
+        select(Booking.booking_id, ClientAddress.lat, ClientAddress.lng)
+        .select_from(Booking)
+        .join(ClientAddress, ClientAddress.address_id == Booking.address_id, isouter=True)
+        .where(
+            Booking.org_id == org_id,
+            Booking.starts_at >= start_utc,
+            Booking.starts_at < end_utc,
+            Booking.archived_at.is_(None),
+        )
     )
+    rows = (await session.execute(stmt)).all()
+    filtered_rows = _apply_zone_filter(rows, zone)
+    return {booking_id for booking_id, _, _ in filtered_rows}
 
 
 def _booking_end(booking: Booking) -> datetime:
@@ -153,6 +186,21 @@ async def fetch_dispatcher_board(
 ) -> DispatcherBoardResult:
     zone_filter = resolve_zone(zone)
     start_utc, end_utc = resolve_day_window(target_date, tz_name)
+    zone_booking_ids = await _zone_filtered_booking_ids(
+        session,
+        org_id=org_id,
+        start_utc=start_utc,
+        end_utc=end_utc,
+        zone=zone_filter,
+    )
+    if zone_filter is not None and not zone_booking_ids:
+        server_time = datetime.now(timezone.utc)
+        return DispatcherBoardResult(
+            bookings=[],
+            workers=[],
+            server_time=server_time,
+            data_version=0,
+        )
     stmt = (
         select(Booking, ClientUser, ClientAddress, Worker)
         .select_from(Booking)
@@ -167,7 +215,8 @@ async def fetch_dispatcher_board(
         )
         .order_by(Worker.worker_id.asc().nulls_last(), Booking.starts_at.asc())
     )
-    stmt = _apply_zone_filter(stmt, zone_filter)
+    if zone_booking_ids is not None:
+        stmt = stmt.where(Booking.booking_id.in_(zone_booking_ids))
     result = await session.execute(stmt)
     rows = result.all()
 
@@ -246,6 +295,13 @@ async def fetch_dispatcher_stats(
 ) -> DispatcherStatsResult:
     zone_filter = resolve_zone(zone)
     start_utc, end_utc = resolve_day_window(target_date, tz_name)
+    zone_booking_ids = await _zone_filtered_booking_ids(
+        session,
+        org_id=org_id,
+        start_utc=start_utc,
+        end_utc=end_utc,
+        zone=zone_filter,
+    )
     status_lower = func.lower(Booking.status)
     duration_expr = func.coalesce(Booking.actual_duration_minutes, Booking.duration_minutes)
     stats_stmt = (
@@ -273,16 +329,27 @@ async def fetch_dispatcher_stats(
             Booking.archived_at.is_(None),
         )
     )
-    stats_stmt = _apply_zone_filter(stats_stmt, zone_filter)
-    stats_row = (await session.execute(stats_stmt)).first()
-    done_count = int(stats_row.done_count or 0) if stats_row else 0
-    in_progress_count = int(stats_row.in_progress_count or 0) if stats_row else 0
-    planned_count = int(stats_row.planned_count or 0) if stats_row else 0
-    avg_minutes = float(stats_row.avg_duration_minutes) if stats_row and stats_row.avg_duration_minutes else None
-    avg_hours = round(avg_minutes / 60, 2) if avg_minutes is not None else None
+    if zone_booking_ids is not None and not zone_booking_ids:
+        done_count = 0
+        in_progress_count = 0
+        planned_count = 0
+        avg_hours = None
+    else:
+        if zone_booking_ids is not None:
+            stats_stmt = stats_stmt.where(Booking.booking_id.in_(zone_booking_ids))
+        stats_row = (await session.execute(stats_stmt)).first()
+        done_count = int(stats_row.done_count or 0) if stats_row else 0
+        in_progress_count = int(stats_row.in_progress_count or 0) if stats_row else 0
+        planned_count = int(stats_row.planned_count or 0) if stats_row else 0
+        avg_minutes = (
+            float(stats_row.avg_duration_minutes)
+            if stats_row and stats_row.avg_duration_minutes
+            else None
+        )
+        avg_hours = round(avg_minutes / 60, 2) if avg_minutes is not None else None
 
     revenue_stmt = (
-        select(func.coalesce(func.sum(func.coalesce(Payment.amount_cents, 0)), 0).label("revenue_cents"))
+        select(Payment.amount_cents, ClientAddress.lat, ClientAddress.lng)
         .select_from(Payment)
         .join(Invoice, Invoice.invoice_id == Payment.invoice_id, isouter=True)
         .join(
@@ -301,9 +368,12 @@ async def fetch_dispatcher_stats(
             func.coalesce(Payment.received_at, Payment.created_at) < end_utc,
         )
     )
-    revenue_stmt = _apply_zone_filter(revenue_stmt, zone_filter)
-    revenue_row = (await session.execute(revenue_stmt)).first()
-    revenue_cents = int(revenue_row.revenue_cents or 0) if revenue_row else 0
+    revenue_rows = (await session.execute(revenue_stmt)).all()
+    if zone_filter is not None:
+        revenue_rows = [
+            row for row in revenue_rows if _matches_zone(row.lat, row.lng, zone_filter)
+        ]
+    revenue_cents = sum(int(row.amount_cents or 0) for row in revenue_rows)
 
     return DispatcherStatsResult(
         done_count=done_count,
