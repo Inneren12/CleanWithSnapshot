@@ -104,8 +104,14 @@ def downgrade() -> None:
     is_sqlite = conn.dialect.name == "sqlite"
 
     if is_sqlite:
+        inspector = sa.inspect(conn)
+        has_named_fk = any(
+            fk.get("name") == "fk_client_users_org_id"
+            for fk in inspector.get_foreign_keys("client_users")
+        )
         with op.batch_alter_table("client_users", recreate="always") as batch_op:
-            batch_op.drop_constraint("fk_client_users_org_id", type_="foreignkey")
+            if has_named_fk:
+                batch_op.drop_constraint("fk_client_users_org_id", type_="foreignkey")
             batch_op.drop_index("ix_client_users_org_id")
             batch_op.drop_column("updated_at")
             batch_op.drop_column("notes")

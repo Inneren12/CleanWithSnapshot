@@ -5966,9 +5966,17 @@ async def _client_delete_counts(
             .where(Booking.client_id == client_id, Booking.org_id == org_id)
         )
     ).scalar_one()
+    subscriptions_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(Subscription)
+            .where(Subscription.client_id == client_id, Subscription.org_id == org_id)
+        )
+    ).scalar_one()
     return {
         "bookings": int(bookings_count or 0),
         "invoices": int(invoices_count or 0),
+        "subscriptions": int(subscriptions_count or 0),
     }
 
 
@@ -6378,6 +6386,13 @@ async def admin_clients_delete(
     ).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    counts = await _client_delete_counts(session, org_id=org_id, client_id=client_id)
+    if counts.get("subscriptions", 0) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Client has subscriptions; cancel/delete them first.",
+        )
 
     booking_ids = (
         await session.execute(
