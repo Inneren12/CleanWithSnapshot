@@ -5881,9 +5881,18 @@ def _render_client_form(client: ClientUser | None, lang: str | None, csrf_input:
 
 
 def _render_client_danger_zone(client: ClientUser, lang: str | None, csrf_input: str) -> str:
-    archive_label = html.escape(tr(lang, "admin.clients.archive_client"))
-    confirm_text = html.escape(tr(lang, "admin.clients.archive_confirm"))
-    help_text = html.escape(tr(lang, "admin.clients.archive_help"))
+    if client.is_active:
+        archive_action = "archive"
+        archive_label = html.escape(tr(lang, "admin.clients.archive_client"))
+        confirm_text = html.escape(tr(lang, "admin.clients.archive_confirm"))
+        help_text = html.escape(tr(lang, "admin.clients.archive_help"))
+    else:
+        archive_action = "unarchive"
+        archive_label = html.escape(tr(lang, "admin.clients.unarchive_client"))
+        confirm_text = html.escape(tr(lang, "admin.clients.unarchive_confirm"))
+        help_text = html.escape(tr(lang, "admin.clients.unarchive_help"))
+
+    delete_label = html.escape(tr(lang, "admin.clients.delete_client"))
     return f"""
     <div class="card">
       <div class="card-row">
@@ -5892,10 +5901,21 @@ def _render_client_danger_zone(client: ClientUser, lang: str | None, csrf_input:
           <div class="muted">{help_text}</div>
         </div>
       </div>
-      <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/archive" onsubmit="return confirm('{confirm_text}')">
+      <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/{archive_action}" onsubmit="return confirm('{confirm_text}')">
         {csrf_input}
         <button class="btn danger" type="submit">{archive_label}</button>
       </form>
+    </div>
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">{delete_label}</div>
+          <div class="muted">Delete permanently with a dependency strategy.</div>
+        </div>
+        <div class="actions">
+          <a class="btn danger" href="/v1/admin/ui/clients/{html.escape(client.client_id)}/delete">Delete permanently</a>
+        </div>
+      </div>
     </div>
     """
 
@@ -5926,13 +5946,40 @@ async def _list_clients(
     return result.scalars().all()
 
 
+async def _client_delete_counts(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    client_id: str,
+) -> dict[str, int]:
+    bookings_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(Booking)
+            .where(Booking.client_id == client_id, Booking.org_id == org_id)
+        )
+    ).scalar_one()
+    invoices_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(Invoice)
+            .join(Booking, Invoice.order_id == Booking.booking_id)
+            .where(Booking.client_id == client_id, Booking.org_id == org_id)
+        )
+    ).scalar_one()
+    return {
+        "bookings": int(bookings_count or 0),
+        "invoices": int(invoices_count or 0),
+    }
+
+
 @router.get("/v1/admin/ui/clients", response_class=HTMLResponse)
 async def admin_clients_list(
     request: Request,
     q: str | None = Query(default=None),
     show: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_dispatch),
+    _identity: AdminIdentity = Depends(require_admin),
 ) -> HTMLResponse:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     lang = resolve_lang(request)
@@ -5966,16 +6013,25 @@ async def admin_clients_list(
             if not client.is_active
             else html.escape(tr(lang, "admin.clients.status_active"))
         )
-        action_html = (
-            f"""
+        if client.is_active:
+            action_html = f"""
             <form method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/archive" onsubmit="return confirm('{html.escape(tr(lang, 'admin.clients.archive_confirm'))}')">
               {csrf_input}
               <button class="btn danger small" type="submit">{html.escape(tr(lang, 'admin.clients.archive'))}</button>
             </form>
             """
-            if client.is_active
-            else f"<span class=\"badge\">{html.escape(tr(lang, 'admin.clients.status_archived'))}</span>"
-        )
+        elif show_value == "archived":
+            action_html = f"""
+            <div class="stack" style="gap: var(--space-xs);">
+              <form method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/unarchive" onsubmit="return confirm('{html.escape(tr(lang, 'admin.clients.unarchive_confirm'))}')">
+                {csrf_input}
+                <button class="btn secondary small" type="submit">{html.escape(tr(lang, 'admin.clients.unarchive'))}</button>
+              </form>
+              <a class="btn danger small" href="/v1/admin/ui/clients/{html.escape(client.client_id)}/delete">Delete permanently</a>
+            </div>
+            """
+        else:
+            action_html = f"<span class=\"badge\">{html.escape(tr(lang, 'admin.clients.status_archived'))}</span>"
         rows.append(f"""
         <tr>
           <td><a href="/v1/admin/ui/clients/{html.escape(client.client_id)}">{html.escape(client.name or '—')}</a></td>
@@ -6041,7 +6097,7 @@ async def admin_clients_new_form(
 async def admin_clients_create(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    identity: AdminIdentity = Depends(require_dispatch),
+    identity: AdminIdentity = Depends(require_admin),
 ) -> Response:
     await require_csrf(request)
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
@@ -6090,7 +6146,7 @@ async def admin_clients_edit_form(
     client_id: str,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_dispatch),
+    _identity: AdminIdentity = Depends(require_admin),
 ) -> HTMLResponse:
     lang = resolve_lang(request)
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
@@ -6124,7 +6180,7 @@ async def admin_clients_update(
     client_id: str,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    identity: AdminIdentity = Depends(require_dispatch),
+    identity: AdminIdentity = Depends(require_admin),
 ) -> Response:
     await require_csrf(request)
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
@@ -6178,7 +6234,7 @@ async def admin_clients_archive(
     client_id: str,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    identity: AdminIdentity = Depends(require_dispatch),
+    identity: AdminIdentity = Depends(require_admin),
 ) -> Response:
     await require_csrf(request)
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
@@ -6203,6 +6259,162 @@ async def admin_clients_archive(
         before=before,
         after={"is_active": client.is_active},
     )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/unarchive", response_class=HTMLResponse)
+async def admin_clients_unarchive(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    before = {"is_active": client.is_active}
+    if not client.is_active:
+        client.is_active = True
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UNARCHIVE_CLIENT",
+        resource_type="client",
+        resource_id=client_id,
+        before=before,
+        after={"is_active": client.is_active},
+    )
+    await session.commit()
+    return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/v1/admin/ui/clients/{client_id}/delete", response_class=HTMLResponse)
+async def admin_clients_delete_confirm(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_admin),
+) -> HTMLResponse:
+    lang = resolve_lang(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    counts = await _client_delete_counts(session, org_id=org_id, client_id=client_id)
+    count_rows = "".join(
+        f"<li><strong>{html.escape(label.replace('_', ' ').title())}:</strong> {count}</li>"
+        for label, count in counts.items()
+    )
+    csrf_token = get_csrf_token(request)
+    content = f"""
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">Delete client permanently</div>
+          <div class="muted">Choose how to handle bookings linked to this client.</div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="muted">Dependent records found:</div>
+        <ul>{count_rows}</ul>
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client_id)}/delete">
+        <label class="muted">Booking strategy</label>
+        <label><input type="radio" name="strategy" value="detach" required /> Detach bookings (set client to empty)</label>
+        <label><input type="radio" name="strategy" value="cascade" required /> Cascade delete bookings (remove all client bookings)</label>
+        <input class="input" type="text" name="confirm" placeholder="DELETE" required />
+        {render_csrf_input(csrf_token)}
+        <button class="btn danger" type="submit">Delete permanently</button>
+      </form>
+    </div>
+    """
+    response = HTMLResponse(
+        _wrap_page(
+            request,
+            content,
+            title="Admin — Delete Client",
+            active="clients",
+            page_lang=lang,
+        )
+    )
+    issue_csrf_token(request, response, csrf_token)
+    return response
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/delete", response_class=HTMLResponse)
+async def admin_clients_delete(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    form = await request.form()
+    confirmation = (form.get("confirm") or "").strip().upper()
+    strategy = (form.get("strategy") or "").strip().lower()
+    if confirmation != "DELETE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deletion confirmation required")
+    if strategy not in {"detach", "cascade"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid deletion strategy")
+
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    booking_ids = (
+        await session.execute(
+            select(Booking.booking_id).where(
+                Booking.client_id == client_id,
+                Booking.org_id == org_id,
+            )
+        )
+    ).scalars().all()
+
+    if strategy == "detach":
+        await session.execute(
+            sa.update(Booking)
+            .where(Booking.client_id == client_id, Booking.org_id == org_id)
+            .values(client_id=None)
+        )
+    else:
+        for booking_id in booking_ids:
+            await _hard_delete_booking(session, booking_id)
+
+    before = {
+        "name": client.name,
+        "email": client.email,
+        "strategy": strategy,
+        "bookings": len(booking_ids),
+    }
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="DELETE_CLIENT",
+        resource_type="client",
+        resource_id=client_id,
+        before=before,
+        after=None,
+    )
+    await session.delete(client)
     await session.commit()
     return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -6611,6 +6823,16 @@ async def _delete_booking_dependencies(session: AsyncSession, booking_id: str) -
     await session.execute(sa.delete(Invoice).where(Invoice.order_id == booking_id))
     await session.execute(sa.delete(BookingWorker).where(BookingWorker.booking_id == booking_id))
     await session.execute(sa.delete(EventLog).where(EventLog.booking_id == booking_id))
+
+
+async def _hard_delete_booking(session: AsyncSession, booking_id: str) -> None:
+    booking = (
+        await session.execute(select(Booking).where(Booking.booking_id == booking_id))
+    ).scalar_one_or_none()
+    if booking is None:
+        return
+    await _delete_booking_dependencies(session, booking.booking_id)
+    await session.delete(booking)
 
 
 @router.get("/v1/admin/ui/bookings/new", response_class=HTMLResponse)
@@ -7144,8 +7366,7 @@ async def admin_bookings_delete(
         before=before,
         after=None,
     )
-    await _delete_booking_dependencies(session, booking.booking_id)
-    await session.delete(booking)
+    await _hard_delete_booking(session, booking.booking_id)
     await session.commit()
     return RedirectResponse("/v1/admin/ui/dispatch", status_code=status.HTTP_303_SEE_OTHER)
 
