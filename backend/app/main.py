@@ -18,6 +18,7 @@ from app.api.break_glass import router as break_glass_router
 from app.api.routes_queues import router as queues_router
 from app.api.routes_timeline import router as timeline_router
 from app.api.routes_bookings import router as bookings_router
+from app.api.routes_dispatcher import router as dispatcher_router
 from app.api.routes_chat import router as chat_router
 from app.api.routes_estimate import router as estimate_router
 from app.api.routes_bot import router as bot_router
@@ -404,6 +405,7 @@ def create_app(app_settings) -> FastAPI:
     app.include_router(ui_lang_router)
     app.include_router(worker_router)
     app.include_router(bookings_router)
+    app.include_router(dispatcher_router)
     app.include_router(leads_router)
     app.include_router(break_glass_router)
     app.include_router(admin_router)
