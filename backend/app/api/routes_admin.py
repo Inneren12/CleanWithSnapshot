@@ -6304,6 +6304,49 @@ async def admin_clients_unarchive(
     return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
 
 
+def _render_client_delete_content(
+    *,
+    delete_client_id: str,
+    delete_counts: dict[str, int],
+    csrf_token: str,
+    banner_message: str | None = None,
+) -> str:
+    count_rows = "".join(
+        f"<li><strong>{html.escape(label.replace('_', ' ').title())}:</strong> {count}</li>"
+        for label, count in delete_counts.items()
+    )
+    banner_block = ""
+    if banner_message:
+        banner_block = f"""
+        <div class="card" style="border-color:#fecaca;background:#fef2f2;color:#b91c1c;">
+          <strong>{html.escape(banner_message)}</strong>
+        </div>
+        """
+    return f"""
+    {banner_block}
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="title">Delete client permanently</div>
+          <div class="muted">Choose how to handle bookings linked to this client.</div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="muted">Dependent records found:</div>
+        <ul>{count_rows}</ul>
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(delete_client_id)}/delete">
+        <label class="muted">Booking strategy</label>
+        <label><input type="radio" name="strategy" value="detach" required /> Detach bookings (set client to empty)</label>
+        <label><input type="radio" name="strategy" value="cascade" required /> Cascade delete bookings (remove all client bookings)</label>
+        <input class="input" type="text" name="confirm" placeholder="DELETE" required />
+        {render_csrf_input(csrf_token)}
+        <button class="btn danger" type="submit">Delete permanently</button>
+      </form>
+    </div>
+    """
+
+
 @router.get("/v1/admin/ui/clients/{client_id}/delete", response_class=HTMLResponse)
 async def admin_clients_delete_confirm(
     client_id: str,
@@ -6322,33 +6365,12 @@ async def admin_clients_delete_confirm(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
 
     counts = await _client_delete_counts(session, org_id=org_id, client_id=client_id)
-    count_rows = "".join(
-        f"<li><strong>{html.escape(label.replace('_', ' ').title())}:</strong> {count}</li>"
-        for label, count in counts.items()
-    )
     csrf_token = get_csrf_token(request)
-    content = f"""
-    <div class="card">
-      <div class="card-row">
-        <div>
-          <div class="title">Delete client permanently</div>
-          <div class="muted">Choose how to handle bookings linked to this client.</div>
-        </div>
-      </div>
-      <div class="stack">
-        <div class="muted">Dependent records found:</div>
-        <ul>{count_rows}</ul>
-      </div>
-      <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client_id)}/delete">
-        <label class="muted">Booking strategy</label>
-        <label><input type="radio" name="strategy" value="detach" required /> Detach bookings (set client to empty)</label>
-        <label><input type="radio" name="strategy" value="cascade" required /> Cascade delete bookings (remove all client bookings)</label>
-        <input class="input" type="text" name="confirm" placeholder="DELETE" required />
-        {render_csrf_input(csrf_token)}
-        <button class="btn danger" type="submit">Delete permanently</button>
-      </form>
-    </div>
-    """
+    content = _render_client_delete_content(
+        delete_client_id=client_id,
+        delete_counts=counts,
+        csrf_token=csrf_token,
+    )
     response = HTMLResponse(
         _wrap_page(
             request,
@@ -6389,10 +6411,26 @@ async def admin_clients_delete(
 
     counts = await _client_delete_counts(session, org_id=org_id, client_id=client_id)
     if counts.get("subscriptions", 0) > 0:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Client has subscriptions; cancel/delete them first.",
+        message = "Client has subscriptions; cancel/delete them first."
+        csrf_token = get_csrf_token(request)
+        content = _render_client_delete_content(
+            delete_client_id=client_id,
+            delete_counts=counts,
+            csrf_token=csrf_token,
+            banner_message=message,
         )
+        response = HTMLResponse(
+            _wrap_page(
+                request,
+                content,
+                title="Admin — Delete Client",
+                active="clients",
+                page_lang=resolve_lang(request),
+            ),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+        issue_csrf_token(request, response, csrf_token)
+        return response
 
     booking_ids = (
         await session.execute(
