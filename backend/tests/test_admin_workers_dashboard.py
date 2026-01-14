@@ -80,8 +80,24 @@ async def test_admin_workers_dashboard_segments(client, async_session_maker):
             rating_count=10,
             is_active=True,
         )
+        worker_rate = Worker(
+            name="Rate Watch",
+            phone="+1 555-6000",
+            team_id=team.team_id,
+            skills=["standard"],
+            rating_avg=4.0,
+            rating_count=3,
+            is_active=True,
+        )
         session.add_all(
-            [worker_top, worker_busy, worker_newbie, worker_problem, worker_revenue]
+            [
+                worker_top,
+                worker_busy,
+                worker_newbie,
+                worker_problem,
+                worker_revenue,
+                worker_rate,
+            ]
         )
         await session.flush()
 
@@ -132,6 +148,27 @@ async def test_admin_workers_dashboard_segments(client, async_session_maker):
                     status="DONE",
                     assigned_worker_id=worker_problem.worker_id,
                 ),
+                Booking(
+                    team_id=team.team_id,
+                    starts_at=now - dt.timedelta(days=1),
+                    duration_minutes=30,
+                    status="CANCELLED",
+                    assigned_worker_id=worker_rate.worker_id,
+                ),
+                Booking(
+                    team_id=team.team_id,
+                    starts_at=now - dt.timedelta(days=2),
+                    duration_minutes=30,
+                    status="DONE",
+                    assigned_worker_id=worker_rate.worker_id,
+                ),
+                Booking(
+                    team_id=team.team_id,
+                    starts_at=now - dt.timedelta(days=3),
+                    duration_minutes=30,
+                    status="CONFIRMED",
+                    assigned_worker_id=worker_rate.worker_id,
+                ),
             ]
         )
         await session.commit()
@@ -144,6 +181,7 @@ async def test_admin_workers_dashboard_segments(client, async_session_maker):
     assert "Newbie" in response.text
     assert "Problem Worker" in response.text
     assert "Top Revenue" in response.text
+    assert "Rate Watch" in response.text
 
     skill_response = client.get(
         "/v1/admin/ui/workers/dashboard?skill=deep", headers=headers
