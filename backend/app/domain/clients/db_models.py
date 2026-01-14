@@ -127,3 +127,31 @@ def normalize_note_type(raw: str | None) -> str:
     if normalized in ClientNote.NOTE_TYPES:
         return normalized
     raise ValueError("Invalid note type")
+
+
+class ClientAddress(Base):
+    __tablename__ = "client_addresses"
+
+    address_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    client_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("client_users.client_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    label: Mapped[str] = mapped_column(String(50), nullable=False)
+    address_text: Mapped[str] = mapped_column(String(500), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="1"
+    )
+
+    __table_args__ = (Index("ix_client_addresses_org_client", "org_id", "client_id"),)

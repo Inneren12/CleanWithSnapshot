@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, BookingWorker, Team
-from app.domain.clients.db_models import ClientNote, ClientUser
+from app.domain.clients.db_models import ClientAddress, ClientNote, ClientUser
 from app.domain.invoices import service as invoice_service
 from app.domain.invoices.schemas import InvoiceItemCreate
 from app.domain.saas.db_models import Organization
@@ -65,6 +65,47 @@ def _seed_clients(async_session_maker):
             session.add(booking)
             await session.commit()
             return active_client.client_id, archived_client.client_id, booking.booking_id
+
+    return asyncio.run(create())
+
+
+def _seed_client_with_addresses(async_session_maker):
+    async def create():
+        async with async_session_maker() as session:
+            client_user = ClientUser(
+                org_id=settings.default_org_id,
+                name="Address Book Client",
+                email=f"address-book-{uuid.uuid4().hex[:6]}@example.com",
+                phone="+1 555-111-1234",
+                address="Baseline",
+                is_active=True,
+            )
+            session.add(client_user)
+            await session.flush()
+
+            home_address = ClientAddress(
+                org_id=settings.default_org_id,
+                client_id=client_user.client_id,
+                label="Home",
+                address_text="100 Main St",
+                notes="Front door",
+            )
+            work_address = ClientAddress(
+                org_id=settings.default_org_id,
+                client_id=client_user.client_id,
+                label="Work",
+                address_text="200 Market St",
+                notes=None,
+            )
+            session.add_all([home_address, work_address])
+            await session.commit()
+            return (
+                client_user.client_id,
+                home_address.address_id,
+                home_address.address_text,
+                work_address.address_id,
+                work_address.address_text,
+            )
 
     return asyncio.run(create())
 
@@ -523,6 +564,41 @@ def test_admin_client_detail_shows_bookings_and_notes(client, async_session_make
         assert "Complaint" in response.text
         assert "Praise" in response.text
         assert booking_id in response.text
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_client_detail_lists_addresses(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        (
+            client_id,
+            home_address_id,
+            home_address_text,
+            work_address_id,
+            work_address_text,
+        ) = _seed_client_with_addresses(async_session_maker)
+        headers = _basic_auth("admin", "secret")
+
+        response = client.get(f"/v1/admin/ui/clients/{client_id}", headers=headers)
+        assert response.status_code == 200
+        assert "Addresses" in response.text
+        assert home_address_text in response.text
+        assert work_address_text in response.text
+        assert "Usage N/A" in response.text
+        assert (
+            f"/v1/admin/ui/bookings/new?client_id={client_id}&address_id={home_address_id}"
+            in response.text
+        )
+        assert (
+            f"/v1/admin/ui/bookings/new?client_id={client_id}&address_id={work_address_id}"
+            in response.text
+        )
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password

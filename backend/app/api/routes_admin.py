@@ -68,6 +68,7 @@ from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
 from app.domain.clients.db_models import (
+    ClientAddress,
     ClientNote,
     ClientUser,
     normalize_note_type,
@@ -10144,9 +10145,74 @@ async def admin_clients_edit_form(
     notes = (
         await session.execute(notes_query.order_by(ClientNote.created_at.desc()).limit(10))
     ).scalars().all()
+    addresses = (
+        await session.execute(
+            select(ClientAddress)
+            .where(ClientAddress.client_id == client_id, ClientAddress.org_id == org_id)
+            .order_by(ClientAddress.created_at.desc())
+        )
+    ).scalars().all()
+    usage_counts = {address.address_id: None for address in addresses}
 
     csrf_token = get_csrf_token(request)
     csrf_input = render_csrf_input(csrf_token)
+    address_cards = []
+    for address in addresses:
+        usage_count = usage_counts.get(address.address_id)
+        usage_label = "Usage N/A" if usage_count is None else f"Usage {usage_count}"
+        notes_html = (
+            f'<div class="muted">{html.escape(address.notes)}</div>' if address.notes else ""
+        )
+        archive_badge = "" if address.is_active else '<span class="badge">Archived</span>'
+        use_link = (
+            ""
+            if not address.is_active
+            else (
+                f'<a class="btn small" href="/v1/admin/ui/bookings/new?client_id={html.escape(client.client_id)}'
+                f'&address_id={address.address_id}">Use this address</a>'
+            )
+        )
+        archive_action = "archive" if address.is_active else "unarchive"
+        archive_label = "Archive" if address.is_active else "Unarchive"
+        address_cards.append(
+            f"""
+            <div class="card" style="padding: var(--space-md);">
+              <div class="card-row">
+                <div>
+                  <div class="title">{html.escape(address.label)}</div>
+                  <div class="muted">{html.escape(address.address_text)}</div>
+                  {notes_html}
+                  <div class="muted">{html.escape(usage_label)}</div>
+                  {archive_badge}
+                </div>
+                <div class="actions">
+                  {use_link}
+                  <form method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/addresses/{address.address_id}/{archive_action}">
+                    {csrf_input}
+                    <button class="btn secondary small" type="submit">{archive_label}</button>
+                  </form>
+                </div>
+              </div>
+              <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/addresses/{address.address_id}/update">
+                <div class="form-group">
+                  <label>Label</label>
+                  <input class="input" type="text" name="label" list="client-address-labels" value="{html.escape(address.label)}" required />
+                </div>
+                <div class="form-group">
+                  <label>Address</label>
+                  <input class="input" type="text" name="address_text" value="{html.escape(address.address_text)}" required />
+                </div>
+                <div class="form-group">
+                  <label>Notes</label>
+                  <textarea class="input" name="notes" rows="2">{html.escape(address.notes or "")}</textarea>
+                </div>
+                {csrf_input}
+                <button class="btn secondary" type="submit">Update address</button>
+              </form>
+            </div>
+            """
+        )
+    address_cards_html = "".join(address_cards) or '<div class="muted">No addresses saved yet.</div>'
     status_label = (
         html.escape(tr(lang, "admin.clients.status_active"))
         if client.is_active
@@ -10397,6 +10463,39 @@ async def admin_clients_edit_form(
         <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.tags_save"))}</button>
       </form>
     </div>
+    <div class="card" id="client-addresses">
+      <div class="card-row">
+        <div>
+          <div class="title">Addresses</div>
+          <div class="muted">Save multiple addresses and notes for this client.</div>
+        </div>
+      </div>
+      <datalist id="client-address-labels">
+        <option value="Home"></option>
+        <option value="Work"></option>
+        <option value="Cottage"></option>
+        <option value="Custom"></option>
+      </datalist>
+      <div class="stack">
+        {address_cards_html}
+      </div>
+      <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/addresses/create">
+        <div class="form-group">
+          <label>Label</label>
+          <input class="input" type="text" name="label" list="client-address-labels" placeholder="Home" required />
+        </div>
+        <div class="form-group">
+          <label>Address</label>
+          <input class="input" type="text" name="address_text" placeholder="123 Main St" required />
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea class="input" name="notes" rows="2" placeholder="Parking, access, gate code"></textarea>
+        </div>
+        {csrf_input}
+        <button class="btn secondary" type="submit">Add address</button>
+      </form>
+    </div>
     {finance_card}
     <div class="card">
       <div class="card-row">
@@ -10512,6 +10611,188 @@ async def admin_clients_update(
     )
     await session.commit()
     return RedirectResponse("/v1/admin/ui/clients", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/addresses/create", response_class=HTMLResponse)
+async def admin_client_addresses_create(
+    client_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.client_id == client_id, ClientUser.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    form = await request.form()
+    label = (form.get("label") or "").strip() or "Custom"
+    address_text = (form.get("address_text") or "").strip()
+    notes = (form.get("notes") or "").strip() or None
+    if not address_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Address is required")
+
+    session.add(
+        ClientAddress(
+            org_id=org_id,
+            client_id=client_id,
+            label=label,
+            address_text=address_text,
+            notes=notes,
+        )
+    )
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="CREATE_CLIENT_ADDRESS",
+        resource_type="client_address",
+        resource_id=None,
+        before=None,
+        after={
+            "client_id": client_id,
+            "label": label,
+            "address_text": address_text,
+            "notes": notes,
+        },
+    )
+    await session.commit()
+    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/addresses/{address_id}/update", response_class=HTMLResponse)
+async def admin_client_addresses_update(
+    client_id: str,
+    address_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    address = (
+        await session.execute(
+            select(ClientAddress).where(
+                ClientAddress.address_id == address_id,
+                ClientAddress.client_id == client_id,
+                ClientAddress.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if address is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Address not found")
+
+    form = await request.form()
+    label = (form.get("label") or "").strip() or "Custom"
+    address_text = (form.get("address_text") or "").strip()
+    notes = (form.get("notes") or "").strip() or None
+    if not address_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Address is required")
+
+    before = {
+        "label": address.label,
+        "address_text": address.address_text,
+        "notes": address.notes,
+    }
+    address.label = label
+    address.address_text = address_text
+    address.notes = notes
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UPDATE_CLIENT_ADDRESS",
+        resource_type="client_address",
+        resource_id=str(address_id),
+        before=before,
+        after={
+            "label": label,
+            "address_text": address_text,
+            "notes": notes,
+        },
+    )
+    await session.commit()
+    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/addresses/{address_id}/archive", response_class=HTMLResponse)
+async def admin_client_addresses_archive(
+    client_id: str,
+    address_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    address = (
+        await session.execute(
+            select(ClientAddress).where(
+                ClientAddress.address_id == address_id,
+                ClientAddress.client_id == client_id,
+                ClientAddress.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if address is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Address not found")
+
+    before = {"is_active": address.is_active}
+    address.is_active = False
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="ARCHIVE_CLIENT_ADDRESS",
+        resource_type="client_address",
+        resource_id=str(address_id),
+        before=before,
+        after={"is_active": address.is_active},
+    )
+    await session.commit()
+    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/clients/{client_id}/addresses/{address_id}/unarchive", response_class=HTMLResponse)
+async def admin_client_addresses_unarchive(
+    client_id: str,
+    address_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> Response:
+    await require_csrf(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    address = (
+        await session.execute(
+            select(ClientAddress).where(
+                ClientAddress.address_id == address_id,
+                ClientAddress.client_id == client_id,
+                ClientAddress.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if address is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Address not found")
+
+    before = {"is_active": address.is_active}
+    address.is_active = True
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UNARCHIVE_CLIENT_ADDRESS",
+        resource_type="client_address",
+        resource_id=str(address_id),
+        before=before,
+        after={"is_active": address.is_active},
+    )
+    await session.commit()
+    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/v1/admin/ui/clients/{client_id}/tags/update", response_class=HTMLResponse)
@@ -11347,6 +11628,7 @@ async def hard_delete_booking(session: AsyncSession, booking_id: uuid.UUID) -> N
 async def admin_bookings_new_form(
     request: Request,
     client_id: str | None = Query(default=None),
+    address_id: int | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_dispatch),
 ) -> HTMLResponse:
@@ -11382,6 +11664,34 @@ async def admin_bookings_new_form(
     prefill_address = ""
     banner_message = None
     banner_is_error = False
+    selected_address_label = None
+    selected_address = None
+    if address_id is not None:
+        selected_address = (
+            await session.execute(
+                select(ClientAddress).where(
+                    ClientAddress.address_id == address_id,
+                    ClientAddress.org_id == org_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if selected_address is None:
+            banner_message = "Selected address not found. Please choose a client."
+            banner_is_error = True
+        elif not selected_address.is_active:
+            banner_message = "Selected address is archived. Please choose another address."
+            banner_is_error = True
+        else:
+            prefill_address = selected_address.address_text
+            selected_address_label = selected_address.label
+            if client_id and selected_address.client_id != client_id:
+                banner_message = "Selected address does not belong to chosen client."
+                banner_is_error = True
+                prefill_address = ""
+                selected_address_label = None
+                selected_address = None
+
+    client = None
     if client_id:
         client = (
             await session.execute(
@@ -11395,14 +11705,31 @@ async def admin_bookings_new_form(
         if client is None:
             banner_message = "Selected client not found. Please choose a client."
             banner_is_error = True
-        else:
-            prefill_client_id = client.client_id
+    elif selected_address and not banner_is_error:
+        client = (
+            await session.execute(
+                select(ClientUser).where(
+                    ClientUser.client_id == selected_address.client_id,
+                    ClientUser.org_id == org_id,
+                    ClientUser.is_active.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if client is None:
+            banner_message = "Selected client not found. Please choose a client."
+            banner_is_error = True
+
+    if client and not banner_is_error:
+        prefill_client_id = client.client_id
+        if not selected_address:
             prefill_address = client.address or ""
-            client_label = client.name or client.email or "client"
-            if client.is_blocked:
-                banner_message = "Client is blocked"
-            else:
-                banner_message = f"Creating booking for {client_label}"
+        client_label = client.name or client.email or "client"
+        if client.is_blocked:
+            banner_message = "Client is blocked"
+        else:
+            banner_message = f"Creating booking for {client_label}"
+        if selected_address_label:
+            banner_message = f"{banner_message} · Using address {selected_address_label}"
 
     csrf_token = get_csrf_token(request)
     content = _render_booking_form(
