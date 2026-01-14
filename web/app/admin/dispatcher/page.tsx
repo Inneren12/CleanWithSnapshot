@@ -1,6 +1,6 @@
 "use client";
 
-import { type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
@@ -85,6 +85,27 @@ function formatTimeRange(startsAt: string, endsAt: string) {
   return `${formatter.format(new Date(startsAt))}–${formatter.format(new Date(endsAt))}`;
 }
 
+function formatDateTimeLocal(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const hour = `${date.getHours()}`.padStart(2, "0");
+  const minute = `${date.getMinutes()}`.padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function parseDateTimeLocal(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function diffMinutes(start: Date, end: Date) {
+  return Math.round((end.getTime() - start.getTime()) / 60000);
+}
+
 function minutesFromRangeStart(value: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: EDMONTON_TZ,
@@ -106,7 +127,7 @@ function bookingStatusClass(status: string) {
   const normalized = status.toLowerCase();
   if (normalized === "planned") return "planned";
   if (normalized === "in_progress") return "in-progress";
-  if (normalized === "done_today") return "done-today";
+  if (normalized === "done_today" || normalized === "done") return "done-today";
   return "default";
 }
 
@@ -139,17 +160,38 @@ export default function DispatcherPage() {
   const [alerts, setAlerts] = useState<DispatcherAlert[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ kind: "error" | "success"; message: string } | null>(null);
   const [selectedBooking, setSelectedBooking] = useState<DispatcherBooking | null>(null);
   const [highlightedBookingId, setHighlightedBookingId] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [pendingActionIds, setPendingActionIds] = useState<string[]>([]);
+  const [reassignWorkerId, setReassignWorkerId] = useState<string>("");
+  const [rescheduleStart, setRescheduleStart] = useState("");
+  const [rescheduleEnd, setRescheduleEnd] = useState("");
+  const [rescheduleOverride, setRescheduleOverride] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [draggingBookingId, setDraggingBookingId] = useState<string | null>(null);
+  const [dragOverWorkerId, setDragOverWorkerId] = useState<number | null>(null);
   const hoursScrollRef = useRef<HTMLDivElement | null>(null);
   const bookingRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
+
+  const isAuthenticated = Boolean(username && password);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
     const encoded = btoa(`${username}:${password}`);
     return { Authorization: `Basic ${encoded}` };
   }, [username, password]);
+
+  const showToast = useCallback((message: string, kind: "error" | "success" = "error") => {
+    setToast({ message, kind });
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   const fetchBoard = useCallback(async () => {
     if (!username || !password) return;
@@ -220,6 +262,15 @@ export default function DispatcherPage() {
     return () => window.clearInterval(interval);
   }, [fetchAlerts, fetchBoard, password, username]);
 
+  useEffect(() => {
+    if (!selectedBooking) return;
+    setReassignWorkerId(selectedBooking.assigned_worker?.id?.toString() ?? "");
+    setRescheduleStart(formatDateTimeLocal(selectedBooking.starts_at));
+    setRescheduleEnd(formatDateTimeLocal(selectedBooking.ends_at));
+    setRescheduleOverride(false);
+    setCancelReason("");
+  }, [selectedBooking]);
+
   const handleSaveCredentials = useCallback(() => {
     window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
     window.localStorage.setItem(STORAGE_PASSWORD_KEY, password);
@@ -234,6 +285,71 @@ export default function DispatcherPage() {
     setBoard(null);
     setSelectedBooking(null);
   }, []);
+
+  const updateBookingState = useCallback(
+    (bookingId: string, updater: (booking: DispatcherBooking) => DispatcherBooking) => {
+      setBoard((current) => {
+        if (!current) return current;
+        const bookings = current.bookings.map((booking) =>
+          booking.booking_id === bookingId ? updater(booking) : booking
+        );
+        return { ...current, bookings };
+      });
+      setSelectedBooking((current) => {
+        if (!current || current.booking_id !== bookingId) return current;
+        return updater(current);
+      });
+    },
+    []
+  );
+
+  const setActionPending = useCallback((bookingId: string, pending: boolean) => {
+    setPendingActionIds((current) => {
+      if (pending) {
+        return current.includes(bookingId) ? current : [...current, bookingId];
+      }
+      return current.filter((id) => id !== bookingId);
+    });
+  }, []);
+
+  const applyOptimisticUpdate = useCallback(
+    async (
+      bookingId: string,
+      optimisticUpdate: (booking: DispatcherBooking) => DispatcherBooking,
+      request: () => Promise<Response>
+    ) => {
+      if (!board) return;
+      const previous = board.bookings.find((booking) => booking.booking_id === bookingId);
+      if (!previous) return;
+      updateBookingState(bookingId, optimisticUpdate);
+      setActionPending(bookingId, true);
+      try {
+        const response = await request();
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message =
+            typeof payload?.detail === "string"
+              ? payload.detail
+              : typeof payload?.detail?.message === "string"
+                ? payload.detail.message
+                : `Request failed (${response.status})`;
+          throw new Error(message);
+        }
+        if (payload) {
+          updateBookingState(bookingId, () => payload as DispatcherBooking);
+        }
+      } catch (requestError) {
+        updateBookingState(bookingId, () => previous);
+        showToast(
+          requestError instanceof Error ? requestError.message : "Unable to update booking",
+          "error"
+        );
+      } finally {
+        setActionPending(bookingId, false);
+      }
+    },
+    [board, setActionPending, showToast, updateBookingState]
+  );
 
   const workerBookings = useMemo(() => {
     if (!board) return new Map<number, DispatcherBooking[]>();
@@ -260,6 +376,11 @@ export default function DispatcherPage() {
     return counts;
   }, [alerts]);
 
+  const isActionPending = useCallback(
+    (bookingId: string) => pendingActionIds.includes(bookingId),
+    [pendingActionIds]
+  );
+
   const alertsBySeverity = useMemo(() => {
     return {
       critical: alerts.filter((alert) => alert.severity === "critical"),
@@ -267,6 +388,179 @@ export default function DispatcherPage() {
       info: alerts.filter((alert) => alert.severity === "info"),
     };
   }, [alerts]);
+
+  const handleReassign = useCallback(
+    async (bookingId: string, workerId: number) => {
+      if (!isAuthenticated) {
+        showToast("Save credentials to manage bookings.");
+        return;
+      }
+      const assignedWorker = board?.workers.find((worker) => worker.worker_id === workerId);
+      const workerPayload = {
+        id: workerId,
+        display_name: assignedWorker?.display_name ?? null,
+        phone: null,
+      };
+      await applyOptimisticUpdate(
+        bookingId,
+        (booking) => ({
+          ...booking,
+          assigned_worker: workerPayload,
+          updated_at: new Date().toISOString(),
+        }),
+        () =>
+          fetch(`${API_BASE}/v1/admin/dispatcher/bookings/${bookingId}/reassign`, {
+            method: "POST",
+            headers: { ...authHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify({ worker_id: workerId }),
+          })
+      );
+    },
+    [applyOptimisticUpdate, authHeaders, board, isAuthenticated, showToast]
+  );
+
+  const handleReschedule = useCallback(async () => {
+    if (!selectedBooking) return;
+    if (!isAuthenticated) {
+      showToast("Save credentials to manage bookings.");
+      return;
+    }
+    const startDate = parseDateTimeLocal(rescheduleStart);
+    const endDate = parseDateTimeLocal(rescheduleEnd);
+    if (!startDate || !endDate) {
+      showToast("Select valid start and end times.");
+      return;
+    }
+    if (endDate <= startDate) {
+      showToast("End time must be after start time.");
+      return;
+    }
+    const durationMinutes = diffMinutes(startDate, endDate);
+    const startIso = startDate.toISOString();
+    const endIso = endDate.toISOString();
+    await applyOptimisticUpdate(
+      selectedBooking.booking_id,
+      (booking) => ({
+        ...booking,
+        starts_at: startIso,
+        ends_at: endIso,
+        duration_min: durationMinutes,
+        updated_at: new Date().toISOString(),
+      }),
+      () =>
+        fetch(`${API_BASE}/v1/admin/dispatcher/bookings/${selectedBooking.booking_id}/reschedule`, {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            starts_at: startIso,
+            ends_at: endIso,
+            override_conflicts: rescheduleOverride,
+          }),
+        })
+    );
+  }, [
+    applyOptimisticUpdate,
+    authHeaders,
+    isAuthenticated,
+    rescheduleEnd,
+    rescheduleOverride,
+    rescheduleStart,
+    selectedBooking,
+    showToast,
+  ]);
+
+  const handleStatusUpdate = useCallback(
+    async (statusValue: "IN_PROGRESS" | "DONE") => {
+      if (!selectedBooking) return;
+      if (!isAuthenticated) {
+        showToast("Save credentials to manage bookings.");
+        return;
+      }
+      await applyOptimisticUpdate(
+        selectedBooking.booking_id,
+        (booking) => ({
+          ...booking,
+          status: statusValue,
+          updated_at: new Date().toISOString(),
+        }),
+        () =>
+          fetch(`${API_BASE}/v1/admin/dispatcher/bookings/${selectedBooking.booking_id}/status`, {
+            method: "POST",
+            headers: { ...authHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify({ status: statusValue }),
+          })
+      );
+    },
+    [applyOptimisticUpdate, authHeaders, isAuthenticated, selectedBooking, showToast]
+  );
+
+  const handleCancel = useCallback(async () => {
+    if (!selectedBooking) return;
+    if (!isAuthenticated) {
+      showToast("Save credentials to manage bookings.");
+      return;
+    }
+    if (!cancelReason.trim()) {
+      showToast("Cancellation reason is required.");
+      return;
+    }
+    await applyOptimisticUpdate(
+      selectedBooking.booking_id,
+      (booking) => ({
+        ...booking,
+        status: "CANCELLED",
+        updated_at: new Date().toISOString(),
+      }),
+      () =>
+        fetch(`${API_BASE}/v1/admin/dispatcher/bookings/${selectedBooking.booking_id}/status`, {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "CANCELLED", reason: cancelReason.trim() }),
+        })
+    );
+  }, [applyOptimisticUpdate, authHeaders, cancelReason, isAuthenticated, selectedBooking, showToast]);
+
+  const handleDragStart = useCallback((bookingId: string) => {
+    return (event: DragEvent<HTMLButtonElement>) => {
+      event.dataTransfer.setData("text/plain", bookingId);
+      event.dataTransfer.effectAllowed = "move";
+      setDraggingBookingId(bookingId);
+    };
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDraggingBookingId(null);
+    setDragOverWorkerId(null);
+  }, []);
+
+  const handleDropOnWorker = useCallback(
+    (workerId: number) => {
+      return async (event: DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        const bookingId = event.dataTransfer.getData("text/plain");
+        setDragOverWorkerId(null);
+        if (!bookingId) return;
+        const booking = board?.bookings.find((item) => item.booking_id === bookingId);
+        if (!booking) return;
+        if (booking.assigned_worker?.id === workerId) return;
+        await handleReassign(bookingId, workerId);
+      };
+    },
+    [board, handleReassign]
+  );
+
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }, []);
+
+  const handleDragEnter = useCallback((workerId: number) => {
+    return () => setDragOverWorkerId(workerId);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverWorkerId(null);
+  }, []);
 
   const focusAlertBooking = useCallback(
     (alert: DispatcherAlert) => {
@@ -290,6 +584,8 @@ export default function DispatcherPage() {
       hoursScrollRef.current.scrollLeft = event.currentTarget.scrollLeft;
     }
   }, []);
+
+  const selectedPending = selectedBooking ? isActionPending(selectedBooking.booking_id) : false;
 
   return (
     <div className="dispatcher-page">
@@ -343,6 +639,7 @@ export default function DispatcherPage() {
       </section>
 
       <section className="dispatcher-content">
+        {toast ? <div className={`inline-alert ${toast.kind}`}>{toast.message}</div> : null}
         {error ? <div className="inline-alert error">{error}</div> : null}
         {loading ? (
           <div className="dispatcher-skeleton" aria-label="Loading dispatcher board">
@@ -449,9 +746,15 @@ export default function DispatcherPage() {
                     {board.workers.map((worker) => (
                       <div key={worker.worker_id} className="dispatcher-row">
                         <div
-                          className="dispatcher-row-track"
+                          className={`dispatcher-row-track${
+                            dragOverWorkerId === worker.worker_id ? " drop-target" : ""
+                          }`}
                           style={{ minWidth: totalTimelineWidth }}
                           aria-label={`Timeline for ${worker.display_name}`}
+                          onDragOver={handleDragOver}
+                          onDragEnter={handleDragEnter(worker.worker_id)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={handleDropOnWorker(worker.worker_id)}
                         >
                           {(workerBookings.get(worker.worker_id) ?? []).map((booking) => {
                             const startOffset = clampRange(
@@ -475,12 +778,15 @@ export default function DispatcherPage() {
                                 }}
                                 className={`dispatcher-booking ${bookingStatusClass(booking.status)}${
                                   isHighlighted ? " alert-focus" : ""
-                                }`}
+                                }${draggingBookingId === booking.booking_id ? " dragging" : ""}`}
                                 style={{
                                   left: `${startOffset * MINUTE_WIDTH}px`,
                                   width: `${width}px`,
                                 }}
                                 onClick={() => setSelectedBooking(booking)}
+                                onDragStart={handleDragStart(booking.booking_id)}
+                                onDragEnd={handleDragEnd}
+                                draggable
                                 aria-label={`Booking for ${booking.client?.name ?? "client"}`}
                               >
                                 <div className="dispatcher-booking-title">
@@ -534,6 +840,119 @@ export default function DispatcherPage() {
               <div className="detail">
                 <span className="detail-label">Worker</span>
                 <strong>{selectedBooking.assigned_worker?.display_name ?? "Unassigned"}</strong>
+              </div>
+              <div className="dispatcher-actions">
+                <div className="dispatcher-action-group">
+                  <span className="detail-label">Reassign</span>
+                  <div className="dispatcher-action-row">
+                    <select
+                      className="input"
+                      value={reassignWorkerId}
+                      onChange={(event) => setReassignWorkerId(event.target.value)}
+                      disabled={!isAuthenticated || selectedPending}
+                    >
+                      <option value="">Select worker</option>
+                      {(board?.workers ?? []).map((worker) => (
+                        <option key={worker.worker_id} value={worker.worker_id}>
+                          {worker.display_name || `Worker ${worker.worker_id}`}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={!reassignWorkerId || !isAuthenticated || selectedPending}
+                      onClick={() => {
+                        if (!reassignWorkerId) return;
+                        void handleReassign(selectedBooking.booking_id, Number(reassignWorkerId));
+                      }}
+                    >
+                      Reassign
+                    </button>
+                  </div>
+                </div>
+                <div className="dispatcher-action-group">
+                  <span className="detail-label">Reschedule</span>
+                  <div className="dispatcher-action-row">
+                    <label className="field">
+                      <span>Start</span>
+                      <input
+                        className="input"
+                        type="datetime-local"
+                        value={rescheduleStart}
+                        onChange={(event) => setRescheduleStart(event.target.value)}
+                        disabled={!isAuthenticated || selectedPending}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>End</span>
+                      <input
+                        className="input"
+                        type="datetime-local"
+                        value={rescheduleEnd}
+                        onChange={(event) => setRescheduleEnd(event.target.value)}
+                        disabled={!isAuthenticated || selectedPending}
+                      />
+                    </label>
+                  </div>
+                  <label className="dispatcher-action-row">
+                    <input
+                      type="checkbox"
+                      checked={rescheduleOverride}
+                      onChange={(event) => setRescheduleOverride(event.target.checked)}
+                      disabled={!isAuthenticated || selectedPending}
+                    />
+                    <span className="muted">Override conflicts</span>
+                  </label>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => void handleReschedule()}
+                    disabled={!isAuthenticated || selectedPending}
+                  >
+                    Reschedule
+                  </button>
+                </div>
+                <div className="dispatcher-action-group">
+                  <span className="detail-label">Status</span>
+                  <div className="dispatcher-action-row">
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => void handleStatusUpdate("IN_PROGRESS")}
+                      disabled={!isAuthenticated || selectedPending}
+                    >
+                      Mark in progress
+                    </button>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => void handleStatusUpdate("DONE")}
+                      disabled={!isAuthenticated || selectedPending}
+                    >
+                      Mark done
+                    </button>
+                  </div>
+                </div>
+                <div className="dispatcher-action-group">
+                  <span className="detail-label">Cancel</span>
+                  <textarea
+                    className="input"
+                    rows={3}
+                    placeholder="Reason for cancelling"
+                    value={cancelReason}
+                    onChange={(event) => setCancelReason(event.target.value)}
+                    disabled={!isAuthenticated || selectedPending}
+                  />
+                  <button
+                    className="btn danger"
+                    type="button"
+                    onClick={() => void handleCancel()}
+                    disabled={!isAuthenticated || selectedPending}
+                  >
+                    Cancel booking
+                  </button>
+                </div>
               </div>
             </div>
           </aside>

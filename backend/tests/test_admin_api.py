@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.domain.leads.db_models import Lead
+from app.domain.workers.db_models import Worker
 from app.domain.bookings.service import LOCAL_TZ
 from app.settings import settings
 
@@ -228,3 +229,53 @@ def test_dispatcher_can_manage_bookings_but_not_pricing(client, async_session_ma
     finally:
         settings.stripe_secret_key = original_stripe_key
         settings.deposit_percent = original_deposit_percent
+
+
+def test_dispatcher_reassign_and_reschedule_validation(client, async_session_maker):
+    settings.dispatcher_basic_username = "dispatcher"
+    settings.dispatcher_basic_password = "dispatch-secret"
+
+    async def _seed_data() -> tuple[str, int]:
+        async with async_session_maker() as session:
+            from app.domain.bookings.db_models import Booking
+
+            booking = Booking(
+                team_id=1,
+                starts_at=datetime.now(tz=timezone.utc) + timedelta(days=1),
+                duration_minutes=60,
+                status="PLANNED",
+            )
+            worker = Worker(team_id=1, name="Dispatch Worker", phone="780-555-0102")
+            session.add_all([booking, worker])
+            await session.commit()
+            await session.refresh(booking)
+            await session.refresh(worker)
+            return booking.booking_id, worker.worker_id
+
+    booking_id, worker_id = asyncio.run(_seed_data())
+    dispatcher_headers = _basic_auth_header("dispatcher", "dispatch-secret")
+
+    response = client.post(
+        f"/v1/admin/dispatcher/bookings/{booking_id}/reassign",
+        headers=dispatcher_headers,
+        json={"worker_id": worker_id},
+    )
+    assert response.status_code == 200
+    assert response.json()["assigned_worker"]["id"] == worker_id
+
+    invalid_worker = client.post(
+        f"/v1/admin/dispatcher/bookings/{booking_id}/reassign",
+        headers=dispatcher_headers,
+        json={"worker_id": 99999},
+    )
+    assert invalid_worker.status_code == 404
+
+    invalid_reschedule = client.post(
+        f"/v1/admin/dispatcher/bookings/{booking_id}/reschedule",
+        headers=dispatcher_headers,
+        json={
+            "starts_at": datetime.now(tz=timezone.utc).isoformat(),
+            "ends_at": datetime.now(tz=timezone.utc).isoformat(),
+        },
+    )
+    assert invalid_reschedule.status_code == 422
