@@ -5052,7 +5052,7 @@ async def admin_teams_delete(
             )
         ).scalars().all()
         for booking_id in booking_ids:
-            await _hard_delete_booking(session, booking_id)
+            await hard_delete_booking(session, booking_id)
         worker_ids = (
             await session.execute(
                 select(Worker.worker_id).where(Worker.team_id == team_id, Worker.org_id == org_id)
@@ -5819,7 +5819,7 @@ async def admin_workers_delete(
         ).scalars().all()
         booking_ids.update(crew_booking_ids)
         for booking_id in booking_ids:
-            await _hard_delete_booking(session, booking_id)
+            await hard_delete_booking(session, booking_id)
         await audit_service.record_action(
             session,
             identity=identity,
@@ -6396,7 +6396,7 @@ async def admin_clients_delete(
         )
     else:
         for booking_id in booking_ids:
-            await _hard_delete_booking(session, booking_id)
+            await hard_delete_booking(session, booking_id)
 
     before = {
         "name": client.name,
@@ -6824,9 +6824,10 @@ async def _delete_booking_dependencies(session: AsyncSession, booking_id: str) -
     await session.execute(sa.delete(EventLog).where(EventLog.booking_id == booking_id))
 
 
-async def _hard_delete_booking(session: AsyncSession, booking_id: str) -> None:
+async def hard_delete_booking(session: AsyncSession, booking_id: uuid.UUID) -> None:
+    booking_id_str = str(booking_id)
     booking = (
-        await session.execute(select(Booking).where(Booking.booking_id == booking_id))
+        await session.execute(select(Booking).where(Booking.booking_id == booking_id_str))
     ).scalar_one_or_none()
     if booking is None:
         return
@@ -7365,7 +7366,7 @@ async def admin_bookings_delete(
         before=before,
         after=None,
     )
-    await _hard_delete_booking(session, booking.booking_id)
+    await hard_delete_booking(session, booking.booking_id)
     await session.commit()
     return RedirectResponse("/v1/admin/ui/dispatch", status_code=status.HTTP_303_SEE_OTHER)
 
