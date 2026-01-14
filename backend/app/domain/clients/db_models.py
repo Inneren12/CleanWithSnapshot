@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Iterable
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,7 +61,7 @@ class ClientUser(Base):
     address: Mapped[str | None] = mapped_column(String(500))
     notes: Mapped[str | None] = mapped_column(Text())
     is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default="1"
+        Boolean, nullable=False, default=True, server_default=sa.true()
     )
     is_blocked: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
@@ -151,7 +152,7 @@ class ClientAddress(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default="1"
+        Boolean, nullable=False, default=True, server_default=sa.true()
     )
 
     __table_args__ = (Index("ix_client_addresses_org_client", "org_id", "client_id"),)

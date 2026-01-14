@@ -1454,7 +1454,7 @@ def test_admin_client_detail_lists_addresses(client, async_session_maker):
         assert "Addresses" in response.text
         assert home_address_text in response.text
         assert work_address_text in response.text
-        assert "Usage N/A" in response.text
+        assert "Usage 0" in response.text
         assert (
             f"/v1/admin/ui/bookings/new?client_id={client_id}&address_id={home_address_id}"
             in response.text
@@ -1463,6 +1463,69 @@ def test_admin_client_detail_lists_addresses(client, async_session_maker):
             f"/v1/admin/ui/bookings/new?client_id={client_id}&address_id={work_address_id}"
             in response.text
         )
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_client_address_usage_counts_from_bookings(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        async def seed_address_booking():
+            async with async_session_maker() as session:
+                team = Team(
+                    name=f"Address Team {uuid.uuid4().hex[:6]}", org_id=settings.default_org_id
+                )
+                session.add(team)
+                await session.flush()
+
+                client_user = ClientUser(
+                    org_id=settings.default_org_id,
+                    name="Usage Client",
+                    email=f"usage-{uuid.uuid4().hex[:6]}@example.com",
+                    phone="+1 555-222-4444",
+                    address="120 Usage Way",
+                    is_active=True,
+                )
+                session.add(client_user)
+                await session.flush()
+                address = ClientAddress(
+                    org_id=settings.default_org_id,
+                    client_id=client_user.client_id,
+                    label="Home",
+                    address_text="120 Usage Way",
+                    notes=None,
+                )
+                session.add(address)
+                await session.flush()
+                await session.commit()
+                return client_user.client_id, team.team_id, address.address_id
+
+        client_id, team_id, address_id = asyncio.run(seed_address_booking())
+        headers = _basic_auth("admin", "secret")
+        starts_at = datetime.now(tz=timezone.utc).replace(microsecond=0)
+
+        create_response = client.post(
+            "/v1/admin/ui/bookings/create",
+            headers=headers,
+            data={
+                "team_id": team_id,
+                "client_id": client_id,
+                "address_id": address_id,
+                "starts_at": starts_at.isoformat(),
+                "duration_minutes": 90,
+            },
+            follow_redirects=False,
+        )
+        assert create_response.status_code == 303
+
+        response = client.get(f"/v1/admin/ui/clients/{client_id}", headers=headers)
+        assert response.status_code == 200
+        assert "Usage 1" in response.text
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
@@ -1486,6 +1549,47 @@ def test_admin_client_notes_filter_by_type(client, async_session_maker):
         assert "Complaint note" in response.text
         assert "General note" not in response.text
         assert "Praise note" not in response.text
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_admin_client_notes_filter_redirects_after_create(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        async def create_client():
+            async with async_session_maker() as session:
+                client_user = ClientUser(
+                    org_id=settings.default_org_id,
+                    name="Filtered Notes Client",
+                    email=f"filter-{uuid.uuid4().hex[:6]}@example.com",
+                    phone="+1 555-010-2020",
+                    address="110 Filter Lane",
+                    is_active=True,
+                )
+                session.add(client_user)
+                await session.commit()
+                return client_user.client_id
+
+        client_id = asyncio.run(create_client())
+        headers = _basic_auth("admin", "secret")
+
+        response = client.post(
+            f"/v1/admin/ui/clients/{client_id}/notes/create",
+            headers=headers,
+            data={
+                "note_text": "Filtered note",
+                "note_type": "COMPLAINT",
+                "note_type_filter": "complaint",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["Location"].endswith(f"/v1/admin/ui/clients/{client_id}?note_type=complaint")
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password
@@ -1570,6 +1674,7 @@ def test_admin_client_finance_section_is_org_scoped(client, async_session_maker)
         assert "Finance" in response.text
         assert "LTV" in response.text
         assert "Avg check" in response.text
+        assert "Currency: CAD" in response.text
         assert "CAD 200.00" in response.text
         assert invoice_number in response.text
         assert other_invoice_number not in response.text

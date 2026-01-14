@@ -10145,6 +10145,34 @@ async def _client_finance_aggregates(
     ).one()
     paid_payments_cents = int(payment_totals.paid_cents or 0)
     payment_count = int(payment_totals.payment_count or 0)
+    payment_currency_rows = (
+        await session.execute(
+            select(func.distinct(Payment.currency)).where(
+                Payment.org_id == org_id,
+                Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                or_(
+                    Payment.booking_id.in_(booking_ids_subq),
+                    Payment.invoice_id.in_(invoice_ids_subq),
+                ),
+            )
+        )
+    ).all()
+    payment_currencies = {row[0].upper() for row in payment_currency_rows if row[0]}
+
+    invoice_currency_rows = (
+        await session.execute(
+            select(func.distinct(Invoice.currency))
+            .select_from(Invoice)
+            .join(Booking, Invoice.order_id == Booking.booking_id)
+            .where(
+                Booking.client_id == client_id,
+                Booking.org_id == org_id,
+                Invoice.org_id == org_id,
+                Invoice.status == invoice_statuses.INVOICE_STATUS_PAID,
+            )
+        )
+    ).all()
+    invoice_currencies = {row[0].upper() for row in invoice_currency_rows if row[0]}
 
     payments_by_invoice = (
         select(
@@ -10237,6 +10265,22 @@ async def _client_finance_aggregates(
         avg_basis = completed_bookings
     avg_check_cents = int(round(ltv_cents / avg_basis)) if avg_basis else 0
 
+    currency_source = ltv_source
+    currency_mixed = False
+    if ltv_source == "payments":
+        currencies = payment_currencies
+    elif ltv_source == "paid_invoices":
+        currencies = invoice_currencies
+    else:
+        currencies = {settings.deposit_currency.upper()}
+    currency_code = None
+    if len(currencies) > 1:
+        currency_mixed = True
+    elif len(currencies) == 1:
+        currency_code = next(iter(currencies))
+    else:
+        currency_code = settings.deposit_currency.upper()
+
     return {
         "total_bookings": total_bookings,
         "completed_bookings": completed_bookings,
@@ -10244,6 +10288,9 @@ async def _client_finance_aggregates(
         "avg_check_cents": avg_check_cents,
         "avg_basis": int(avg_basis),
         "ltv_source": ltv_source,
+        "currency_source": currency_source,
+        "currency_code": currency_code,
+        "currency_mixed": currency_mixed,
         "outstanding_cents": int(balance_rows.outstanding_cents or 0),
         "overpaid_cents": int(balance_rows.overpaid_cents or 0),
         "invoice_count": int(balance_rows.invoice_count or 0),
@@ -10811,28 +10858,48 @@ async def admin_clients_edit_form(
             .order_by(ClientAddress.created_at.desc())
         )
     ).scalars().all()
-    usage_counts = {address.address_id: None for address in addresses}
+    address_ids = [address.address_id for address in addresses]
+    usage_counts = {address_id: 0 for address_id in address_ids}
+    if address_ids:
+        usage_rows = (
+            await session.execute(
+                select(Booking.address_id, func.count())
+                .where(Booking.org_id == org_id, Booking.address_id.in_(address_ids))
+                .group_by(Booking.address_id)
+            )
+        ).all()
+        usage_counts.update(
+            {address_id: int(count or 0) for address_id, count in usage_rows if address_id}
+        )
 
     csrf_token = get_csrf_token(request)
     csrf_input = render_csrf_input(csrf_token)
     address_cards = []
     for address in addresses:
         usage_count = usage_counts.get(address.address_id)
-        usage_label = "Usage N/A" if usage_count is None else f"Usage {usage_count}"
+        usage_label = tr(lang, "admin.clients.addresses_usage", count=usage_count or 0)
         notes_html = (
             f'<div class="muted">{html.escape(address.notes)}</div>' if address.notes else ""
         )
-        archive_badge = "" if address.is_active else '<span class="badge">Archived</span>'
+        archive_badge = (
+            ""
+            if address.is_active
+            else f'<span class="badge">{html.escape(tr(lang, "admin.clients.addresses_archived_badge"))}</span>'
+        )
         use_link = (
             ""
             if not address.is_active
             else (
                 f'<a class="btn small" href="/v1/admin/ui/bookings/new?client_id={html.escape(client.client_id)}'
-                f'&address_id={address.address_id}">Use this address</a>'
+                f'&address_id={address.address_id}">{html.escape(tr(lang, "admin.clients.addresses_use"))}</a>'
             )
         )
         archive_action = "archive" if address.is_active else "unarchive"
-        archive_label = "Archive" if address.is_active else "Unarchive"
+        archive_label = (
+            tr(lang, "admin.clients.addresses_archive")
+            if address.is_active
+            else tr(lang, "admin.clients.addresses_unarchive")
+        )
         address_cards.append(
             f"""
             <div class="card" style="padding: var(--space-md);">
@@ -10848,30 +10915,30 @@ async def admin_clients_edit_form(
                   {use_link}
                   <form method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/addresses/{address.address_id}/{archive_action}">
                     {csrf_input}
-                    <button class="btn secondary small" type="submit">{archive_label}</button>
+                    <button class="btn secondary small" type="submit">{html.escape(archive_label)}</button>
                   </form>
                 </div>
               </div>
               <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/addresses/{address.address_id}/update">
                 <div class="form-group">
-                  <label>Label</label>
+                  <label>{html.escape(tr(lang, "admin.clients.addresses_label_label"))}</label>
                   <input class="input" type="text" name="label" list="client-address-labels" value="{html.escape(address.label)}" required />
                 </div>
                 <div class="form-group">
-                  <label>Address</label>
+                  <label>{html.escape(tr(lang, "admin.clients.addresses_label_address"))}</label>
                   <input class="input" type="text" name="address_text" value="{html.escape(address.address_text)}" required />
                 </div>
                 <div class="form-group">
-                  <label>Notes</label>
+                  <label>{html.escape(tr(lang, "admin.clients.addresses_label_notes"))}</label>
                   <textarea class="input" name="notes" rows="2">{html.escape(address.notes or "")}</textarea>
                 </div>
                 {csrf_input}
-                <button class="btn secondary" type="submit">Update address</button>
+                <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.addresses_update"))}</button>
               </form>
             </div>
             """
         )
-    address_cards_html = "".join(address_cards) or '<div class="muted">No addresses saved yet.</div>'
+    address_cards_html = "".join(address_cards) or f'<div class="muted">{html.escape(tr(lang, "admin.clients.addresses_empty"))}</div>'
     status_label = (
         html.escape(tr(lang, "admin.clients.status_active"))
         if client.is_active
@@ -10889,14 +10956,36 @@ async def admin_clients_edit_form(
         else html.escape(tr(lang, "admin.clients.block"))
     )
     tags_input_value = html.escape(", ".join(tags))
-    currency = settings.deposit_currency.upper()
+    booking_currency = settings.deposit_currency.upper()
+    finance_currency_code = finance_summary.get("currency_code") or booking_currency
+    finance_currency_mixed = bool(finance_summary.get("currency_mixed"))
+    finance_currency_source = finance_summary.get("currency_source") or "completed_bookings"
+    finance_currency_display = (
+        tr(lang, "admin.clients.finance_currency_mixed")
+        if finance_currency_mixed
+        else finance_currency_code
+    )
+    finance_currency_proxy = (
+        tr(lang, "admin.clients.finance_currency_proxy_suffix")
+        if finance_currency_source == "completed_bookings"
+        else ""
+    )
+    finance_currency_label = (
+        f"{tr(lang, 'admin.clients.finance_currency_label')}: "
+        f"{finance_currency_display}{(' ' + finance_currency_proxy) if finance_currency_proxy else ''}"
+    )
+    finance_currency_warning = (
+        f"<div class=\"muted\">⚠️ {html.escape(tr(lang, 'admin.clients.finance_currency_warning'))}</div>"
+        if finance_currency_mixed
+        else ""
+    )
     bookings_rows = "".join(
         f"""
         <tr>
           <td>{html.escape(_format_dt(booking.starts_at))}</td>
           <td>{html.escape(booking.status)}</td>
           <td>{html.escape(str(booking.duration_minutes))}</td>
-          <td>{html.escape(_format_money(booking.base_charge_cents, settings.deposit_currency.upper())) if booking.base_charge_cents else "—"}</td>
+          <td>{html.escape(_format_money(booking.base_charge_cents, booking_currency)) if booking.base_charge_cents else "—"}</td>
           <td>{html.escape(booking.team.name if booking.team else "—")}</td>
           <td>{html.escape(_format_booking_workers(booking))}</td>
           <td><a class="btn small" href="/v1/admin/ui/bookings/{html.escape(booking.booking_id)}/edit">{html.escape(tr(lang, "admin.clients.bookings_view"))}</a></td>
@@ -10904,15 +10993,14 @@ async def admin_clients_edit_form(
         """
         for booking in bookings
     )
-    ltv_display = (
-        _format_money(finance_summary["ltv_cents"], currency)
-        if finance_summary["ltv_cents"] > 0
-        else "—"
-    )
+    def _format_finance_amount(cents: int) -> str:
+        if finance_currency_mixed:
+            return f"{cents / 100:,.2f}"
+        return _format_money(cents, finance_currency_code)
+
+    ltv_display = _format_finance_amount(finance_summary["ltv_cents"]) if finance_summary["ltv_cents"] > 0 else "—"
     avg_display = (
-        _format_money(finance_summary["avg_check_cents"], currency)
-        if finance_summary["avg_basis"] > 0
-        else "—"
+        _format_finance_amount(finance_summary["avg_check_cents"]) if finance_summary["avg_basis"] > 0 else "—"
     )
     complaint_count = risk_summary["complaint_count"]
     avg_recent_rating = risk_summary["avg_rating"]
@@ -10982,17 +11070,17 @@ async def admin_clients_edit_form(
         if finance_summary["outstanding_cents"] > 0:
             balance_details.append(
                 f"{html.escape(tr(lang, 'admin.clients.finance_outstanding'))}: "
-                f"{html.escape(_format_money(finance_summary['outstanding_cents'], currency))}"
+                f"{html.escape(_format_finance_amount(finance_summary['outstanding_cents']))}"
             )
         if finance_summary["overpaid_cents"] > 0:
             balance_details.append(
                 f"{html.escape(tr(lang, 'admin.clients.finance_overpaid'))}: "
-                f"{html.escape(_format_money(finance_summary['overpaid_cents'], currency))}"
+                f"{html.escape(_format_finance_amount(finance_summary['overpaid_cents']))}"
             )
         if not balance_details:
             balance_details.append(
                 f"{html.escape(tr(lang, 'admin.clients.finance_balance'))}: "
-                f"{html.escape(_format_money(0, currency))}"
+                f"{html.escape(_format_finance_amount(0))}"
             )
         if finance_summary["unpaid_invoice_count"] > 0:
             balance_details.append(
@@ -11070,6 +11158,8 @@ async def admin_clients_edit_form(
         <div>
           <div class="title">{html.escape(tr(lang, "admin.clients.finance_title"))}</div>
           <div class="muted">{html.escape(tr(lang, "admin.clients.finance_hint"))}</div>
+          <div class="muted">{html.escape(finance_currency_label)}</div>
+          {finance_currency_warning}
         </div>
       </div>
       <div style="display: grid; gap: var(--space-md); grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
@@ -11250,39 +11340,47 @@ async def admin_clients_edit_form(
     if settings.chat_enabled:
         chat_action = (
             f'<a class="btn secondary" href="/v1/admin/ui/clients/{html.escape(client.client_id)}/chat">'
-            "Send message</a>"
+            f"{html.escape(tr(lang, 'admin.clients.quick_actions_chat_button'))}</a>"
         )
         chat_hint = ""
     else:
-        chat_action = '<button class="btn secondary" type="button" disabled>Chat not enabled yet</button>'
-        chat_hint = '<div class="muted small">Coming soon</div>'
+        chat_action = (
+            f'<button class="btn secondary" type="button" disabled>'
+            f"{html.escape(tr(lang, 'admin.clients.quick_actions_chat_disabled'))}"
+            "</button>"
+        )
+        chat_hint = f'<div class="muted small">{html.escape(tr(lang, "admin.clients.quick_actions_coming_soon"))}</div>'
 
     if settings.promos_enabled:
         promo_action = (
             f'<a class="btn secondary" href="/v1/admin/ui/clients/{html.escape(client.client_id)}/promos">'
-            "Apply promo</a>"
+            f"{html.escape(tr(lang, 'admin.clients.quick_actions_promo_button'))}</a>"
         )
         promo_hint = ""
     else:
-        promo_action = '<button class="btn secondary" type="button" disabled>Promos not enabled yet</button>'
-        promo_hint = '<div class="muted small">Coming soon</div>'
+        promo_action = (
+            f'<button class="btn secondary" type="button" disabled>'
+            f"{html.escape(tr(lang, 'admin.clients.quick_actions_promo_disabled'))}"
+            "</button>"
+        )
+        promo_hint = f'<div class="muted small">{html.escape(tr(lang, "admin.clients.quick_actions_coming_soon"))}</div>'
 
     quick_actions_card = f"""
     <div class="card">
       <div class="card-row">
         <div>
-          <div class="title">Quick actions</div>
-          <div class="muted">Reach out or apply a discount for this client.</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.quick_actions"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.quick_actions_hint"))}</div>
         </div>
       </div>
       <div style="display: grid; gap: var(--space-md); grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
         <div class="stack">
-          <div class="title">Send message</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.quick_actions_chat_title"))}</div>
           {chat_action}
           {chat_hint}
         </div>
         <div class="stack">
-          <div class="title">Apply promo</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.quick_actions_promo_title"))}</div>
           {promo_action}
           {promo_hint}
         </div>
@@ -11356,7 +11454,7 @@ async def admin_clients_edit_form(
             name=html.escape(str(worker["name"])),
             count=worker["completed_count"],
             minutes=worker["total_minutes"],
-            revenue=html.escape(_format_money(worker["total_revenue_cents"], currency))
+            revenue=html.escape(_format_money(worker["total_revenue_cents"], booking_currency))
             if worker["total_revenue_cents"]
             else "—",
         )
@@ -11474,34 +11572,34 @@ async def admin_clients_edit_form(
     <div class="card" id="client-addresses">
       <div class="card-row">
         <div>
-          <div class="title">Addresses</div>
-          <div class="muted">Save multiple addresses and notes for this client.</div>
+          <div class="title">{html.escape(tr(lang, "admin.clients.addresses_title"))}</div>
+          <div class="muted">{html.escape(tr(lang, "admin.clients.addresses_hint"))}</div>
         </div>
       </div>
       <datalist id="client-address-labels">
-        <option value="Home"></option>
-        <option value="Work"></option>
-        <option value="Cottage"></option>
-        <option value="Custom"></option>
+        <option value="{html.escape(tr(lang, 'admin.clients.addresses_label_home'))}"></option>
+        <option value="{html.escape(tr(lang, 'admin.clients.addresses_label_work'))}"></option>
+        <option value="{html.escape(tr(lang, 'admin.clients.addresses_label_cottage'))}"></option>
+        <option value="{html.escape(tr(lang, 'admin.clients.addresses_label_custom'))}"></option>
       </datalist>
       <div class="stack">
         {address_cards_html}
       </div>
       <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/addresses/create">
         <div class="form-group">
-          <label>Label</label>
-          <input class="input" type="text" name="label" list="client-address-labels" placeholder="Home" required />
+          <label>{html.escape(tr(lang, "admin.clients.addresses_label_label"))}</label>
+          <input class="input" type="text" name="label" list="client-address-labels" placeholder="{html.escape(tr(lang, 'admin.clients.addresses_placeholder_label'))}" required />
         </div>
         <div class="form-group">
-          <label>Address</label>
-          <input class="input" type="text" name="address_text" placeholder="123 Main St" required />
+          <label>{html.escape(tr(lang, "admin.clients.addresses_label_address"))}</label>
+          <input class="input" type="text" name="address_text" placeholder="{html.escape(tr(lang, 'admin.clients.addresses_placeholder_address'))}" required />
         </div>
         <div class="form-group">
-          <label>Notes</label>
-          <textarea class="input" name="notes" rows="2" placeholder="Parking, access, gate code"></textarea>
+          <label>{html.escape(tr(lang, "admin.clients.addresses_label_notes"))}</label>
+          <textarea class="input" name="notes" rows="2" placeholder="{html.escape(tr(lang, 'admin.clients.addresses_placeholder_notes'))}"></textarea>
         </div>
         {csrf_input}
-        <button class="btn secondary" type="submit">Add address</button>
+        <button class="btn secondary" type="submit">{html.escape(tr(lang, "admin.clients.addresses_add"))}</button>
       </form>
     </div>
     {finance_card}
@@ -11531,6 +11629,7 @@ async def admin_clients_edit_form(
         {notes_block}
       </div>
       <form class="stack" method="post" action="/v1/admin/ui/clients/{html.escape(client.client_id)}/notes/create">
+        <input type="hidden" name="note_type_filter" value="{html.escape(note_filter)}" />
         <div class="form-group">
           <label>{html.escape(tr(lang, "admin.clients.note_type_label"))}</label>
           <select class="input" name="note_type" id="client-note-type">
@@ -11609,6 +11708,10 @@ async def admin_client_chat_stub(
     )
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+    redirect_template = getattr(settings, "client_chat_redirect_url", None)
+    if redirect_template:
+        redirect_url = redirect_template.format(client_id=client.client_id)
+        return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
     csrf_token = get_csrf_token(request)
     return _render_client_quick_action_page(
         request,
@@ -11636,6 +11739,10 @@ async def admin_client_promos_stub(
     )
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+    redirect_template = getattr(settings, "client_promos_redirect_url", None)
+    if redirect_template:
+        redirect_url = redirect_template.format(client_id=client.client_id)
+        return RedirectResponse(url=redirect_url, status_code=status.HTTP_303_SEE_OTHER)
     csrf_token = get_csrf_token(request)
     return _render_client_quick_action_page(
         request,
@@ -11939,6 +12046,9 @@ async def admin_clients_add_note(
 
     form = await request.form()
     note_text = (form.get("note_text") or "").strip()
+    note_type_filter_raw = (form.get("note_type_filter") or "").strip().lower()
+    allowed_filters = {"all", "note", "complaint", "praise"}
+    note_type_filter = note_type_filter_raw if note_type_filter_raw in allowed_filters else "all"
     try:
         note_type = normalize_note_type(form.get("note_type"))
     except ValueError as exc:
@@ -11969,7 +12079,11 @@ async def admin_clients_add_note(
         after={"client_id": client_id},
     )
     await session.commit()
-    return RedirectResponse(f"/v1/admin/ui/clients/{client_id}", status_code=status.HTTP_303_SEE_OTHER)
+    redirect_params = {"note_type": note_type_filter} if note_type_filter != "all" else {}
+    redirect_url = f"/v1/admin/ui/clients/{client_id}"
+    if redirect_params:
+        redirect_url = f"{redirect_url}?{urlencode(redirect_params)}"
+    return RedirectResponse(redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/v1/admin/ui/clients/{client_id}/feedback/create", response_class=HTMLResponse)
@@ -12366,6 +12480,7 @@ def _render_booking_form(
     selected_worker_ids: list[int] | None = None,
     selected_client_id: str | None = None,
     address_value: str | None = None,
+    address_id: int | None = None,
     banner_message: str | None = None,
     banner_is_error: bool = False,
 ) -> str:
@@ -12413,6 +12528,12 @@ def _render_booking_form(
       </div>
         """
     address_value = address_value or ""
+    address_id_value = str(address_id) if address_id is not None else ""
+    address_id_input = (
+        f'<input type="hidden" name="address_id" value="{html.escape(address_id_value)}" />'
+        if address_id_value
+        else ""
+    )
 
     return f"""
     {banner_block}
@@ -12450,6 +12571,7 @@ def _render_booking_form(
           <label>{html.escape(tr(lang, 'admin.bookings.duration'))}</label>
           <input class="input" type="number" name="duration_minutes" min="30" step="30" value="{duration_value}" required />
         </div>
+        {address_id_input}
         {csrf_input}
         <button class="btn" type="submit">{html.escape(tr(lang, 'admin.bookings.save'))}</button>
       </form>
@@ -12905,6 +13027,7 @@ async def admin_bookings_new_form(
         action="/v1/admin/ui/bookings/create",
         selected_client_id=prefill_client_id,
         address_value=prefill_address,
+        address_id=selected_address.address_id if selected_address else None,
         banner_message=banner_message,
         banner_is_error=banner_is_error,
     )
@@ -12925,6 +13048,7 @@ async def admin_bookings_create(
 
     team_id_raw = form.get("team_id")
     client_id = (form.get("client_id") or "").strip() or None
+    address_id_raw = (form.get("address_id") or "").strip()
     assigned_worker_id_raw = form.get("assigned_worker_id")
     worker_ids = _normalize_worker_ids(form.getlist("worker_ids"))
     if not worker_ids and assigned_worker_id_raw:
@@ -12969,6 +13093,30 @@ async def admin_bookings_create(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Client not found or does not belong to your organization",
         )
+    address_id = None
+    if address_id_raw:
+        try:
+            address_id = int(address_id_raw)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid address selection",
+            ) from exc
+        address = (
+            await session.execute(
+                select(ClientAddress).where(
+                    ClientAddress.address_id == address_id,
+                    ClientAddress.client_id == client_id,
+                    ClientAddress.org_id == org_id,
+                    ClientAddress.is_active.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if address is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selected address not found for client",
+            )
     missing = []
     if not client.name or not client.name.strip():
         missing.append("name")
@@ -12993,6 +13141,7 @@ async def admin_bookings_create(
         booking_id=str(uuid.uuid4()),
         org_id=org_id,
         client_id=client_id,
+        address_id=address_id,
         team_id=team_id,
         assigned_worker_id=assigned_worker_id,
         starts_at=starts_at,
