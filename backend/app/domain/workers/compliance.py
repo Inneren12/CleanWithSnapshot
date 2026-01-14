@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 import json
+import re
 
 from app.settings import settings
 
@@ -29,6 +30,16 @@ class CertificateSnapshot:
 
 def _normalize_certificate_name(name: str) -> str:
     return name.strip().lower()
+
+
+def _normalize_skill_name(name: str) -> str:
+    cleaned = name.strip().lower()
+    if not cleaned:
+        return ""
+    cleaned = re.sub(r"[\s-]+", "_", cleaned)
+    cleaned = re.sub(r"[^a-z0-9_]", "", cleaned)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned
 
 
 def _normalize_skill_requirements(
@@ -68,11 +79,28 @@ def required_certificates_for_skills(
     requirements: dict[str, list[str]] | None = None,
 ) -> list[str]:
     requirements = _normalize_skill_requirements(requirements or get_skill_cert_requirements())
+    normalized_requirements: dict[str, list[str]] = {}
+    for skill, certs in requirements.items():
+        if not isinstance(skill, str):
+            continue
+        normalized_skill = _normalize_skill_name(skill)
+        if not normalized_skill:
+            continue
+        normalized_certs = normalized_requirements.setdefault(normalized_skill, [])
+        for cert in certs:
+            if cert not in normalized_certs:
+                normalized_certs.append(cert)
     required_by_name: dict[str, str] = {}
     for skill in skills or []:
         if not isinstance(skill, str):
             continue
-        for cert in requirements.get(skill, []):
+        normalized_skill = _normalize_skill_name(skill)
+        cert_sources: list[str] = []
+        if normalized_skill:
+            cert_sources.extend(normalized_requirements.get(normalized_skill, []))
+        if skill in requirements and skill != normalized_skill:
+            cert_sources.extend(requirements.get(skill, []))
+        for cert in cert_sources:
             normalized = _normalize_certificate_name(cert)
             if normalized:
                 required_by_name.setdefault(normalized, cert)
