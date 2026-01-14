@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import uuid
 from typing import Iterable, List, Literal, Optional
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -5137,6 +5137,115 @@ def _safe_csv_value(value: object) -> str:
     return text
 
 
+def _resolve_worker_filters(
+    *,
+    status: str | None,
+    show: str | None,
+    availability: str | None,
+    skill: list[str] | None,
+) -> tuple[str, str, list[str]]:
+    status_value = status or ("archived" if show == "archived" else "active")
+    if status_value not in {"active", "archived", "all"}:
+        status_value = "active"
+    availability_value = availability or "all"
+    if availability_value not in {"free", "busy", "all"}:
+        availability_value = "all"
+    selected_skills = [entry.strip() for entry in (skill or []) if entry and entry.strip()]
+    return status_value, availability_value, selected_skills
+
+
+def _build_workers_export_query(
+    *,
+    q: str | None,
+    active_only: bool,
+    team_id: int | None,
+    status: str | None,
+    rating_min: float | None,
+    rating_max: float | None,
+    availability: str | None,
+    skills: list[str],
+) -> str:
+    params: dict[str, str | list[str]] = {}
+    if q:
+        params["q"] = q
+    if active_only:
+        params["active_only"] = "1"
+    if team_id:
+        params["team_id"] = str(team_id)
+    if status:
+        params["status"] = status
+    if rating_min is not None:
+        params["rating_min"] = str(rating_min)
+    if rating_max is not None:
+        params["rating_max"] = str(rating_max)
+    if availability and availability != "all":
+        params["availability"] = availability
+    if skills:
+        params["skill"] = skills
+    return urlencode(params, doseq=True)
+
+
+def _workers_csv_response(workers: list[Worker], filename: str) -> Response:
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer)
+    headers = [
+        "worker_id",
+        "name",
+        "phone",
+        "email",
+        "role",
+        "team_id",
+        "team_name",
+        "is_active",
+        "archived_at",
+        "rating_avg",
+        "rating_count",
+        "skills",
+        "created_at",
+    ]
+    writer.writerow(headers)
+    for worker in workers:
+        row_values = [
+            worker.worker_id,
+            worker.name,
+            worker.phone,
+            worker.email or "",
+            worker.role or "",
+            worker.team_id,
+            getattr(worker.team, "name", "") if worker.team else "",
+            worker.is_active,
+            worker.archived_at.isoformat() if worker.archived_at else "",
+            worker.rating_avg if worker.rating_avg is not None else "",
+            worker.rating_count,
+            ", ".join(worker.skills or []),
+            worker.created_at.isoformat() if worker.created_at else "",
+        ]
+        writer.writerow([_safe_csv_value(value) for value in row_values])
+    csv_content = csv_buffer.getvalue()
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+def _parse_worker_ids(form: dict) -> list[int]:
+    raw_ids = []
+    if hasattr(form, "getlist"):
+        raw_ids = form.getlist("worker_ids") or form.getlist("worker_ids[]")
+    if not raw_ids:
+        raw_ids = [form.get("worker_ids"), form.get("worker_ids[]")]
+    worker_ids: list[int] = []
+    for raw_id in raw_ids:
+        if raw_id in (None, ""):
+            continue
+        try:
+            worker_ids.append(int(raw_id))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid worker id") from exc
+    return list(dict.fromkeys(worker_ids))
+
+
 def _normalize_worker_skills(raw: str | None) -> list[str] | None:
     if raw is None:
         return None
@@ -5397,13 +5506,12 @@ async def admin_workers_list(
 ) -> HTMLResponse:
     lang = resolve_lang(request)
     org_id = _resolve_admin_org(request, identity)
-    status_value = status or ("archived" if show == "archived" else "active")
-    if status_value not in {"active", "archived", "all"}:
-        status_value = "active"
-    availability_value = availability or "all"
-    if availability_value not in {"free", "busy", "all"}:
-        availability_value = "all"
-    selected_skills = [entry.strip() for entry in (skill or []) if entry and entry.strip()]
+    status_value, availability_value, selected_skills = _resolve_worker_filters(
+        status=status,
+        show=show,
+        availability=availability,
+        skill=skill,
+    )
     workers = await _list_workers(
         session,
         org_id=org_id,
@@ -5454,12 +5562,39 @@ async def admin_workers_list(
     )
     csrf_token = get_csrf_token(request)
     csrf_input = render_csrf_input(csrf_token)
+    export_query = _build_workers_export_query(
+        q=q,
+        active_only=active_only,
+        team_id=team_id,
+        status=status_value,
+        rating_min=rating_min,
+        rating_max=rating_max,
+        availability=availability_value,
+        skills=selected_skills,
+    )
+    export_filtered_url = "/v1/admin/ui/workers/export?format=csv"
+    if export_query:
+        export_filtered_url = f"{export_filtered_url}&{export_query}"
+    return_to = f"{request.url.path}?{request.url.query}" if request.url.query else request.url.path
+    bulk_action = request.query_params.get("bulk_action")
+    bulk_updated = request.query_params.get("updated")
+    bulk_skipped = request.query_params.get("skipped")
+    bulk_note = ""
+    if bulk_action:
+        action_label = "Archive" if bulk_action == "archive" else "Unarchive"
+        updated_label = bulk_updated or "0"
+        skipped_label = bulk_skipped or "0"
+        bulk_note = (
+            "<div class=\"card\">"
+            "<div class=\"card-row\">"
+            f"<div class=\"note\">{html.escape(action_label)} complete: "
+            f"{html.escape(updated_label)} updated, {html.escape(skipped_label)} skipped.</div>"
+            "</div>"
+            "</div>"
+        )
     rows: list[str] = []
     for worker in workers:
         busy_until = busy_until_map.get(worker.worker_id)
-        contact = [worker.phone]
-        if worker.email:
-            contact.append(worker.email)
         skills_html = (
             " ".join(
                 f'<span class="chip">{html.escape(skill_item)}</span>'
@@ -5480,6 +5615,7 @@ async def admin_workers_list(
         rows.append(
             """
             <tr>
+              <td><input type="checkbox" name="worker_ids" value="{worker_id}" data-worker-select /></td>
               <td>
                 <div class="title">{name}</div>
                 <div class="muted small">{team}</div>
@@ -5549,9 +5685,25 @@ async def admin_workers_list(
             "<div class=\"form-group\"><label>&nbsp;</label><div class=\"actions\"><button class=\"btn\" type=\"submit\">Apply</button><a class=\"btn secondary\" href=\"/v1/admin/ui/workers\">Reset</a></div></div>",
             "</form>",
             "</div>",
+            bulk_note,
             (
+                "<form method=\"post\">"
+                f"{csrf_input}"
+                f"<input type=\"hidden\" name=\"return_to\" value=\"{html.escape(return_to)}\" />"
+                "<div class=\"card\">"
+                "<div class=\"card-row\">"
+                "<div class=\"actions\">"
+                "<label class=\"with-icon\"><input type=\"checkbox\" id=\"select-all-workers\" /> Select all on page</label>"
+                "<button class=\"btn secondary\" type=\"submit\" formaction=\"/v1/admin/ui/workers/bulk/archive\">Archive selected</button>"
+                "<button class=\"btn secondary\" type=\"submit\" formaction=\"/v1/admin/ui/workers/bulk/unarchive\">Unarchive selected</button>"
+                "<button class=\"btn secondary\" type=\"submit\" formaction=\"/v1/admin/ui/workers/export_selected\">Export selected CSV</button>"
+                f"<a class=\"btn secondary\" href=\"{html.escape(export_filtered_url)}\">Export filtered CSV</a>"
+                "</div>"
+                "</div>"
+                "</div>"
                 "<table class=\"table\">"
                 "<thead><tr>"
+                "<th>Select</th>"
                 f"<th>{html.escape(tr(lang, 'admin.workers.name'))}</th>"
                 f"<th>{html.escape(tr(lang, 'admin.workers.phone'))}</th>"
                 f"<th>{html.escape(tr(lang, 'admin.workers.status_label'))}</th>"
@@ -5562,6 +5714,17 @@ async def admin_workers_list(
                 "</tr></thead><tbody>"
                 f"{''.join(rows)}"
                 "</tbody></table>"
+                "</form>"
+                "<script>"
+                "const selectAll = document.getElementById('select-all-workers');"
+                "if (selectAll) {"
+                "selectAll.addEventListener('change', () => {"
+                "document.querySelectorAll('input[data-worker-select]').forEach((checkbox) => {"
+                "checkbox.checked = selectAll.checked;"
+                "});"
+                "});"
+                "}"
+                "</script>"
                 if rows
                 else _render_empty(tr(lang, "admin.workers.none"))
             ),
@@ -5570,6 +5733,224 @@ async def admin_workers_list(
     response = HTMLResponse(_wrap_page(request, content, title="Admin — Workers", active="workers", page_lang=lang))
     issue_csrf_token(request, response, csrf_token)
     return response
+
+
+@router.post("/v1/admin/ui/workers/bulk/archive", response_class=HTMLResponse)
+async def admin_workers_bulk_archive(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    form = await request.form()
+    worker_ids = _parse_worker_ids(form)
+    if not worker_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No workers selected")
+    workers = (
+        await session.execute(
+            select(Worker)
+            .where(Worker.org_id == org_id, Worker.worker_id.in_(worker_ids))
+        )
+    ).scalars().all()
+    worker_ids_set = {worker.worker_id for worker in workers}
+    now = datetime.now(timezone.utc)
+    updated = 0
+    for worker in workers:
+        before = {
+            "archived_at": worker.archived_at.isoformat() if worker.archived_at else None,
+            "is_active": worker.is_active,
+        }
+        changed = False
+        if worker.archived_at is None:
+            worker.archived_at = now
+            changed = True
+        if worker.is_active:
+            worker.is_active = False
+            changed = True
+            if entitlements.has_tenant_identity(request):
+                await billing_service.record_usage_event(
+                    session,
+                    entitlements.resolve_org_id(request),
+                    metric="worker_created",
+                    quantity=-1,
+                    resource_id=str(worker.worker_id),
+                )
+        if changed:
+            updated += 1
+            await audit_service.record_action(
+                session,
+                identity=identity,
+                action="ARCHIVE_WORKER",
+                resource_type="worker",
+                resource_id=str(worker.worker_id),
+                before=before,
+                after={"archived_at": worker.archived_at.isoformat(), "is_active": worker.is_active},
+            )
+    if worker_ids_set:
+        await session.execute(
+            sa.update(Booking)
+            .where(
+                Booking.org_id == org_id,
+                Booking.assigned_worker_id.in_(worker_ids_set),
+            )
+            .values(assigned_worker_id=None)
+        )
+        await session.execute(
+            sa.delete(BookingWorker).where(BookingWorker.worker_id.in_(worker_ids_set))
+        )
+    await session.commit()
+    skipped = len(set(worker_ids)) - updated
+    return_to = form.get("return_to") or "/v1/admin/ui/workers"
+    parsed = urlparse(str(return_to))
+    redirect_target = parsed.path if parsed.path else "/v1/admin/ui/workers"
+    query_parts = parse_qs(parsed.query)
+    query_parts.update(
+        {"bulk_action": ["archive"], "updated": [str(updated)], "skipped": [str(skipped)]}
+    )
+    redirect_url = redirect_target
+    if query_parts:
+        redirect_url = f"{redirect_target}?{urlencode(query_parts, doseq=True)}"
+    return RedirectResponse(redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/v1/admin/ui/workers/bulk/unarchive", response_class=HTMLResponse)
+async def admin_workers_bulk_unarchive(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    form = await request.form()
+    worker_ids = _parse_worker_ids(form)
+    if not worker_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No workers selected")
+    workers = (
+        await session.execute(
+            select(Worker)
+            .where(Worker.org_id == org_id, Worker.worker_id.in_(worker_ids))
+        )
+    ).scalars().all()
+    updated = 0
+    for worker in workers:
+        before = {
+            "archived_at": worker.archived_at.isoformat() if worker.archived_at else None,
+            "is_active": worker.is_active,
+        }
+        changed = False
+        if worker.archived_at is not None:
+            worker.archived_at = None
+            changed = True
+        if not worker.is_active:
+            worker.is_active = True
+            changed = True
+            if entitlements.has_tenant_identity(request):
+                await billing_service.record_usage_event(
+                    session,
+                    entitlements.resolve_org_id(request),
+                    metric="worker_created",
+                    quantity=1,
+                    resource_id=str(worker.worker_id),
+                )
+        if changed:
+            updated += 1
+            await audit_service.record_action(
+                session,
+                identity=identity,
+                action="UNARCHIVE_WORKER",
+                resource_type="worker",
+                resource_id=str(worker.worker_id),
+                before=before,
+                after={"archived_at": None, "is_active": worker.is_active},
+            )
+    await session.commit()
+    skipped = len(set(worker_ids)) - updated
+    return_to = form.get("return_to") or "/v1/admin/ui/workers"
+    parsed = urlparse(str(return_to))
+    redirect_target = parsed.path if parsed.path else "/v1/admin/ui/workers"
+    query_parts = parse_qs(parsed.query)
+    query_parts.update(
+        {"bulk_action": ["unarchive"], "updated": [str(updated)], "skipped": [str(skipped)]}
+    )
+    redirect_url = redirect_target
+    if query_parts:
+        redirect_url = f"{redirect_target}?{urlencode(query_parts, doseq=True)}"
+    return RedirectResponse(redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/v1/admin/ui/workers/export")
+async def admin_workers_export_filtered(
+    request: Request,
+    format: str = Query(default="csv"),
+    q: str | None = Query(default=None),
+    active_only: bool = Query(default=False),
+    team_id: int | None = Query(default=None),
+    status: str | None = Query(default=None),
+    show: str | None = Query(default=None),
+    rating_min: float | None = Query(default=None),
+    rating_max: float | None = Query(default=None),
+    availability: str | None = Query(default=None),
+    skill: list[str] | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    if format != "csv":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid export format")
+    org_id = _resolve_admin_org(request, identity)
+    status_value, availability_value, selected_skills = _resolve_worker_filters(
+        status=status,
+        show=show,
+        availability=availability,
+        skill=skill,
+    )
+    workers = await _list_workers(
+        session,
+        org_id=org_id,
+        q=q,
+        active_only=active_only,
+        team_id=team_id,
+        status=status_value,
+        rating_min=rating_min,
+        rating_max=rating_max,
+        skills=selected_skills,
+    )
+    if availability_value != "all":
+        busy_until_map = await _worker_busy_until_map(
+            session,
+            org_id=org_id,
+            worker_ids=[worker.worker_id for worker in workers],
+        )
+        if availability_value == "busy":
+            workers = [worker for worker in workers if worker.worker_id in busy_until_map]
+        elif availability_value == "free":
+            workers = [worker for worker in workers if worker.worker_id not in busy_until_map]
+    return _workers_csv_response(workers, filename="workers.csv")
+
+
+@router.post("/v1/admin/ui/workers/export_selected")
+async def admin_workers_export_selected(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> Response:
+    await require_csrf(request)
+    org_id = _resolve_admin_org(request, identity)
+    form = await request.form()
+    worker_ids = _parse_worker_ids(form)
+    if not worker_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No workers selected")
+    workers = (
+        await session.execute(
+            select(Worker)
+            .options(selectinload(Worker.team))
+            .where(Worker.org_id == org_id, Worker.worker_id.in_(worker_ids))
+            .order_by(Worker.created_at.desc())
+        )
+    ).scalars().all()
+    if not workers:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No matching workers found")
+    return _workers_csv_response(workers, filename="workers-selected.csv")
 
 
 @router.get("/v1/admin/ui/workers/new", response_class=HTMLResponse)
