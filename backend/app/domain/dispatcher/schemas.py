@@ -95,3 +95,37 @@ class DispatcherStatusRequest(BaseModel):
         if normalized not in DISPATCHER_STATUS_VALUES:
             raise ValueError("Status must be planned, in_progress, done, or cancelled")
         return normalized
+
+
+class DispatcherNotifyRequest(BaseModel):
+    booking_id: str
+    target: Literal["client", "worker"]
+    channel: Literal["sms", "call"]
+    template_id: str
+    params: dict[str, str] | None = None
+    locale: Literal["en", "ru"] = "en"
+
+
+class DispatcherNotifyResponse(BaseModel):
+    audit_id: str
+    status: Literal["sent", "failed"]
+    error_code: str | None = None
+    provider_msg_id: str | None = None
+    sent_at: datetime
+
+
+class DispatcherNotifyAuditEntry(BaseModel):
+    audit_id: str
+    booking_id: str
+    target: Literal["client", "worker"]
+    channel: Literal["sms", "call"]
+    template_id: str
+    admin_user_id: str
+    status: Literal["sent", "failed"]
+    error_code: str | None = None
+    provider_msg_id: str | None = None
+    sent_at: datetime
+
+
+class DispatcherNotifyAuditResponse(BaseModel):
+    audits: list[DispatcherNotifyAuditEntry] = Field(default_factory=list)

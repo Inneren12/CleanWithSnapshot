@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.infra.communication import NoopCommunicationAdapter, TwilioCommunicationAdapter, resolve_communication_adapter
 from app.infra.email import EmailAdapter, NoopEmailAdapter, resolve_email_adapter
 from app.infra.metrics import Metrics, configure_metrics
 from app.infra.security import RateLimiter, create_rate_limiter
@@ -16,6 +17,7 @@ class AppServices:
 
     storage: StorageBackend
     email_adapter: EmailAdapter | NoopEmailAdapter
+    communication_adapter: TwilioCommunicationAdapter | NoopCommunicationAdapter
     stripe_client: StripeClient
     rate_limiter: RateLimiter
     action_rate_limiter: RateLimiter
@@ -27,6 +29,7 @@ def build_app_services(app_settings, *, metrics: Metrics | None = None) -> AppSe
     return AppServices(
         storage=new_storage_backend(),
         email_adapter=resolve_email_adapter(app_settings),
+        communication_adapter=resolve_communication_adapter(app_settings),
         stripe_client=StripeClient(
             secret_key=app_settings.stripe_secret_key,
             webhook_secret=app_settings.stripe_webhook_secret,

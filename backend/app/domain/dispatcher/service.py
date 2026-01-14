@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -9,8 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Booking
 from app.domain.clients.db_models import ClientAddress, ClientUser
+from app.domain.dispatcher.db_models import DispatcherCommunicationAudit
 from app.domain.dispatcher import schemas
 from app.domain.workers.db_models import Worker
+from app.infra.communication import CommunicationResult, NoopCommunicationAdapter, TwilioCommunicationAdapter
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -154,6 +159,171 @@ async def fetch_dispatcher_board(
         server_time=server_time,
         data_version=data_version,
     )
+
+
+_DISPATCHER_TEMPLATES: dict[str, dict[str, str]] = {
+    "WORKER_EN_ROUTE_15MIN": {
+        "en": (
+            "Hi {worker_name}, reminder: booking {booking_id} starts at {start_time}. "
+            "Please head to {address}. Reply if you're delayed."
+        ),
+        "ru": "",
+    },
+    "CLIENT_DELAY_TRAFFIC": {
+        "en": (
+            "Hi {client_name}, your cleaner is running about {delay_minutes} minutes late due to traffic. "
+            "We'll keep you posted."
+        ),
+        "ru": "",
+    },
+    "CLIENT_DONE": {
+        "en": "Hi {client_name}, your cleaning is complete at {address}. Thank you for choosing us!",
+        "ru": "",
+    },
+}
+
+
+class _SafeFormatDict(dict):
+    def __missing__(self, key: str) -> str:
+        return f"{{{key}}}"
+
+
+def _render_template(template_id: str, locale: str, context: dict[str, str]) -> str:
+    template = _DISPATCHER_TEMPLATES.get(template_id, {}).get(locale)
+    if not template:
+        raise LookupError("unknown_template")
+    return template.format_map(_SafeFormatDict(context))
+
+
+def _format_booking_time(value: datetime | None) -> str:
+    if value is None:
+        return "—"
+    return value.astimezone(timezone.utc).strftime("%H:%M")
+
+
+async def send_dispatcher_notification(
+    session: AsyncSession,
+    *,
+    org_id,
+    payload: schemas.DispatcherNotifyRequest,
+    admin_user_id: str,
+    adapter: TwilioCommunicationAdapter | NoopCommunicationAdapter | None,
+) -> tuple[DispatcherCommunicationAudit, CommunicationResult]:
+    stmt = (
+        select(Booking, ClientUser, ClientAddress, Worker)
+        .select_from(Booking)
+        .join(ClientUser, ClientUser.client_id == Booking.client_id, isouter=True)
+        .join(ClientAddress, ClientAddress.address_id == Booking.address_id, isouter=True)
+        .join(Worker, Worker.worker_id == Booking.assigned_worker_id, isouter=True)
+        .where(Booking.booking_id == payload.booking_id, Booking.org_id == org_id)
+    )
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        raise LookupError("booking_not_found")
+
+    booking, client, address, worker = row
+    phone = None
+    if payload.target == "client":
+        phone = getattr(client, "phone", None)
+    elif payload.target == "worker":
+        phone = getattr(worker, "phone", None)
+
+    status = "failed"
+    provider_msg_id = None
+    error_code = None
+
+    if not phone:
+        error_code = "missing_phone"
+    else:
+        adapter = adapter or NoopCommunicationAdapter()
+        try:
+            if payload.channel == "sms":
+                context = {
+                    "booking_id": booking.booking_id,
+                    "client_name": getattr(client, "name", "") or "there",
+                    "worker_name": getattr(worker, "name", "") or "team",
+                    "start_time": _format_booking_time(booking.starts_at),
+                    "address": getattr(address, "address_text", "") or "your location",
+                    "delay_minutes": payload.params.get("delay_minutes", "15")
+                    if payload.params
+                    else "15",
+                }
+                context.update(payload.params or {})
+                try:
+                    body = _render_template(payload.template_id, payload.locale, context)
+                except LookupError:
+                    error_code = "unknown_template"
+                else:
+                    result = await adapter.send_sms(to_number=phone, body=body)
+                    status = result.status
+                    provider_msg_id = result.provider_msg_id
+                    error_code = result.error_code
+            else:
+                result = await adapter.send_call(to_number=phone)
+                status = result.status
+                provider_msg_id = result.provider_msg_id
+                error_code = result.error_code
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "dispatcher_notify_failed",
+                extra={
+                    "extra": {
+                        "booking_id": payload.booking_id,
+                        "template_id": payload.template_id,
+                        "target": payload.target,
+                        "channel": payload.channel,
+                        "reason": type(exc).__name__,
+                    }
+                },
+            )
+            status = "failed"
+            error_code = "send_failed"
+
+    audit = DispatcherCommunicationAudit(
+        org_id=org_id,
+        booking_id=payload.booking_id,
+        target=payload.target,
+        channel=payload.channel,
+        template_id=payload.template_id,
+        admin_user_id=admin_user_id,
+        status=status,
+        provider_msg_id=provider_msg_id,
+        error_code=error_code,
+    )
+    session.add(audit)
+    await session.flush()
+    logger.info(
+        "dispatcher_notify_audit",
+        extra={
+            "extra": {
+                "booking_id": payload.booking_id,
+                "template_id": payload.template_id,
+                "target": payload.target,
+                "channel": payload.channel,
+                "status": status,
+            }
+        },
+    )
+    return audit, CommunicationResult(status=status, provider_msg_id=provider_msg_id, error_code=error_code)
+
+
+async def fetch_dispatcher_notification_audits(
+    session: AsyncSession,
+    *,
+    org_id,
+    booking_id: str,
+    limit: int = 5,
+) -> list[DispatcherCommunicationAudit]:
+    stmt = (
+        select(DispatcherCommunicationAudit)
+        .where(
+            DispatcherCommunicationAudit.org_id == org_id,
+            DispatcherCommunicationAudit.booking_id == booking_id,
+        )
+        .order_by(DispatcherCommunicationAudit.sent_at.desc())
+        .limit(limit)
+    )
+    return (await session.execute(stmt)).scalars().all()
 
 
 async def fetch_dispatcher_alerts(

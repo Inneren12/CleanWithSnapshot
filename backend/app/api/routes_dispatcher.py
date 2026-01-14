@@ -20,6 +20,7 @@ from app.domain.dispatcher import schemas
 from app.domain.dispatcher import service as dispatcher_service
 from app.domain.ops import service as ops_service
 from app.domain.workers.db_models import Worker
+from app.infra.communication import resolve_app_communication_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +283,75 @@ async def reschedule_dispatcher_booking(
     )
     await session.commit()
     return await _load_dispatcher_booking(session, org_id=org_id, booking_id=booking_id)
+
+
+@router.post(
+    "/v1/admin/dispatcher/notify",
+    response_model=schemas.DispatcherNotifyResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def notify_dispatcher_target(
+    payload: schemas.DispatcherNotifyRequest,
+    session: AsyncSession = Depends(get_db_session),
+    org_id=Depends(require_org_context),
+    identity: AdminIdentity = Depends(require_dispatch),
+    request: Request,
+) -> schemas.DispatcherNotifyResponse:
+    adapter = resolve_app_communication_adapter(request)
+    try:
+        audit, result = await dispatcher_service.send_dispatcher_notification(
+            session,
+            org_id=org_id,
+            payload=payload,
+            admin_user_id=identity.username,
+            adapter=adapter,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    await session.commit()
+    return schemas.DispatcherNotifyResponse(
+        audit_id=audit.audit_id,
+        status=result.status,
+        error_code=result.error_code,
+        provider_msg_id=result.provider_msg_id,
+        sent_at=audit.sent_at,
+    )
+
+
+@router.get(
+    "/v1/admin/dispatcher/notify/audit",
+    response_model=schemas.DispatcherNotifyAuditResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_dispatcher_notify_audits(
+    booking_id: str = Query(..., description="Booking id"),
+    limit: int = Query(5, ge=1, le=50),
+    session: AsyncSession = Depends(get_db_session),
+    org_id=Depends(require_org_context),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> schemas.DispatcherNotifyAuditResponse:
+    del identity
+    audits = await dispatcher_service.fetch_dispatcher_notification_audits(
+        session, org_id=org_id, booking_id=booking_id, limit=limit
+    )
+    return schemas.DispatcherNotifyAuditResponse(
+        audits=[
+            schemas.DispatcherNotifyAuditEntry(
+                audit_id=audit.audit_id,
+                booking_id=audit.booking_id,
+                target=audit.target,
+                channel=audit.channel,
+                template_id=audit.template_id,
+                admin_user_id=audit.admin_user_id,
+                status=audit.status,
+                error_code=audit.error_code,
+                provider_msg_id=audit.provider_msg_id,
+                sent_at=audit.sent_at,
+            )
+            for audit in audits
+        ]
+    )
 
 
 @router.post(

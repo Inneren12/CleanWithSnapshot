@@ -299,6 +299,9 @@ def create_app(app_settings) -> FastAPI:
         app.state.export_transport = getattr(app.state, "export_transport", None)
         app.state.export_resolver = getattr(app.state, "export_resolver", None)
         app.state.email_adapter = getattr(app.state, "email_adapter", None) or state_services.email_adapter
+        app.state.communication_adapter = (
+            getattr(app.state, "communication_adapter", None) or state_services.communication_adapter
+        )
         app.state.stripe_client = getattr(app.state, "stripe_client", None) or state_services.stripe_client
         yield
         await app.state.rate_limiter.close()
