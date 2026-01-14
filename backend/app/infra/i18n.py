@@ -10,6 +10,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "en": {
         "nav.dashboard": "Dashboard",
         "nav.my_jobs": "My Jobs",
+        "nav.chat": "Chat",
         "worker.today": "Today",
         "worker.next_job": "Next job",
         "worker.no_jobs": "No jobs assigned.",
@@ -266,6 +267,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "ru": {
         "nav.dashboard": "Панель",
         "nav.my_jobs": "Мои заказы",
+        "nav.chat": "Чат",
         "worker.today": "Сегодня",
         "worker.next_job": "Следующее задание",
         "worker.no_jobs": "Нет заданий",
