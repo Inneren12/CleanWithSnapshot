@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     twilio_call_from: str | None = Field(None)
     twilio_call_url: str | None = Field(None)
     twilio_timeout_seconds: float = Field(10.0)
+    dispatcher_alert_sms_to: str | None = Field(None)
     owner_basic_username: str | None = Field(None)
     owner_basic_password: str | None = Field(None)
     admin_basic_username: str | None = Field(None)

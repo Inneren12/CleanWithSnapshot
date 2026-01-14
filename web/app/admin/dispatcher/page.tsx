@@ -58,6 +58,7 @@ type DispatcherBoardResponse = {
 };
 
 type DispatcherAlert = {
+  alert_id: string;
   type: "DOUBLE_BOOKING" | "LATE_WORKER" | "CLIENT_CANCELLED_TODAY" | "WORKER_SHORTAGE";
   severity: "info" | "warn" | "critical";
   message: string;
@@ -68,6 +69,10 @@ type DispatcherAlert = {
 
 type DispatcherAlertsResponse = {
   alerts: DispatcherAlert[];
+};
+
+type DispatcherAlertAckResponse = {
+  status: "ok";
 };
 
 type DispatcherStatsResponse = {
@@ -325,6 +330,7 @@ export default function DispatcherPage() {
   const [selectedZone, setSelectedZone] = useState<string>("All");
   const [viewMode, setViewMode] = useState<"timeline" | "map" | "split">("split");
   const [isSmallScreen, setIsSmallScreen] = useState(false);
+  const [mobileTab, setMobileTab] = useState<"alerts" | "today" | "timeline">("alerts");
   const [mapScriptsLoaded, setMapScriptsLoaded] = useState(false);
   const [clustererLoaded, setClustererLoaded] = useState(false);
   const hoursScrollRef = useRef<HTMLDivElement | null>(null);
@@ -462,6 +468,33 @@ export default function DispatcherPage() {
     }
   }, [authHeaders, password, username]);
 
+  const acknowledgeAlert = useCallback(
+    async (alertId: string) => {
+      if (!username || !password) return;
+      try {
+        const response = await fetch(`${API_BASE}/v1/admin/dispatcher/alerts/ack`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders,
+          },
+          body: JSON.stringify({ alert_id: alertId }),
+        });
+        if (!response.ok) {
+          throw new Error(`Request failed (${response.status})`);
+        }
+        const payload = (await response.json()) as DispatcherAlertAckResponse;
+        if (payload.status === "ok") {
+          showToast("Alert acknowledged.", "success");
+          void fetchAlerts();
+        }
+      } catch (fetchError) {
+        showToast(fetchError instanceof Error ? fetchError.message : "Unable to acknowledge alert");
+      }
+    },
+    [authHeaders, fetchAlerts, password, showToast, username]
+  );
+
   const fetchNotifyAudits = useCallback(async () => {
     if (!isAuthenticated || !selectedBooking) return;
     setCommError(null);
@@ -497,7 +530,14 @@ export default function DispatcherPage() {
     const isSmall = mediaQuery.matches;
     setIsSmallScreen(isSmall);
     setViewMode(isSmall ? "timeline" : "split");
-    const handleChange = (event: MediaQueryListEvent) => setIsSmallScreen(event.matches);
+    setMobileTab("alerts");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsSmallScreen(event.matches);
+      setViewMode(event.matches ? "timeline" : "split");
+      if (event.matches) {
+        setMobileTab("alerts");
+      }
+    };
     if (mediaQuery.addEventListener) {
       mediaQuery.addEventListener("change", handleChange);
     } else {
@@ -900,6 +940,8 @@ export default function DispatcherPage() {
     };
   }, [alerts]);
 
+  const criticalAlert = alertsBySeverity.critical[0] ?? null;
+
   const handleReassign = useCallback(
     async (bookingId: string, workerId: number) => {
       if (!isAuthenticated) {
@@ -929,6 +971,15 @@ export default function DispatcherPage() {
     },
     [applyOptimisticUpdate, authHeaders, board, isAuthenticated, showToast]
   );
+
+  const confirmReassign = useCallback(() => {
+    if (!selectedBooking || !reassignWorkerId) return;
+    const workerId = Number(reassignWorkerId);
+    const workerName = workerNames.get(workerId) ?? `Worker ${workerId}`;
+    const confirmed = window.confirm(`Reassign booking to ${workerName}?`);
+    if (!confirmed) return;
+    void handleReassign(selectedBooking.booking_id, workerId);
+  }, [handleReassign, reassignWorkerId, selectedBooking, workerNames]);
 
   const handleReschedule = useCallback(async () => {
     if (!selectedBooking) return;
@@ -1275,6 +1326,250 @@ export default function DispatcherPage() {
   }, []);
 
   const selectedPending = selectedBooking ? isActionPending(selectedBooking.booking_id) : false;
+  const clientPhone = selectedBooking?.client?.phone ?? "";
+  const workerPhone = selectedBooking?.assigned_worker?.phone ?? "";
+
+  const renderAlertGroup = useCallback(
+    (groupAlerts: DispatcherAlert[], label: string, tone: "critical" | "warn" | "info") => {
+      if (!groupAlerts.length) return null;
+      return (
+        <div className="dispatcher-alert-group">
+          <h3>{label}</h3>
+          <div className="dispatcher-alert-list">
+            {groupAlerts.map((alert) => (
+              <div key={alert.alert_id} className={`dispatcher-alert-card ${tone}`}>
+                <button
+                  type="button"
+                  className="dispatcher-alert-main"
+                  onClick={() => focusAlertBooking(alert)}
+                >
+                  <strong>{alert.message}</strong>
+                  <span className="muted">Action: {alert.action.split("_").join(" ")}</span>
+                </button>
+                <button
+                  type="button"
+                  className="dispatcher-alert-ack"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void acknowledgeAlert(alert.alert_id);
+                  }}
+                >
+                  Acknowledge
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    },
+    [acknowledgeAlert, focusAlertBooking]
+  );
+
+  const alertsPanel = (
+    <aside className="dispatcher-alerts" aria-label="Dispatcher alerts">
+      <header>
+        <h2>Alerts</h2>
+        <span className="muted">{alerts.length} total</span>
+      </header>
+      {alerts.length === 0 ? <p className="muted">No alerts for today.</p> : null}
+      {renderAlertGroup(alertsBySeverity.critical, "Critical", "critical")}
+      {renderAlertGroup(alertsBySeverity.warn, "Warning", "warn")}
+      {renderAlertGroup(alertsBySeverity.info, "Info", "info")}
+    </aside>
+  );
+
+  const metricsPanel = (
+    <div className="dispatcher-metrics">
+      <section className="dispatcher-card" aria-label="Today stats">
+        <header>
+          <h2>Today</h2>
+          <span className="muted">Paid revenue</span>
+        </header>
+        <div className="dispatcher-metric-grid">
+          <div>
+            <span className="muted">Planned</span>
+            <strong>{stats?.planned_count ?? "—"}</strong>
+          </div>
+          <div>
+            <span className="muted">In progress</span>
+            <strong>{stats?.in_progress_count ?? "—"}</strong>
+          </div>
+          <div>
+            <span className="muted">Done</span>
+            <strong>{stats?.done_count ?? "—"}</strong>
+          </div>
+          <div>
+            <span className="muted">Avg duration</span>
+            <strong>
+              {stats?.avg_duration_hours !== null && stats?.avg_duration_hours !== undefined
+                ? `${stats.avg_duration_hours.toFixed(2)}h`
+                : "—"}
+            </strong>
+          </div>
+          <div>
+            <span className="muted">Revenue</span>
+            <strong>{stats ? formatCurrencyFromCents(stats.revenue_today) : "—"}</strong>
+          </div>
+        </div>
+      </section>
+      <section className="dispatcher-card" aria-label="Zone filter">
+        <header>
+          <h2>Zones</h2>
+          <span className="muted">Filter board + stats</span>
+        </header>
+        <div className="dispatcher-zone-chips" role="group" aria-label="Zone filters">
+          {ZONE_OPTIONS.map((zone) => {
+            const isActive = selectedZone === zone;
+            return (
+              <button
+                key={zone}
+                type="button"
+                className={`dispatcher-zone-chip${isActive ? " active" : ""}`}
+                onClick={() => setSelectedZone(zone)}
+              >
+                {zone}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+
+  const mainPanel = (
+    <div className="dispatcher-main">
+      <div className="dispatcher-view-toggle" role="tablist" aria-label="Timeline map view">
+        {(["timeline", "map", "split"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            role="tab"
+            aria-selected={viewMode === mode}
+            className={`dispatcher-view-button${viewMode === mode ? " active" : ""}`}
+            onClick={() => setViewMode(mode)}
+          >
+            {mode === "timeline" ? "Timeline" : mode === "map" ? "Map" : "Split"}
+          </button>
+        ))}
+      </div>
+      <div className={`dispatcher-view dispatcher-view-${viewMode}`}>
+        {board?.workers.length ? (
+          <div
+            className={`dispatcher-panel dispatcher-panel-timeline${viewMode === "map" ? " is-hidden" : ""}`}
+            role="region"
+            aria-label="Dispatcher timeline"
+          >
+            <div className="dispatcher-timeline">
+              <div className="dispatcher-timeline-header">
+                <div className="dispatcher-worker-spacer">Worker</div>
+                <div className="dispatcher-hours-scroll" ref={hoursScrollRef}>
+                  <div className="dispatcher-hours" style={{ minWidth: totalTimelineWidth }}>
+                    {HOURS.map((hour) => (
+                      <div key={hour} className="dispatcher-hour">
+                        {formatTimeLabel(hour)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="dispatcher-timeline-body">
+                <div className="dispatcher-body-scroll" onScroll={handleRowsScroll}>
+                  <div className="dispatcher-worker-list">
+                    {board?.workers.map((worker) => (
+                      <div key={worker.worker_id} className="dispatcher-worker-name">
+                        {worker.display_name || `Worker ${worker.worker_id}`}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="dispatcher-rows">
+                    {board?.workers.map((worker) => (
+                      <div key={worker.worker_id} className="dispatcher-row">
+                        <div
+                          className={`dispatcher-row-track${
+                            dragOverWorkerId === worker.worker_id ? " drop-target" : ""
+                          }`}
+                          style={{ minWidth: totalTimelineWidth }}
+                          aria-label={`Timeline for ${worker.display_name}`}
+                          onDragOver={handleDragOver}
+                          onDragEnter={handleDragEnter(worker.worker_id)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={handleDropOnWorker(worker.worker_id)}
+                        >
+                          {(workerBookings.get(worker.worker_id) ?? []).map((booking) => {
+                            const startOffset = clampRange(
+                              minutesFromRangeStart(booking.starts_at),
+                              0,
+                              RANGE_END_MINUTES
+                            );
+                            const endOffset = clampRange(
+                              minutesFromRangeStart(booking.ends_at),
+                              0,
+                              RANGE_END_MINUTES
+                            );
+                            const width = Math.max((endOffset - startOffset) * MINUTE_WIDTH, 24);
+                            const isHighlighted = highlightedBookingId === booking.booking_id;
+                            return (
+                              <button
+                                key={booking.booking_id}
+                                type="button"
+                                ref={(element) => {
+                                  bookingRefs.current.set(booking.booking_id, element);
+                                }}
+                                className={`dispatcher-booking ${bookingStatusClass(booking.status)}${
+                                  isHighlighted ? " alert-focus" : ""
+                                }${draggingBookingId === booking.booking_id ? " dragging" : ""}`}
+                                style={{
+                                  left: `${startOffset * MINUTE_WIDTH}px`,
+                                  width: `${width}px`,
+                                }}
+                                onClick={() => focusBooking(booking)}
+                                onDragStart={handleDragStart(booking.booking_id)}
+                                onDragEnd={handleDragEnd}
+                                draggable
+                                aria-label={`Booking for ${booking.client?.name ?? "client"}`}
+                              >
+                                <div className="dispatcher-booking-title">
+                                  {booking.client?.name ?? "Unnamed client"}
+                                </div>
+                                <div className="dispatcher-booking-subtitle">
+                                  {formatTimeRange(booking.starts_at, booking.ends_at)}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        <div
+          className={`dispatcher-panel dispatcher-panel-map${viewMode === "timeline" ? " is-hidden" : ""}`}
+          role="region"
+          aria-label="Dispatcher map"
+        >
+          <div className="dispatcher-map-header">
+            <div>
+              <h3>Active bookings map</h3>
+              <p className="muted">Edmonton area view for today.</p>
+            </div>
+            <div className="dispatcher-map-meta">
+              <span className="muted">Missing locations</span>
+              <strong>{board ? mapLocations.missingCount : "—"}</strong>
+            </div>
+          </div>
+          {!hasMapKey ? (
+            <div className="dispatcher-map-unavailable">Map unavailable (missing key).</div>
+          ) : (
+            <div className="dispatcher-map-canvas" ref={mapContainerRef} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="dispatcher-page">
@@ -1342,278 +1637,91 @@ export default function DispatcherPage() {
       <section className="dispatcher-content">
         {toast ? <div className={`inline-alert ${toast.kind}`}>{toast.message}</div> : null}
         {error ? <div className="inline-alert error">{error}</div> : null}
-        <div className="dispatcher-metrics">
-          <section className="dispatcher-card" aria-label="Today stats">
-            <header>
-              <h2>Today</h2>
-              <span className="muted">Paid revenue</span>
-            </header>
-            <div className="dispatcher-metric-grid">
-              <div>
-                <span className="muted">Planned</span>
-                <strong>{stats?.planned_count ?? "—"}</strong>
-              </div>
-              <div>
-                <span className="muted">In progress</span>
-                <strong>{stats?.in_progress_count ?? "—"}</strong>
-              </div>
-              <div>
-                <span className="muted">Done</span>
-                <strong>{stats?.done_count ?? "—"}</strong>
-              </div>
-              <div>
-                <span className="muted">Avg duration</span>
-                <strong>
-                  {stats?.avg_duration_hours !== null && stats?.avg_duration_hours !== undefined
-                    ? `${stats.avg_duration_hours.toFixed(2)}h`
-                    : "—"}
-                </strong>
-              </div>
-              <div>
-                <span className="muted">Revenue</span>
-                <strong>{stats ? formatCurrencyFromCents(stats.revenue_today) : "—"}</strong>
-              </div>
+        {criticalAlert ? (
+          <button
+            type="button"
+            className="dispatcher-critical-card"
+            onClick={() => focusAlertBooking(criticalAlert)}
+          >
+            <div>
+              <span className="dispatcher-critical-label">Critical alert</span>
+              <strong>{criticalAlert.message}</strong>
             </div>
-          </section>
-          <section className="dispatcher-card" aria-label="Zone filter">
-            <header>
-              <h2>Zones</h2>
-              <span className="muted">Filter board + stats</span>
-            </header>
-            <div className="dispatcher-zone-chips" role="group" aria-label="Zone filters">
-              {ZONE_OPTIONS.map((zone) => {
-                const isActive = selectedZone === zone;
-                return (
-                  <button
-                    key={zone}
-                    type="button"
-                    className={`dispatcher-zone-chip${isActive ? " active" : ""}`}
-                    onClick={() => setSelectedZone(zone)}
-                  >
-                    {zone}
-                  </button>
-                );
-              })}
+            <span className="dispatcher-critical-action">
+              Open booking · {criticalAlert.action.split("_").join(" ")}
+            </span>
+          </button>
+        ) : null}
+
+        {isSmallScreen ? (
+          <>
+            <div className="dispatcher-mobile-tabs" role="tablist" aria-label="Dispatcher tabs">
+              {[
+                { id: "alerts", label: "Alerts" },
+                { id: "today", label: "Today" },
+                { id: "timeline", label: "Timeline" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={mobileTab === tab.id}
+                  className={`dispatcher-mobile-tab${mobileTab === tab.id ? " active" : ""}`}
+                  onClick={() => setMobileTab(tab.id as "alerts" | "today" | "timeline")}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
-          </section>
-        </div>
-        {loading ? (
+            <div className={`dispatcher-mobile-panel${mobileTab === "alerts" ? " is-active" : ""}`}>
+              {alertsPanel}
+            </div>
+            <div className={`dispatcher-mobile-panel${mobileTab === "today" ? " is-active" : ""}`}>
+              {metricsPanel}
+            </div>
+            <div className={`dispatcher-mobile-panel${mobileTab === "timeline" ? " is-active" : ""}`}>
+              {mainPanel}
+            </div>
+          </>
+        ) : (
+          <>
+            {metricsPanel}
+            {loading ? (
+              <div className="dispatcher-skeleton" aria-label="Loading dispatcher board">
+                <div className="skeleton-line" />
+                <div className="skeleton-grid" />
+              </div>
+            ) : null}
+
+            {!loading && board && board.workers.length === 0 ? (
+              <div className="empty-state">No workers</div>
+            ) : null}
+
+            {!loading && board && board.workers.length > 0 && board.bookings.length === 0 ? (
+              <div className="empty-state">No bookings today</div>
+            ) : null}
+
+            {!loading && board ? (
+              <div className="dispatcher-grid">
+                {alertsPanel}
+                {mainPanel}
+              </div>
+            ) : null}
+          </>
+        )}
+        {isSmallScreen && loading ? (
           <div className="dispatcher-skeleton" aria-label="Loading dispatcher board">
             <div className="skeleton-line" />
             <div className="skeleton-grid" />
           </div>
         ) : null}
 
-        {!loading && board && board.workers.length === 0 ? (
+        {isSmallScreen && !loading && board && board.workers.length === 0 ? (
           <div className="empty-state">No workers</div>
         ) : null}
 
-        {!loading && board && board.workers.length > 0 && board.bookings.length === 0 ? (
+        {isSmallScreen && !loading && board && board.workers.length > 0 && board.bookings.length === 0 ? (
           <div className="empty-state">No bookings today</div>
-        ) : null}
-
-        {!loading && board ? (
-          <div className="dispatcher-grid">
-            <aside className="dispatcher-alerts" aria-label="Dispatcher alerts">
-              <header>
-                <h2>Alerts</h2>
-                <span className="muted">{alerts.length} total</span>
-              </header>
-              {alerts.length === 0 ? <p className="muted">No alerts for today.</p> : null}
-              {alertsBySeverity.critical.length > 0 ? (
-                <div className="dispatcher-alert-group">
-                  <h3>Critical</h3>
-                  <div className="dispatcher-alert-list">
-                    {alertsBySeverity.critical.map((alert, index) => (
-                      <button
-                        key={`${alert.type}-${index}`}
-                        type="button"
-                        className="dispatcher-alert-card critical"
-                        onClick={() => focusAlertBooking(alert)}
-                      >
-                        <strong>{alert.message}</strong>
-                        <span className="muted">Action: {alert.action.split("_").join(" ")}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              {alertsBySeverity.warn.length > 0 ? (
-                <div className="dispatcher-alert-group">
-                  <h3>Warning</h3>
-                  <div className="dispatcher-alert-list">
-                    {alertsBySeverity.warn.map((alert, index) => (
-                      <button
-                        key={`${alert.type}-${index}`}
-                        type="button"
-                        className="dispatcher-alert-card warn"
-                        onClick={() => focusAlertBooking(alert)}
-                      >
-                        <strong>{alert.message}</strong>
-                        <span className="muted">Action: {alert.action.split("_").join(" ")}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              {alertsBySeverity.info.length > 0 ? (
-                <div className="dispatcher-alert-group">
-                  <h3>Info</h3>
-                  <div className="dispatcher-alert-list">
-                    {alertsBySeverity.info.map((alert, index) => (
-                      <button
-                        key={`${alert.type}-${index}`}
-                        type="button"
-                        className="dispatcher-alert-card info"
-                        onClick={() => focusAlertBooking(alert)}
-                      >
-                        <strong>{alert.message}</strong>
-                        <span className="muted">Action: {alert.action.split("_").join(" ")}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </aside>
-            <div className="dispatcher-main">
-              <div className="dispatcher-view-toggle" role="tablist" aria-label="Timeline map view">
-                {(["timeline", "map", "split"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="tab"
-                    aria-selected={viewMode === mode}
-                    className={`dispatcher-view-button${viewMode === mode ? " active" : ""}`}
-                    onClick={() => setViewMode(mode)}
-                  >
-                    {mode === "timeline" ? "Timeline" : mode === "map" ? "Map" : "Split"}
-                  </button>
-                ))}
-              </div>
-              <div className={`dispatcher-view dispatcher-view-${viewMode}`}>
-                {board.workers.length > 0 ? (
-                  <div
-                    className={`dispatcher-panel dispatcher-panel-timeline${
-                      viewMode === "map" ? " is-hidden" : ""
-                    }`}
-                    role="region"
-                    aria-label="Dispatcher timeline"
-                  >
-                    <div className="dispatcher-timeline">
-                      <div className="dispatcher-timeline-header">
-                        <div className="dispatcher-worker-spacer">Worker</div>
-                        <div className="dispatcher-hours-scroll" ref={hoursScrollRef}>
-                          <div className="dispatcher-hours" style={{ minWidth: totalTimelineWidth }}>
-                            {HOURS.map((hour) => (
-                              <div key={hour} className="dispatcher-hour">
-                                {formatTimeLabel(hour)}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="dispatcher-timeline-body">
-                        <div className="dispatcher-body-scroll" onScroll={handleRowsScroll}>
-                          <div className="dispatcher-worker-list">
-                            {board.workers.map((worker) => (
-                              <div key={worker.worker_id} className="dispatcher-worker-name">
-                                {worker.display_name || `Worker ${worker.worker_id}`}
-                              </div>
-                            ))}
-                          </div>
-                          <div className="dispatcher-rows">
-                            {board.workers.map((worker) => (
-                              <div key={worker.worker_id} className="dispatcher-row">
-                                <div
-                                  className={`dispatcher-row-track${
-                                    dragOverWorkerId === worker.worker_id ? " drop-target" : ""
-                                  }`}
-                                  style={{ minWidth: totalTimelineWidth }}
-                                  aria-label={`Timeline for ${worker.display_name}`}
-                                  onDragOver={handleDragOver}
-                                  onDragEnter={handleDragEnter(worker.worker_id)}
-                                  onDragLeave={handleDragLeave}
-                                  onDrop={handleDropOnWorker(worker.worker_id)}
-                                >
-                                  {(workerBookings.get(worker.worker_id) ?? []).map((booking) => {
-                                    const startOffset = clampRange(
-                                      minutesFromRangeStart(booking.starts_at),
-                                      0,
-                                      RANGE_END_MINUTES
-                                    );
-                                    const endOffset = clampRange(
-                                      minutesFromRangeStart(booking.ends_at),
-                                      0,
-                                      RANGE_END_MINUTES
-                                    );
-                                    const width = Math.max((endOffset - startOffset) * MINUTE_WIDTH, 24);
-                                    const isHighlighted = highlightedBookingId === booking.booking_id;
-                                    return (
-                                      <button
-                                        key={booking.booking_id}
-                                        type="button"
-                                        ref={(element) => {
-                                          bookingRefs.current.set(booking.booking_id, element);
-                                        }}
-                                        className={`dispatcher-booking ${bookingStatusClass(booking.status)}${
-                                          isHighlighted ? " alert-focus" : ""
-                                        }${draggingBookingId === booking.booking_id ? " dragging" : ""}`}
-                                        style={{
-                                          left: `${startOffset * MINUTE_WIDTH}px`,
-                                          width: `${width}px`,
-                                        }}
-                                        onClick={() => focusBooking(booking)}
-                                        onDragStart={handleDragStart(booking.booking_id)}
-                                        onDragEnd={handleDragEnd}
-                                        draggable
-                                        aria-label={`Booking for ${booking.client?.name ?? "client"}`}
-                                      >
-                                        <div className="dispatcher-booking-title">
-                                          {booking.client?.name ?? "Unnamed client"}
-                                        </div>
-                                        <div className="dispatcher-booking-subtitle">
-                                          {formatTimeRange(booking.starts_at, booking.ends_at)}
-                                        </div>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-                <div
-                  className={`dispatcher-panel dispatcher-panel-map${
-                    viewMode === "timeline" ? " is-hidden" : ""
-                  }`}
-                  role="region"
-                  aria-label="Dispatcher map"
-                >
-                  <div className="dispatcher-map-header">
-                    <div>
-                      <h3>Active bookings map</h3>
-                      <p className="muted">Edmonton area view for today.</p>
-                    </div>
-                    <div className="dispatcher-map-meta">
-                      <span className="muted">Missing locations</span>
-                      <strong>{board ? mapLocations.missingCount : "—"}</strong>
-                    </div>
-                  </div>
-                  {!hasMapKey ? (
-                    <div className="dispatcher-map-unavailable">
-                      Map unavailable (missing key).
-                    </div>
-                  ) : (
-                    <div className="dispatcher-map-canvas" ref={mapContainerRef} />
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
         ) : null}
       </section>
 
@@ -1729,12 +1837,9 @@ export default function DispatcherPage() {
                       className="btn"
                       type="button"
                       disabled={!reassignWorkerId || !isAuthenticated || selectedPending}
-                      onClick={() => {
-                        if (!reassignWorkerId) return;
-                        void handleReassign(selectedBooking.booking_id, Number(reassignWorkerId));
-                      }}
+                      onClick={confirmReassign}
                     >
-                      Reassign
+                      Confirm
                     </button>
                   </div>
                 </div>
@@ -1986,6 +2091,51 @@ export default function DispatcherPage() {
                     Cancel booking
                   </button>
                 </div>
+              </div>
+            </div>
+            <div className="dispatcher-drawer-action-bar" aria-label="Quick actions">
+              <div className="dispatcher-quick-calls">
+                {clientPhone ? (
+                  <a className="btn btn-secondary" href={`tel:${clientPhone}`}>
+                    Call client
+                  </a>
+                ) : (
+                  <button className="btn btn-secondary" type="button" disabled>
+                    Call client
+                  </button>
+                )}
+                {workerPhone ? (
+                  <a className="btn btn-secondary" href={`tel:${workerPhone}`}>
+                    Call worker
+                  </a>
+                ) : (
+                  <button className="btn btn-secondary" type="button" disabled>
+                    Call worker
+                  </button>
+                )}
+              </div>
+              <div className="dispatcher-reassign-inline">
+                <select
+                  className="input"
+                  value={reassignWorkerId}
+                  onChange={(event) => setReassignWorkerId(event.target.value)}
+                  disabled={!isAuthenticated || selectedPending}
+                >
+                  <option value="">Reassign to...</option>
+                  {(board?.workers ?? []).map((worker) => (
+                    <option key={worker.worker_id} value={worker.worker_id}>
+                      {worker.display_name || `Worker ${worker.worker_id}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  disabled={!reassignWorkerId || !isAuthenticated || selectedPending}
+                  onClick={confirmReassign}
+                >
+                  Confirm
+                </button>
               </div>
             </div>
           </aside>

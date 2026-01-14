@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -9,6 +10,7 @@ from sqlalchemy import func, select
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.admin_audit import service as audit_service
 from app.domain.bookings.db_models import Booking
 from app.domain.bookings.service import BLOCKING_STATUSES
 from app.domain.clients.db_models import ClientAddress, ClientUser
@@ -22,8 +24,14 @@ from app.domain.notifications.email_service import LOCAL_TZ
 from app.domain.ops import service as ops_service
 from app.domain.workers.db_models import Worker
 from app.infra.communication import CommunicationResult, NoopCommunicationAdapter, TwilioCommunicationAdapter
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
+
+_DISPATCHER_ALERT_ACK_TTL = timedelta(minutes=30)
+_DISPATCHER_ALERT_SMS_TTL = timedelta(minutes=30)
+_ALERT_ACKED_UNTIL: dict[str, datetime] = {}
+_ALERT_SMS_SENT_AT: dict[str, datetime] = {}
 
 
 @dataclass(frozen=True)
@@ -200,7 +208,14 @@ def _make_alert(
     booking_ids: list[str] | None = None,
     worker_ids: list[int] | None = None,
 ) -> schemas.DispatcherAlert:
+    alert_id = _alert_signature(
+        alert_type=alert_type,
+        action=action,
+        booking_ids=booking_ids,
+        worker_ids=worker_ids,
+    )
     return schemas.DispatcherAlert(
+        alert_id=alert_id,
         type=alert_type,
         severity=severity,
         message=message,
@@ -208,6 +223,94 @@ def _make_alert(
         booking_ids=booking_ids or [],
         worker_ids=worker_ids or [],
     )
+
+
+def _alert_signature(
+    *,
+    alert_type: str,
+    action: str,
+    booking_ids: list[str] | None,
+    worker_ids: list[int] | None,
+) -> str:
+    booking = ",".join(sorted(booking_ids or []))
+    worker = ",".join(str(value) for value in sorted(worker_ids or []))
+    signature = f"{alert_type}|{action}|{booking}|{worker}"
+    return hashlib.sha1(signature.encode("utf-8")).hexdigest()[:12]
+
+
+def _prune_alert_cache(now: datetime) -> None:
+    for cache in (_ALERT_ACKED_UNTIL, _ALERT_SMS_SENT_AT):
+        expired = [key for key, value in cache.items() if value <= now]
+        for key in expired:
+            cache.pop(key, None)
+
+
+def _filter_acknowledged_alerts(alerts: list[schemas.DispatcherAlert]) -> list[schemas.DispatcherAlert]:
+    now = datetime.now(timezone.utc)
+    _prune_alert_cache(now)
+    if not _ALERT_ACKED_UNTIL:
+        return alerts
+    return [alert for alert in alerts if _ALERT_ACKED_UNTIL.get(alert.alert_id, now) <= now]
+
+
+def acknowledge_dispatcher_alert(alert_id: str) -> None:
+    now = datetime.now(timezone.utc)
+    _prune_alert_cache(now)
+    _ALERT_ACKED_UNTIL[alert_id] = now + _DISPATCHER_ALERT_ACK_TTL
+
+
+def _should_send_alert_sms(alert_id: str, now: datetime) -> bool:
+    sent_until = _ALERT_SMS_SENT_AT.get(alert_id)
+    if sent_until is None:
+        return True
+    return now >= sent_until
+
+
+def _alert_sms_body(alert: schemas.DispatcherAlert) -> str:
+    booking_summary = ""
+    if alert.booking_ids:
+        booking_summary = f" Booking IDs: {', '.join(alert.booking_ids)}."
+    return f"Dispatcher CRITICAL alert: {alert.type}. {alert.message}.{booking_summary}"
+
+
+async def send_critical_alert_sms(
+    session: AsyncSession,
+    *,
+    org_id,
+    identity,
+    alerts: list[schemas.DispatcherAlert],
+    adapter: TwilioCommunicationAdapter | NoopCommunicationAdapter | None,
+) -> None:
+    sms_to = settings.dispatcher_alert_sms_to
+    if not sms_to:
+        return
+    now = datetime.now(timezone.utc)
+    _prune_alert_cache(now)
+    adapter = adapter or NoopCommunicationAdapter()
+    for alert in alerts:
+        if alert.severity != "critical":
+            continue
+        if _ALERT_ACKED_UNTIL.get(alert.alert_id, now) > now:
+            continue
+        if not _should_send_alert_sms(alert.alert_id, now):
+            continue
+        result = await adapter.send_sms(to_number=sms_to, body=_alert_sms_body(alert))
+        _ALERT_SMS_SENT_AT[alert.alert_id] = now + _DISPATCHER_ALERT_SMS_TTL
+        await audit_service.record_action(
+            session,
+            identity=identity,
+            org_id=org_id,
+            action="dispatcher_alert_sms",
+            resource_type="dispatcher_alert",
+            resource_id=alert.alert_id,
+            before=None,
+            after={
+                "status": result.status,
+                "error_code": result.error_code,
+                "alert_type": alert.type,
+                "severity": alert.severity,
+            },
+        )
 
 
 def resolve_day_window(target_date: date, tz_name: str) -> tuple[datetime, datetime]:
@@ -902,4 +1005,4 @@ async def fetch_dispatcher_alerts(
             )
         )
 
-    return DispatcherAlertsResult(alerts=alerts)
+    return DispatcherAlertsResult(alerts=_filter_acknowledged_alerts(alerts))
