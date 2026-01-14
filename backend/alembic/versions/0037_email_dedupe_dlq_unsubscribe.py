@@ -131,5 +131,23 @@ def downgrade() -> None:
     op.drop_index("ix_email_failures_org_status", table_name="email_failures")
     op.drop_table("email_failures")
 
+    bind = op.get_bind()
+    is_sqlite = bind.dialect.name == "sqlite"
+
+    if is_sqlite:
+        inspector = sa.inspect(bind)
+        has_named_constraint = any(
+            constraint.get("name") == "uq_email_events_org_dedupe"
+            for constraint in inspector.get_unique_constraints("email_events")
+        )
+        with op.batch_alter_table("email_events", recreate="always") as batch_op:
+            if has_named_constraint:
+                batch_op.drop_constraint("uq_email_events_org_dedupe", type_="unique")
+            else:
+                # SQLite may omit the named constraint; rebuilding the table drops it safely.
+                pass
+            batch_op.drop_column("dedupe_key")
+        return
+
     op.drop_constraint("uq_email_events_org_dedupe", "email_events", type_="unique")
     op.drop_column("email_events", "dedupe_key")
