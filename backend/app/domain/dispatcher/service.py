@@ -12,6 +12,7 @@ from app.domain.bookings.db_models import Booking
 from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.dispatcher.db_models import DispatcherCommunicationAudit
 from app.domain.dispatcher import schemas
+from app.domain.notifications.email_service import LOCAL_TZ
 from app.domain.workers.db_models import Worker
 from app.infra.communication import CommunicationResult, NoopCommunicationAdapter, TwilioCommunicationAdapter
 
@@ -198,7 +199,9 @@ def _render_template(template_id: str, locale: str, context: dict[str, str]) -> 
 def _format_booking_time(value: datetime | None) -> str:
     if value is None:
         return "—"
-    return value.astimezone(timezone.utc).strftime("%H:%M")
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(LOCAL_TZ).strftime("%H:%M")
 
 
 async def send_dispatcher_notification(
