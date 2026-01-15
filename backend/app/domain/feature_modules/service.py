@@ -40,21 +40,21 @@ SUBFEATURE_KEYS = [
 FEATURE_KEYS = MODULE_KEYS + SUBFEATURE_KEYS
 
 MODULE_PERMISSIONS: dict[str, str] = {
-    dashboard: "core.view",
-    schedule: "bookings.view",
-    invoices: "invoices.view",
-    quality: "bookings.view",
-    teams: "users.manage",
-    analytics: "finance.view",
-    finance: "finance.view",
-    pricing: "settings.manage",
-    marketing: "core.view",
-    leads: "contacts.view",
-    inventory: "core.view",
-    training: "core.view",
-    notifications_center: "admin.manage",
-    settings: "settings.manage",
-    api: "settings.manage",
+    "dashboard": "core.view",
+    "schedule": "bookings.view",
+    "invoices": "invoices.view",
+    "quality": "bookings.view",
+    "teams": "users.manage",
+    "analytics": "finance.view",
+    "finance": "finance.view",
+    "pricing": "settings.manage",
+    "marketing": "core.view",
+    "leads": "contacts.view",
+    "inventory": "core.view",
+    "training": "core.view",
+    "notifications_center": "admin.manage",
+    "settings": "settings.manage",
+    "api": "settings.manage",
 }
 
 

@@ -194,45 +194,94 @@ export default function AdminPage() {
     return { Authorization: `Basic ${encoded}` };
   }, [username, password]);
 
-  
   const permissionKeys = profile?.permissions ?? [];
-const canManageBookings =
-  permissionKeys.includes("bookings.edit") || permissionKeys.includes("bookings.assign");
-const isReadOnly = !canManageBookings;
+  const canManageBookings =
+    permissionKeys.includes("bookings.edit") || permissionKeys.includes("bookings.assign");
+  const isReadOnly = !canManageBookings;
+  const canAdminMetrics = permissionKeys.includes("admin.manage");
 
-const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
-const featureOverrides = featureConfig?.overrides ?? {};
-const hiddenKeys = uiPrefs?.hidden_keys ?? [];
+  const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
+  const featureOverrides = featureConfig?.overrides ?? {};
+  const hiddenKeys = uiPrefs?.hidden_keys ?? [];
 
-const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
+  const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
 
-const dashboardVisible = visibilityReady
-  ? isVisible("module.dashboard", permissionKeys, featureOverrides, hiddenKeys)
-  : true;
+  const dashboardVisible = visibilityReady
+    ? isVisible("module.dashboard", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
 
-const financeReportsVisible = visibilityReady
-  ? isVisible("finance.reports", permissionKeys, featureOverrides, hiddenKeys)
-  : true;
+  const financeReportsVisible = visibilityReady
+    ? isVisible("finance.reports", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
 
-const navLinks = useMemo(() => {
-  if (!visibilityReady || !profile) return [];
+  const navLinks = useMemo(() => {
+    if (!visibilityReady || !profile) return [];
 
-  const candidates = [
-    { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
-    { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+    const candidates = [
+      { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
+      { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      { key: "org-settings", label: "Org Settings", href: "/admin/settings/org", featureKey: "module.settings" },
+      { key: "pricing", label: "Service Types & Pricing", href: "/admin/settings/pricing", featureKey: "module.settings" },
+      {
+        key: "policies",
+        label: "Booking Policies",
+        href: "/admin/settings/booking-policies",
+        featureKey: "module.settings",
+      },
+      { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "module.settings" },
+      { key: "roles", label: "Roles & Permissions", href: "/admin/iam/roles", featureKey: "module.settings" },
+    ];
 
-    { key: "org-settings", label: "Org Settings", href: "/admin/settings/org", featureKey: "module.settings" },
-    { key: "pricing", label: "Service Types & Pricing", href: "/admin/settings/pricing", featureKey: "module.settings" },
-    { key: "policies", label: "Booking Policies", href: "/admin/settings/booking-policies", featureKey: "module.settings" },
+    return candidates
+      .filter((entry) => isVisible(entry.featureKey, permissionKeys, featureOverrides, hiddenKeys))
+      .map(({ featureKey, ...link }) => link);
+  }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
 
-    { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "module.settings" },
-    { key: "roles", label: "Roles & Permissions", href: "/admin/iam/roles", featureKey: "module.settings" },
-  ];
+  const loadProfile = useCallback(async () => {
+    if (!username || !password) return;
+    const response = await fetch(`${API_BASE}/v1/admin/profile`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as AdminProfile;
+      setProfile(data);
+    } else {
+      setProfile(null);
+    }
+  }, [authHeaders, password, username]);
 
-  return candidates
-    .filter((entry) => isVisible(entry.featureKey, permissionKeys, featureOverrides, hiddenKeys))
-    .map(({ featureKey, ...link }) => link);
-}, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
+  const loadFeatureConfig = useCallback(async () => {
+    if (!username || !password) return;
+    setSettingsError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as FeatureConfigResponse;
+      setFeatureConfig(data);
+    } else {
+      setFeatureConfig(null);
+      setSettingsError("Failed to load module settings");
+    }
+  }, [authHeaders, password, username]);
+
+  const loadUiPrefs = useCallback(async () => {
+    if (!username || !password) return;
+    setSettingsError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as UiPrefsResponse;
+      setUiPrefs(data);
+    } else {
+      setUiPrefs(null);
+      setSettingsError("Failed to load UI preferences");
+    }
+  }, [authHeaders, password, username]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

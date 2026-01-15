@@ -38,21 +38,22 @@ def upgrade() -> None:
         sa.UniqueConstraint("org_id", "role_key", name="uq_iam_roles_org_key"),
     )
 
-    op.add_column("memberships", sa.Column("custom_role_id", sa.Uuid(as_uuid=True), nullable=True))
-    op.create_foreign_key(
-        "fk_memberships_custom_role",
-        "memberships",
-        "iam_roles",
-        ["custom_role_id"],
-        ["role_id"],
-        ondelete="SET NULL",
-    )
+    with op.batch_alter_table("memberships") as batch_op:
+        batch_op.add_column(sa.Column("custom_role_id", sa.Uuid(as_uuid=True), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_memberships_custom_role",
+            "iam_roles",
+            ["custom_role_id"],
+            ["role_id"],
+            ondelete="SET NULL",
+        )
 
     if op.get_bind().dialect.name == "postgresql":
         op.execute("ALTER TYPE membershiprole ADD VALUE IF NOT EXISTS 'accountant'")
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_memberships_custom_role", "memberships", type_="foreignkey")
-    op.drop_column("memberships", "custom_role_id")
+    with op.batch_alter_table("memberships") as batch_op:
+        batch_op.drop_constraint("fk_memberships_custom_role", type_="foreignkey")
+        batch_op.drop_column("custom_role_id")
     op.drop_table("iam_roles")

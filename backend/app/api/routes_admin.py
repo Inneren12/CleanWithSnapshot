@@ -4405,7 +4405,7 @@ async def send_invoice(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
     _csrf: None = Depends(require_csrf),
-    _admin: AdminIdentity = Depends(require_finance),
+    _admin: AdminIdentity = Depends(require_permission_keys("invoices.edit")),
 ) -> invoice_schemas.InvoiceSendResponse:
     org_id = entitlements.resolve_org_id(http_request)
     invoice = await _get_org_invoice(
@@ -4487,7 +4487,7 @@ async def create_invoice_from_order(
     request: invoice_schemas.InvoiceCreateRequest,
     session: AsyncSession = Depends(get_db_session),
     _csrf: None = Depends(require_csrf),
-    admin: AdminIdentity = Depends(require_finance),
+    admin: AdminIdentity = Depends(require_permission_keys("invoices.edit")),
 ) -> invoice_schemas.InvoiceResponse:
     org_id = entitlements.resolve_org_id(http_request)
     order = await session.get(
@@ -4551,7 +4551,7 @@ async def mark_invoice_paid(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
     _csrf: None = Depends(require_csrf),
-    admin: AdminIdentity = Depends(require_finance),
+    admin: AdminIdentity = Depends(require_permission_keys("payments.record")),
 ) -> invoice_schemas.ManualPaymentResult:
     org_id = entitlements.resolve_org_id(http_request)
     return await _record_manual_invoice_payment(invoice_id, request, session, org_id, admin)
@@ -4568,7 +4568,7 @@ async def record_manual_invoice_payment(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
     _csrf: None = Depends(require_csrf),
-    admin: AdminIdentity = Depends(require_finance),
+    admin: AdminIdentity = Depends(require_permission_keys("payments.record")),
 ) -> invoice_schemas.ManualPaymentResult:
     org_id = entitlements.resolve_org_id(http_request)
     idempotency = await require_idempotency(http_request, session, org_id, "record_payment")
