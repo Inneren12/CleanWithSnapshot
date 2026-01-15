@@ -46,6 +46,29 @@ class PaymentResponse(BaseModel):
     created_at: datetime
 
 
+class EmailEventResponse(BaseModel):
+    event_id: str
+    email_type: str
+    recipient: str
+    subject: str
+    created_at: datetime
+
+
+class CustomerInfo(BaseModel):
+    customer_id: str
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    address: str | None = None
+
+
+class BookingInfo(BaseModel):
+    booking_id: str
+    booking_number: str | None = None
+    scheduled_start: datetime | None = None
+    status: str | None = None
+
+
 class InvoiceResponse(BaseModel):
     invoice_id: str
     invoice_number: str
@@ -66,6 +89,10 @@ class InvoiceResponse(BaseModel):
     updated_at: datetime
     items: list[InvoiceItemResponse]
     payments: list[PaymentResponse]
+    email_events: list[EmailEventResponse] = Field(default_factory=list)
+    public_link: str | None = None
+    customer: CustomerInfo | None = None
+    booking: BookingInfo | None = None
 
 
 class InvoiceListItem(BaseModel):
@@ -284,4 +311,10 @@ class BulkMarkPaidRequest(BaseModel):
 class BulkMarkPaidResult(BaseModel):
     succeeded: list[str]
     failed: list[dict]
+
+
+class InvoiceReminderResponse(BaseModel):
+    invoice: InvoiceResponse
+    email_sent: bool
+    recipient: str
 
