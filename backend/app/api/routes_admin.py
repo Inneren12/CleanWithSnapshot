@@ -111,6 +111,7 @@ from app.domain.nps import schemas as nps_schemas, service as nps_service
 from app.domain.pricing.config_loader import load_pricing_config
 from app.domain.pricing_settings.db_models import ServiceType
 from app.domain.notifications.db_models import EmailFailure
+from app.domain.org_settings import service as org_settings_service
 from app.domain.policy_overrides.db_models import PolicyOverrideAudit
 from app.domain.reason_logs import schemas as reason_schemas
 from app.domain.reason_logs import service as reason_service
@@ -1349,11 +1350,14 @@ async def list_schedule(
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     resolved_from = from_date or date.today()
     resolved_to = to_date or resolved_from
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
     payload = await ops_service.list_schedule(
         session,
         org_id,
         resolved_from,
         resolved_to,
+        org_timezone=org_timezone,
         worker_id=worker_id,
         team_id=team_id,
         status=status,
@@ -5289,9 +5293,16 @@ async def bulk_mark_paid_invoices(
                 failed.append({"invoice_id": invoice_id, "error": "Invoice not found"})
                 continue
 
+            normalized_status = invoice.status.strip().upper() if invoice.status else ""
+
             # Don't allow marking void invoices as paid
-            if invoice.status == invoice_statuses.INVOICE_STATUS_VOID:
+            if normalized_status == invoice_statuses.INVOICE_STATUS_VOID:
                 failed.append({"invoice_id": invoice_id, "error": "Cannot mark void invoice as paid"})
+                continue
+
+            # Skip if already paid
+            if normalized_status == invoice_statuses.INVOICE_STATUS_PAID:
+                failed.append({"invoice_id": invoice_id, "error": "Invoice already paid"})
                 continue
 
             # Calculate remaining balance by querying database directly for accuracy
@@ -5305,7 +5316,11 @@ async def bulk_mark_paid_invoices(
             balance_due = max(invoice.total_cents - paid_cents, 0)
 
             # Skip if already paid
-            if balance_due == 0:
+            if (
+                paid_cents >= invoice.total_cents
+                or balance_due == 0
+                or invoice_service.outstanding_balance_cents(invoice) == 0
+            ):
                 failed.append({"invoice_id": invoice_id, "error": "Invoice already paid"})
                 continue
 
