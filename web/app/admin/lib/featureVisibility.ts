@@ -25,17 +25,19 @@ export type FeatureTreeItem = {
 
 const MODULE_PERMISSIONS: Record<string, string> = {
   dashboard: "core.view",
-  schedule: "bookings.assign",
+  schedule: "bookings.view",
   invoices: "invoices.view",
   quality: "bookings.view",
   teams: "users.manage",
   analytics: "finance.view",
   finance: "finance.view",
+  pricing: "settings.manage",
   marketing: "core.view",
   leads: "contacts.view",
   inventory: "core.view",
   training: "core.view",
   notifications_center: "admin.manage",
+  settings: "settings.manage",
   api: "settings.manage",
 };
 
@@ -64,11 +66,25 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
       { key: "finance.cash_flow", label: "Cash flow widget" },
     ],
   },
+  {
+    key: "module.pricing",
+    label: "Pricing & Policies",
+    description: "Service catalog, pricing rules, and booking policies.",
+    children: [
+      { key: "pricing.service_types", label: "Service types & pricing" },
+      { key: "pricing.booking_policies", label: "Booking policies" },
+    ],
+  },
   { key: "module.marketing", label: "Marketing" },
   { key: "module.leads", label: "Leads" },
   { key: "module.inventory", label: "Inventory" },
   { key: "module.training", label: "Training" },
   { key: "module.notifications_center", label: "Notifications center" },
+  {
+    key: "module.settings",
+    label: "Settings",
+    description: "Organization profile, hours, and holidays.",
+  },
   {
     key: "module.api",
     label: "API & Integrations",

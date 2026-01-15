@@ -17,11 +17,13 @@ MODULE_KEYS = [
     "module.teams",
     "module.analytics",
     "module.finance",
+    "module.pricing",
     "module.marketing",
     "module.leads",
     "module.inventory",
     "module.training",
     "module.notifications_center",
+    "module.settings",
     "module.api",
 ]
 
@@ -30,25 +32,29 @@ SUBFEATURE_KEYS = [
     "schedule.optimization_ai",
     "finance.reports",
     "finance.cash_flow",
+    "pricing.service_types",
+    "pricing.booking_policies",
     "api.settings",
 ]
 
 FEATURE_KEYS = MODULE_KEYS + SUBFEATURE_KEYS
 
 MODULE_PERMISSIONS: dict[str, str] = {
-    "dashboard": "core.view",
-    "schedule": "bookings.assign",
-    "invoices": "invoices.view",
-    "quality": "bookings.view",
-    "teams": "users.manage",
-    "analytics": "finance.view",
-    "finance": "finance.view",
-    "marketing": "core.view",
-    "leads": "contacts.view",
-    "inventory": "core.view",
-    "training": "core.view",
-    "notifications_center": "admin.manage",
-    "api": "settings.manage",
+    dashboard: "core.view",
+    schedule: "bookings.view",
+    invoices: "invoices.view",
+    quality: "bookings.view",
+    teams: "users.manage",
+    analytics: "finance.view",
+    finance: "finance.view",
+    pricing: "settings.manage",
+    marketing: "core.view",
+    leads: "contacts.view",
+    inventory: "core.view",
+    training: "core.view",
+    notifications_center: "admin.manage",
+    settings: "settings.manage",
+    api: "settings.manage",
 }
 
 
