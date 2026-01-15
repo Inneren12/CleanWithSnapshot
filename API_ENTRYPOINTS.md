@@ -200,6 +200,8 @@ curl -X POST https://api.panidobro.com/v1/admin/ui/bookings/create \
 
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
+| GET | `/v1/admin/invoices/overdue_summary` | `invoices.view` | Overdue invoice bucket summary |
+| POST | `/v1/admin/invoices/overdue_remind` | `invoices.send` | Send overdue reminders (bucket or invoice IDs) |
 | GET | `/v1/admin/ui/invoices` | `invoices.view` | List invoices |
 | GET | `/v1/admin/ui/invoices/{id}` | `invoices.view` | Invoice detail |
 | POST | `/v1/admin/ui/invoices/new` | `invoices.edit` | Create invoice |

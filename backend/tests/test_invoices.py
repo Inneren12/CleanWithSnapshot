@@ -772,6 +772,67 @@ def test_overdue_summary_buckets_boundary_days(client, async_session_maker):
     assert invoice_ids["critical"] in critical_ids
 
 
+def test_overdue_summary_excludes_paid_and_void(client, async_session_maker):
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    as_of_date = date(2024, 2, 1)
+
+    async def _seed_invoices() -> dict[str, str]:
+        async with async_session_maker() as session:
+            invoice_ids: dict[str, str] = {}
+            for label, status in {
+                "sent": statuses.INVOICE_STATUS_SENT,
+                "paid": statuses.INVOICE_STATUS_PAID,
+                "void": statuses.INVOICE_STATUS_VOID,
+            }.items():
+                lead = Lead(**_lead_payload(name=f"{label.title()} Lead"))
+                session.add(lead)
+                await session.flush()
+                booking = Booking(
+                    team_id=1,
+                    lead_id=lead.lead_id,
+                    starts_at=datetime.now(tz=timezone.utc),
+                    duration_minutes=90,
+                    status="PENDING",
+                )
+                session.add(booking)
+                await session.flush()
+                invoice = await invoice_service.create_invoice_from_order(
+                    session=session,
+                    order=booking,
+                    items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000)],
+                    issue_date=as_of_date - timedelta(days=20),
+                    due_date=as_of_date - timedelta(days=10),
+                    currency="CAD",
+                )
+                invoice.status = status
+                invoice_ids[label] = invoice.invoice_id
+            await session.commit()
+            return invoice_ids
+
+    invoice_ids = asyncio.run(_seed_invoices())
+    headers = _auth_headers("admin", "secret")
+
+    resp = client.get(
+        "/v1/admin/invoices/overdue_summary",
+        headers=headers,
+        params={"as_of": as_of_date.isoformat()},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    buckets = {bucket["bucket"]: bucket for bucket in payload["buckets"]}
+
+    all_ids = {
+        item["invoice_id"]
+        for bucket in payload["buckets"]
+        for item in bucket["invoices"]
+    }
+    assert invoice_ids["sent"] in all_ids
+    assert invoice_ids["paid"] not in all_ids
+    assert invoice_ids["void"] not in all_ids
+    assert buckets["attention"]["total_count"] == 1
+
+
 def test_overdue_remind_requires_send_permission(client, async_session_maker):
     settings.admin_basic_username = "viewer"
     settings.admin_basic_password = "viewpass"

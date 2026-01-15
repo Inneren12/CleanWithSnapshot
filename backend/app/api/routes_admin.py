@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api import entitlements
 from app.api.idempotency import enforce_org_action_rate_limit, require_idempotency
+from app.api.problem_details import problem_details
 from app.api.admin_auth import (
     AdminIdentity,
     require_admin,
@@ -4375,16 +4376,21 @@ async def overdue_invoice_summary(
         if bucket is None:
             continue
         client_label = None
+        client_email = None
         if lead is not None:
             client_label = lead.name or lead.email
+            client_email = lead.email
         if client_label is None and invoice.customer_id:
             client_label = invoice.customer_id
         summary_item = invoice_schemas.OverdueInvoiceSummary(
             invoice_id=invoice.invoice_id,
+            invoice_number=invoice.invoice_number,
             client=client_label,
+            client_email=client_email,
             amount_due=balance_due,
             due_at=invoice.due_date,
             days_overdue=days_overdue,
+            status=invoice.status,
         )
         bucket_entry = bucket_data[bucket]
         bucket_entry["total_count"] += 1
@@ -4427,7 +4433,12 @@ async def send_overdue_bucket_reminders(
     as_of_date = date.today()
     adapter = _email_adapter(http_request)
     if adapter is None:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Email adapter unavailable")
+        return problem_details(
+            request=http_request,
+            status=status.HTTP_502_BAD_GATEWAY,
+            title="Email Adapter Unavailable",
+            detail="Email adapter unavailable for overdue reminders.",
+        )
 
     paid_subq = (
         select(
