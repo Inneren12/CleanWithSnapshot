@@ -1807,3 +1807,74 @@ button:focus-visible {
     padding: 12px;
   }
 }
+
+.admin-nav {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 8px 0 20px;
+}
+
+.admin-nav-link {
+  text-decoration: none;
+  color: #374151;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  font-weight: 600;
+}
+
+.admin-nav-link.is-active {
+  background: #111827;
+  color: #ffffff;
+  border-color: #111827;
+}
+
+.settings-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.settings-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-key {
+  font-size: 12px;
+  font-family: "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "Courier New", monospace;
+  color: #6b7280;
+}
+
+.settings-toggles {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
