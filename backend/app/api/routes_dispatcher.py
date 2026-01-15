@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, require_dispatch
+from app.api.problem_details import problem_details
 from app.api.org_context import require_org_context
 from app.dependencies import get_db_session
 from app.domain.admin_audit import service as audit_service
@@ -21,6 +22,7 @@ from app.domain.dispatcher import context as dispatcher_context
 from app.domain.dispatcher import route_estimates
 from app.domain.dispatcher import schemas
 from app.domain.dispatcher import service as dispatcher_service
+from app.domain.feature_modules import service as feature_service
 from app.domain.ops import service as ops_service
 from app.domain.workers.db_models import Worker
 from app.infra.communication import resolve_app_communication_adapter
@@ -28,6 +30,20 @@ from app.infra.communication import resolve_app_communication_adapter
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _require_schedule_enabled(
+    request: Request, session: AsyncSession, org_id: uuid.UUID
+):
+    enabled = await feature_service.effective_feature_enabled(session, org_id, "module.schedule")
+    if not enabled:
+        return problem_details(
+            request=request,
+            status=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail="Disabled by org settings",
+        )
+    return None
 
 
 async def _load_dispatcher_booking(
@@ -89,6 +105,7 @@ async def _load_dispatcher_booking(
     status_code=status.HTTP_200_OK,
 )
 async def get_dispatcher_board(
+    request: Request,
     board_date: date = Query(..., alias="date", description="Target date in YYYY-MM-DD"),
     tz: str = Query("America/Edmonton", description="IANA timezone, e.g. America/Edmonton"),
     zone: str | None = Query(None, description="Optional zone filter"),
@@ -103,6 +120,9 @@ async def get_dispatcher_board(
     Returns booking timeline data, worker list, server time, and a polling-friendly
     data_version derived from the most recently updated booking in the window.
     """
+    guard = await _require_schedule_enabled(request, session, org_id)
+    if guard:
+        return guard
     try:
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
@@ -134,6 +154,7 @@ async def get_dispatcher_board(
     status_code=status.HTTP_200_OK,
 )
 async def get_dispatcher_stats(
+    request: Request,
     stats_date: date = Query(..., alias="date", description="Target date in YYYY-MM-DD"),
     tz: str = Query("America/Edmonton", description="IANA timezone, e.g. America/Edmonton"),
     zone: str | None = Query(None, description="Optional zone filter"),
@@ -145,6 +166,9 @@ async def get_dispatcher_stats(
 
     Revenue is derived from succeeded payments received during the day window (cents).
     """
+    guard = await _require_schedule_enabled(request, session, org_id)
+    if guard:
+        return guard
     try:
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
