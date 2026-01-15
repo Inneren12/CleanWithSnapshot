@@ -337,9 +337,9 @@ function shortAddress(address: DispatcherAddress | null | undefined) {
   return street?.trim() || formatted;
 }
 
-function contextWeatherLabel(summary: string | null, temp: number | null) {
-  if (!summary && temp === null) return "Weather unavailable";
-  const tempLabel = temp === null ? "" : `${Math.round(temp)}°C`;
+function contextWeatherLabel(summary: string | null, temp: number | null | undefined) {
+  if (!summary && temp == null) return "Weather unavailable";
+  const tempLabel = temp == null ? "" : `${Math.round(temp)}°C`;
   return [summary ?? "Now", tempLabel].filter(Boolean).join(" · ");
 }
 
@@ -1756,19 +1756,19 @@ export default function DispatcherPage() {
               <div className="dispatcher-context-detail-row">
                 <span>Wind</span>
                 <strong>
-                  {context?.weather_now.wind_kph ? `${Math.round(context.weather_now.wind_kph)} kph` : "—"}
+                  {context?.weather_now.wind_kph != null ? `${Math.round(context.weather_now.wind_kph)} kph` : "—"}
                 </strong>
               </div>
               <div className="dispatcher-context-detail-row">
                 <span>Precip now</span>
                 <strong>
-                  {context?.weather_now.precip_mm ? `${context.weather_now.precip_mm.toFixed(1)} mm` : "—"}
+                  {context?.weather_now.precip_mm != null ? `${context.weather_now.precip_mm.toFixed(1)} mm` : "—"}
                 </strong>
               </div>
               <div className="dispatcher-context-detail-row">
                 <span>Snow now</span>
                 <strong>
-                  {context?.weather_now.snow_cm ? `${context.weather_now.snow_cm.toFixed(1)} cm` : "—"}
+                  {context?.weather_now.snow_cm != null ? `${context.weather_now.snow_cm.toFixed(1)} cm` : "—"}
                 </strong>
               </div>
               <div className="dispatcher-context-forecast">
@@ -1784,8 +1784,8 @@ export default function DispatcherPage() {
                           hour12: false,
                         }).format(new Date(hour.starts_at))}
                       </span>
-                      <span>{hour.precip_mm ? `${hour.precip_mm.toFixed(1)} mm` : "—"}</span>
-                      <span>{hour.snow_cm ? `${hour.snow_cm.toFixed(1)} cm` : "—"}</span>
+                      <span>{hour.precip_mm != null ? `${hour.precip_mm.toFixed(1)} mm` : "—"}</span>
+                      <span>{hour.snow_cm != null ? `${hour.snow_cm.toFixed(1)} cm` : "—"}</span>
                     </div>
                   ))}
                   {context?.next_6h?.length ? null : <span className="muted">No forecast data.</span>}
