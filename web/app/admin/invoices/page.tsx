@@ -37,6 +37,29 @@ type InvoiceListResponse = {
   total: number;
 };
 
+type OverdueInvoiceSummary = {
+  invoice_id: string;
+  client: string | null;
+  amount_due: number;
+  due_at: string;
+  days_overdue: number;
+};
+
+type OverdueBucketKey = "critical" | "attention" | "recent";
+
+type OverdueBucketSummary = {
+  bucket: OverdueBucketKey;
+  total_count: number;
+  total_amount_due: number;
+  template_key: string;
+  invoices: OverdueInvoiceSummary[];
+};
+
+type OverdueSummaryResponse = {
+  as_of: string;
+  buckets: OverdueBucketSummary[];
+};
+
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
   { value: "DRAFT", label: "Draft" },
@@ -69,6 +92,26 @@ export default function InvoicesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionMessage, setBulkActionMessage] = useState<string | null>(null);
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
+  const [overdueSummary, setOverdueSummary] = useState<OverdueSummaryResponse | null>(null);
+  const [overdueLoading, setOverdueLoading] = useState(false);
+  const [overdueError, setOverdueError] = useState<string | null>(null);
+  const [overdueBucketFilter, setOverdueBucketFilter] = useState<OverdueBucketKey | null>(null);
+  const [asOfFilter, setAsOfFilter] = useState("");
+  const [bucketActionMessage, setBucketActionMessage] = useState<Record<OverdueBucketKey, string | null>>({
+    critical: null,
+    attention: null,
+    recent: null,
+  });
+  const [bucketActionError, setBucketActionError] = useState<Record<OverdueBucketKey, string | null>>({
+    critical: null,
+    attention: null,
+    recent: null,
+  });
+  const [bucketActionLoading, setBucketActionLoading] = useState<Record<OverdueBucketKey, boolean>>({
+    critical: false,
+    attention: false,
+    recent: false,
+  });
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState("");
@@ -95,7 +138,7 @@ export default function InvoicesPage() {
     : true;
 
   const hasViewPermission = permissionKeys.includes("invoices.view");
-  const hasSendPermission = permissionKeys.includes("invoices.edit");
+  const hasSendPermission = permissionKeys.includes("invoices.send");
   const hasRecordPaymentPermission = permissionKeys.includes("payments.record");
 
   const navLinks = useMemo(() => {
@@ -172,6 +215,8 @@ export default function InvoicesPage() {
     if (toDate) params.set("to", toDate);
     if (amountMin) params.set("amount_min", (parseFloat(amountMin) * 100).toString());
     if (amountMax) params.set("amount_max", (parseFloat(amountMax) * 100).toString());
+    if (overdueBucketFilter) params.set("overdue_bucket", overdueBucketFilter);
+    if (asOfFilter) params.set("as_of", asOfFilter);
 
     try {
       const response = await fetch(`${API_BASE}/v1/admin/invoices?${params.toString()}`, {
@@ -192,7 +237,48 @@ export default function InvoicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, username, password, page, pageSize, searchQuery, statusFilter, fromDate, toDate, amountMin, amountMax]);
+  }, [
+    authHeaders,
+    username,
+    password,
+    page,
+    pageSize,
+    searchQuery,
+    statusFilter,
+    fromDate,
+    toDate,
+    amountMin,
+    amountMax,
+    overdueBucketFilter,
+    asOfFilter,
+  ]);
+
+  const loadOverdueSummary = useCallback(async () => {
+    if (!username || !password) return;
+    setOverdueLoading(true);
+    setOverdueError(null);
+    const params = new URLSearchParams();
+    if (asOfFilter) params.set("as_of", asOfFilter);
+    try {
+      const response = await fetch(
+        `${API_BASE}/v1/admin/invoices/overdue_summary${params.toString() ? `?${params.toString()}` : ""}`,
+        {
+          headers: authHeaders,
+          cache: "no-store",
+        }
+      );
+      if (response.ok) {
+        const data = (await response.json()) as OverdueSummaryResponse;
+        setOverdueSummary(data);
+      } else {
+        setOverdueError("Failed to load overdue summary");
+      }
+    } catch (err) {
+      setOverdueError("Network error loading overdue summary");
+    } finally {
+      setOverdueLoading(false);
+    }
+  }, [authHeaders, username, password, asOfFilter]);
 
   useEffect(() => {
     const storedUsername = localStorage.getItem(STORAGE_USERNAME_KEY);
@@ -200,6 +286,19 @@ export default function InvoicesPage() {
     if (storedUsername && storedPassword) {
       setUsername(storedUsername);
       setPassword(storedPassword);
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const bucket = params.get("overdue_bucket");
+    if (bucket === "critical" || bucket === "attention" || bucket === "recent") {
+      setOverdueBucketFilter(bucket);
+      setStatusFilter("OVERDUE");
+    }
+    const asOf = params.get("as_of");
+    if (asOf) {
+      setAsOfFilter(asOf);
     }
   }, []);
 
@@ -216,6 +315,12 @@ export default function InvoicesPage() {
       void loadInvoices();
     }
   }, [hasViewPermission, loadInvoices]);
+
+  useEffect(() => {
+    if (hasViewPermission) {
+      void loadOverdueSummary();
+    }
+  }, [hasViewPermission, loadOverdueSummary]);
 
   const handleLogin = useCallback(
     (e: React.FormEvent) => {
@@ -310,6 +415,40 @@ export default function InvoicesPage() {
     }
   }, [authHeaders, username, password, selectedIds, paymentMethod, bulkNote, loadInvoices]);
 
+  const handleBucketRemind = useCallback(
+    async (bucket: OverdueBucketKey) => {
+      if (!username || !password) return;
+      setBucketActionMessage((prev) => ({ ...prev, [bucket]: null }));
+      setBucketActionError((prev) => ({ ...prev, [bucket]: null }));
+      setBucketActionLoading((prev) => ({ ...prev, [bucket]: true }));
+      try {
+        const response = await fetch(`${API_BASE}/v1/admin/invoices/overdue_remind`, {
+          method: "POST",
+          headers: {
+            ...authHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ bucket }),
+        });
+        if (response.ok) {
+          const result = await response.json();
+          setBucketActionMessage((prev) => ({
+            ...prev,
+            [bucket]: `Sent ${result.succeeded.length} reminders. ${result.failed.length} failed.`,
+          }));
+          void loadOverdueSummary();
+        } else {
+          setBucketActionError((prev) => ({ ...prev, [bucket]: "Failed to send reminders" }));
+        }
+      } catch (err) {
+        setBucketActionError((prev) => ({ ...prev, [bucket]: "Network error sending reminders" }));
+      } finally {
+        setBucketActionLoading((prev) => ({ ...prev, [bucket]: false }));
+      }
+    },
+    [authHeaders, username, password, loadOverdueSummary]
+  );
+
   const handleSearch = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
@@ -381,6 +520,89 @@ export default function InvoicesPage() {
         <div className="admin-card">
           <h2>Invoices</h2>
           <p className="muted">Search, filter and manage invoices with bulk actions</p>
+
+          <section className="overdue-summary" aria-label="Overdue invoice summary">
+            <div className="overdue-summary-header">
+              <div>
+                <h3>Overdue invoices</h3>
+                <p className="muted">
+                  As of {overdueSummary?.as_of ? formatDate(overdueSummary.as_of) : "today"}
+                </p>
+              </div>
+              {overdueBucketFilter && (
+                <div className="chip">Filtered: {overdueBucketFilter}</div>
+              )}
+            </div>
+            {overdueLoading && <div>Loading overdue summary...</div>}
+            {overdueError && <div className="error">{overdueError}</div>}
+            {!overdueLoading && !overdueError && overdueSummary && (
+              <div className="overdue-grid">
+                {overdueSummary.buckets.map((bucket) => (
+                  <div key={bucket.bucket} className={`overdue-card overdue-${bucket.bucket}`}>
+                    <div className="overdue-card-header">
+                      <div>
+                        <h4>
+                          {bucket.bucket === "critical" && "Critical (>14 days)"}
+                          {bucket.bucket === "attention" && "Attention (7–14 days)"}
+                          {bucket.bucket === "recent" && "Recent (<7 days)"}
+                        </h4>
+                        <div className="muted small">Template: {bucket.template_key}</div>
+                      </div>
+                      <div className="overdue-count">{bucket.total_count}</div>
+                    </div>
+                    <div className="overdue-total">
+                      Total due: {formatMoney(bucket.total_amount_due, "CAD")}
+                    </div>
+                    <div className="overdue-list-header">Top invoices</div>
+                    <ul className="overdue-list">
+                      {bucket.invoices.length === 0 && (
+                        <li className="muted">No overdue invoices in this bucket.</li>
+                      )}
+                      {bucket.invoices.map((invoice) => (
+                        <li key={invoice.invoice_id} className="overdue-item">
+                          <div className="overdue-item-main">
+                            <span className="overdue-client">{invoice.client ?? "Unknown client"}</span>
+                            <span className="overdue-amount">
+                              {formatMoney(invoice.amount_due, "CAD")}
+                            </span>
+                          </div>
+                          <div className="overdue-item-meta">
+                            Due {formatDate(invoice.due_at)} · {invoice.days_overdue} days overdue
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="overdue-actions">
+                      {hasSendPermission && (
+                        <button
+                          className="btn"
+                          type="button"
+                          onClick={() => handleBucketRemind(bucket.bucket)}
+                          disabled={bucketActionLoading[bucket.bucket] || bucket.total_count === 0}
+                        >
+                          {bucketActionLoading[bucket.bucket] ? "Sending..." : "Send reminders"}
+                        </button>
+                      )}
+                      <a
+                        className="btn secondary"
+                        href={`/admin/invoices?overdue_bucket=${bucket.bucket}${
+                          overdueSummary.as_of ? `&as_of=${overdueSummary.as_of}` : ""
+                        }`}
+                      >
+                        View all
+                      </a>
+                    </div>
+                    {bucketActionMessage[bucket.bucket] && (
+                      <div className="bulk-message success">{bucketActionMessage[bucket.bucket]}</div>
+                    )}
+                    {bucketActionError[bucket.bucket] && (
+                      <div className="bulk-message error">{bucketActionError[bucket.bucket]}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
 
           {/* Search and Filters */}
           <form onSubmit={handleSearch} className="invoice-filters">
@@ -462,6 +684,8 @@ export default function InvoicesPage() {
                   setToDate("");
                   setAmountMin("");
                   setAmountMax("");
+                  setOverdueBucketFilter(null);
+                  setAsOfFilter("");
                   setPage(1);
                 }}
               >
@@ -625,6 +849,114 @@ export default function InvoicesPage() {
         .muted {
           color: #666;
           margin-bottom: 1.5rem;
+        }
+
+        .overdue-summary {
+          margin-bottom: 1.5rem;
+          padding: 1.5rem;
+          border: 1px solid #eee;
+          border-radius: 8px;
+          background: #fafafa;
+        }
+
+        .overdue-summary-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 1rem;
+          margin-bottom: 1rem;
+        }
+
+        .overdue-summary h3 {
+          margin: 0 0 0.25rem 0;
+        }
+
+        .chip {
+          padding: 0.25rem 0.75rem;
+          border-radius: 999px;
+          background: #e3f2fd;
+          color: #0d47a1;
+          font-size: 0.75rem;
+          font-weight: 600;
+        }
+
+        .overdue-grid {
+          display: grid;
+          gap: 1rem;
+          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        }
+
+        .overdue-card {
+          padding: 1rem;
+          border-radius: 8px;
+          border: 1px solid #e0e0e0;
+          background: white;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+
+        .overdue-card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 0.5rem;
+        }
+
+        .overdue-card h4 {
+          margin: 0;
+        }
+
+        .overdue-count {
+          font-size: 1.5rem;
+          font-weight: 700;
+        }
+
+        .overdue-total {
+          font-weight: 600;
+        }
+
+        .overdue-list-header {
+          font-size: 0.875rem;
+          font-weight: 600;
+          color: #555;
+        }
+
+        .overdue-list {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+
+        .overdue-item {
+          padding-bottom: 0.5rem;
+          border-bottom: 1px solid #f0f0f0;
+        }
+
+        .overdue-item:last-child {
+          border-bottom: none;
+          padding-bottom: 0;
+        }
+
+        .overdue-item-main {
+          display: flex;
+          justify-content: space-between;
+          gap: 0.5rem;
+          font-weight: 500;
+        }
+
+        .overdue-item-meta {
+          font-size: 0.75rem;
+          color: #666;
+        }
+
+        .overdue-actions {
+          display: flex;
+          gap: 0.5rem;
+          flex-wrap: wrap;
         }
 
         .invoice-filters {

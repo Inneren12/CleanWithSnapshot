@@ -4140,6 +4140,35 @@ def _invoice_list_item(invoice: Invoice) -> invoice_schemas.InvoiceListItem:
     return invoice_schemas.InvoiceListItem(**data)
 
 
+OVERDUE_BUCKETS: tuple[str, ...] = ("critical", "attention", "recent")
+OVERDUE_TEMPLATE_KEYS: dict[str, str] = {
+    "critical": "final",
+    "attention": "second",
+    "recent": "gentle",
+}
+OVERDUE_TOP_LIMIT = 5
+
+
+def _bucket_for_days_overdue(days_overdue: int) -> str | None:
+    if days_overdue <= 0:
+        return None
+    if days_overdue > 14:
+        return "critical"
+    if days_overdue >= 7:
+        return "attention"
+    return "recent"
+
+
+def _overdue_bucket_bounds(bucket: str, as_of: date) -> tuple[date | None, date | None]:
+    if bucket == "recent":
+        return as_of - timedelta(days=6), as_of - timedelta(days=1)
+    if bucket == "attention":
+        return as_of - timedelta(days=14), as_of - timedelta(days=7)
+    if bucket == "critical":
+        return None, as_of - timedelta(days=15)
+    return None, None
+
+
 async def _get_org_invoice(
     session: AsyncSession,
     invoice_id: str,
@@ -4168,6 +4197,8 @@ async def _query_invoice_list(
     to_date: date | None = None,
     amount_min: int | None = None,
     amount_max: int | None = None,
+    overdue_bucket: Literal["critical", "attention", "recent"] | None = None,
+    as_of: date | None = None,
     page: int,
     page_size: int = 50,
 ) -> invoice_schemas.InvoiceListResponse:
@@ -4190,6 +4221,24 @@ async def _query_invoice_list(
         filters.append(Invoice.total_cents >= amount_min)
     if amount_max is not None:
         filters.append(Invoice.total_cents <= amount_max)
+    if overdue_bucket:
+        as_of_date = as_of or date.today()
+        start_date, end_date = _overdue_bucket_bounds(overdue_bucket, as_of_date)
+        filters.append(Invoice.due_date.is_not(None))
+        filters.append(Invoice.due_date < as_of_date)
+        filters.append(
+            Invoice.status.notin_(
+                [invoice_statuses.INVOICE_STATUS_PAID, invoice_statuses.INVOICE_STATUS_VOID]
+            )
+        )
+        if overdue_bucket == "critical":
+            if end_date:
+                filters.append(Invoice.due_date <= end_date)
+        else:
+            if start_date:
+                filters.append(Invoice.due_date >= start_date)
+            if end_date:
+                filters.append(Invoice.due_date <= end_date)
 
     # Enhanced search: invoice number OR client name/email
     if q:
@@ -4239,12 +4288,14 @@ async def list_invoices(
     to_date: date | None = Query(default=None, alias="to"),
     amount_min: int | None = None,
     amount_max: int | None = None,
+    overdue_bucket: Literal["critical", "attention", "recent"] | None = Query(default=None),
+    as_of: date | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
     http_request: Request = None,
     session: AsyncSession = Depends(get_db_session),
     _admin: AdminIdentity = Depends(require_permission_keys("invoices.view")),
-) -> invoice_schemas.InvoiceListResponse:
+    ) -> invoice_schemas.InvoiceListResponse:
     org_id = entitlements.resolve_org_id(http_request)
     return await _query_invoice_list(
         session=session,
@@ -4257,8 +4308,235 @@ async def list_invoices(
         to_date=to_date,
         amount_min=amount_min,
         amount_max=amount_max,
+        overdue_bucket=overdue_bucket,
+        as_of=as_of,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get(
+    "/v1/admin/invoices/overdue_summary",
+    response_model=invoice_schemas.OverdueSummaryResponse,
+)
+async def overdue_invoice_summary(
+    http_request: Request,
+    as_of: date | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_session),
+    _admin: AdminIdentity = Depends(require_permission_keys("invoices.view")),
+) -> invoice_schemas.OverdueSummaryResponse:
+    org_id = entitlements.resolve_org_id(http_request)
+    as_of_date = as_of or date.today()
+    paid_subq = (
+        select(
+            Payment.invoice_id.label("invoice_id"),
+            func.coalesce(func.sum(Payment.amount_cents), 0).label("paid_cents"),
+        )
+        .where(Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED)
+        .group_by(Payment.invoice_id)
+        .subquery()
+    )
+    stmt = (
+        select(
+            Invoice,
+            Lead,
+            func.coalesce(paid_subq.c.paid_cents, 0).label("paid_cents"),
+        )
+        .outerjoin(Lead, Invoice.customer_id == Lead.lead_id)
+        .outerjoin(paid_subq, paid_subq.c.invoice_id == Invoice.invoice_id)
+        .where(
+            Invoice.org_id == org_id,
+            Invoice.due_date.is_not(None),
+            Invoice.due_date < as_of_date,
+            Invoice.status.notin_(
+                [invoice_statuses.INVOICE_STATUS_PAID, invoice_statuses.INVOICE_STATUS_VOID]
+            ),
+        )
+    )
+    rows = (await session.execute(stmt)).all()
+
+    bucket_data = {
+        bucket: {
+            "total_count": 0,
+            "total_amount_due": 0,
+            "items": [],
+        }
+        for bucket in OVERDUE_BUCKETS
+    }
+
+    for invoice, lead, paid_cents in rows:
+        if invoice.due_date is None:
+            continue
+        balance_due = max(invoice.total_cents - int(paid_cents or 0), 0)
+        if balance_due <= 0:
+            continue
+        days_overdue = (as_of_date - invoice.due_date).days
+        bucket = _bucket_for_days_overdue(days_overdue)
+        if bucket is None:
+            continue
+        client_label = None
+        if lead is not None:
+            client_label = lead.name or lead.email
+        if client_label is None and invoice.customer_id:
+            client_label = invoice.customer_id
+        summary_item = invoice_schemas.OverdueInvoiceSummary(
+            invoice_id=invoice.invoice_id,
+            client=client_label,
+            amount_due=balance_due,
+            due_at=invoice.due_date,
+            days_overdue=days_overdue,
+        )
+        bucket_entry = bucket_data[bucket]
+        bucket_entry["total_count"] += 1
+        bucket_entry["total_amount_due"] += balance_due
+        bucket_entry["items"].append(summary_item)
+
+    bucket_summaries: list[invoice_schemas.OverdueBucketSummary] = []
+    for bucket in OVERDUE_BUCKETS:
+        items = bucket_data[bucket]["items"]
+        top_items = sorted(
+            items,
+            key=lambda item: (-item.days_overdue, -item.amount_due, item.due_at),
+        )[:OVERDUE_TOP_LIMIT]
+        bucket_summaries.append(
+            invoice_schemas.OverdueBucketSummary(
+                bucket=bucket,
+                total_count=bucket_data[bucket]["total_count"],
+                total_amount_due=bucket_data[bucket]["total_amount_due"],
+                template_key=OVERDUE_TEMPLATE_KEYS[bucket],
+                invoices=top_items,
+            )
+        )
+
+    return invoice_schemas.OverdueSummaryResponse(as_of=as_of_date, buckets=bucket_summaries)
+
+
+@router.post(
+    "/v1/admin/invoices/overdue_remind",
+    response_model=invoice_schemas.OverdueRemindResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def send_overdue_bucket_reminders(
+    request: invoice_schemas.OverdueRemindRequest,
+    http_request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _csrf: None = Depends(require_csrf),
+    _admin: AdminIdentity = Depends(require_permission_keys("invoices.send")),
+) -> invoice_schemas.OverdueRemindResponse:
+    org_id = entitlements.resolve_org_id(http_request)
+    as_of_date = date.today()
+    adapter = _email_adapter(http_request)
+    if adapter is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Email adapter unavailable")
+
+    paid_subq = (
+        select(
+            Payment.invoice_id.label("invoice_id"),
+            func.coalesce(func.sum(Payment.amount_cents), 0).label("paid_cents"),
+        )
+        .where(Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED)
+        .group_by(Payment.invoice_id)
+        .subquery()
+    )
+    stmt = (
+        select(
+            Invoice,
+            Lead,
+            func.coalesce(paid_subq.c.paid_cents, 0).label("paid_cents"),
+        )
+        .outerjoin(Lead, Invoice.customer_id == Lead.lead_id)
+        .outerjoin(paid_subq, paid_subq.c.invoice_id == Invoice.invoice_id)
+        .where(
+            Invoice.org_id == org_id,
+            Invoice.due_date.is_not(None),
+            Invoice.due_date < as_of_date,
+            Invoice.status.notin_(
+                [invoice_statuses.INVOICE_STATUS_PAID, invoice_statuses.INVOICE_STATUS_VOID]
+            ),
+        )
+    )
+    if request.invoice_ids:
+        stmt = stmt.where(Invoice.invoice_id.in_(request.invoice_ids))
+    else:
+        start_date, end_date = _overdue_bucket_bounds(request.bucket, as_of_date)
+        if request.bucket == "critical":
+            if end_date:
+                stmt = stmt.where(Invoice.due_date <= end_date)
+        else:
+            if start_date:
+                stmt = stmt.where(Invoice.due_date >= start_date)
+            if end_date:
+                stmt = stmt.where(Invoice.due_date <= end_date)
+
+    rows = (await session.execute(stmt)).all()
+    rows_by_id = {invoice.invoice_id: (invoice, lead, paid_cents) for invoice, lead, paid_cents in rows}
+
+    succeeded: list[str] = []
+    failed: list[dict] = []
+
+    invoice_ids = request.invoice_ids or list(rows_by_id.keys())
+    for invoice_id in invoice_ids:
+        row = rows_by_id.get(invoice_id)
+        if row is None:
+            failed.append({"invoice_id": invoice_id, "error": "Invoice not found"})
+            continue
+        invoice, lead, paid_cents = row
+        if invoice.due_date is None:
+            failed.append({"invoice_id": invoice_id, "error": "Invoice missing due date"})
+            continue
+        balance_due = max(invoice.total_cents - int(paid_cents or 0), 0)
+        if balance_due <= 0:
+            failed.append({"invoice_id": invoice_id, "error": "Invoice already settled"})
+            continue
+        days_overdue = (as_of_date - invoice.due_date).days
+        bucket = _bucket_for_days_overdue(days_overdue)
+        if bucket != request.bucket:
+            failed.append({"invoice_id": invoice_id, "error": "Invoice not in requested bucket"})
+            continue
+        if lead is None or not lead.email:
+            failed.append({"invoice_id": invoice_id, "error": "Invoice missing customer email"})
+            continue
+
+        token = await invoice_service.upsert_public_token(session, invoice, mark_sent=True)
+        base_url = settings.public_base_url.rstrip("/") if settings.public_base_url else None
+        if base_url:
+            public_link = f"{base_url}/i/{token}"
+            public_link_pdf = f"{base_url}/i/{token}.pdf"
+        else:
+            public_link = str(http_request.url_for("public_invoice_view", token=token))
+            public_link_pdf = str(http_request.url_for("public_invoice_pdf", token=token))
+
+        subject = f"Reminder: Invoice {invoice.invoice_number}"
+        body = (
+            f"Hi {lead.name},\n\n"
+            f"This is a reminder about invoice {invoice.invoice_number}.\n"
+            f"View online: {public_link}\n"
+            f"Download PDF: {public_link_pdf}\n"
+            f"Balance due: {_format_money(balance_due, invoice.currency)}\n\n"
+            "If you have questions or already paid, please reply to this email."
+        )
+        try:
+            delivered = await adapter.send_email(recipient=lead.email, subject=subject, body=body)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "overdue_bucket_reminder_failed",
+                extra={"extra": {"invoice_id": invoice_id, "reason": type(exc).__name__}},
+            )
+            failed.append({"invoice_id": invoice_id, "error": "Email send error"})
+            continue
+        if not delivered:
+            failed.append({"invoice_id": invoice_id, "error": "Email delivery failed"})
+            continue
+        if invoice.status == invoice_statuses.INVOICE_STATUS_DRAFT:
+            invoice.status = invoice_statuses.INVOICE_STATUS_SENT
+        succeeded.append(invoice_id)
+
+    await session.commit()
+    return invoice_schemas.OverdueRemindResponse(
+        bucket=request.bucket,
+        template_key=OVERDUE_TEMPLATE_KEYS[request.bucket],
+        succeeded=succeeded,
+        failed=failed,
     )
 
 
@@ -4269,6 +4547,8 @@ async def admin_invoice_list_ui(
     customer_id: str | None = Query(default=None),
     order_id: str | None = Query(default=None),
     q: str | None = Query(default=None),
+    overdue_bucket: Literal["critical", "attention", "recent"] | None = Query(default=None),
+    as_of: date | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     session: AsyncSession = Depends(get_db_session),
     _admin: AdminIdentity = Depends(require_finance),
@@ -4281,6 +4561,8 @@ async def admin_invoice_list_ui(
         customer_id=customer_id,
         order_id=order_id,
         q=q,
+        overdue_bucket=overdue_bucket,
+        as_of=as_of,
         page=page,
     )
 
@@ -5365,13 +5647,10 @@ async def send_invoice_reminder(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
     _csrf: None = Depends(require_csrf),
-    admin: AdminIdentity = Depends(require_viewer),
+    _admin: AdminIdentity = Depends(require_permission_keys("invoices.send")),
 ) -> invoice_schemas.InvoiceReminderResponse:
     """Send a reminder email for a single invoice."""
     org_id = entitlements.resolve_org_id(http_request)
-    permission_keys = permission_keys_for_request(http_request, admin)
-    if "invoices.edit" not in permission_keys:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     invoice = await _get_org_invoice(
         session,
@@ -5487,7 +5766,7 @@ async def bulk_remind_invoices(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
     _csrf: None = Depends(require_csrf),
-    _admin: AdminIdentity = Depends(require_permission_keys("invoices.edit")),
+    _admin: AdminIdentity = Depends(require_permission_keys("invoices.send")),
 ) -> invoice_schemas.BulkRemindResult:
     """Send email reminders for multiple invoices."""
     org_id = entitlements.resolve_org_id(http_request)

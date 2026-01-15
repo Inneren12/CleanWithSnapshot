@@ -1,7 +1,7 @@
 from datetime import date, datetime
 import uuid
 from decimal import Decimal
-from typing import List
+from typing import List, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -118,6 +118,39 @@ class InvoiceListResponse(BaseModel):
     page: int
     page_size: int
     total: int
+
+
+class OverdueInvoiceSummary(BaseModel):
+    invoice_id: str
+    client: str | None = None
+    amount_due: int
+    due_at: date
+    days_overdue: int
+
+
+class OverdueBucketSummary(BaseModel):
+    bucket: Literal["critical", "attention", "recent"]
+    total_count: int
+    total_amount_due: int
+    template_key: str
+    invoices: list[OverdueInvoiceSummary]
+
+
+class OverdueSummaryResponse(BaseModel):
+    as_of: date
+    buckets: list[OverdueBucketSummary]
+
+
+class OverdueRemindRequest(BaseModel):
+    bucket: Literal["critical", "attention", "recent"]
+    invoice_ids: list[str] | None = None
+
+
+class OverdueRemindResponse(BaseModel):
+    bucket: Literal["critical", "attention", "recent"]
+    template_key: str
+    succeeded: list[str]
+    failed: list[dict]
 
 
 class ManualPaymentRequest(BaseModel):
@@ -317,4 +350,3 @@ class InvoiceReminderResponse(BaseModel):
     invoice: InvoiceResponse
     email_sent: bool
     recipient: str
-
