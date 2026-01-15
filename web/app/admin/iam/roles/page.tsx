@@ -90,6 +90,7 @@ export default function RolesPermissionsPage() {
     if (!visibilityReady || !profile) return [];
     const candidates = [
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
+      { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
       { key: "roles", label: "Roles & Permissions", href: "/admin/iam/roles", featureKey: "module.teams" },

@@ -132,6 +132,7 @@ export default function ServiceTypesPricingPage() {
     if (!visibilityReady || !profile) return [];
     const candidates = [
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
+      { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "pricing", label: "Service Types & Pricing", href: "/admin/settings/pricing", featureKey: "pricing.service_types" },
       { key: "policies", label: "Booking Policies", href: "/admin/settings/booking-policies", featureKey: "pricing.booking_policies" },

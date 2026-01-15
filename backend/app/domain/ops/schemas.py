@@ -36,8 +36,17 @@ class GlobalSearchResult(BaseModel):
 class ScheduleBooking(BaseModel):
     booking_id: str
     starts_at: datetime
+    ends_at: datetime
     duration_minutes: int
     status: str
+    worker_id: int | None = None
+    worker_name: str | None = None
+    team_id: int
+    team_name: str | None = None
+    client_label: str | None = None
+    address: str | None = None
+    service_label: str | None = None
+    price_cents: int | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -49,11 +58,9 @@ class ScheduleBlackout(BaseModel):
 
 
 class ScheduleResponse(BaseModel):
-    team_id: int
-    day: date
+    from_date: date
+    to_date: date
     bookings: list[ScheduleBooking]
-    blackouts: list[ScheduleBlackout]
-    available_slots: list[datetime]
     model_config = ConfigDict(from_attributes=True)
 
 

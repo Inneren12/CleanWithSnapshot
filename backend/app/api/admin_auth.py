@@ -301,6 +301,19 @@ def require_permission_keys(*permission_keys: str):
     return _require
 
 
+def require_any_permission_keys(*permission_keys: str):
+    async def _require(
+        request: Request, identity: AdminIdentity = Depends(get_admin_identity)
+    ) -> AdminIdentity:
+        granted = _resolve_permission_keys(request, identity)
+        required = {key for key in permission_keys if key}
+        if required and granted.isdisjoint(required):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        return identity
+
+    return _require
+
+
 async def require_admin(identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN))) -> AdminIdentity:
     return identity
 
