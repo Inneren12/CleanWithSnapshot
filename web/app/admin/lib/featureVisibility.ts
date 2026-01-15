@@ -38,6 +38,7 @@ const MODULE_PERMISSIONS: Record<string, string> = {
   training: "core.view",
   notifications_center: "admin.manage",
   settings: "settings.manage",
+  integrations: "settings.manage",
   api: "settings.manage",
 };
 
@@ -84,6 +85,11 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
     key: "module.settings",
     label: "Settings",
     description: "Organization profile, hours, and holidays.",
+  },
+  {
+    key: "module.integrations",
+    label: "Integrations",
+    description: "Payments, messaging, and email providers.",
   },
   {
     key: "module.api",

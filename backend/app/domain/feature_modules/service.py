@@ -24,6 +24,7 @@ MODULE_KEYS = [
     "module.training",
     "module.notifications_center",
     "module.settings",
+    "module.integrations",
     "module.api",
 ]
 
@@ -54,6 +55,7 @@ MODULE_PERMISSIONS: dict[str, str] = {
     "training": "core.view",
     "notifications_center": "admin.manage",
     "settings": "settings.manage",
+    "integrations": "settings.manage",
     "api": "settings.manage",
 }
 
