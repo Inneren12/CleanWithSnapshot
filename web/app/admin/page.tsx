@@ -228,6 +228,12 @@ export default function AdminPage() {
         href: "/admin/settings/booking-policies",
         featureKey: "module.settings",
       },
+      {
+        key: "integrations",
+        label: "Integrations",
+        href: "/admin/settings/integrations",
+        featureKey: "module.integrations",
+      },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "module.settings" },
       { key: "roles", label: "Roles & Permissions", href: "/admin/iam/roles", featureKey: "module.settings" },
     ];

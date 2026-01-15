@@ -127,6 +127,12 @@ export default function OrganizationSettingsPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "org-settings", label: "Org Settings", href: "/admin/settings/org", featureKey: "module.settings" },
+      {
+        key: "integrations",
+        label: "Integrations",
+        href: "/admin/settings/integrations",
+        featureKey: "module.integrations",
+      },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
     ];
     return candidates

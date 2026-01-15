@@ -101,6 +101,12 @@ export default function BookingPoliciesPage() {
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "pricing", label: "Service Types & Pricing", href: "/admin/settings/pricing", featureKey: "pricing.service_types" },
       { key: "policies", label: "Booking Policies", href: "/admin/settings/booking-policies", featureKey: "pricing.booking_policies" },
+      {
+        key: "integrations",
+        label: "Integrations",
+        href: "/admin/settings/integrations",
+        featureKey: "module.integrations",
+      },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
     ];
     return candidates
