@@ -213,11 +213,42 @@ function localDayForBooking(value: string, timeZone: string) {
   return formatYMDInTz(new Date(value), timeZone);
 }
 
-function buildLocalDateTime(day: string, minutes: number) {
+function getTimeZoneOffsetMinutes(timeZone: string, date: Date) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const lookup: Record<string, string> = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const asUTC = Date.UTC(
+    Number(lookup.year),
+    Number(lookup.month) - 1,
+    Number(lookup.day),
+    Number(lookup.hour),
+    Number(lookup.minute),
+    Number(lookup.second)
+  );
+  return (asUTC - date.getTime()) / 60000;
+}
+
+function buildOrgZonedInstant(day: string, minutes: number, timeZone: string) {
   const [year, month, dayValue] = day.split("-").map((value) => parseInt(value, 10));
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
-  return new Date(year, month - 1, dayValue, hours, mins, 0);
+  const desiredLocalAsUTC = Date.UTC(year, month - 1, dayValue, hours, mins, 0);
+  const initialOffset = getTimeZoneOffsetMinutes(timeZone, new Date(desiredLocalAsUTC));
+  let utcMillis = desiredLocalAsUTC - initialOffset * 60000;
+  const adjustedOffset = getTimeZoneOffsetMinutes(timeZone, new Date(utcMillis));
+  if (adjustedOffset !== initialOffset) {
+    utcMillis = desiredLocalAsUTC - adjustedOffset * 60000;
+  }
+  return new Date(utcMillis);
 }
 
 export default function SchedulePage() {
@@ -728,7 +759,7 @@ export default function SchedulePage() {
       const rawMinutes = Math.round(offsetY / SLOT_HEIGHT) * SLOT_MINUTES;
       const minutesFromStart = Math.min(Math.max(rawMinutes, 0), dayMinutes);
       const minutes = START_HOUR * 60 + minutesFromStart;
-      const newStart = buildLocalDateTime(day, minutes);
+      const newStart = buildOrgZonedInstant(day, minutes, orgTimezone);
       const newEnd = new Date(newStart.getTime() + booking.duration_minutes * 60000);
 
       const previous = booking;
@@ -790,12 +821,12 @@ export default function SchedulePage() {
         showToast(fetchError instanceof Error ? fetchError.message : "Update failed");
       }
     },
-    [authHeaders, canAssign, dayMinutes, schedule, showToast]
+    [authHeaders, canAssign, dayMinutes, orgTimezone, schedule, showToast]
   );
 
   const openQuickCreate = useCallback(
     (day: string, minutes: number) => {
-      const start = buildLocalDateTime(day, minutes);
+      const start = buildOrgZonedInstant(day, minutes, orgTimezone);
       setQuickCreateStart(formatDateTimeInput(start));
       setQuickCreateDuration(120);
       setDurationTouched(false);
@@ -822,7 +853,7 @@ export default function SchedulePage() {
       setQuickCreateError(null);
       setQuickCreateOpen(true);
     },
-    []
+    [orgTimezone]
   );
 
   const closeQuickCreate = useCallback(() => {

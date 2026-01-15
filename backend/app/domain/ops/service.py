@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,7 @@ from app.domain.bookings.service import (
 from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.leads.db_models import Lead
+from app.domain.org_settings import service as org_settings_service
 from app.domain.workers.db_models import Worker
 from app.domain.notifications import email_service
 
@@ -456,12 +458,21 @@ async def list_schedule(
     start_date: date,
     end_date: date,
     *,
+    org_timezone: str | None = None,
     worker_id: int | None = None,
     team_id: int | None = None,
     status: str | None = None,
 ) -> dict[str, object]:
-    window_start = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
-    window_end = datetime.combine(end_date, time.max, tzinfo=timezone.utc)
+    resolved_timezone = org_timezone or org_settings_service.DEFAULT_TIMEZONE
+    try:
+        org_tz = ZoneInfo(resolved_timezone)
+    except Exception:
+        org_tz = ZoneInfo(org_settings_service.DEFAULT_TIMEZONE)
+
+    start_local = datetime.combine(start_date, time.min).replace(tzinfo=org_tz)
+    end_local = datetime.combine(end_date + timedelta(days=1), time.min).replace(tzinfo=org_tz)
+    window_start = start_local.astimezone(timezone.utc)
+    window_end = end_local.astimezone(timezone.utc)
 
     stmt = (
         select(Booking, Team, Worker, Lead, ClientUser, ClientAddress)
@@ -474,7 +485,7 @@ async def list_schedule(
             Booking.org_id == org_id,
             Booking.archived_at.is_(None),
             Booking.starts_at >= window_start,
-            Booking.starts_at <= window_end,
+            Booking.starts_at < window_end,
         )
         .order_by(Booking.starts_at.asc())
     )

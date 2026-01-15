@@ -518,6 +518,9 @@ async def record_manual_payment(
     reference: str | None = None,
     received_at: datetime | None = None,
 ) -> Payment:
+    if invoice.invoice_id is None:
+        await session.flush()
+
     normalized_method = method.lower()
     if normalized_method not in statuses.PAYMENT_METHODS:
         raise ValueError("Invalid payment method")
