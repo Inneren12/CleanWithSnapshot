@@ -187,3 +187,38 @@ class DispatcherNotifyAuditEntry(BaseModel):
 
 class DispatcherNotifyAuditResponse(BaseModel):
     audits: list[DispatcherNotifyAuditEntry] = Field(default_factory=list)
+
+
+class DispatcherWeatherNow(BaseModel):
+    temp_c: float | None = None
+    wind_kph: float | None = None
+    precip_mm: float | None = None
+    snow_cm: float | None = None
+    summary: str | None = None
+
+
+class DispatcherWeatherHour(BaseModel):
+    starts_at: str
+    precip_mm: float | None = None
+    snow_cm: float | None = None
+
+
+class DispatcherWeatherFlags(BaseModel):
+    snow_risk: bool
+    freezing_risk: bool
+
+
+class DispatcherWeatherPayload(BaseModel):
+    weather_now: DispatcherWeatherNow
+    next_6h: list[DispatcherWeatherHour] = Field(default_factory=list)
+    flags: DispatcherWeatherFlags
+
+
+TrafficRiskLevel = Literal["low", "medium", "high"]
+
+
+class DispatcherContextResponse(BaseModel):
+    weather_now: DispatcherWeatherNow
+    next_6h: list[DispatcherWeatherHour] = Field(default_factory=list)
+    flags: DispatcherWeatherFlags
+    traffic_risk: TrafficRiskLevel

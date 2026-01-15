@@ -17,6 +17,7 @@ from app.domain.admin_audit import service as audit_service
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.db_models import Booking, BookingWorker
 from app.domain.clients.db_models import ClientAddress, ClientUser
+from app.domain.dispatcher import context as dispatcher_context
 from app.domain.dispatcher import route_estimates
 from app.domain.dispatcher import schemas
 from app.domain.dispatcher import service as dispatcher_service
@@ -208,6 +209,24 @@ async def get_dispatcher_alerts(
     )
 
     return schemas.DispatcherAlertsResponse(alerts=result.alerts)
+
+
+@router.get(
+    "/v1/admin/dispatcher/context",
+    response_model=schemas.DispatcherContextResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_dispatcher_context(
+    tz: str = Query("America/Edmonton", description="IANA timezone, e.g. America/Edmonton"),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> schemas.DispatcherContextResponse:
+    """Fetch dispatcher context (weather + traffic risk)."""
+    try:
+        ZoneInfo(tz)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+
+    return await dispatcher_context.fetch_dispatcher_context(tz)
 
 
 @router.post(
