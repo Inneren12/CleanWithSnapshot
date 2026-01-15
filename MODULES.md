@@ -54,6 +54,7 @@ module.api                    # API access
 
 **Key Pages:**
 - `web/app/admin/page.tsx` - Main dashboard
+- `web/app/admin/dashboard/ops/page.tsx` - Ops dashboard UI (`/admin/dashboard/ops`)
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - `/v1/admin/ui/dashboard` (GET)

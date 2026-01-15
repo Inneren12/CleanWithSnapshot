@@ -407,6 +407,7 @@ web/app/
 |------|---------------|
 | `web/app/page.tsx` | **Public homepage** - Lead capture |
 | `web/app/admin/page.tsx` | **Admin dashboard** |
+| `web/app/admin/dashboard/ops/page.tsx` | **Ops dashboard** |
 | `web/app/admin/schedule/page.tsx` | **Schedule view** |
 | `web/app/admin/invoices/page.tsx` | **Invoice list + overdue alerts** |
 | `web/app/admin/invoices/[id]/page.tsx` | **Invoice detail** |
