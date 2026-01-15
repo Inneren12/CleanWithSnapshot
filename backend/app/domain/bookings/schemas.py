@@ -119,6 +119,13 @@ class BookingRescheduleRequest(BaseModel):
         return apply_duration_constraints(rounded, self.service_type)
 
 
+class AdminBookingUpdateRequest(BaseModel):
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    worker_id: int | None = None
+    team_id: int | None = None
+
+
 class AdminBookingListItem(BaseModel):
     booking_id: str
     lead_id: str | None

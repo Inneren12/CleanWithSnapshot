@@ -28,6 +28,7 @@ from app.api.admin_auth import (
     require_admin,
     require_dispatch,
     require_finance,
+    require_any_permission_keys,
     require_permission_keys,
     permission_keys_for_request,
     require_viewer,
@@ -1247,13 +1248,26 @@ async def global_search(
 @router.get("/v1/admin/schedule", response_model=ScheduleResponse)
 async def list_schedule(
     request: Request,
-    day: date = Query(default_factory=date.today),
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    worker_id: int | None = None,
     team_id: int | None = None,
+    status: str | None = None,
     session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_dispatch),
+    _identity: AdminIdentity = Depends(require_permission_keys("bookings.view")),
 ) -> ScheduleResponse:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    payload = await ops_service.list_schedule(session, org_id, day, team_id)
+    resolved_from = from_date or date.today()
+    resolved_to = to_date or resolved_from
+    payload = await ops_service.list_schedule(
+        session,
+        org_id,
+        resolved_from,
+        resolved_to,
+        worker_id=worker_id,
+        team_id=team_id,
+        status=status,
+    )
     return ScheduleResponse(**payload)
 
 
@@ -2971,6 +2985,120 @@ async def list_bookings(
         )
         for booking, lead in result.all()
     ]
+
+
+@router.patch("/v1/admin/bookings/{booking_id}", response_model=ScheduleBooking)
+async def update_booking(
+    booking_id: str,
+    payload: booking_schemas.AdminBookingUpdateRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_any_permission_keys("bookings.assign", "bookings.edit")),
+) -> ScheduleBooking:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    booking_result = await session.execute(
+        select(Booking).where(Booking.booking_id == booking_id, Booking.org_id == org_id)
+    )
+    booking = booking_result.scalar_one_or_none()
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    if booking.status in {"DONE", "CANCELLED"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Booking is no longer active")
+
+    fields_set = payload.model_fields_set
+    if not fields_set:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No updates provided")
+
+    new_starts_at = payload.starts_at if "starts_at" in fields_set and payload.starts_at else booking.starts_at
+    if new_starts_at is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="starts_at is required")
+
+    duration_minutes = booking.duration_minutes
+    if "ends_at" in fields_set:
+        if payload.ends_at is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ends_at is required")
+        duration_minutes = int((payload.ends_at - new_starts_at).total_seconds() // 60)
+        if duration_minutes <= 0:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid time range")
+
+    target_team_id = payload.team_id if "team_id" in fields_set and payload.team_id is not None else booking.team_id
+    team = await session.get(Team, target_team_id)
+    if team is None or team.org_id != org_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    worker_id_provided = "worker_id" in fields_set
+    target_worker_id = booking.assigned_worker_id
+    if worker_id_provided:
+        target_worker_id = payload.worker_id
+        if target_worker_id is not None:
+            worker = await session.get(Worker, target_worker_id)
+            if worker is None or worker.org_id != org_id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+            if worker.team_id != target_team_id:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
+
+    if not worker_id_provided and target_team_id != booking.team_id and booking.assigned_worker_id is not None:
+        target_worker_id = None
+        worker_id_provided = True
+
+    ends_at = new_starts_at + timedelta(minutes=duration_minutes)
+    try:
+        conflicts = await ops_service.check_schedule_conflicts(
+            session,
+            org_id,
+            starts_at=new_starts_at,
+            ends_at=ends_at,
+            team_id=target_team_id,
+            booking_id=booking.booking_id,
+            worker_id=target_worker_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    if conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "conflict_with_existing_booking", "conflicts": conflicts},
+        )
+
+    before_state = {
+        "starts_at": booking.starts_at.isoformat() if booking.starts_at else None,
+        "duration_minutes": booking.duration_minutes,
+        "team_id": booking.team_id,
+        "assigned_worker_id": booking.assigned_worker_id,
+    }
+
+    booking.starts_at = new_starts_at
+    booking.duration_minutes = duration_minutes
+    booking.team_id = target_team_id
+    if worker_id_provided:
+        booking.assigned_worker_id = target_worker_id
+        worker_ids = [target_worker_id] if target_worker_id is not None else []
+        await _sync_booking_workers(session, booking.booking_id, worker_ids, replace=True)
+
+    request.state.explicit_admin_audit = True
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="booking_update",
+        resource_type="booking",
+        resource_id=booking.booking_id,
+        before=before_state,
+        after={
+            "starts_at": booking.starts_at.isoformat() if booking.starts_at else None,
+            "duration_minutes": booking.duration_minutes,
+            "team_id": booking.team_id,
+            "assigned_worker_id": booking.assigned_worker_id,
+        },
+    )
+    await session.commit()
+
+    schedule_payload = await ops_service.fetch_schedule_booking(session, org_id, booking.booking_id)
+    return ScheduleBooking(**schedule_payload)
 
 
 @router.post("/v1/admin/bookings/{booking_id}/confirm", response_model=booking_schemas.BookingResponse)

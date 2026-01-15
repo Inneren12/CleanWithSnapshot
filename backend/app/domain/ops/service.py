@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
 
 from sqlalchemy import Select, and_, func, or_, select
@@ -16,6 +16,7 @@ from app.domain.bookings.service import (
     ensure_default_team,
     generate_slots,
 )
+from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.leads.db_models import Lead
 from app.domain.workers.db_models import Worker
@@ -397,53 +398,130 @@ async def _worker_conflicts(
     return conflicts
 
 
-async def list_schedule(
-    session: AsyncSession, org_id, day: date, team_id: int | None = None
+def _serialize_schedule_booking(
+    booking: Booking,
+    *,
+    team: Team | None,
+    worker: Worker | None,
+    lead: Lead | None,
+    client: ClientUser | None,
+    address: ClientAddress | None,
 ) -> dict[str, object]:
-    team = await _team_for_org(session, org_id, team_id)
-    day_start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+    client_label = getattr(lead, "name", None) or getattr(client, "name", None) or getattr(client, "email", None)
+    address_value = None
+    if address and address.address_text:
+        address_value = address.address_text
+    elif client and client.address:
+        address_value = client.address
+    elif lead and lead.address:
+        address_value = lead.address
 
-    bookings_stmt = select(Booking).where(
-        Booking.org_id == org_id,
-        Booking.team_id == team.team_id,
-        Booking.status.in_(BLOCKING_STATUSES),
-        Booking.starts_at >= day_start,
-        Booking.starts_at < day_end,
-    ).order_by(Booking.starts_at.asc())
-    bookings = (await session.execute(bookings_stmt)).scalars().all()
+    service_label = None
+    if lead and lead.structured_inputs:
+        service_label = (
+            lead.structured_inputs.get("cleaning_type")
+            or lead.structured_inputs.get("service_type")
+            or lead.structured_inputs.get("service")
+        )
 
-    blackout_stmt = select(TeamBlackout).where(
-        TeamBlackout.team_id == team.team_id,
-        TeamBlackout.starts_at < day_end,
-        TeamBlackout.ends_at > day_start,
+    duration = booking.duration_minutes or DEFAULT_SLOT_DURATION_MINUTES
+    normalized_start = _normalize(booking.starts_at)
+    ends_at = normalized_start + timedelta(minutes=duration)
+    return {
+        "booking_id": booking.booking_id,
+        "starts_at": normalized_start,
+        "ends_at": ends_at,
+        "duration_minutes": duration,
+        "status": booking.status,
+        "worker_id": booking.assigned_worker_id,
+        "worker_name": getattr(worker, "name", None),
+        "team_id": booking.team_id,
+        "team_name": getattr(team, "name", None),
+        "client_label": client_label,
+        "address": address_value,
+        "service_label": service_label,
+        "price_cents": booking.base_charge_cents,
+    }
+
+
+async def list_schedule(
+    session: AsyncSession,
+    org_id,
+    start_date: date,
+    end_date: date,
+    *,
+    worker_id: int | None = None,
+    team_id: int | None = None,
+    status: str | None = None,
+) -> dict[str, object]:
+    window_start = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+    window_end = datetime.combine(end_date, time.max, tzinfo=timezone.utc)
+
+    stmt = (
+        select(Booking, Team, Worker, Lead, ClientUser, ClientAddress)
+        .join(Team, Booking.team_id == Team.team_id)
+        .outerjoin(Worker, Booking.assigned_worker_id == Worker.worker_id)
+        .outerjoin(Lead, Booking.lead_id == Lead.lead_id)
+        .outerjoin(ClientUser, Booking.client_id == ClientUser.client_id)
+        .outerjoin(ClientAddress, Booking.address_id == ClientAddress.address_id)
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= window_start,
+            Booking.starts_at <= window_end,
+        )
+        .order_by(Booking.starts_at.asc())
     )
-    blackouts = (await session.execute(blackout_stmt)).scalars().all()
 
-    slots = await generate_slots(day, DEFAULT_SLOT_DURATION_MINUTES, session, team_id=team.team_id)
+    if team_id is not None:
+        stmt = stmt.where(Booking.team_id == team_id)
+    if worker_id is not None:
+        stmt = stmt.where(Booking.assigned_worker_id == worker_id)
+    if status:
+        stmt = stmt.where(Booking.status == status)
+
+    rows = (await session.execute(stmt)).all()
+    bookings = [
+        _serialize_schedule_booking(
+            booking,
+            team=team,
+            worker=worker,
+            lead=lead,
+            client=client,
+            address=address,
+        )
+        for booking, team, worker, lead, client, address in rows
+    ]
 
     return {
-        "team_id": team.team_id,
-        "day": day,
-        "bookings": [
-            {
-                "booking_id": b.booking_id,
-                "starts_at": _normalize(b.starts_at),
-                "duration_minutes": b.duration_minutes,
-                "status": b.status,
-            }
-            for b in bookings
-        ],
-        "blackouts": [
-            {
-                "starts_at": _normalize(b.starts_at),
-                "ends_at": _normalize(b.ends_at),
-                "reason": b.reason,
-            }
-            for b in blackouts
-        ],
-        "available_slots": [_normalize(slot) for slot in slots],
+        "from_date": start_date,
+        "to_date": end_date,
+        "bookings": bookings,
     }
+
+
+async def fetch_schedule_booking(session: AsyncSession, org_id, booking_id: str) -> dict[str, object]:
+    stmt = (
+        select(Booking, Team, Worker, Lead, ClientUser, ClientAddress)
+        .join(Team, Booking.team_id == Team.team_id)
+        .outerjoin(Worker, Booking.assigned_worker_id == Worker.worker_id)
+        .outerjoin(Lead, Booking.lead_id == Lead.lead_id)
+        .outerjoin(ClientUser, Booking.client_id == ClientUser.client_id)
+        .outerjoin(ClientAddress, Booking.address_id == ClientAddress.address_id)
+        .where(Booking.org_id == org_id, Booking.booking_id == booking_id)
+    )
+    row = (await session.execute(stmt)).first()
+    if not row:
+        raise LookupError("booking_not_found")
+    booking, team, worker, lead, client, address = row
+    return _serialize_schedule_booking(
+        booking,
+        team=team,
+        worker=worker,
+        lead=lead,
+        client=client,
+        address=address,
+    )
 
 
 async def suggest_schedule_resources(
