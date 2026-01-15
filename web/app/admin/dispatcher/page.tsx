@@ -438,13 +438,13 @@ export default function DispatcherPage() {
   const featureOverrides = featureConfig?.overrides ?? {};
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
   const scheduleVisible = visibilityReady
-    ? isVisible("module.schedule", profile?.role, featureOverrides, hiddenKeys)
+    ? isVisible("module.schedule", profile?.permissions, featureOverrides, hiddenKeys)
     : true;
   const weatherVisible = visibilityReady
-    ? isVisible("dashboard.weather", profile?.role, featureOverrides, hiddenKeys)
+    ? isVisible("dashboard.weather", profile?.permissions, featureOverrides, hiddenKeys)
     : true;
   const suggestionsVisible = visibilityReady
-    ? isVisible("schedule.optimization_ai", profile?.role, featureOverrides, hiddenKeys)
+    ? isVisible("schedule.optimization_ai", profile?.permissions, featureOverrides, hiddenKeys)
     : true;
 
   const navLinks = useMemo(() => {
@@ -453,9 +453,10 @@ export default function DispatcherPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
+      { key: "roles", label: "Roles & Permissions", href: "/admin/iam/roles", featureKey: "module.teams" },
     ];
     return candidates
-      .filter((entry) => isVisible(entry.featureKey, profile.role, featureOverrides, hiddenKeys))
+      .filter((entry) => isVisible(entry.featureKey, profile.permissions, featureOverrides, hiddenKeys))
       .map(({ featureKey, ...link }) => link);
   }, [featureOverrides, hiddenKeys, profile, visibilityReady]);
 

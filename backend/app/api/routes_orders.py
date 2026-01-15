@@ -20,9 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import entitlements
 from app.api.admin_auth import (
     AdminIdentity,
-    AdminPermission,
-    AdminRole,
-    ROLE_PERMISSIONS,
+    permission_keys_for_request,
     require_admin,
     require_dispatch,
 )
@@ -217,9 +215,8 @@ async def upload_order_photo(
     await file.seek(0)
 
     if admin_override:
-        has_admin_permission = AdminPermission.ADMIN in ROLE_PERMISSIONS.get(identity.role, set())
-        is_owner_or_admin = identity.role in {AdminRole.ADMIN, AdminRole.OWNER}
-        if not (has_admin_permission or is_owner_or_admin):
+        permission_keys = permission_keys_for_request(request, identity)
+        if "admin.manage" not in permission_keys:
             logger.info(
                 "order_photo_denied",
                 extra={"extra": {"order_id": order_id, "reason": "admin_override_required"}},

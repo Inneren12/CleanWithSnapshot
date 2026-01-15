@@ -23,6 +23,7 @@ from fastapi import (
 )
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
@@ -32,6 +33,7 @@ from app.api.worker_auth import (
     SESSION_COOKIE_NAME,
     WorkerIdentity,
     _session_token,
+    _session_token_v2,
     get_worker_identity,
     require_worker,
 )
@@ -42,7 +44,7 @@ from app.domain.addons import schemas as addon_schemas
 from app.domain.addons import service as addon_service
 from app.domain.analytics import service as analytics_service
 from app.domain.bookings import photos_service
-from app.domain.bookings.db_models import Booking, EmailEvent
+from app.domain.bookings.db_models import Booking, BookingWorker, EmailEvent
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.chat_threads import schemas as chat_schemas
 from app.domain.chat_threads import service as chat_service
@@ -207,7 +209,10 @@ async def _audit(
 
 
 async def _load_team_bookings(
-    session: AsyncSession, team_id: int, org_id: uuid.UUID
+    session: AsyncSession,
+    team_id: int,
+    org_id: uuid.UUID,
+    worker_id: int | None = None,
 ) -> list[Booking]:
     stmt = (
         select(Booking)
@@ -219,6 +224,17 @@ async def _load_team_bookings(
         )
         .order_by(Booking.starts_at)
     )
+    if worker_id is not None:
+        stmt = (
+            stmt.outerjoin(BookingWorker, BookingWorker.booking_id == Booking.booking_id)
+            .where(
+                sa.or_(
+                    Booking.assigned_worker_id == worker_id,
+                    BookingWorker.worker_id == worker_id,
+                )
+            )
+            .distinct()
+        )
     result = await session.execute(stmt)
     return result.scalars().all()
 
@@ -257,6 +273,17 @@ async def _load_worker_booking(
             selectinload(Booking.assigned_worker),
         )
     )
+    if identity.worker_id is not None:
+        stmt = (
+            stmt.outerjoin(BookingWorker, BookingWorker.booking_id == Booking.booking_id)
+            .where(
+                sa.or_(
+                    Booking.assigned_worker_id == identity.worker_id,
+                    BookingWorker.worker_id == identity.worker_id,
+                )
+            )
+            .distinct()
+        )
     result = await session.execute(stmt)
     booking = result.scalar_one_or_none()
     if booking is None:
@@ -808,7 +835,16 @@ async def _audit_transition(
 @router.post("/worker/login")
 async def worker_login(request: Request, identity: WorkerIdentity = Depends(get_worker_identity)) -> JSONResponse:
     try:
-        token = _session_token(identity.username, identity.role, identity.team_id, identity.org_id)
+        if identity.worker_id is not None:
+            token = _session_token_v2(
+                identity.username,
+                identity.role,
+                identity.team_id,
+                identity.org_id,
+                identity.worker_id,
+            )
+        else:
+            token = _session_token(identity.username, identity.role, identity.team_id, identity.org_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
     secure = settings.app_env != "dev" and request.url.scheme == "https"
@@ -1328,7 +1364,9 @@ async def worker_dashboard(
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     lang = resolve_lang(request)
-    bookings = await _load_team_bookings(session, identity.team_id, identity.org_id)
+    bookings = await _load_team_bookings(
+        session, identity.team_id, identity.org_id, identity.worker_id
+    )
     counts: dict[str, int] = defaultdict(int)
     for booking in bookings:
         counts[booking.status] += 1
@@ -1355,7 +1393,9 @@ async def worker_jobs(
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     lang = resolve_lang(request)
-    bookings = await _load_team_bookings(session, identity.team_id, identity.org_id)
+    bookings = await _load_team_bookings(
+        session, identity.team_id, identity.org_id, identity.worker_id
+    )
     invoices = await _latest_invoices(session, [b.booking_id for b in bookings], identity.org_id)
     cards = (
         "".join(_render_job_card(booking, invoices.get(booking.booking_id), lang) for booking in bookings)

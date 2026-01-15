@@ -94,7 +94,7 @@ export default function ModulesVisibilityPage() {
   const featureOverrides = featureConfig?.overrides ?? {};
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
   const pageVisible = visibilityReady
-    ? isVisible("api.settings", profile?.role, featureOverrides, hiddenKeys)
+    ? isVisible("api.settings", profile?.permissions, featureOverrides, hiddenKeys)
     : true;
 
   const navLinks = useMemo(() => {
@@ -103,9 +103,10 @@ export default function ModulesVisibilityPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
+      { key: "roles", label: "Roles & Permissions", href: "/admin/iam/roles", featureKey: "module.teams" },
     ];
     return candidates
-      .filter((entry) => isVisible(entry.featureKey, profile.role, featureOverrides, hiddenKeys))
+      .filter((entry) => isVisible(entry.featureKey, profile.permissions, featureOverrides, hiddenKeys))
       .map(({ featureKey, ...link }) => link);
   }, [featureOverrides, hiddenKeys, profile, visibilityReady]);
 

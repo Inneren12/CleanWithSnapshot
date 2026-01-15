@@ -14,6 +14,7 @@ class MembershipRole(str, Enum):
     OWNER = "owner"
     ADMIN = "admin"
     DISPATCHER = "dispatcher"
+    ACCOUNTANT = "accountant"
     FINANCE = "finance"
     VIEWER = "viewer"
     WORKER = "worker"
@@ -72,6 +73,11 @@ class Membership(Base):
     )
     role: Mapped[MembershipRole] = mapped_column(
         sa.Enum(MembershipRole, name="membershiprole"), nullable=False
+    )
+    custom_role_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID_TYPE,
+        sa.ForeignKey("iam_roles.role_id", ondelete="SET NULL"),
+        nullable=True,
     )
     is_active: Mapped[bool] = mapped_column(sa.Boolean, default=True, server_default=sa.true())
     created_at: Mapped[datetime] = mapped_column(

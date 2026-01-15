@@ -191,17 +191,19 @@ export default function AdminPage() {
     return { Authorization: `Basic ${encoded}` };
   }, [username, password]);
 
-  const isReadOnly = !profile?.permissions?.some((permission) =>
-    ["dispatch", "admin"].includes(permission)
-  );
+  const permissionKeys = profile?.permissions ?? [];
+  const canManageBookings =
+    permissionKeys.includes("bookings.edit") || permissionKeys.includes("bookings.assign");
+  const canAdminMetrics = permissionKeys.includes("admin.manage");
+  const isReadOnly = !canManageBookings;
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
   const featureOverrides = featureConfig?.overrides ?? {};
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
   const dashboardVisible = visibilityReady
-    ? isVisible("module.dashboard", profile?.role, featureOverrides, hiddenKeys)
+    ? isVisible("module.dashboard", profile?.permissions, featureOverrides, hiddenKeys)
     : true;
   const financeReportsVisible = visibilityReady
-    ? isVisible("finance.reports", profile?.role, featureOverrides, hiddenKeys)
+    ? isVisible("finance.reports", profile?.permissions, featureOverrides, hiddenKeys)
     : true;
 
   const navLinks = useMemo(() => {
@@ -210,9 +212,10 @@ export default function AdminPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
+      { key: "roles", label: "Roles & Permissions", href: "/admin/iam/roles", featureKey: "module.teams" },
     ];
     return candidates
-      .filter((entry) => isVisible(entry.featureKey, profile.role, featureOverrides, hiddenKeys))
+      .filter((entry) => isVisible(entry.featureKey, profile.permissions, featureOverrides, hiddenKeys))
       .map(({ featureKey, ...link }) => link);
   }, [featureOverrides, hiddenKeys, profile, visibilityReady]);
 
@@ -281,6 +284,11 @@ export default function AdminPage() {
 
   const loadMetrics = async () => {
     if (!username || !password) return;
+    if (profile && !canAdminMetrics) {
+      setMetrics(null);
+      setMetricsError("Metrics require admin access");
+      return;
+    }
     setMetricsLoading(true);
     setMetricsError(null);
     try {
@@ -298,7 +306,7 @@ export default function AdminPage() {
       } else {
         setMetrics(null);
         if (response.status === 403) {
-          setMetricsError("Metrics require an admin permission");
+          setMetricsError("Metrics require admin access");
         } else {
           setMetricsError("Failed to load metrics");
         }
@@ -310,6 +318,10 @@ export default function AdminPage() {
 
   const downloadMetricsCsv = async () => {
     if (!username || !password) return;
+    if (profile && !canAdminMetrics) {
+      setMetricsError("Metrics require admin access");
+      return;
+    }
     const params = new URLSearchParams({
       from: metricsRange.from,
       to: metricsRange.to,
@@ -559,7 +571,7 @@ export default function AdminPage() {
       {profile ? (
         <div className={`alert ${isReadOnly ? "alert-warning" : "alert-info"}`}>
           Signed in as <strong>{profile.username}</strong> ({profile.role})
-          {isReadOnly ? " · Your account is read-only without dispatch/admin permissions." : ""}
+          {isReadOnly ? " · Your account is read-only without booking edit/assign permissions." : ""}
         </div>
       ) : null}
 
@@ -615,14 +627,19 @@ export default function AdminPage() {
             </label>
           </div>
           <div className="admin-actions" style={{ marginLeft: "auto" }}>
-            <button className="btn btn-ghost" type="button" onClick={() => void loadMetrics()} disabled={metricsLoading}>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={() => void loadMetrics()}
+              disabled={metricsLoading || (profile ? !canAdminMetrics : false)}
+            >
               Refresh
             </button>
             <button
               className="btn btn-secondary"
               type="button"
               onClick={() => void downloadMetricsCsv()}
-              disabled={metricsLoading || !!metricsError}
+              disabled={metricsLoading || !!metricsError || (profile ? !canAdminMetrics : false)}
             >
               Download CSV
             </button>

@@ -11,6 +11,7 @@ from app.api.idempotency import enforce_org_action_rate_limit, require_idempoten
 from app.api.saas_auth import ROLE_TO_ADMIN_ROLE, SaaSIdentity, require_permissions
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, Organization, PasswordResetEvent, User
+from app.domain.iam.db_models import IamRole
 from app.domain.admin_audit import service as audit_service
 from app.infra.db import get_db_session
 from app.infra.email import resolve_app_email_adapter
@@ -25,6 +26,8 @@ class IAMUserResponse(BaseModel):
     user_id: uuid.UUID
     email: EmailStr
     role: MembershipRole
+    role_key: str
+    custom_role_id: uuid.UUID | None = None
     membership_active: bool
     user_active: bool
     must_change_password: bool
@@ -44,7 +47,8 @@ class IAMCreateUserResponse(IAMUserResponse):
 
 
 class IAMUpdateRoleRequest(BaseModel):
-    role: MembershipRole
+    role: MembershipRole | None = None
+    custom_role_id: uuid.UUID | None = None
 
 
 class IAMResetPasswordRequest(BaseModel):
@@ -70,12 +74,16 @@ async def _get_membership_with_user(
     return membership, user
 
 
-def _serialize_user(membership: Membership, user: User) -> IAMUserResponse:
+def _serialize_user(
+    membership: Membership, user: User, role_key: str | None = None
+) -> IAMUserResponse:
     return IAMUserResponse(
         membership_id=membership.membership_id,
         user_id=user.user_id,
         email=user.email,
         role=membership.role,
+        role_key=role_key or membership.role.value,
+        custom_role_id=membership.custom_role_id,
         membership_active=membership.is_active,
         user_active=user.is_active,
         must_change_password=bool(user.must_change_password),
@@ -87,8 +95,16 @@ async def list_users(
     identity: SaaSIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
     session: AsyncSession = Depends(get_db_session),
 ) -> IAMUserListResponse:
-    rows = await saas_service.list_memberships_for_org(session, identity.org_id)
-    return IAMUserListResponse(users=[_serialize_user(membership, user) for membership, user in rows])
+    result = await session.execute(
+        sa.select(Membership, User, IamRole.role_key)
+        .join(User, User.user_id == Membership.user_id)
+        .outerjoin(IamRole, IamRole.role_id == Membership.custom_role_id)
+        .where(Membership.org_id == identity.org_id)
+    )
+    rows = result.all()
+    return IAMUserListResponse(
+        users=[_serialize_user(membership, user, role_key) for membership, user, role_key in rows]
+    )
 
 
 @router.post("/users", response_model=IAMCreateUserResponse)
@@ -247,10 +263,30 @@ async def update_role(
     membership, user = await _get_membership_with_user(session, identity.org_id, user_id)
     if not membership or not user:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not payload.role and not payload.custom_role_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Role required")
 
-    await saas_service.update_membership_role(session, membership, payload.role)
+    if payload.custom_role_id:
+        role_record = await session.get(IamRole, payload.custom_role_id)
+        if not role_record or role_record.org_id != identity.org_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+        membership.custom_role_id = role_record.role_id
+    else:
+        membership.custom_role_id = None
+
+    if payload.role:
+        await saas_service.update_membership_role(session, membership, payload.role)
+    else:
+        await saas_service.revoke_user_sessions_for_org(
+            session, membership.user_id, membership.org_id, reason="role_changed"
+        )
     await session.commit()
-    return _serialize_user(membership, user)
+    role_key = None
+    if membership.custom_role_id:
+        role_key = await session.scalar(
+            sa.select(IamRole.role_key).where(IamRole.role_id == membership.custom_role_id)
+        )
+    return _serialize_user(membership, user, role_key)
 
 
 @router.post("/users/{user_id}/logout", response_model=IAMStatusResponse)
@@ -268,4 +304,3 @@ async def logout_everywhere(
     )
     await session.commit()
     return IAMStatusResponse(status="revoked")
-

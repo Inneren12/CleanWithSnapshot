@@ -25,11 +25,11 @@ from app.api import entitlements
 from app.api.idempotency import enforce_org_action_rate_limit, require_idempotency
 from app.api.admin_auth import (
     AdminIdentity,
-    AdminPermission,
-    ROLE_PERMISSIONS,
     require_admin,
     require_dispatch,
     require_finance,
+    require_permission_keys,
+    permission_keys_for_request,
     require_viewer,
     verify_admin_or_dispatcher,
 )
@@ -203,14 +203,19 @@ async def admin_whoami(identity: AdminIdentity = Depends(require_viewer)) -> Adm
 
 
 @router.get("/v1/admin/profile", response_model=AdminProfileResponse)
-async def get_admin_profile(identity: AdminIdentity = Depends(require_viewer)) -> AdminProfileResponse:
+async def get_admin_profile(
+    request: Request, identity: AdminIdentity = Depends(require_viewer)
+) -> AdminProfileResponse:
+    permissions = sorted(permission_keys_for_request(request, identity))
+    saas_identity = getattr(request.state, "saas_identity", None)
+    if saas_identity and getattr(saas_identity, "role_key", None):
+        role_value = saas_identity.role_key
+    else:
+        role_value = getattr(identity.role, "value", str(identity.role))
     return AdminProfileResponse(
         username=identity.username,
-        role=getattr(identity.role, "value", str(identity.role)),
-        permissions=sorted(
-            getattr(permission, "value", str(permission))
-            for permission in ROLE_PERMISSIONS.get(identity.role, set())
-        ),
+        role=role_value,
+        permissions=permissions,
     )
 
 
@@ -2112,7 +2117,7 @@ async def feature_flags(
     "/v1/admin/config", response_model=config_schemas.ConfigViewerResponse
 )
 async def config_viewer(
-    _identity: AdminIdentity = Depends(require_admin),
+    _identity: AdminIdentity = Depends(require_permission_keys("settings.manage")),
 ) -> config_schemas.ConfigViewerResponse:
     entries = _config_entries_from_settings()
     return config_schemas.ConfigViewerResponse(entries=entries)
@@ -2504,7 +2509,7 @@ async def list_invoice_reconcile_items(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_admin),
+    _identity: AdminIdentity = Depends(require_permission_keys("finance.view")),
 ) -> invoice_schemas.InvoiceReconcileListResponse:
     org_id = entitlements.resolve_org_id(request)
     cases, total = await invoice_service.list_invoice_reconcile_items(
@@ -2526,7 +2531,7 @@ async def reconcile_invoice(
     invoice_id: str,
     dry_run: bool = Query(default=False, alias="dry_run"),
     session: AsyncSession = Depends(get_db_session),
-    identity: AdminIdentity = Depends(require_admin),
+    identity: AdminIdentity = Depends(require_permission_keys("payments.record")),
 ) -> invoice_schemas.InvoiceReconcilePlan | invoice_schemas.InvoiceReconcileResponse:
     org_id = entitlements.resolve_org_id(request)
     invoice, before, after = await invoice_service.reconcile_invoice(
@@ -2570,7 +2575,7 @@ async def list_stripe_events(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_admin),
+    _identity: AdminIdentity = Depends(require_permission_keys("finance.view")),
 ) -> invoice_schemas.StripeEventListResponse:
     org_id = entitlements.resolve_org_id(request)
     items, total = await invoice_service.list_stripe_events(
@@ -2913,7 +2918,9 @@ async def admin_pnl_report(
 
 
 @router.post("/v1/admin/pricing/reload", status_code=status.HTTP_202_ACCEPTED)
-async def reload_pricing(_admin: AdminIdentity = Depends(require_admin)) -> dict[str, str]:
+async def reload_pricing(
+    _admin: AdminIdentity = Depends(require_permission_keys("pricing.manage")),
+) -> dict[str, str]:
     load_pricing_config(settings.pricing_config_path)
     return {"status": "reloaded"}
 

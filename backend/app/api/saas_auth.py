@@ -8,10 +8,12 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, ROLE_PERMISSIONS
+from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole
 from app.api.problem_details import problem_details
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, User
+from app.domain.iam import permissions as iam_permissions
+from app.domain.iam.db_models import IamRole
 from app.infra.auth import decode_access_token
 from app.infra.logging import update_log_context
 from app.infra.org_context import set_current_org_id
@@ -36,12 +38,16 @@ class SaaSIdentity:
     must_change_password: bool = False
     session_id: uuid.UUID | None = None
     mfa_verified: bool = False
+    role_key: str | None = None
+    permission_keys: set[str] | None = None
+    custom_role_id: uuid.UUID | None = None
 
 
 ROLE_TO_ADMIN_ROLE: dict[MembershipRole, AdminRole] = {
     MembershipRole.OWNER: AdminRole.OWNER,
     MembershipRole.ADMIN: AdminRole.ADMIN,
     MembershipRole.DISPATCHER: AdminRole.DISPATCHER,
+    MembershipRole.ACCOUNTANT: AdminRole.ACCOUNTANT,
     MembershipRole.FINANCE: AdminRole.FINANCE,
     MembershipRole.VIEWER: AdminRole.VIEWER,
 }
@@ -87,7 +93,16 @@ async def _load_identity(request: Request, token: str | None, *, strict: bool = 
 
     session_factory = getattr(request.app.state, "db_session_factory", None)
     if not session_factory:
-        return SaaSIdentity(user_id=user_id, org_id=org_id, role=role, email="", session_id=session_id)
+        role_key = getattr(role, "value", str(role))
+        return SaaSIdentity(
+            user_id=user_id,
+            org_id=org_id,
+            role=role,
+            email="",
+            session_id=session_id,
+            role_key=role_key,
+            permission_keys=iam_permissions.permissions_for_role(role_key),
+        )
 
     async with session_factory() as session:
         if session_id:
@@ -104,8 +119,12 @@ async def _load_identity(request: Request, token: str | None, *, strict: bool = 
                 User.must_change_password,
                 Membership.role,
                 Membership.is_active,
+                Membership.custom_role_id,
+                IamRole.role_key,
+                IamRole.permissions,
             )
             .join(Membership, Membership.user_id == User.user_id)
+            .outerjoin(IamRole, IamRole.role_id == Membership.custom_role_id)
             .where(
                 User.user_id == user_id,
                 Membership.org_id == org_id,
@@ -116,7 +135,16 @@ async def _load_identity(request: Request, token: str | None, *, strict: bool = 
             if strict:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
             return None
-        email, user_active, must_change_password, membership_role, is_active = row
+        (
+            email,
+            user_active,
+            must_change_password,
+            membership_role,
+            is_active,
+            custom_role_id,
+            role_key,
+            permission_keys,
+        ) = row
         if not user_active or not is_active or membership_role != role:
             if strict:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
@@ -129,6 +157,14 @@ async def _load_identity(request: Request, token: str | None, *, strict: bool = 
             must_change_password=bool(must_change_password),
             session_id=session_id,
             mfa_verified=mfa_verified,
+            role_key=role_key or getattr(role, "value", str(role)),
+            permission_keys=iam_permissions.effective_permissions(
+                role_key=role.value if role else None,
+                custom_permissions=permission_keys,
+            )
+            if permission_keys is not None
+            else None,
+            custom_role_id=custom_role_id,
         )
 
 
@@ -222,11 +258,18 @@ def require_role(*roles: MembershipRole):
 
 def require_permissions(*permissions: AdminPermission):
     async def _require(identity: SaaSIdentity = Depends(require_saas_user)) -> SaaSIdentity:
-        admin_role = ROLE_TO_ADMIN_ROLE.get(identity.role)
-        if not admin_role:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-        granted = ROLE_PERMISSIONS.get(admin_role, set())
-        missing = set(permissions) - granted
+        role_key = identity.role_key or getattr(identity.role, "value", str(identity.role))
+        granted = iam_permissions.effective_permissions(
+            role_key=role_key,
+            custom_permissions=identity.permission_keys,
+        )
+        required_keys: set[str] = set()
+        for permission in permissions:
+            required_keys |= iam_permissions.LEGACY_ADMIN_PERMISSION_MAP.get(
+                getattr(permission, "value", str(permission)),
+                set(),
+            )
+        missing = required_keys - granted
         if missing:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         return identity

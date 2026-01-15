@@ -38,6 +38,7 @@ class WorkerIdentity:
     role: str
     team_id: int
     org_id: uuid.UUID
+    worker_id: int | None = None
 
 
 @dataclass
@@ -90,7 +91,21 @@ def _session_token(username: str, role: str, team_id: int, org_id: uuid.UUID) ->
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.session_ttl_minutes_worker)
     msg = f"{username}:{role}:{team_id}:{org_id}:{int(expires_at.timestamp())}".encode()
     signature = hmac.new(secret.encode(), msg=msg, digestmod=hashlib.sha256).hexdigest()
-    return base64.b64encode(f"v1:{username}:{role}:{team_id}:{org_id}:{int(expires_at.timestamp())}:{signature}".encode()).decode()
+    return base64.b64encode(
+        f"v1:{username}:{role}:{team_id}:{org_id}:{int(expires_at.timestamp())}:{signature}".encode()
+    ).decode()
+
+
+def _session_token_v2(
+    username: str, role: str, team_id: int, org_id: uuid.UUID, worker_id: int
+) -> str:
+    secret = _worker_secret()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.session_ttl_minutes_worker)
+    msg = f"{username}:{role}:{team_id}:{org_id}:{worker_id}:{int(expires_at.timestamp())}".encode()
+    signature = hmac.new(secret.encode(), msg=msg, digestmod=hashlib.sha256).hexdigest()
+    return base64.b64encode(
+        f"v2:{username}:{role}:{team_id}:{org_id}:{worker_id}:{int(expires_at.timestamp())}:{signature}".encode()
+    ).decode()
 
 
 def _parse_session_token(token: str | None) -> WorkerIdentity:
@@ -98,6 +113,27 @@ def _parse_session_token(token: str | None) -> WorkerIdentity:
         raise _build_auth_exception()
     try:
         decoded = base64.b64decode(token).decode()
+        if decoded.startswith("v2:"):
+            _, username, role, team_id_raw, org_id_raw, worker_id_raw, expires_raw, signature = decoded.split(
+                ":", 7
+            )
+            expected_payload = (
+                f"{username}:{role}:{int(team_id_raw)}:{uuid.UUID(org_id_raw)}:{int(worker_id_raw)}:{int(expires_raw)}"
+            )
+            expected_sig = hmac.new(
+                _worker_secret().encode(), msg=expected_payload.encode(), digestmod=hashlib.sha256
+            ).hexdigest()
+            if not secrets.compare_digest(signature, expected_sig):
+                raise ValueError("Invalid token signature")
+            if datetime.now(timezone.utc).timestamp() > int(expires_raw):
+                raise ValueError("Session expired")
+            return WorkerIdentity(
+                username=username,
+                role=role,
+                team_id=int(team_id_raw),
+                org_id=uuid.UUID(org_id_raw),
+                worker_id=int(worker_id_raw),
+            )
         if decoded.startswith("v1:"):
             _, username, role, team_id_raw, org_id_raw, expires_raw, signature = decoded.split(":", 6)
             expected_payload = f"{username}:{role}:{int(team_id_raw)}:{uuid.UUID(org_id_raw)}:{int(expires_raw)}"
@@ -194,6 +230,7 @@ async def _authenticate_worker_db(
         role=WorkerRole.WORKER,
         team_id=worker.team_id,
         org_id=worker.org_id,
+        worker_id=worker.worker_id,
     )
 
 
@@ -252,9 +289,17 @@ class WorkerAccessMiddleware(BaseHTTPMiddleware):
 
         try:
             credentials = _credentials_from_header(request)
-            identity = _authenticate_credentials(credentials) if credentials else _parse_session_token(
-                request.cookies.get(SESSION_COOKIE_NAME)
-            )
+            if credentials:
+                try:
+                    identity = _authenticate_credentials(credentials)
+                except HTTPException:
+                    session_factory = getattr(request.app.state, "db_session_factory", None)
+                    if session_factory is None:
+                        raise
+                    async with session_factory() as session:
+                        identity = await _authenticate_worker_db(session, credentials)
+            else:
+                identity = _parse_session_token(request.cookies.get(SESSION_COOKIE_NAME))
             request.state.worker_identity = identity
             request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
             set_current_org_id(request.state.current_org_id)
@@ -264,4 +309,3 @@ class WorkerAccessMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         except HTTPException as exc:
             return await http_exception_handler(request, exc)
-
