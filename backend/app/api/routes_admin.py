@@ -3564,6 +3564,10 @@ async def _query_invoice_list(
     customer_id: str | None,
     order_id: str | None,
     q: str | None,
+    from_date: date | None,
+    to_date: date | None,
+    amount_min: int | None,
+    amount_max: int | None,
     page: int,
     page_size: int = 50,
 ) -> invoice_schemas.InvoiceListResponse:
@@ -3578,11 +3582,33 @@ async def _query_invoice_list(
         filters.append(Invoice.customer_id == customer_id)
     if order_id:
         filters.append(Invoice.order_id == order_id)
-    if q:
-        filters.append(func.lower(Invoice.invoice_number).like(f"%{q.lower()}%"))
+    if from_date:
+        filters.append(Invoice.issue_date >= from_date)
+    if to_date:
+        filters.append(Invoice.issue_date <= to_date)
+    if amount_min is not None:
+        filters.append(Invoice.total_cents >= amount_min)
+    if amount_max is not None:
+        filters.append(Invoice.total_cents <= amount_max)
 
-    base_query = select(Invoice).where(Invoice.org_id == org_id, *filters)
-    count_stmt = select(func.count()).select_from(base_query.subquery())
+    # Enhanced search: invoice number OR client name/email
+    if q:
+        search_term = q.lower()
+        search_filters = [func.lower(Invoice.invoice_number).like(f"%{search_term}%")]
+        # Join with Lead to search by client name/email
+        lead_search = or_(
+            func.lower(Lead.name).like(f"%{search_term}%"),
+            func.lower(Lead.email).like(f"%{search_term}%"),
+        )
+        filters.append(
+            or_(
+                func.lower(Invoice.invoice_number).like(f"%{search_term}%"),
+                and_(Invoice.customer_id.is_not(None), Invoice.customer_id == Lead.lead_id, lead_search),
+            )
+        )
+
+    base_query = select(Invoice).outerjoin(Lead, Invoice.customer_id == Lead.lead_id).where(Invoice.org_id == org_id, *filters)
+    count_stmt = select(func.count(Invoice.invoice_id.distinct())).select_from(base_query.subquery())
     total = int((await session.scalar(count_stmt)) or 0)
 
     stmt = (
@@ -3607,7 +3633,12 @@ async def list_invoices(
     customer_id: str | None = None,
     order_id: str | None = None,
     q: str | None = None,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    amount_min: int | None = None,
+    amount_max: int | None = None,
     page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     http_request: Request = None,
     session: AsyncSession = Depends(get_db_session),
     _admin: AdminIdentity = Depends(require_finance),
@@ -3620,7 +3651,12 @@ async def list_invoices(
         customer_id=customer_id,
         order_id=order_id,
         q=q,
+        from_date=from_date,
+        to_date=to_date,
+        amount_min=amount_min,
+        amount_max=amount_max,
         page=page,
+        page_size=page_size,
     )
 
 
@@ -4655,6 +4691,162 @@ async def _record_manual_invoice_payment(
             after=response_body.model_dump(mode="json"),
         )
     return response_body
+
+
+@router.post(
+    "/v1/admin/invoices/bulk/remind",
+    response_model=invoice_schemas.BulkRemindResult,
+    status_code=status.HTTP_200_OK,
+)
+async def bulk_remind_invoices(
+    request: invoice_schemas.BulkRemindRequest,
+    http_request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _csrf: None = Depends(require_csrf),
+    _admin: AdminIdentity = Depends(require_permission_keys("invoices.edit")),
+) -> invoice_schemas.BulkRemindResult:
+    """Send email reminders for multiple invoices."""
+    org_id = entitlements.resolve_org_id(http_request)
+    succeeded: list[str] = []
+    failed: list[dict] = []
+
+    adapter = _email_adapter(http_request)
+    if adapter is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Email adapter unavailable")
+
+    for invoice_id in request.invoice_ids:
+        try:
+            invoice = await _get_org_invoice(
+                session,
+                invoice_id,
+                org_id,
+                options=(selectinload(Invoice.items), selectinload(Invoice.payments)),
+            )
+            if invoice is None:
+                failed.append({"invoice_id": invoice_id, "error": "Invoice not found"})
+                continue
+
+            # Don't send reminders for void or paid invoices
+            if invoice.status in {invoice_statuses.INVOICE_STATUS_VOID, invoice_statuses.INVOICE_STATUS_PAID}:
+                failed.append({"invoice_id": invoice_id, "error": f"Cannot send reminder for {invoice.status} invoice"})
+                continue
+
+            lead = await invoice_service.fetch_customer(session, invoice)
+            if lead is None or not lead.email:
+                failed.append({"invoice_id": invoice_id, "error": "Invoice missing customer email"})
+                continue
+
+            # Generate or get existing token
+            token = await invoice_service.upsert_public_token(session, invoice, mark_sent=True)
+            base_url = settings.public_base_url.rstrip("/") if settings.public_base_url else None
+            if base_url:
+                public_link = f"{base_url}/i/{token}"
+                public_link_pdf = f"{base_url}/i/{token}.pdf"
+            else:
+                public_link = str(http_request.url_for("public_invoice_view", token=token))
+                public_link_pdf = str(http_request.url_for("public_invoice_pdf", token=token))
+
+            # Send reminder email
+            subject = f"Reminder: Invoice {invoice.invoice_number}"
+            balance = max(invoice.total_cents - sum(p.amount_cents for p in invoice.payments if p.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED), 0)
+            body = (
+                f"Hi {lead.name},\n\n"
+                f"This is a reminder about invoice {invoice.invoice_number}.\n"
+                f"View online: {public_link}\n"
+                f"Download PDF: {public_link_pdf}\n"
+                f"Balance due: {_format_money(balance, invoice.currency)}\n\n"
+                "If you have questions or already paid, please reply to this email."
+            )
+            try:
+                delivered = await adapter.send_email(recipient=lead.email, subject=subject, body=body)
+                if delivered:
+                    if invoice.status == invoice_statuses.INVOICE_STATUS_DRAFT:
+                        invoice.status = invoice_statuses.INVOICE_STATUS_SENT
+                    succeeded.append(invoice_id)
+                else:
+                    failed.append({"invoice_id": invoice_id, "error": "Email delivery failed"})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "bulk_remind_email_failed",
+                    extra={"extra": {"invoice_id": invoice_id, "reason": type(exc).__name__}},
+                )
+                failed.append({"invoice_id": invoice_id, "error": "Email send error"})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "bulk_remind_invoice_failed",
+                extra={"extra": {"invoice_id": invoice_id, "reason": type(exc).__name__}},
+            )
+            failed.append({"invoice_id": invoice_id, "error": str(exc)})
+
+    await session.commit()
+    return invoice_schemas.BulkRemindResult(succeeded=succeeded, failed=failed)
+
+
+@router.post(
+    "/v1/admin/invoices/bulk/mark_paid",
+    response_model=invoice_schemas.BulkMarkPaidResult,
+    status_code=status.HTTP_200_OK,
+)
+async def bulk_mark_paid_invoices(
+    request: invoice_schemas.BulkMarkPaidRequest,
+    http_request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _csrf: None = Depends(require_csrf),
+    _admin: AdminIdentity = Depends(require_permission_keys("payments.record")),
+) -> invoice_schemas.BulkMarkPaidResult:
+    """Mark multiple invoices as paid with manual payments."""
+    org_id = entitlements.resolve_org_id(http_request)
+    succeeded: list[str] = []
+    failed: list[dict] = []
+
+    for invoice_id in request.invoice_ids:
+        try:
+            invoice = await _get_org_invoice(
+                session,
+                invoice_id,
+                org_id,
+                options=(selectinload(Invoice.items), selectinload(Invoice.payments)),
+            )
+            if invoice is None:
+                failed.append({"invoice_id": invoice_id, "error": "Invoice not found"})
+                continue
+
+            # Don't allow marking void invoices as paid
+            if invoice.status == invoice_statuses.INVOICE_STATUS_VOID:
+                failed.append({"invoice_id": invoice_id, "error": "Cannot mark void invoice as paid"})
+                continue
+
+            # Calculate remaining balance
+            paid_cents = sum(p.amount_cents for p in invoice.payments if p.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED)
+            balance_due = max(invoice.total_cents - paid_cents, 0)
+
+            # Skip if already paid
+            if balance_due == 0:
+                failed.append({"invoice_id": invoice_id, "error": "Invoice already paid"})
+                continue
+
+            # Record manual payment for the remaining balance
+            try:
+                payment = await invoice_service.record_manual_payment(
+                    session=session,
+                    invoice=invoice,
+                    amount_cents=balance_due,
+                    method=request.method,
+                    reference=request.note,
+                    received_at=datetime.now(tz=timezone.utc),
+                )
+                succeeded.append(invoice_id)
+            except ValueError as exc:
+                failed.append({"invoice_id": invoice_id, "error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "bulk_mark_paid_invoice_failed",
+                extra={"extra": {"invoice_id": invoice_id, "reason": type(exc).__name__}},
+            )
+            failed.append({"invoice_id": invoice_id, "error": str(exc)})
+
+    await session.commit()
+    return invoice_schemas.BulkMarkPaidResult(succeeded=succeeded, failed=failed)
 
 
 @router.get("/api/admin/tickets", response_model=nps_schemas.TicketListResponse)

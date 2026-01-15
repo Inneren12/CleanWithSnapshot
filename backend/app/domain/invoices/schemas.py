@@ -257,3 +257,31 @@ class StripeEventListResponse(BaseModel):
     limit: int
     offset: int
 
+
+class BulkRemindRequest(BaseModel):
+    invoice_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class BulkRemindResult(BaseModel):
+    succeeded: list[str]
+    failed: list[dict]
+
+
+class BulkMarkPaidRequest(BaseModel):
+    invoice_ids: list[str] = Field(min_length=1, max_length=100)
+    method: str = Field(pattern="^(cash|etransfer|other|card)$")
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("method")
+    @classmethod
+    def normalize_method(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized not in statuses.PAYMENT_METHODS:
+            raise ValueError("Invalid payment method")
+        return normalized
+
+
+class BulkMarkPaidResult(BaseModel):
+    succeeded: list[str]
+    failed: list[dict]
+
