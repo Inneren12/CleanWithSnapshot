@@ -110,6 +110,49 @@ type SlotAvailability = {
   slots: string[];
 };
 
+type ServiceAddonSummary = {
+  addon_id: number;
+  service_type_id: number;
+  name: string;
+  price_cents: number;
+  active: boolean;
+};
+
+type ServiceTypeSummary = {
+  service_type_id: number;
+  name: string;
+  description?: string | null;
+  active: boolean;
+  default_duration_minutes: number;
+  pricing_model: 'flat' | 'hourly';
+  base_price_cents: number;
+  hourly_rate_cents: number;
+  currency: string;
+  addons: ServiceAddonSummary[];
+};
+
+type PricingSettingsPublic = {
+  org_id: string;
+  gst_rate: number;
+  discounts: Array<{ label: string; kind: 'percent' | 'flat'; percent?: number | null; amount_cents?: number | null }>;
+  surcharges: Array<{ label: string; kind: 'percent' | 'flat'; percent?: number | null; amount_cents?: number | null }>;
+  promo_enabled: boolean;
+};
+
+type BookingPoliciesPublic = {
+  org_id: string;
+  deposit: { enabled: boolean; percent: number; minimum_cents?: number | null; due_days: number };
+  cancellation: { window_hours: number; refund_percent: number; fee_cents: number; notes?: string | null };
+  reschedule: { allowed: boolean; notice_hours: number; fee_cents: number; max_reschedules: number };
+  payment_terms: { due_days: number; accepted_methods: string[]; notes?: string | null };
+  scheduling: {
+    slot_duration_minutes: number;
+    buffer_minutes: number;
+    lead_time_hours: number;
+    max_bookings_per_day?: number | null;
+  };
+};
+
 type TurnstileOptions = {
   sitekey: string;
   callback: (token: string) => void;
@@ -311,6 +354,10 @@ export default function HomePage() {
   const [summaryPatch, setSummaryPatch] = useState<SummaryPatch | null>(null);
   const [uiHint, setUIHint] = useState<UIHint | null>(null);
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
+  const [serviceCatalog, setServiceCatalog] = useState<ServiceTypeSummary[]>([]);
+  const [pricingSettings, setPricingSettings] = useState<PricingSettingsPublic | null>(null);
+  const [bookingPolicies, setBookingPolicies] = useState<BookingPoliciesPublic | null>(null);
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
 
   const apiBaseUrl = useMemo(
     () => process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000',
@@ -363,6 +410,48 @@ export default function HomePage() {
       script.removeEventListener('error', handleError);
     };
   }, [turnstileSiteKey]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const loadSettings = async () => {
+      setSettingsLoadError(null);
+      try {
+        const [catalogRes, pricingRes, policyRes] = await Promise.all([
+          fetch(`${apiBaseUrl}/v1/settings/service-catalog`, { signal: controller.signal }),
+          fetch(`${apiBaseUrl}/v1/settings/pricing`, { signal: controller.signal }),
+          fetch(`${apiBaseUrl}/v1/settings/booking-policies`, { signal: controller.signal }),
+        ]);
+
+        if (catalogRes.ok) {
+          const catalogData = (await catalogRes.json()) as ServiceTypeSummary[];
+          setServiceCatalog(catalogData);
+        } else {
+          throw new Error('Failed to load service catalog');
+        }
+
+        if (pricingRes.ok) {
+          const pricingData = (await pricingRes.json()) as PricingSettingsPublic;
+          setPricingSettings(pricingData);
+        } else {
+          throw new Error('Failed to load pricing settings');
+        }
+
+        if (policyRes.ok) {
+          const policyData = (await policyRes.json()) as BookingPoliciesPublic;
+          setBookingPolicies(policyData);
+        } else {
+          throw new Error('Failed to load booking policies');
+        }
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return;
+        setSettingsLoadError('Settings are temporarily unavailable.');
+      }
+    };
+
+    void loadSettings();
+    return () => controller.abort();
+  }, [apiBaseUrl]);
 
   const copyReferralCode = useCallback(async () => {
     if (!issuedReferralCode || typeof navigator === 'undefined' || !navigator.clipboard) {
@@ -789,6 +878,46 @@ export default function HomePage() {
           </div>
         </section>
 
+        <section className="section" id="service-catalog" aria-labelledby="service-catalog-title">
+          <div className="section-heading">
+            <h2 id="service-catalog-title">Service catalog</h2>
+            <p className="muted">Current services and add-ons configured in settings.</p>
+          </div>
+          {settingsLoadError ? <p className="alert alert-warning">{settingsLoadError}</p> : null}
+          {serviceCatalog.length === 0 ? (
+            <p className="muted">Service catalog is not configured yet.</p>
+          ) : (
+            <div className="catalog-grid">
+              {serviceCatalog.map((service) => (
+                <article key={service.service_type_id} className="catalog-card card">
+                  <div className="catalog-header">
+                    <h3>{service.name}</h3>
+                    <span className="pill">{service.pricing_model === 'flat' ? 'Flat' : 'Hourly'}</span>
+                  </div>
+                  <p className="muted">{service.description || 'No description provided.'}</p>
+                  <div className="catalog-meta">
+                    <span>Duration: {service.default_duration_minutes} min</span>
+                    <span>Base: {formatCurrencyCents(service.base_price_cents, service.currency)}</span>
+                    <span>Hourly: {formatCurrencyCents(service.hourly_rate_cents, service.currency)}</span>
+                  </div>
+                  {service.addons.length > 0 ? (
+                    <ul className="catalog-addons">
+                      {service.addons.map((addon) => (
+                        <li key={addon.addon_id}>
+                          <span>{addon.name}</span>
+                          <span>{formatCurrencyCents(addon.price_cents, service.currency)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="muted">No add-ons available.</p>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
         <section className="section" aria-labelledby="included-title">
           <div className="section-heading">
             <h2 id="included-title">What’s included</h2>
@@ -804,6 +933,58 @@ export default function HomePage() {
               </li>
             ))}
           </ul>
+        </section>
+
+        <section className="section" aria-labelledby="policies-title">
+          <div className="section-heading">
+            <h2 id="policies-title">Booking policies</h2>
+            <p className="muted">Stored policies shown for transparency before you book.</p>
+          </div>
+          {bookingPolicies ? (
+            <div className="policy-grid">
+              <div className="policy-card">
+                <h3>Deposit</h3>
+                <p>{bookingPolicies.deposit.enabled ? 'Required' : 'Not required'} for some bookings.</p>
+                <p>
+                  Percent: {formatPercent(bookingPolicies.deposit.percent)} · Minimum:{' '}
+                  {formatCurrencyCents(bookingPolicies.deposit.minimum_cents ?? 0, 'CAD')}
+                </p>
+                <p>Due: {bookingPolicies.deposit.due_days} day(s) before service.</p>
+              </div>
+              <div className="policy-card">
+                <h3>Cancellation</h3>
+                <p>Refund window: {bookingPolicies.cancellation.window_hours} hours.</p>
+                <p>Refund: {formatPercent(bookingPolicies.cancellation.refund_percent)}</p>
+                <p>Fee: {formatCurrencyCents(bookingPolicies.cancellation.fee_cents, 'CAD')}</p>
+              </div>
+              <div className="policy-card">
+                <h3>Reschedule</h3>
+                <p>{bookingPolicies.reschedule.allowed ? 'Reschedules allowed' : 'Reschedules not allowed'}.</p>
+                <p>Notice: {bookingPolicies.reschedule.notice_hours} hours.</p>
+                <p>Fee: {formatCurrencyCents(bookingPolicies.reschedule.fee_cents, 'CAD')}</p>
+                <p>Max reschedules: {bookingPolicies.reschedule.max_reschedules}</p>
+              </div>
+              <div className="policy-card">
+                <h3>Payment terms</h3>
+                <p>Due in {bookingPolicies.payment_terms.due_days} day(s).</p>
+                <p>Methods: {bookingPolicies.payment_terms.accepted_methods.join(', ') || 'Standard methods'}</p>
+                {bookingPolicies.payment_terms.notes ? <p>{bookingPolicies.payment_terms.notes}</p> : null}
+              </div>
+              <div className="policy-card">
+                <h3>Scheduling</h3>
+                <p>Slot duration: {bookingPolicies.scheduling.slot_duration_minutes} minutes.</p>
+                <p>Buffer: {bookingPolicies.scheduling.buffer_minutes} minutes.</p>
+                <p>Lead time: {bookingPolicies.scheduling.lead_time_hours} hours.</p>
+              </div>
+              <div className="policy-card">
+                <h3>Tax & promos</h3>
+                <p>GST rate: {pricingSettings ? formatPercent(pricingSettings.gst_rate) : '—'}</p>
+                <p>Promos: {pricingSettings?.promo_enabled ? 'Enabled' : 'Disabled'}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="muted">Policies will appear once settings are loaded.</p>
+          )}
         </section>
 
         <section className="section chat-wrapper" id="chat" aria-labelledby="chat-title">
@@ -1310,6 +1491,18 @@ function formatCurrency(amount: number) {
     currency: 'CAD',
     maximumFractionDigits: 2
   }).format(amount);
+}
+
+function formatCurrencyCents(amountCents: number, currency: string) {
+  return new Intl.NumberFormat('en-CA', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 2
+  }).format(amountCents / 100);
+}
+
+function formatPercent(rate: number) {
+  return `${(rate * 100).toFixed(0)}%`;
 }
 
 function formatYMDInTz(date: Date, timeZone: string): string {

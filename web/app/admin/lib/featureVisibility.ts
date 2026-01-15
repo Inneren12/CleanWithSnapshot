@@ -40,6 +40,7 @@ const MODULE_PERMISSIONS: Record<string, string> = {
   teams: "admin",
   analytics: "finance",
   finance: "finance",
+  pricing: "view",
   marketing: "view",
   leads: "view",
   inventory: "view",
@@ -72,6 +73,15 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
     children: [
       { key: "finance.reports", label: "Reports dashboard" },
       { key: "finance.cash_flow", label: "Cash flow widget" },
+    ],
+  },
+  {
+    key: "module.pricing",
+    label: "Pricing & Policies",
+    description: "Service catalog, pricing rules, and booking policies.",
+    children: [
+      { key: "pricing.service_types", label: "Service types & pricing" },
+      { key: "pricing.booking_policies", label: "Booking policies" },
     ],
   },
   { key: "module.marketing", label: "Marketing" },

@@ -14,6 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.admin_auth import AdminAccessMiddleware, AdminAuditMiddleware
 from app.api.routes_admin import router as admin_router
+from app.api.routes_admin_pricing import router as admin_pricing_router
 from app.api.routes_admin_settings import router as admin_settings_router
 from app.api.break_glass import router as break_glass_router
 from app.api.routes_queues import router as queues_router
@@ -37,6 +38,7 @@ from app.api.routes_auth import router as auth_router
 from app.api.routes_iam import router as iam_router
 from app.api.worker_auth import WorkerAccessMiddleware
 from app.api.routes_public import router as public_router
+from app.api.routes_public_settings import router as public_settings_router
 from app.api.routes_leads import router as leads_router
 from app.api.routes_billing import router as billing_router
 from app.api.problem_details import (
@@ -395,6 +397,7 @@ def create_app(app_settings) -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(public_router)
+    app.include_router(public_settings_router)
     app.include_router(auth_router)
     app.include_router(iam_router)
     app.include_router(bot_router)
@@ -414,6 +417,7 @@ def create_app(app_settings) -> FastAPI:
     app.include_router(break_glass_router)
     app.include_router(admin_router)
     app.include_router(admin_settings_router)
+    app.include_router(admin_pricing_router)
     app.include_router(queues_router)
     app.include_router(health_backup_router)
     app.include_router(timeline_router)
