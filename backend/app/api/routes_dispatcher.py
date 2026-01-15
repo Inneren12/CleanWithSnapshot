@@ -274,7 +274,23 @@ async def estimate_dispatcher_route(
         depart_at=payload.depart_at,
         mode=payload.mode,
     )
-    return schemas.DispatcherRouteEstimateResponse(**estimate.as_payload(), cached=cached)
+    base_duration_min = estimate.duration_in_traffic_min or estimate.duration_min
+    adjusted_duration_min, adjustments = dispatcher_service.apply_eta_adjustments(
+        base_duration_min=base_duration_min,
+        depart_at=payload.depart_at,
+        zone=dispatcher_service.zone_for_point(payload.dest.lat, payload.dest.lng),
+        lat=payload.dest.lat,
+        lng=payload.dest.lng,
+    )
+    return schemas.DispatcherRouteEstimateResponse(
+        distance_km=estimate.distance_km,
+        duration_min=adjusted_duration_min,
+        duration_in_traffic_min=estimate.duration_in_traffic_min,
+        provider=estimate.provider,
+        cached=cached,
+        base_duration_min=base_duration_min,
+        adjustments=adjustments,
+    )
 
 
 @router.get(
