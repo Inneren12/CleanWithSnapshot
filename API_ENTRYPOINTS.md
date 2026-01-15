@@ -166,6 +166,7 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
 | GET | `/v1/admin/ui/dashboard` | `core.view` | Dashboard KPIs |
+| GET | `/v1/admin/dashboard/ops` | `core.view` + `module.dashboard` | Ops dashboard aggregates (org TZ windows) |
 
 ---
 
