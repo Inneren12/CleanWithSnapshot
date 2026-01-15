@@ -7,6 +7,7 @@ import logging
 import math
 import re
 from datetime import date, datetime, time, timezone, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal, ROUND_HALF_UP
 import uuid
 from typing import Iterable, List, Literal, Optional
@@ -112,6 +113,7 @@ from app.domain.outbox.schemas import OutboxEventResponse, OutboxReplayResponse
 from app.domain.outbox.service import replay_outbox_event
 from app.domain.queues.schemas import DLQBatchReplayResponse
 from app.domain.nps import schemas as nps_schemas, service as nps_service
+from app.domain.feature_modules import service as feature_service
 from app.domain.pricing.config_loader import load_pricing_config
 from app.domain.pricing_settings.db_models import ServiceType
 from app.domain.notifications.db_models import EmailFailure
@@ -132,6 +134,10 @@ from app.domain.ops.schemas import (
     ConflictCheckResponse,
     ConflictDetail,
     JobStatusResponse,
+    OpsDashboardBookingStatusToday,
+    OpsDashboardBookingStatusTotals,
+    OpsDashboardResponse,
+    OpsDashboardUpcomingEvent,
     MoveBookingRequest,
     QuickActionModel,
     QuickCreateBookingRequest,
@@ -225,6 +231,99 @@ async def get_admin_profile(
         username=identity.username,
         role=role_value,
         permissions=permissions,
+    )
+
+
+@router.get("/v1/admin/dashboard/ops", response_model=OpsDashboardResponse)
+async def get_ops_dashboard(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+) -> OpsDashboardResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_dashboard_enabled(request, session, org_id)
+    if guard is not None:
+        return guard
+
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
+    try:
+        org_tz = ZoneInfo(org_timezone)
+    except Exception:  # noqa: BLE001
+        org_timezone = org_settings_service.DEFAULT_TIMEZONE
+        org_tz = ZoneInfo(org_timezone)
+
+    now_local = datetime.now(org_tz)
+    today_start_local = datetime.combine(now_local.date(), time.min, tzinfo=org_tz)
+    today_end_local = today_start_local + timedelta(days=1)
+    today_start_utc = today_start_local.astimezone(timezone.utc)
+    today_end_utc = today_end_local.astimezone(timezone.utc)
+
+    next24_start_local = now_local
+    next24_end_local = now_local + timedelta(hours=24)
+    next24_start_utc = next24_start_local.astimezone(timezone.utc)
+    next24_end_utc = next24_end_local.astimezone(timezone.utc)
+
+    status_stmt = (
+        select(Booking.status, func.count())
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= today_start_utc,
+            Booking.starts_at < today_end_utc,
+        )
+        .group_by(Booking.status)
+    )
+    status_rows = (await session.execute(status_stmt)).all()
+    status_counts = {status: count for status, count in status_rows}
+    total_count = sum(status_counts.values())
+    totals = OpsDashboardBookingStatusTotals(
+        total=total_count,
+        pending=status_counts.get("PENDING", 0),
+        confirmed=status_counts.get("CONFIRMED", 0),
+        done=status_counts.get("DONE", 0),
+        cancelled=status_counts.get("CANCELLED", 0),
+    )
+
+    upcoming_stmt = (
+        select(Booking)
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= next24_start_utc,
+            Booking.starts_at < next24_end_utc,
+        )
+        .order_by(Booking.starts_at.asc())
+        .limit(50)
+    )
+    upcoming_rows = (await session.execute(upcoming_stmt)).scalars().all()
+    upcoming_events = []
+    for booking in upcoming_rows:
+        starts_at = booking.starts_at
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=timezone.utc)
+        duration_minutes = booking.duration_minutes or booking_service.DEFAULT_SLOT_DURATION_MINUTES
+        upcoming_events.append(
+            OpsDashboardUpcomingEvent(
+                booking_id=booking.booking_id,
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(minutes=duration_minutes),
+                status=booking.status,
+                team_id=booking.team_id,
+                worker_id=booking.assigned_worker_id,
+            )
+        )
+
+    return OpsDashboardResponse(
+        as_of=datetime.now(timezone.utc),
+        org_timezone=org_timezone,
+        critical_alerts=[],
+        upcoming_events=upcoming_events,
+        worker_availability=[],
+        booking_status_today=OpsDashboardBookingStatusToday(
+            totals=totals,
+            bands=[],
+        ),
     )
 
 
@@ -327,6 +426,20 @@ def _parse_since_timestamp(since: str | None) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+async def _require_dashboard_enabled(
+    request: Request, session: AsyncSession, org_id: uuid.UUID
+):
+    enabled = await feature_service.effective_feature_enabled(session, org_id, "module.dashboard")
+    if not enabled:
+        return problem_details(
+            request=request,
+            status=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail="Disabled by org settings",
+        )
+    return None
 
 
 def _parse_availability_scope(scope: str | None) -> tuple[str | None, int | None]:

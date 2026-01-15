@@ -64,6 +64,56 @@ class ScheduleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OpsDashboardAlert(BaseModel):
+    alert_id: str
+    severity: str
+    message: str
+    created_at: datetime | None = None
+
+
+class OpsDashboardUpcomingEvent(BaseModel):
+    booking_id: str
+    starts_at: datetime
+    ends_at: datetime
+    status: str
+    team_id: int | None = None
+    worker_id: int | None = None
+
+
+class OpsDashboardWorkerAvailability(BaseModel):
+    worker_id: int
+    name: str | None = None
+    available: bool
+    next_available_at: datetime | None = None
+
+
+class OpsDashboardBookingStatusTotals(BaseModel):
+    total: int
+    pending: int
+    confirmed: int
+    done: int
+    cancelled: int
+
+
+class OpsDashboardBookingStatusBand(BaseModel):
+    label: str
+    count: int
+
+
+class OpsDashboardBookingStatusToday(BaseModel):
+    totals: OpsDashboardBookingStatusTotals
+    bands: list[OpsDashboardBookingStatusBand] = Field(default_factory=list)
+
+
+class OpsDashboardResponse(BaseModel):
+    as_of: datetime
+    org_timezone: str
+    critical_alerts: list[OpsDashboardAlert] = Field(default_factory=list)
+    upcoming_events: list[OpsDashboardUpcomingEvent] = Field(default_factory=list)
+    worker_availability: list[OpsDashboardWorkerAvailability] = Field(default_factory=list)
+    booking_status_today: OpsDashboardBookingStatusToday
+
+
 class MoveBookingRequest(BaseModel):
     starts_at: datetime
     duration_minutes: int | None = None

@@ -57,6 +57,7 @@ module.api                    # API access
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - `/v1/admin/ui/dashboard` (GET)
+- `backend/app/api/routes_admin.py` - `/v1/admin/dashboard/ops` (GET, ops aggregates)
 
 **Key Services:**
 - N/A (dashboard aggregates data from other modules)
