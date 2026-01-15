@@ -345,9 +345,9 @@ function shortAddress(address: DispatcherAddress | null | undefined) {
   return street?.trim() || formatted;
 }
 
-function contextWeatherLabel(summary: string | null, temp: number | null) {
-  if (!summary && temp === null) return "Weather unavailable";
-  const tempLabel = temp === null ? "" : `${Math.round(temp)}°C`;
+function contextWeatherLabel(summary: string | null, temp: number | null | undefined) {
+  if (!summary && temp == null) return "Weather unavailable";
+  const tempLabel = temp == null ? "" : `${Math.round(temp)}°C`;
   return [summary ?? "Now", tempLabel].filter(Boolean).join(" · ");
 }
 
@@ -1852,54 +1852,54 @@ export default function DispatcherPage() {
                   </div>
                 </div>
               </div>
-              <div className="dispatcher-context-row">
-                <span className={`dispatcher-context-badge ${riskBadgeTone}`} aria-hidden="true" />
-                <div>
-                  <div className="dispatcher-context-title">{trafficLabel}</div>
-                  <div className="dispatcher-context-subtitle">{trafficHint}</div>
-                </div>
+            </div>
+            <div className="dispatcher-context-row">
+              <span className={`dispatcher-context-badge ${riskBadgeTone}`} aria-hidden="true" />
+              <div>
+                <div className="dispatcher-context-title">{trafficLabel}</div>
+                <div className="dispatcher-context-subtitle">{trafficHint}</div>
               </div>
-              <span className="dispatcher-context-action">{contextExpanded ? "Hide" : "Details"}</span>
-            </button>
-            {contextExpanded ? (
-              <div className="dispatcher-context-details">
-                <div className="dispatcher-context-detail-row">
-                  <span>Wind</span>
-                  <strong>
-                    {context?.weather_now.wind_kph ? `${Math.round(context.weather_now.wind_kph)} kph` : "—"}
-                  </strong>
-                </div>
-                <div className="dispatcher-context-detail-row">
-                  <span>Precip now</span>
-                  <strong>
-                    {context?.weather_now.precip_mm ? `${context.weather_now.precip_mm.toFixed(1)} mm` : "—"}
-                  </strong>
-                </div>
-                <div className="dispatcher-context-detail-row">
-                  <span>Snow now</span>
-                  <strong>
-                    {context?.weather_now.snow_cm ? `${context.weather_now.snow_cm.toFixed(1)} cm` : "—"}
-                  </strong>
-                </div>
-                <div className="dispatcher-context-forecast">
-                  <span className="dispatcher-context-forecast-title">Next 6 hours</span>
-                  <div className="dispatcher-context-forecast-list">
-                    {(context?.next_6h ?? []).map((hour) => (
-                      <div key={hour.starts_at} className="dispatcher-context-forecast-item">
-                        <span className="muted">
-                          {new Intl.DateTimeFormat("en-CA", {
-                            timeZone: EDMONTON_TZ,
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            hour12: false,
-                          }).format(new Date(hour.starts_at))}
-                        </span>
-                        <span>{hour.precip_mm ? `${hour.precip_mm.toFixed(1)} mm` : "—"}</span>
-                        <span>{hour.snow_cm ? `${hour.snow_cm.toFixed(1)} cm` : "—"}</span>
-                      </div>
-                    ))}
-                    {context?.next_6h?.length ? null : <span className="muted">No forecast data.</span>}
-                  </div>
+            </div>
+            <span className="dispatcher-context-action">{contextExpanded ? "Hide" : "Details"}</span>
+          </button>
+          {contextExpanded ? (
+            <div className="dispatcher-context-details">
+              <div className="dispatcher-context-detail-row">
+                <span>Wind</span>
+                <strong>
+                  {context?.weather_now.wind_kph != null ? `${Math.round(context.weather_now.wind_kph)} kph` : "—"}
+                </strong>
+              </div>
+              <div className="dispatcher-context-detail-row">
+                <span>Precip now</span>
+                <strong>
+                  {context?.weather_now.precip_mm != null ? `${context.weather_now.precip_mm.toFixed(1)} mm` : "—"}
+                </strong>
+              </div>
+              <div className="dispatcher-context-detail-row">
+                <span>Snow now</span>
+                <strong>
+                  {context?.weather_now.snow_cm != null ? `${context.weather_now.snow_cm.toFixed(1)} cm` : "—"}
+                </strong>
+              </div>
+              <div className="dispatcher-context-forecast">
+                <span className="dispatcher-context-forecast-title">Next 6 hours</span>
+                <div className="dispatcher-context-forecast-list">
+                  {(context?.next_6h ?? []).map((hour) => (
+                    <div key={hour.starts_at} className="dispatcher-context-forecast-item">
+                      <span className="muted">
+                        {new Intl.DateTimeFormat("en-CA", {
+                          timeZone: EDMONTON_TZ,
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: false,
+                        }).format(new Date(hour.starts_at))}
+                      </span>
+                      <span>{hour.precip_mm != null ? `${hour.precip_mm.toFixed(1)} mm` : "—"}</span>
+                      <span>{hour.snow_cm != null ? `${hour.snow_cm.toFixed(1)} cm` : "—"}</span>
+                    </div>
+                  ))}
+                  {context?.next_6h?.length ? null : <span className="muted">No forecast data.</span>}
                 </div>
               </div>
             ) : null}
