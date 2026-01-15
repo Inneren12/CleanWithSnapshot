@@ -74,6 +74,7 @@ export default function BookingPoliciesPage() {
   const [profile, setProfile] = useState<AdminProfile | null>(null);
   const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
+  const [policies, setPolicies] = useState<BookingPoliciesResponse | null>(null);
   const [draft, setDraft] = useState<BookingPoliciesResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
