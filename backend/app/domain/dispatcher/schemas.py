@@ -95,12 +95,22 @@ class DispatcherRouteEstimateRequest(BaseModel):
     mode: Literal["driving"] = "driving"
 
 
+class DispatcherEtaAdjustment(BaseModel):
+    kind: Literal["adjustment", "note"]
+    code: str
+    label: str
+    delta_min: int = 0
+    multiplier: float | None = None
+
+
 class DispatcherRouteEstimateResponse(BaseModel):
     distance_km: float
     duration_min: int
     duration_in_traffic_min: int | None = None
     provider: Literal["google", "heuristic"]
     cached: bool
+    base_duration_min: int
+    adjustments: list[DispatcherEtaAdjustment] = Field(default_factory=list)
 
 
 class DispatcherSuggestionScoreParts(BaseModel):

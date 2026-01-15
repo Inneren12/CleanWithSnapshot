@@ -108,12 +108,22 @@ type DispatcherNotifyAuditResponse = {
   audits: DispatcherNotifyAuditEntry[];
 };
 
+type DispatcherEtaAdjustment = {
+  kind: "adjustment" | "note";
+  code: string;
+  label: string;
+  delta_min: number;
+  multiplier: number | null;
+};
+
 type RouteEstimateResponse = {
   distance_km: number;
   duration_min: number;
   duration_in_traffic_min: number | null;
   provider: "google" | "heuristic";
   cached: boolean;
+  base_duration_min: number;
+  adjustments: DispatcherEtaAdjustment[];
 };
 
 type DispatcherSuggestionScoreParts = {
@@ -297,6 +307,14 @@ function formatDistanceKm(value: number) {
 function formatDurationDelta(value: number) {
   const sign = value > 0 ? "+" : "";
   return `${sign}${Math.abs(value)} min`;
+}
+
+function adjustmentLabels(
+  adjustments: DispatcherEtaAdjustment[] | null | undefined,
+  kind: DispatcherEtaAdjustment["kind"]
+) {
+  if (!adjustments) return [];
+  return adjustments.filter((adjustment) => adjustment.kind === kind).map((adjustment) => adjustment.label);
 }
 
 function isoDateInTz(now: Date, tz: string): string {
@@ -1004,6 +1022,16 @@ export default function DispatcherPage() {
   const routeDeltaMinutes = useMemo(() => {
     if (!currentRouteEstimate || !reassignRouteEstimate) return null;
     return reassignRouteEstimate.duration_min - currentRouteEstimate.duration_min;
+  }, [currentRouteEstimate, reassignRouteEstimate]);
+
+  const etaAdjustmentLabels = useMemo(() => {
+    const adjustments = currentRouteEstimate?.adjustments ?? reassignRouteEstimate?.adjustments ?? [];
+    return adjustmentLabels(adjustments, "adjustment");
+  }, [currentRouteEstimate, reassignRouteEstimate]);
+
+  const etaNoteLabels = useMemo(() => {
+    const adjustments = currentRouteEstimate?.adjustments ?? reassignRouteEstimate?.adjustments ?? [];
+    return adjustmentLabels(adjustments, "note");
   }, [currentRouteEstimate, reassignRouteEstimate]);
 
   const alertCounts = useMemo(() => {
@@ -1988,6 +2016,16 @@ export default function DispatcherPage() {
                     <div className="dispatcher-route-delta">
                       Assigning to {reassignWorkerName} {routeDeltaMinutes >= 0 ? "adds" : "saves"}{" "}
                       {formatDurationDelta(routeDeltaMinutes)} travel.
+                    </div>
+                  ) : null}
+                  {etaAdjustmentLabels.length ? (
+                    <div className="dispatcher-route-delta">
+                      <span className="muted">ETA includes: {etaAdjustmentLabels.join(", ")}</span>
+                    </div>
+                  ) : null}
+                  {etaNoteLabels.length ? (
+                    <div className="dispatcher-route-delta">
+                      <span className="muted">Note: {etaNoteLabels.join(", ")}</span>
                     </div>
                   ) : null}
                 </div>

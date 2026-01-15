@@ -4,6 +4,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from math import ceil
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -84,6 +85,12 @@ _ZONE_ALIASES = {
     "old strathcona": "whyte/old strathcona",
     "st albert": "st. albert",
 }
+_RIVER_VALLEY_BOXES = [
+    _ZoneBox("River Valley Access", 53.47, 53.58, -113.62, -113.42),
+    _ZoneBox("River Valley Southwest", 53.44, 53.50, -113.62, -113.50),
+]
+
+_DEFAULT_TZ = ZoneInfo("America/Edmonton")
 
 SUGGEST_DISTANCE_WEIGHT = 0.45
 SUGGEST_SKILL_WEIGHT = 0.2
@@ -172,6 +179,86 @@ def _ensure_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
+
+
+def _local_month(value: datetime | None) -> int:
+    if value is None:
+        return datetime.now(_DEFAULT_TZ).month
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(_DEFAULT_TZ).month
+
+
+def _river_valley_access(lat: float | None, lng: float | None) -> bool:
+    if lat is None or lng is None:
+        return False
+    return any(
+        zone.lat_min <= lat <= zone.lat_max and zone.lng_min <= lng <= zone.lng_max
+        for zone in _RIVER_VALLEY_BOXES
+    )
+
+
+def apply_eta_adjustments(
+    *,
+    base_duration_min: int,
+    depart_at: datetime | None,
+    zone: str | None,
+    lat: float | None,
+    lng: float | None,
+) -> tuple[int, list[schemas.DispatcherEtaAdjustment]]:
+    adjustments: list[schemas.DispatcherEtaAdjustment] = []
+    adjusted = base_duration_min
+    if _local_month(depart_at) in settings.dispatcher_winter_months:
+        multiplier = settings.dispatcher_winter_travel_multiplier
+        if multiplier and multiplier != 1.0:
+            multiplied = max(int(ceil(base_duration_min * multiplier)), base_duration_min)
+            delta = multiplied - base_duration_min
+            if delta:
+                adjustments.append(
+                    schemas.DispatcherEtaAdjustment(
+                        kind="adjustment",
+                        code="winter_travel_multiplier",
+                        label=f"Winter +{int(round((multiplier - 1) * 100))}%",
+                        delta_min=delta,
+                        multiplier=multiplier,
+                    )
+                )
+            adjusted = multiplied
+        buffer_min = settings.dispatcher_winter_buffer_min
+        if buffer_min > 0:
+            adjusted += buffer_min
+            adjustments.append(
+                schemas.DispatcherEtaAdjustment(
+                    kind="adjustment",
+                    code="winter_buffer",
+                    label=f"Winter buffer +{buffer_min}m",
+                    delta_min=buffer_min,
+                )
+            )
+
+    if zone == "Downtown":
+        buffer_min = settings.dispatcher_downtown_parking_buffer_min
+        if buffer_min > 0:
+            adjusted += buffer_min
+            adjustments.append(
+                schemas.DispatcherEtaAdjustment(
+                    kind="adjustment",
+                    code="downtown_parking_buffer",
+                    label=f"Downtown parking +{buffer_min}m",
+                    delta_min=buffer_min,
+                )
+            )
+
+    if _river_valley_access(lat, lng):
+        adjustments.append(
+            schemas.DispatcherEtaAdjustment(
+                kind="note",
+                code="river_valley_access",
+                label="River Valley access",
+            )
+        )
+
+    return adjusted, adjustments
 
 
 def _cancellation_timestamp(booking: Booking) -> datetime | None:
@@ -548,6 +635,7 @@ async def fetch_dispatcher_assignment_suggestions(
     ends_at = _booking_end(booking)
     target_lat = getattr(address, "lat", None)
     target_lng = getattr(address, "lng", None)
+    target_zone = zone_for_point(target_lat, target_lng)
     service_type = None
     if lead and getattr(lead, "structured_inputs", None):
         service_type = _normalize_skill_value((lead.structured_inputs or {}).get("cleaning_type"))
@@ -644,10 +732,22 @@ async def fetch_dispatcher_assignment_suggestions(
                 )
                 eta_min = estimate.duration_in_traffic_min or estimate.duration_min
 
+        eta_adjustments: list[schemas.DispatcherEtaAdjustment] = []
+        if eta_min is not None:
+            eta_min, eta_adjustments = apply_eta_adjustments(
+                base_duration_min=eta_min,
+                depart_at=starts_at,
+                zone=target_zone,
+                lat=target_lat,
+                lng=target_lng,
+            )
+
         if eta_min is None:
             distance_score = 0.5
         else:
-            distance_score = _clamp(1 - min(eta_min, SUGGEST_DISTANCE_MAX_MIN) / SUGGEST_DISTANCE_MAX_MIN)
+            distance_score = _clamp(
+                1 - min(eta_min, SUGGEST_DISTANCE_MAX_MIN) / SUGGEST_DISTANCE_MAX_MIN
+            )
 
         worker_skills = [
             normalized
@@ -684,6 +784,10 @@ async def fetch_dispatcher_assignment_suggestions(
             reasons.append("high rating")
         if workload_score >= SUGGEST_LIGHT_WORKLOAD_THRESHOLD and max_workload > 0:
             reasons.append("light workload")
+
+        for adjustment in eta_adjustments:
+            if adjustment.label not in reasons:
+                reasons.append(adjustment.label)
 
         suggestions.append(
             schemas.DispatcherAssignmentSuggestion(

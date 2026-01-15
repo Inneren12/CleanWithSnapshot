@@ -50,7 +50,8 @@ async def test_dispatcher_route_estimate_uses_heuristic_without_google_key(clien
         "/v1/admin/dispatcher/routes/estimate",
         json={
             "origin": {"lat": 53.5461, "lng": -113.4938},
-            "dest": {"lat": 53.558, "lng": -113.473},
+            "dest": {"lat": 53.6, "lng": -113.7},
+            "depart_at": "2024-06-01T10:00:00Z",
             "mode": "driving",
         },
         headers=_basic_auth("admin", "secret"),
@@ -61,6 +62,9 @@ async def test_dispatcher_route_estimate_uses_heuristic_without_google_key(clien
     assert payload["provider"] == "heuristic"
     assert payload["cached"] is False
     assert payload["duration_min"] >= 5
+    assert payload["base_duration_min"] >= 5
+    assert payload["duration_min"] == payload["base_duration_min"]
+    assert payload["adjustments"] == []
 
 
 @pytest.mark.anyio

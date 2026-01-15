@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     twilio_call_url: str | None = Field(None)
     twilio_timeout_seconds: float = Field(10.0)
     dispatcher_alert_sms_to: str | None = Field(None)
+    dispatcher_winter_months_raw: str = Field(
+        "11,12,1,2,3", validation_alias="DISPATCHER_WINTER_MONTHS"
+    )
+    dispatcher_winter_travel_multiplier: float = Field(
+        1.10, validation_alias="DISPATCHER_WINTER_TRAVEL_MULTIPLIER"
+    )
+    dispatcher_winter_buffer_min: int = Field(10, validation_alias="DISPATCHER_WINTER_BUFFER_MIN")
+    dispatcher_downtown_parking_buffer_min: int = Field(
+        15, validation_alias="DISPATCHER_DOWNTOWN_PARKING_BUFFER_MIN"
+    )
     owner_basic_username: str | None = Field(None)
     owner_basic_password: str | None = Field(None)
     admin_basic_username: str | None = Field(None)
@@ -236,6 +246,7 @@ class Settings(BaseSettings):
         "trusted_proxy_cidrs_raw",
         "export_webhook_allowed_hosts_raw",
         "order_photo_allowed_mimes_raw",
+        "dispatcher_winter_months_raw",
         mode="before",
     )
     @classmethod
@@ -405,6 +416,23 @@ class Settings(BaseSettings):
     @admin_mfa_required_roles.setter
     def admin_mfa_required_roles(self, value: list[str] | str | None) -> None:
         self.admin_mfa_required_roles_raw = self._normalize_raw_list(value)
+
+    @property
+    def dispatcher_winter_months(self) -> list[int]:
+        parsed = self._parse_list(self.dispatcher_winter_months_raw)
+        months: list[int] = []
+        for entry in parsed:
+            try:
+                value = int(entry)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= value <= 12:
+                months.append(value)
+        return months
+
+    @dispatcher_winter_months.setter
+    def dispatcher_winter_months(self, value: list[int] | str | None) -> None:
+        self.dispatcher_winter_months_raw = self._normalize_raw_list(value)
 
     @property
     def dlq_auto_replay_allow_outbox_kinds(self) -> list[str]:
