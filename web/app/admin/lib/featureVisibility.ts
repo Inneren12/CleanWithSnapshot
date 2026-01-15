@@ -46,6 +46,7 @@ const MODULE_PERMISSIONS: Record<string, string> = {
   inventory: "view",
   training: "view",
   notifications_center: "admin",
+  settings: "admin",
   api: "admin",
 };
 
@@ -88,6 +89,11 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
   { key: "module.inventory", label: "Inventory" },
   { key: "module.training", label: "Training" },
   { key: "module.notifications_center", label: "Notifications center" },
+  {
+    key: "module.settings",
+    label: "Settings",
+    description: "Organization profile, hours, and holidays.",
+  },
   {
     key: "module.api",
     label: "API & Integrations",

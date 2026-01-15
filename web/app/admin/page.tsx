@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AdminNav from "./components/AdminNav";
 import {
@@ -9,11 +9,11 @@ import {
   type UiPrefsResponse,
   isVisible,
 } from "./lib/featureVisibility";
+import { DEFAULT_ORG_TIMEZONE, type OrgSettingsResponse } from "./lib/orgSettings";
 
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-const EDMONTON_TZ = "America/Edmonton";
 const KPI_PRESETS = [7, 28, 90];
 
 type AdminMetricsResponse = {
@@ -85,12 +85,12 @@ type OutboxEvent = {
   created_at: string;
 };
 
-function formatDateTime(value: string) {
+function formatDateTime(value: string, timeZone: string) {
   const dt = new Date(value);
   return new Intl.DateTimeFormat("en-CA", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: EDMONTON_TZ,
+    timeZone,
   }).format(dt);
 }
 
@@ -111,14 +111,14 @@ function ymdToDate(ymd: string) {
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 }
 
-function addDaysYMD(day: string, delta: number) {
+function addDaysYMD(day: string, delta: number, timeZone: string) {
   const base = ymdToDate(day);
   base.setUTCDate(base.getUTCDate() + delta);
-  return formatYMDInTz(base, EDMONTON_TZ);
+  return formatYMDInTz(base, timeZone);
 }
 
-function bookingLocalYMD(startsAt: string) {
-  return formatYMDInTz(new Date(startsAt), EDMONTON_TZ);
+function bookingLocalYMD(startsAt: string, timeZone: string) {
+  return formatYMDInTz(new Date(startsAt), timeZone);
 }
 
 function statusBadge(status?: string) {
@@ -169,6 +169,8 @@ export default function AdminPage() {
   const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [orgSettings, setOrgSettings] = useState<OrgSettingsResponse | null>(null);
+  const [orgSettingsError, setOrgSettingsError] = useState<string | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [exportEvents, setExportEvents] = useState<ExportEvent[]>([]);
@@ -181,9 +183,10 @@ export default function AdminPage() {
   const [leadStatusFilter, setLeadStatusFilter] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     const today = new Date();
-    return formatYMDInTz(today, EDMONTON_TZ);
+    return formatYMDInTz(today, DEFAULT_ORG_TIMEZONE);
   });
   const [message, setMessage] = useState<string | null>(null);
+  const timezoneRef = useRef(DEFAULT_ORG_TIMEZONE);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -197,6 +200,7 @@ export default function AdminPage() {
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
   const featureOverrides = featureConfig?.overrides ?? {};
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
+  const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
   const dashboardVisible = visibilityReady
     ? isVisible("module.dashboard", profile?.role, featureOverrides, hiddenKeys)
     : true;
@@ -210,17 +214,24 @@ export default function AdminPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       {
+        key: "org-settings",
+        label: "Org Settings",
+        href: "/admin/settings/org",
+        featureKey: "module.settings",
+      },
+      {
         key: "pricing",
         label: "Service Types & Pricing",
         href: "/admin/settings/pricing",
-        featureKey: "pricing.service_types",
+        featureKey: "module.settings",
       },
       {
         key: "policies",
         label: "Booking Policies",
         href: "/admin/settings/booking-policies",
-        featureKey: "pricing.booking_policies",
+        featureKey: "module.settings",
       },
+
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
     ];
     return candidates
@@ -271,6 +282,22 @@ export default function AdminPage() {
     } else {
       setUiPrefs(null);
       setSettingsError("Failed to load UI preferences");
+    }
+  }, [authHeaders, password, username]);
+
+  const loadOrgSettings = useCallback(async () => {
+    if (!username || !password) return;
+    setOrgSettingsError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/settings/org`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as OrgSettingsResponse;
+      setOrgSettings(data);
+    } else {
+      setOrgSettings(null);
+      setOrgSettingsError("Failed to load org settings");
     }
   }, [authHeaders, password, username]);
 
@@ -360,7 +387,7 @@ export default function AdminPage() {
 
   const loadBookings = async () => {
     if (!username || !password) return;
-    const endDate = addDaysYMD(selectedDate, 6);
+    const endDate = addDaysYMD(selectedDate, 6, orgTimezone);
     const response = await fetch(
       `${API_BASE}/v1/admin/bookings?from=${selectedDate}&to=${endDate}`,
       { headers: authHeaders, cache: "no-store" }
@@ -510,7 +537,7 @@ export default function AdminPage() {
   const weekView = useMemo(() => {
     const start = ymdToDate(selectedDate);
     const formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: EDMONTON_TZ,
+      timeZone: orgTimezone,
       weekday: "short",
       month: "short",
       day: "numeric",
@@ -519,15 +546,15 @@ export default function AdminPage() {
     for (let i = 0; i < 7; i++) {
       const d = new Date(start);
       d.setUTCDate(start.getUTCDate() + i);
-      const key = formatYMDInTz(d, EDMONTON_TZ);
+      const key = formatYMDInTz(d, orgTimezone);
       days.push({
         label: formatter.format(d),
         date: key,
-        items: bookings.filter((b) => bookingLocalYMD(b.starts_at) === key),
+        items: bookings.filter((b) => bookingLocalYMD(b.starts_at, orgTimezone) === key),
       });
     }
     return days;
-  }, [bookings, selectedDate]);
+  }, [bookings, orgTimezone, selectedDate]);
 
   const applyPresetRange = (days: number) => {
     setMetricsPreset(days);
@@ -567,6 +594,7 @@ export default function AdminPage() {
       </div>
 
       {settingsError ? <p className="alert alert-warning">{settingsError}</p> : null}
+      {orgSettingsError ? <p className="alert alert-warning">{orgSettingsError}</p> : null}
 
       {profile ? (
         <div className={`alert ${isReadOnly ? "alert-warning" : "alert-info"}`}>
@@ -816,7 +844,7 @@ export default function AdminPage() {
                     <span className="muted">{event.target_url_host ?? "unknown host"}</span>
                   </div>
                   <div className="muted">
-                    Attempts: {event.attempts} · Lead: {event.lead_id ?? "unknown"} · Created: {formatDateTime(event.created_at)}
+                    Attempts: {event.attempts} · Lead: {event.lead_id ?? "unknown"} · Created: {formatDateTime(event.created_at, orgTimezone)}
                   </div>
                   <div className="muted">Last error: {event.last_error_code || "unknown"}</div>
                 </div>
@@ -844,7 +872,7 @@ export default function AdminPage() {
                     <strong>{event.kind}</strong>
                     <span className="muted">Attempts: {event.attempts}</span>
                   </div>
-                  <div className="muted">Created: {formatDateTime(event.created_at)}</div>
+                  <div className="muted">Created: {formatDateTime(event.created_at, orgTimezone)}</div>
                   <div className="muted">Last error: {event.last_error || "unknown"}</div>
                   <div className="muted">Dedupe: {event.dedupe_key}</div>
                   <div className="admin-actions">
@@ -885,10 +913,10 @@ export default function AdminPage() {
           </thead>
           <tbody>
             {bookings
-              .filter((booking) => bookingLocalYMD(booking.starts_at) === selectedDate)
+              .filter((booking) => bookingLocalYMD(booking.starts_at, orgTimezone) === selectedDate)
               .map((booking) => (
                 <tr key={booking.booking_id}>
-                  <td>{formatDateTime(booking.starts_at)}</td>
+                  <td>{formatDateTime(booking.starts_at, orgTimezone)}</td>
                   <td>{statusBadge(booking.status)}</td>
                   <td>
                     <div>{booking.lead_name || "Unassigned"}</div>
@@ -937,7 +965,7 @@ export default function AdminPage() {
                 <div className="muted">{day.items.length} bookings</div>
                 <ul style={{ paddingLeft: 16, margin: 0, display: "grid", gap: 6 }}>
                   {day.items.map((booking) => (
-                    <li key={booking.booking_id}>• {formatDateTime(booking.starts_at)}</li>
+                    <li key={booking.booking_id}>• {formatDateTime(booking.starts_at, orgTimezone)}</li>
                   ))}
                 </ul>
               </div>

@@ -10,11 +10,11 @@ import {
   type UiPrefsResponse,
   isVisible,
 } from "../lib/featureVisibility";
+import { DEFAULT_ORG_TIMEZONE, type OrgSettingsResponse } from "../lib/orgSettings";
 
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-const EDMONTON_TZ = "America/Edmonton";
 const EDMONTON_CENTER = { lat: 53.5461, lng: -113.4938 };
 const START_HOUR = 8;
 const END_HOUR = 20;
@@ -204,9 +204,9 @@ function formatTimeLabel(hour: number) {
   return `${value}:00`;
 }
 
-function formatTimeRange(startsAt: string, endsAt: string) {
+function formatTimeRange(startsAt: string, endsAt: string, timeZone: string) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: EDMONTON_TZ,
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -214,9 +214,9 @@ function formatTimeRange(startsAt: string, endsAt: string) {
   return `${formatter.format(new Date(startsAt))}–${formatter.format(new Date(endsAt))}`;
 }
 
-function formatStartTime(startsAt: string) {
+function formatStartTime(startsAt: string, timeZone: string) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: EDMONTON_TZ,
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -245,9 +245,9 @@ function diffMinutes(start: Date, end: Date) {
   return Math.round((end.getTime() - start.getTime()) / 60000);
 }
 
-function minutesFromRangeStart(value: string) {
+function minutesFromRangeStart(value: string, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: EDMONTON_TZ,
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -278,20 +278,20 @@ function bookingStatusColor(status: string) {
   return "#64748b";
 }
 
-function formatLastUpdated(value: string | null) {
+function formatLastUpdated(value: string | null, timeZone: string) {
   if (!value) return "—";
   return new Intl.DateTimeFormat("en-CA", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: EDMONTON_TZ,
+    timeZone,
   }).format(new Date(value));
 }
 
-function formatAuditTime(value: string) {
+function formatAuditTime(value: string, timeZone: string) {
   return new Intl.DateTimeFormat("en-CA", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: EDMONTON_TZ,
+    timeZone,
   }).format(new Date(value));
 }
 
@@ -379,6 +379,8 @@ export default function DispatcherPage() {
   const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [orgSettings, setOrgSettings] = useState<OrgSettingsResponse | null>(null);
+  const [orgSettingsError, setOrgSettingsError] = useState<string | null>(null);
   const [board, setBoard] = useState<DispatcherBoardResponse | null>(null);
   const [stats, setStats] = useState<DispatcherStatsResponse | null>(null);
   const [alerts, setAlerts] = useState<DispatcherAlert[]>([]);
@@ -437,6 +439,7 @@ export default function DispatcherPage() {
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
   const featureOverrides = featureConfig?.overrides ?? {};
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
+  const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
   const scheduleVisible = visibilityReady
     ? isVisible("module.schedule", profile?.role, featureOverrides, hiddenKeys)
     : true;
@@ -453,16 +456,22 @@ export default function DispatcherPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       {
+        key: "org-settings",
+        label: "Org Settings",
+        href: "/admin/settings/org",
+        featureKey: "module.settings",
+      },
+      {
         key: "pricing",
         label: "Service Types & Pricing",
         href: "/admin/settings/pricing",
-        featureKey: "pricing.service_types",
+        featureKey: "module.settings",
       },
       {
         key: "policies",
         label: "Booking Policies",
         href: "/admin/settings/booking-policies",
-        featureKey: "pricing.booking_policies",
+        featureKey: "module.settings",
       },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
     ];
@@ -523,6 +532,22 @@ export default function DispatcherPage() {
     }
   }, [authHeaders, password, username]);
 
+  const loadOrgSettings = useCallback(async () => {
+    if (!username || !password) return;
+    setOrgSettingsError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/settings/org`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as OrgSettingsResponse;
+      setOrgSettings(data);
+    } else {
+      setOrgSettings(null);
+      setOrgSettingsError("Failed to load org settings");
+    }
+  }, [authHeaders, password, username]);
+
   const showToast = useCallback((message: string, kind: "error" | "success" = "error") => {
     setToast({ message, kind });
   }, []);
@@ -537,7 +562,8 @@ export default function DispatcherPage() {
     void loadProfile();
     void loadFeatureConfig();
     void loadUiPrefs();
-  }, [loadFeatureConfig, loadProfile, loadUiPrefs]);
+    void loadOrgSettings();
+  }, [loadFeatureConfig, loadOrgSettings, loadProfile, loadUiPrefs]);
 
   useEffect(() => {
     if (!selectedBooking) {
@@ -568,13 +594,13 @@ export default function DispatcherPage() {
     setLoading(true);
     setError(null);
     try {
-      const isoDate = isoDateInTz(new Date(), EDMONTON_TZ);
+      const isoDate = isoDateInTz(new Date(), orgTimezone);
       const zoneParam = selectedZone === "All" ? null : selectedZone;
       const zoneQuery = zoneParam ? `&zone=${encodeURIComponent(zoneParam)}` : "";
       const response = await fetch(
         `${API_BASE}/v1/admin/dispatcher/board?date=${encodeURIComponent(
           isoDate
-        )}&tz=${encodeURIComponent(EDMONTON_TZ)}${zoneQuery}`,
+        )}&tz=${encodeURIComponent(orgTimezone)}${zoneQuery}`,
         {
           headers: authHeaders,
           cache: "no-store",
@@ -591,18 +617,18 @@ export default function DispatcherPage() {
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, password, selectedZone, username]);
+  }, [authHeaders, orgTimezone, password, selectedZone, username]);
 
   const fetchStats = useCallback(async () => {
     if (!username || !password) return;
     try {
-      const isoDate = isoDateInTz(new Date(), EDMONTON_TZ);
+      const isoDate = isoDateInTz(new Date(), orgTimezone);
       const zoneParam = selectedZone === "All" ? null : selectedZone;
       const zoneQuery = zoneParam ? `&zone=${encodeURIComponent(zoneParam)}` : "";
       const response = await fetch(
         `${API_BASE}/v1/admin/dispatcher/stats?date=${encodeURIComponent(
           isoDate
-        )}&tz=${encodeURIComponent(EDMONTON_TZ)}${zoneQuery}`,
+        )}&tz=${encodeURIComponent(orgTimezone)}${zoneQuery}`,
         {
           headers: authHeaders,
           cache: "no-store",
@@ -616,16 +642,16 @@ export default function DispatcherPage() {
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Unable to load dispatcher stats");
     }
-  }, [authHeaders, password, selectedZone, username]);
+  }, [authHeaders, orgTimezone, password, selectedZone, username]);
 
   const fetchAlerts = useCallback(async () => {
     if (!username || !password) return;
     try {
-      const isoDate = isoDateInTz(new Date(), EDMONTON_TZ);
+      const isoDate = isoDateInTz(new Date(), orgTimezone);
       const response = await fetch(
         `${API_BASE}/v1/admin/dispatcher/alerts?date=${encodeURIComponent(
           isoDate
-        )}&tz=${encodeURIComponent(EDMONTON_TZ)}`,
+        )}&tz=${encodeURIComponent(orgTimezone)}`,
         {
           headers: authHeaders,
           cache: "no-store",
@@ -645,7 +671,7 @@ export default function DispatcherPage() {
     if (!username || !password) return;
     try {
       const response = await fetch(
-        `${API_BASE}/v1/admin/dispatcher/context?tz=${encodeURIComponent(EDMONTON_TZ)}`,
+        `${API_BASE}/v1/admin/dispatcher/context?tz=${encodeURIComponent(orgTimezone)}`,
         {
           headers: authHeaders,
           cache: "no-store",
@@ -1526,7 +1552,7 @@ export default function DispatcherPage() {
           const strong = document.createElement("strong");
           strong.textContent = booking.client?.name ?? "Client";
           const span = document.createElement("span");
-          span.textContent = `${formatStartTime(booking.starts_at)} • ${shortAddress(booking.address)}`;
+          span.textContent = `${formatStartTime(booking.starts_at, orgTimezone)} • ${shortAddress(booking.address)}`;
           root.append(strong, span);
           infoWindow.setContent(root);
           infoWindow.open({ map, anchor: marker });
@@ -1737,12 +1763,12 @@ export default function DispatcherPage() {
                         >
                           {(workerBookings.get(worker.worker_id) ?? []).map((booking) => {
                             const startOffset = clampRange(
-                              minutesFromRangeStart(booking.starts_at),
+                              minutesFromRangeStart(booking.starts_at, orgTimezone),
                               0,
                               RANGE_END_MINUTES
                             );
                             const endOffset = clampRange(
-                              minutesFromRangeStart(booking.ends_at),
+                              minutesFromRangeStart(booking.ends_at, orgTimezone),
                               0,
                               RANGE_END_MINUTES
                             );
@@ -1772,7 +1798,7 @@ export default function DispatcherPage() {
                                   {booking.client?.name ?? "Unnamed client"}
                                 </div>
                                 <div className="dispatcher-booking-subtitle">
-                                  {formatTimeRange(booking.starts_at, booking.ends_at)}
+                                  {formatTimeRange(booking.starts_at, booking.ends_at, orgTimezone)}
                                 </div>
                               </button>
                             );
@@ -1827,6 +1853,7 @@ export default function DispatcherPage() {
     <div className="dispatcher-page">
       <AdminNav links={navLinks} activeKey="dispatcher" />
       {settingsError ? <p className="alert alert-warning">{settingsError}</p> : null}
+      {orgSettingsError ? <p className="alert alert-warning">{orgSettingsError}</p> : null}
       {hasMapKey ? (
         <>
           <Script
@@ -1842,7 +1869,7 @@ export default function DispatcherPage() {
       <header className="dispatcher-header">
         <div>
           <h1>Dispatcher Timeline</h1>
-          <p className="muted">Live schedule for today in {EDMONTON_TZ}.</p>
+          <p className="muted">Live schedule for today in {orgTimezone}.</p>
         </div>
         {weatherVisible ? (
           <section className="dispatcher-context" aria-label="Context">
@@ -1900,7 +1927,7 @@ export default function DispatcherPage() {
                     <div key={hour.starts_at} className="dispatcher-context-forecast-item">
                       <span className="muted">
                         {new Intl.DateTimeFormat("en-CA", {
-                          timeZone: EDMONTON_TZ,
+                          timeZone: orgTimezone,
                           hour: "2-digit",
                           minute: "2-digit",
                           hour12: false,
@@ -1927,7 +1954,7 @@ export default function DispatcherPage() {
         </div>
         <div className="dispatcher-updated" role="status" aria-live="polite">
           <span>Last updated</span>
-          <strong>{formatLastUpdated(lastUpdated)}</strong>
+          <strong>{formatLastUpdated(lastUpdated, orgTimezone)}</strong>
         </div>
       </header>
 
@@ -2073,7 +2100,7 @@ export default function DispatcherPage() {
               </div>
               <div className="detail">
                 <span className="detail-label">Time</span>
-                <strong>{formatTimeRange(selectedBooking.starts_at, selectedBooking.ends_at)}</strong>
+                <strong>{formatTimeRange(selectedBooking.starts_at, selectedBooking.ends_at, orgTimezone)}</strong>
               </div>
               <div className="detail">
                 <span className="detail-label">Status</span>
@@ -2394,7 +2421,7 @@ export default function DispatcherPage() {
                       <ul>
                         {commAudits.map((audit) => (
                           <li key={audit.audit_id}>
-                            <span>{formatAuditTime(audit.sent_at)}</span>
+                            <span>{formatAuditTime(audit.sent_at, orgTimezone)}</span>
                             <span>
                               {audit.channel.toUpperCase()} {audit.target}
                             </span>

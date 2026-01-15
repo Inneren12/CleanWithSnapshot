@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.org_settings.db_models import OrganizationSettings
+
+DEFAULT_TIMEZONE = "America/Edmonton"
+DEFAULT_CURRENCY = "CAD"
+DEFAULT_LANGUAGE = "en"
+
+DEFAULT_BUSINESS_HOURS: dict[str, dict[str, str | bool]] = {
+    "monday": {"enabled": True, "start": "08:00", "end": "18:00"},
+    "tuesday": {"enabled": True, "start": "08:00", "end": "18:00"},
+    "wednesday": {"enabled": True, "start": "08:00", "end": "18:00"},
+    "thursday": {"enabled": True, "start": "08:00", "end": "18:00"},
+    "friday": {"enabled": True, "start": "08:00", "end": "18:00"},
+    "saturday": {"enabled": True, "start": "09:00", "end": "17:00"},
+    "sunday": {"enabled": False, "start": "", "end": ""},
+}
+
+DEFAULT_HOLIDAYS = [
+    "new_years_day",
+    "family_day",
+    "good_friday",
+    "victoria_day",
+    "canada_day",
+    "labour_day",
+    "thanksgiving",
+    "remembrance_day",
+    "christmas_day",
+    "boxing_day",
+]
+
+
+async def get_or_create_org_settings(
+    session: AsyncSession, org_id: uuid.UUID
+) -> OrganizationSettings:
+    record = await session.get(OrganizationSettings, org_id)
+    if record:
+        return record
+    record = OrganizationSettings(
+        org_id=org_id,
+        timezone=DEFAULT_TIMEZONE,
+        currency=DEFAULT_CURRENCY,
+        language=DEFAULT_LANGUAGE,
+        business_hours=DEFAULT_BUSINESS_HOURS,
+        holidays=DEFAULT_HOLIDAYS,
+        branding={},
+    )
+    session.add(record)
+    await session.flush()
+    return record
+
+
+def resolve_timezone(record: OrganizationSettings) -> str:
+    return record.timezone or DEFAULT_TIMEZONE
+
+
+def resolve_currency(record: OrganizationSettings) -> str:
+    return record.currency or DEFAULT_CURRENCY
+
+
+def resolve_language(record: OrganizationSettings) -> str:
+    return record.language or DEFAULT_LANGUAGE
+
+
+def resolve_business_hours(record: OrganizationSettings) -> dict:
+    if isinstance(record.business_hours, dict) and record.business_hours:
+        return record.business_hours
+    return DEFAULT_BUSINESS_HOURS
+
+
+def resolve_holidays(record: OrganizationSettings) -> list[str]:
+    if isinstance(record.holidays, list) and record.holidays:
+        return record.holidays
+    return DEFAULT_HOLIDAYS
+
+
+def resolve_branding(record: OrganizationSettings) -> dict:
+    if isinstance(record.branding, dict) and record.branding:
+        return record.branding
+    return {}
+
+
+async def apply_org_settings_update(
+    session: AsyncSession, org_id: uuid.UUID, *, payload
+) -> OrganizationSettings:
+    record = await get_or_create_org_settings(session, org_id)
+    if payload.timezone is not None:
+        record.timezone = payload.timezone
+    if payload.currency is not None:
+        record.currency = payload.currency
+    if payload.language is not None:
+        record.language = payload.language
+    if payload.business_hours is not None:
+        normalized_hours: dict[str, dict] = {}
+        for key, value in payload.business_hours.items():
+            if hasattr(value, "model_dump"):
+                normalized_hours[key] = value.model_dump()
+            else:
+                normalized_hours[key] = dict(value)
+        record.business_hours = normalized_hours
+    if payload.holidays is not None:
+        record.holidays = payload.holidays
+    if payload.legal_name is not None:
+        record.legal_name = payload.legal_name
+    if payload.legal_bn is not None:
+        record.legal_bn = payload.legal_bn
+    if payload.legal_gst_hst is not None:
+        record.legal_gst_hst = payload.legal_gst_hst
+    if payload.legal_address is not None:
+        record.legal_address = payload.legal_address
+    if payload.legal_phone is not None:
+        record.legal_phone = payload.legal_phone
+    if payload.legal_email is not None:
+        record.legal_email = payload.legal_email
+    if payload.legal_website is not None:
+        record.legal_website = payload.legal_website
+    if payload.branding is not None:
+        record.branding = payload.branding
+    await session.flush()
+    return record

@@ -22,6 +22,7 @@ MODULE_KEYS = [
     "module.inventory",
     "module.training",
     "module.notifications_center",
+    "module.settings",
     "module.api",
 ]
 
@@ -60,6 +61,7 @@ MODULE_PERMISSIONS: dict[str, str] = {
     "inventory": "view",
     "training": "view",
     "notifications_center": "admin",
+    "settings": "admin",
     "api": "admin",
 }
 
