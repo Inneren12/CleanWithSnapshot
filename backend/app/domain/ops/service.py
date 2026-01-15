@@ -417,8 +417,14 @@ def _serialize_schedule_booking(
         address_value = lead.address
 
     service_label = None
-    if lead and lead.structured_inputs:
+    if booking.policy_snapshot:
         service_label = (
+            booking.policy_snapshot.get("service_type")
+            or booking.policy_snapshot.get("cleaning_type")
+            or booking.policy_snapshot.get("service")
+        )
+    if lead and lead.structured_inputs:
+        service_label = service_label or (
             lead.structured_inputs.get("cleaning_type")
             or lead.structured_inputs.get("service_type")
             or lead.structured_inputs.get("service")

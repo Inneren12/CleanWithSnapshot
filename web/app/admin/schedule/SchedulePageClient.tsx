@@ -1,6 +1,6 @@
 "use client";
 
-import { type DragEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type DragEvent, type MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import AdminNav from "../components/AdminNav";
@@ -57,6 +57,57 @@ type ScheduleResponse = {
 type ToastMessage = {
   message: string;
   kind: "error" | "success";
+};
+
+type ClientOption = {
+  client_id: string;
+  name: string | null;
+  email: string;
+  phone: string | null;
+  address: string | null;
+};
+
+type AddressOption = {
+  address_id: number;
+  label: string;
+  address_text: string;
+};
+
+type ServiceAddon = {
+  addon_id: number;
+  name: string;
+  price_cents: number;
+  active: boolean;
+};
+
+type ServiceTypeOption = {
+  service_type_id: number;
+  name: string;
+  active: boolean;
+  default_duration_minutes: number;
+  base_price_cents: number;
+  addons: ServiceAddon[];
+};
+
+type AddonOption = {
+  addon_id: number;
+  name: string;
+  price_cents: number;
+  default_minutes: number;
+};
+
+type RankedWorkerSuggestion = {
+  worker_id: number;
+  name: string;
+  team_id: number;
+  team_name: string;
+  reasons: string[];
+};
+
+type ScheduleSuggestionsResponse = {
+  teams: { team_id: number; name: string }[];
+  workers: { worker_id: number; name: string; team_id: number; team_name: string }[];
+  ranked_workers?: RankedWorkerSuggestion[];
 };
 
 function formatYMDInTz(date: Date, timeZone: string) {
@@ -122,6 +173,28 @@ function formatCurrencyFromCents(value: number | null) {
   }).format(value / 100);
 }
 
+function formatDateTimeInput(date: Date) {
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const hour = `${date.getHours()}`.padStart(2, "0");
+  const minute = `${date.getMinutes()}`.padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function parseDateTimeLocal(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function centsFromInput(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.round(parsed * 100);
+}
+
 function minutesFromTime(value: string, timeZone: string) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     hour: "2-digit",
@@ -162,6 +235,35 @@ export default function SchedulePage() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [draggingBookingId, setDraggingBookingId] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
+  const [quickCreateStart, setQuickCreateStart] = useState("");
+  const [quickCreateDuration, setQuickCreateDuration] = useState(120);
+  const [durationTouched, setDurationTouched] = useState(false);
+  const [quickCreatePrice, setQuickCreatePrice] = useState("");
+  const [priceTouched, setPriceTouched] = useState(false);
+  const [quickCreateDeposit, setQuickCreateDeposit] = useState("");
+  const [clientQuery, setClientQuery] = useState("");
+  const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState("");
+  const [creatingClient, setCreatingClient] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientEmail, setNewClientEmail] = useState("");
+  const [newClientPhone, setNewClientPhone] = useState("");
+  const [addressOptions, setAddressOptions] = useState<AddressOption[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState("");
+  const [useNewAddress, setUseNewAddress] = useState(false);
+  const [newAddressLabel, setNewAddressLabel] = useState("Primary");
+  const [newAddressText, setNewAddressText] = useState("");
+  const [serviceTypes, setServiceTypes] = useState<ServiceTypeOption[]>([]);
+  const [selectedServiceTypeId, setSelectedServiceTypeId] = useState("");
+  const [selectedAddonIds, setSelectedAddonIds] = useState<Set<number>>(new Set());
+  const [addonOptions, setAddonOptions] = useState<AddonOption[]>([]);
+  const [workerSuggestions, setWorkerSuggestions] = useState<RankedWorkerSuggestion[]>([]);
+  const [availableWorkers, setAvailableWorkers] = useState<RankedWorkerSuggestion[]>([]);
+  const [selectedWorkerId, setSelectedWorkerId] = useState("");
 
   const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
   const defaultDate = useMemo(() => formatYMDInTz(new Date(), orgTimezone), [orgTimezone]);
@@ -175,6 +277,7 @@ export default function SchedulePage() {
   const permissionKeys = profile?.permissions ?? [];
   const canAssign =
     permissionKeys.includes("bookings.assign") || permissionKeys.includes("bookings.edit");
+  const canCreate = permissionKeys.includes("bookings.edit");
 
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
   const featureOverrides = featureConfig?.overrides ?? {};
@@ -219,6 +322,10 @@ export default function SchedulePage() {
 
   const showToast = useCallback((message: string, kind: "error" | "success" = "error") => {
     setToast({ message, kind });
+  }, []);
+
+  const refreshSchedule = useCallback(() => {
+    setRefreshToken((value) => value + 1);
   }, []);
 
   useEffect(() => {
@@ -329,6 +436,172 @@ export default function SchedulePage() {
   }, [isAuthenticated, loadFeatureConfig, loadOrgSettings, loadProfile, loadUiPrefs]);
 
   useEffect(() => {
+    if (!isAuthenticated || !scheduleVisible) return;
+    fetch(`${API_BASE}/v1/admin/service-types`, {
+      headers: authHeaders,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Failed to load service types");
+        }
+        return response.json();
+      })
+      .then((payload: ServiceTypeOption[]) => {
+        setServiceTypes(payload.filter((service) => service.active));
+      })
+      .catch(() => {
+        setServiceTypes([]);
+      });
+  }, [authHeaders, isAuthenticated, scheduleVisible]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !canCreate) return;
+    fetch(`${API_BASE}/v1/admin/schedule/addons`, {
+      headers: authHeaders,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Failed to load addons");
+        }
+        return response.json();
+      })
+      .then((payload: AddonOption[]) => {
+        setAddonOptions(payload);
+      })
+      .catch(() => {
+        setAddonOptions([]);
+      });
+  }, [authHeaders, canCreate, isAuthenticated]);
+
+  useEffect(() => {
+    if (!quickCreateOpen) return;
+    if (creatingClient) {
+      setClientOptions([]);
+      return;
+    }
+    const trimmed = clientQuery.trim();
+    if (!trimmed) {
+      setClientOptions([]);
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      fetch(`${API_BASE}/v1/admin/clients?q=${encodeURIComponent(trimmed)}`, {
+        headers: authHeaders,
+        cache: "no-store",
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const message = await response.text();
+            throw new Error(message || "Failed to load clients");
+          }
+          return response.json();
+        })
+        .then((payload: ClientOption[]) => {
+          setClientOptions(payload);
+        })
+        .catch(() => {
+          setClientOptions([]);
+        });
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [authHeaders, clientQuery, creatingClient, quickCreateOpen]);
+
+  useEffect(() => {
+    if (!selectedClientId || creatingClient || !quickCreateOpen) {
+      setAddressOptions([]);
+      setSelectedAddressId("");
+      return;
+    }
+    fetch(`${API_BASE}/v1/admin/clients/${selectedClientId}/addresses`, {
+      headers: authHeaders,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Failed to load addresses");
+        }
+        return response.json();
+      })
+      .then((payload: AddressOption[]) => {
+        setAddressOptions(payload);
+        if (payload.length && !selectedAddressId) {
+          setSelectedAddressId(String(payload[0].address_id));
+        }
+      })
+      .catch(() => {
+        setAddressOptions([]);
+      });
+  }, [authHeaders, creatingClient, quickCreateOpen, selectedAddressId, selectedClientId]);
+
+  useEffect(() => {
+    const match = serviceTypes.find(
+      (service) => String(service.service_type_id) === selectedServiceTypeId
+    );
+    if (!match) return;
+    if (!durationTouched) {
+      setQuickCreateDuration(match.default_duration_minutes);
+    }
+    if (!priceTouched) {
+      setQuickCreatePrice((match.base_price_cents / 100).toFixed(2));
+    }
+  }, [durationTouched, priceTouched, selectedServiceTypeId, serviceTypes]);
+
+  useEffect(() => {
+    if (!quickCreateOpen || !quickCreateStart || !quickCreateDuration) {
+      setWorkerSuggestions([]);
+      setAvailableWorkers([]);
+      return;
+    }
+    const startDate = parseDateTimeLocal(quickCreateStart);
+    if (!startDate) return;
+    const params = new URLSearchParams({
+      starts_at: startDate.toISOString(),
+      duration_min: String(quickCreateDuration),
+    });
+    if (!useNewAddress && selectedAddressId) {
+      params.set("address_id", selectedAddressId);
+    }
+    if (selectedServiceTypeId) {
+      params.set("service_type_id", selectedServiceTypeId);
+    }
+    fetch(`${API_BASE}/v1/admin/schedule/suggestions?${params.toString()}`, {
+      headers: authHeaders,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Failed to load suggestions");
+        }
+        return response.json();
+      })
+      .then((payload: ScheduleSuggestionsResponse) => {
+        const ranked = payload.ranked_workers?.length
+          ? payload.ranked_workers
+          : payload.workers.map((worker) => ({ ...worker, reasons: ["available"] }));
+        setWorkerSuggestions(ranked);
+        setAvailableWorkers(ranked);
+      })
+      .catch(() => {
+        setWorkerSuggestions([]);
+        setAvailableWorkers([]);
+      });
+  }, [
+    authHeaders,
+    quickCreateDuration,
+    quickCreateOpen,
+    quickCreateStart,
+    selectedAddressId,
+    selectedServiceTypeId,
+    useNewAddress,
+  ]);
+
+  useEffect(() => {
     if (!isAuthenticated) return;
     if (!scheduleVisible) return;
     setLoading(true);
@@ -362,7 +635,17 @@ export default function SchedulePage() {
         setError(fetchError instanceof Error ? fetchError.message : "Failed to load schedule");
       })
       .finally(() => setLoading(false));
-  }, [authHeaders, isAuthenticated, orgTimezone, scheduleVisible, selectedDate, statusFilter, teamFilter, workerFilter]);
+  }, [
+    authHeaders,
+    isAuthenticated,
+    orgTimezone,
+    refreshToken,
+    scheduleVisible,
+    selectedDate,
+    statusFilter,
+    teamFilter,
+    workerFilter,
+  ]);
 
   const weekStart = useMemo(() => weekStartFromDay(selectedDate, orgTimezone), [selectedDate, orgTimezone]);
   const weekDays = useMemo(
@@ -417,6 +700,11 @@ export default function SchedulePage() {
     });
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
   }, [schedule]);
+
+  const selectedServiceType = useMemo(
+    () => serviceTypes.find((service) => String(service.service_type_id) === selectedServiceTypeId),
+    [selectedServiceTypeId, serviceTypes]
+  );
 
   const statusOptions = useMemo(() => {
     const set = new Set<string>();
@@ -503,6 +791,178 @@ export default function SchedulePage() {
       }
     },
     [authHeaders, canAssign, dayMinutes, schedule, showToast]
+  );
+
+  const openQuickCreate = useCallback(
+    (day: string, minutes: number) => {
+      const start = buildLocalDateTime(day, minutes);
+      setQuickCreateStart(formatDateTimeInput(start));
+      setQuickCreateDuration(120);
+      setDurationTouched(false);
+      setQuickCreatePrice("");
+      setPriceTouched(false);
+      setQuickCreateDeposit("");
+      setClientQuery("");
+      setClientOptions([]);
+      setSelectedClientId("");
+      setCreatingClient(false);
+      setNewClientName("");
+      setNewClientEmail("");
+      setNewClientPhone("");
+      setAddressOptions([]);
+      setSelectedAddressId("");
+      setUseNewAddress(false);
+      setNewAddressLabel("Primary");
+      setNewAddressText("");
+      setSelectedServiceTypeId("");
+      setSelectedAddonIds(new Set());
+      setSelectedWorkerId("");
+      setWorkerSuggestions([]);
+      setAvailableWorkers([]);
+      setQuickCreateError(null);
+      setQuickCreateOpen(true);
+    },
+    []
+  );
+
+  const closeQuickCreate = useCallback(() => {
+    setQuickCreateOpen(false);
+    setQuickCreateError(null);
+  }, []);
+
+  const toggleAddon = useCallback((addonId: number) => {
+    setSelectedAddonIds((current) => {
+      const next = new Set(current);
+      if (next.has(addonId)) {
+        next.delete(addonId);
+      } else {
+        next.add(addonId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleQuickCreate = useCallback(async () => {
+    if (!canCreate) return;
+    const startDate = parseDateTimeLocal(quickCreateStart);
+    if (!startDate) {
+      setQuickCreateError("Select a valid start time.");
+      return;
+    }
+    if (!quickCreateDuration || quickCreateDuration <= 0) {
+      setQuickCreateError("Duration must be greater than zero.");
+      return;
+    }
+    const priceCents = centsFromInput(quickCreatePrice);
+    if (!quickCreatePrice || priceCents <= 0) {
+      setQuickCreateError("Enter a price.");
+      return;
+    }
+    if (creatingClient) {
+      if (!newClientName || !newClientEmail || !newClientPhone) {
+        setQuickCreateError("Enter name, email, and phone for the new client.");
+        return;
+      }
+    } else if (!selectedClientId) {
+      setQuickCreateError("Select a client.");
+      return;
+    }
+
+    if (useNewAddress) {
+      if (!newAddressText) {
+        setQuickCreateError("Enter an address.");
+        return;
+      }
+    } else if (!selectedAddressId) {
+      setQuickCreateError("Select an address.");
+      return;
+    }
+
+    const payload: Record<string, unknown> = {
+      starts_at: startDate.toISOString(),
+      duration_minutes: quickCreateDuration,
+      price_cents: priceCents,
+      deposit_cents: quickCreateDeposit ? centsFromInput(quickCreateDeposit) : null,
+      service_type_id: selectedServiceTypeId ? Number(selectedServiceTypeId) : null,
+      addon_ids: Array.from(selectedAddonIds),
+      assigned_worker_id: selectedWorkerId ? Number(selectedWorkerId) : null,
+    };
+
+    if (creatingClient) {
+      payload.client = {
+        name: newClientName,
+        email: newClientEmail,
+        phone: newClientPhone,
+      };
+    } else {
+      payload.client_id = selectedClientId;
+    }
+
+    if (useNewAddress) {
+      payload.address_text = newAddressText;
+      payload.address_label = newAddressLabel || "Primary";
+    } else {
+      payload.address_id = Number(selectedAddressId);
+    }
+
+    setQuickCreateError(null);
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/schedule/quick-create`, {
+        method: "POST",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = payload?.detail || response.statusText || "Create failed";
+        throw new Error(message);
+      }
+      closeQuickCreate();
+      refreshSchedule();
+      showToast("Booking created", "success");
+    } catch (fetchError) {
+      setQuickCreateError(fetchError instanceof Error ? fetchError.message : "Create failed");
+    }
+  }, [
+    authHeaders,
+    canCreate,
+    closeQuickCreate,
+    creatingClient,
+    newAddressLabel,
+    newAddressText,
+    newClientEmail,
+    newClientName,
+    newClientPhone,
+    quickCreateDeposit,
+    quickCreateDuration,
+    quickCreatePrice,
+    quickCreateStart,
+    refreshSchedule,
+    selectedAddonIds,
+    selectedAddressId,
+    selectedClientId,
+    selectedServiceTypeId,
+    selectedWorkerId,
+    showToast,
+    useNewAddress,
+  ]);
+
+  const handleSlotClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>, day: string) => {
+      if (!canCreate) return;
+      const target = event.target as HTMLElement;
+      if (target.closest(".schedule-booking")) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const offsetY = Math.max(0, event.clientY - rect.top);
+      const rawMinutes = Math.round(offsetY / SLOT_HEIGHT) * SLOT_MINUTES;
+      const minutesFromStart = Math.min(Math.max(rawMinutes, 0), dayMinutes);
+      const minutes = START_HOUR * 60 + minutesFromStart;
+      openQuickCreate(day, minutes);
+    },
+    [canCreate, dayMinutes, openQuickCreate]
   );
 
   if (visibilityReady && !scheduleVisible) {
@@ -706,7 +1166,11 @@ export default function SchedulePage() {
               onDrop={(event) => handleDrop(event, day)}
             >
               <div className="schedule-day-header">{formatDayLabel(day, orgTimezone)}</div>
-              <div className="schedule-day-body" style={{ height: gridHeight }}>
+              <div
+                className="schedule-day-body"
+                style={{ height: gridHeight }}
+                onClick={(event) => handleSlotClick(event, day)}
+              >
                 {bookings.map((booking) => {
                   const bookingStartMinutes = minutesFromTime(booking.starts_at, orgTimezone);
                   const bookingEndMinutes = minutesFromTime(booking.ends_at, orgTimezone);
@@ -758,6 +1222,297 @@ export default function SchedulePage() {
           );
         })}
       </section>
+
+      {quickCreateOpen ? (
+        <div className="schedule-modal" role="dialog" aria-modal="true">
+          <div className="schedule-modal-backdrop" onClick={closeQuickCreate} />
+          <div className="schedule-modal-panel">
+            <header className="schedule-modal-header">
+              <div>
+                <h2>Quick create booking</h2>
+                <p className="muted">Click a slot to prefill the time and create a booking fast.</p>
+              </div>
+              <button className="btn btn-ghost" type="button" onClick={closeQuickCreate}>
+                Close
+              </button>
+            </header>
+            <div className="schedule-modal-body">
+              {quickCreateError ? <div className="inline-alert error">{quickCreateError}</div> : null}
+              <div className="schedule-modal-grid">
+                <div className="schedule-modal-section">
+                  <h3>Client</h3>
+                  <label className="schedule-toggle">
+                    <input
+                      type="checkbox"
+                      checked={creatingClient}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setCreatingClient(checked);
+                        setSelectedClientId("");
+                        setClientQuery("");
+                        setClientOptions([]);
+                        setAddressOptions([]);
+                        setSelectedAddressId("");
+                        setUseNewAddress(checked);
+                      }}
+                    />
+                    <span>Create new client</span>
+                  </label>
+                  {creatingClient ? (
+                    <div className="stack">
+                      <label className="stack">
+                        <span className="muted">Name</span>
+                        <input
+                          className="input"
+                          value={newClientName}
+                          onChange={(event) => setNewClientName(event.target.value)}
+                        />
+                      </label>
+                      <label className="stack">
+                        <span className="muted">Email</span>
+                        <input
+                          className="input"
+                          type="email"
+                          value={newClientEmail}
+                          onChange={(event) => setNewClientEmail(event.target.value)}
+                        />
+                      </label>
+                      <label className="stack">
+                        <span className="muted">Phone</span>
+                        <input
+                          className="input"
+                          value={newClientPhone}
+                          onChange={(event) => setNewClientPhone(event.target.value)}
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <div className="stack">
+                      <label className="stack">
+                        <span className="muted">Search</span>
+                        <input
+                          className="input"
+                          placeholder="Search clients by name, email, phone"
+                          value={clientQuery}
+                          onChange={(event) => setClientQuery(event.target.value)}
+                        />
+                      </label>
+                      <label className="stack">
+                        <span className="muted">Select client</span>
+                        <select
+                          className="input"
+                          value={selectedClientId}
+                          onChange={(event) => setSelectedClientId(event.target.value)}
+                        >
+                          <option value="">Select client</option>
+                          {clientOptions.map((client) => (
+                            <option key={client.client_id} value={client.client_id}>
+                              {client.name || client.email}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {clientOptions.length === 0 && clientQuery ? (
+                        <span className="muted">No matching clients.</span>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+
+                <div className="schedule-modal-section">
+                  <h3>Address</h3>
+                  <label className="schedule-toggle">
+                    <input
+                      type="checkbox"
+                      checked={useNewAddress}
+                      onChange={(event) => setUseNewAddress(event.target.checked)}
+                    />
+                    <span>Enter new address</span>
+                  </label>
+                  {useNewAddress ? (
+                    <div className="stack">
+                      <label className="stack">
+                        <span className="muted">Label</span>
+                        <input
+                          className="input"
+                          value={newAddressLabel}
+                          onChange={(event) => setNewAddressLabel(event.target.value)}
+                        />
+                      </label>
+                      <label className="stack">
+                        <span className="muted">Address</span>
+                        <input
+                          className="input"
+                          value={newAddressText}
+                          onChange={(event) => setNewAddressText(event.target.value)}
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <label className="stack">
+                      <span className="muted">Saved address</span>
+                      <select
+                        className="input"
+                        value={selectedAddressId}
+                        onChange={(event) => setSelectedAddressId(event.target.value)}
+                      >
+                        <option value="">Select address</option>
+                        {addressOptions.map((address) => (
+                          <option key={address.address_id} value={address.address_id}>
+                            {address.label} · {address.address_text}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+
+                <div className="schedule-modal-section">
+                  <h3>Service</h3>
+                  <label className="stack">
+                    <span className="muted">Service type</span>
+                    <select
+                      className="input"
+                      value={selectedServiceTypeId}
+                      onChange={(event) => setSelectedServiceTypeId(event.target.value)}
+                    >
+                      <option value="">Select service</option>
+                      {serviceTypes.map((service) => (
+                        <option key={service.service_type_id} value={service.service_type_id}>
+                          {service.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {addonOptions.length ? (
+                    <div className="schedule-addon-list">
+                      <span className="muted">Add-ons</span>
+                      {addonOptions.map((addon) => (
+                        <label key={addon.addon_id} className="schedule-addon-item">
+                          <input
+                            type="checkbox"
+                            checked={selectedAddonIds.has(addon.addon_id)}
+                            onChange={() => toggleAddon(addon.addon_id)}
+                          />
+                          <span>
+                            {addon.name} · {formatCurrencyFromCents(addon.price_cents)}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="muted">No add-ons configured.</span>
+                  )}
+                  {selectedServiceType ? (
+                    <span className="muted">Default duration: {selectedServiceType.default_duration_minutes} min</span>
+                  ) : null}
+                </div>
+
+                <div className="schedule-modal-section">
+                  <h3>Timing</h3>
+                  <label className="stack">
+                    <span className="muted">Start</span>
+                    <input
+                      className="input"
+                      type="datetime-local"
+                      value={quickCreateStart}
+                      onChange={(event) => setQuickCreateStart(event.target.value)}
+                    />
+                  </label>
+                  <label className="stack">
+                    <span className="muted">Duration (minutes)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={30}
+                      step={15}
+                      value={quickCreateDuration}
+                      onChange={(event) => {
+                        setDurationTouched(true);
+                        setQuickCreateDuration(Number(event.target.value));
+                      }}
+                    />
+                  </label>
+                </div>
+
+                <div className="schedule-modal-section">
+                  <h3>Worker</h3>
+                  {workerSuggestions.length ? (
+                    <div className="schedule-suggestions">
+                      {workerSuggestions.map((worker) => (
+                        <button
+                          key={worker.worker_id}
+                          type="button"
+                          className={`schedule-suggestion${selectedWorkerId === String(worker.worker_id) ? " active" : ""}`}
+                          onClick={() => setSelectedWorkerId(String(worker.worker_id))}
+                        >
+                          <strong>{worker.name}</strong>
+                          <span className="muted">{worker.team_name}</span>
+                          <span className="muted">{worker.reasons.join(", ")}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="muted">No available workers for this slot.</span>
+                  )}
+                  <label className="stack">
+                    <span className="muted">Assign manually</span>
+                    <select
+                      className="input"
+                      value={selectedWorkerId}
+                      onChange={(event) => setSelectedWorkerId(event.target.value)}
+                    >
+                      <option value="">Unassigned</option>
+                      {availableWorkers.map((worker) => (
+                        <option key={worker.worker_id} value={worker.worker_id}>
+                          {worker.name} · {worker.team_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="schedule-modal-section">
+                  <h3>Pricing</h3>
+                  <label className="stack">
+                    <span className="muted">Price (CAD)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={quickCreatePrice}
+                      onChange={(event) => {
+                        setPriceTouched(true);
+                        setQuickCreatePrice(event.target.value);
+                      }}
+                    />
+                  </label>
+                  <label className="stack">
+                    <span className="muted">Deposit (CAD)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={quickCreateDeposit}
+                      onChange={(event) => setQuickCreateDeposit(event.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+            <footer className="schedule-modal-footer">
+              <button className="btn btn-ghost" type="button" onClick={closeQuickCreate}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" type="button" onClick={() => void handleQuickCreate()}>
+                Create booking
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
