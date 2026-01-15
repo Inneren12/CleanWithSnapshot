@@ -1,6 +1,6 @@
 import asyncio
 import base64
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import sqlalchemy as sa
@@ -567,8 +567,8 @@ def test_send_invoice_reminder_endpoint(client, async_session_maker):
         settings.public_base_url = previous_public_base_url
 
 
-def test_send_reminder_requires_invoices_edit_permission(client, async_session_maker):
-    """Test that sending reminders requires invoices.edit permission"""
+def test_send_reminder_requires_invoices_send_permission(client, async_session_maker):
+    """Test that sending reminders requires invoices.send permission"""
     settings.admin_basic_username = "viewer"
     settings.admin_basic_password = "viewpass"
 
@@ -599,8 +599,112 @@ def test_send_reminder_requires_invoices_edit_permission(client, async_session_m
     invoice_id = asyncio.run(_seed_invoice())
     headers = _auth_headers("viewer", "viewpass")
 
-    # Viewer doesn't have invoices.edit permission, should get 403
+    # Viewer doesn't have invoices.send permission, should get 403
     resp = client.post(f"/v1/admin/invoices/{invoice_id}/remind", headers=headers)
+    assert resp.status_code == 403
+
+
+def test_overdue_summary_buckets_boundary_days(client, async_session_maker):
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    as_of_date = date(2024, 1, 20)
+
+    async def _seed_invoices() -> dict[str, str]:
+        async with async_session_maker() as session:
+            invoice_ids: dict[str, str] = {}
+            for label, days_overdue in {
+                "recent": 1,
+                "attention_low": 7,
+                "attention_high": 14,
+                "critical": 15,
+            }.items():
+                lead = Lead(**_lead_payload(name=f"{label.title()} Lead"))
+                session.add(lead)
+                await session.flush()
+                booking = Booking(
+                    team_id=1,
+                    lead_id=lead.lead_id,
+                    starts_at=datetime.now(tz=timezone.utc),
+                    duration_minutes=90,
+                    status="PENDING",
+                )
+                session.add(booking)
+                await session.flush()
+                invoice = await invoice_service.create_invoice_from_order(
+                    session=session,
+                    order=booking,
+                    items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000)],
+                    issue_date=as_of_date - timedelta(days=20),
+                    due_date=as_of_date - timedelta(days=days_overdue),
+                    currency="CAD",
+                )
+                invoice.status = statuses.INVOICE_STATUS_SENT
+                invoice_ids[label] = invoice.invoice_id
+            await session.commit()
+            return invoice_ids
+
+    invoice_ids = asyncio.run(_seed_invoices())
+    headers = _auth_headers("admin", "secret")
+
+    resp = client.get(
+        "/v1/admin/invoices/overdue_summary",
+        headers=headers,
+        params={"as_of": as_of_date.isoformat()},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    buckets = {bucket["bucket"]: bucket for bucket in payload["buckets"]}
+
+    assert buckets["critical"]["total_count"] == 1
+    assert buckets["attention"]["total_count"] == 2
+    assert buckets["recent"]["total_count"] == 1
+
+    attention_days = {item["days_overdue"] for item in buckets["attention"]["invoices"]}
+    assert 7 in attention_days
+    assert 14 in attention_days
+
+    critical_ids = {item["invoice_id"] for item in buckets["critical"]["invoices"]}
+    assert invoice_ids["critical"] in critical_ids
+
+
+def test_overdue_remind_requires_send_permission(client, async_session_maker):
+    settings.admin_basic_username = "viewer"
+    settings.admin_basic_password = "viewpass"
+
+    async def _seed_invoice() -> str:
+        async with async_session_maker() as session:
+            lead = Lead(**_lead_payload())
+            session.add(lead)
+            await session.flush()
+            booking = Booking(
+                team_id=1,
+                lead_id=lead.lead_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="PENDING",
+            )
+            session.add(booking)
+            await session.flush()
+            invoice = await invoice_service.create_invoice_from_order(
+                session=session,
+                order=booking,
+                items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000)],
+                issue_date=date.today() - timedelta(days=10),
+                due_date=date.today() - timedelta(days=7),
+                currency="CAD",
+            )
+            invoice.status = statuses.INVOICE_STATUS_SENT
+            await session.commit()
+            return invoice.invoice_id
+
+    invoice_id = asyncio.run(_seed_invoice())
+    headers = _auth_headers("viewer", "viewpass")
+
+    resp = client.post(
+        "/v1/admin/invoices/overdue_remind",
+        headers=headers,
+        json={"bucket": "attention", "invoice_ids": [invoice_id]},
+    )
     assert resp.status_code == 403
 
 

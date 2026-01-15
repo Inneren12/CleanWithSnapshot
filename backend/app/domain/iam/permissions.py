@@ -83,6 +83,12 @@ PERMISSION_CATALOG: list[PermissionDefinition] = [
         group="finance",
     ),
     PermissionDefinition(
+        key="invoices.send",
+        label="Send invoice reminders",
+        description="Send invoice reminder emails.",
+        group="finance",
+    ),
+    PermissionDefinition(
         key="payments.record",
         label="Record payments",
         description="Record and reconcile payments.",
@@ -176,6 +182,7 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
             "bookings.view",
             "invoices.view",
             "invoices.edit",
+            "invoices.send",
             "payments.record",
             "finance.view",
             "exports.run",
@@ -190,6 +197,7 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
             "bookings.view",
             "invoices.view",
             "invoices.edit",
+            "invoices.send",
             "payments.record",
             "finance.view",
             "exports.run",
