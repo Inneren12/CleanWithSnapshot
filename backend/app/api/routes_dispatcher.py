@@ -236,10 +236,17 @@ async def get_dispatcher_context(
 )
 async def ack_dispatcher_alert(
     payload: schemas.DispatcherAlertAckRequest,
+    session: AsyncSession = Depends(get_db_session),
+    org_id=Depends(require_org_context),
     identity: AdminIdentity = Depends(require_dispatch),
 ) -> schemas.DispatcherAlertAckResponse:
     del identity
-    dispatcher_service.acknowledge_dispatcher_alert(payload.alert_id)
+    await dispatcher_service.acknowledge_dispatcher_alert(
+        session,
+        org_id=org_id,
+        alert_id=payload.alert_id,
+    )
+    await session.commit()
     return schemas.DispatcherAlertAckResponse(status="ok")
 
 
