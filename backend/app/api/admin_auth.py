@@ -77,6 +77,18 @@ security = HTTPBasic(auto_error=False)
 
 def _configured_users() -> list[_ConfiguredUser]:
     configured: list[_ConfiguredUser] = []
+    def _role_override(username: str, default_role: AdminRole) -> AdminRole:
+        normalized = username.strip().lower()
+        if normalized == AdminRole.VIEWER.value:
+            return AdminRole.VIEWER
+        if normalized == AdminRole.DISPATCHER.value:
+            return AdminRole.DISPATCHER
+        if normalized == AdminRole.ACCOUNTANT.value:
+            return AdminRole.ACCOUNTANT
+        if normalized == AdminRole.FINANCE.value:
+            return AdminRole.FINANCE
+        return default_role
+
     if settings.owner_basic_username and settings.owner_basic_password:
         configured.append(
             _ConfiguredUser(
@@ -90,7 +102,7 @@ def _configured_users() -> list[_ConfiguredUser]:
             _ConfiguredUser(
                 username=settings.admin_basic_username,
                 password=settings.admin_basic_password,
-                role=AdminRole.ADMIN,
+                role=_role_override(settings.admin_basic_username, AdminRole.ADMIN),
             )
         )
     if settings.dispatcher_basic_username and settings.dispatcher_basic_password:

@@ -187,6 +187,30 @@ export default function InvoiceDetailPage() {
   const hasSendPermission = permissionKeys.includes("invoices.edit");
   const hasRecordPaymentPermission = permissionKeys.includes("payments.record");
 
+  const navLinks = useMemo(() => {
+    if (!visibilityReady || !profile) return [];
+    const candidates = [
+      { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
+      { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      { key: "invoices", label: "Invoices", href: "/admin/invoices", featureKey: "module.invoices" },
+      {
+        key: "org-settings",
+        label: "Org Settings",
+        href: "/admin/settings/org",
+        featureKey: "module.settings",
+      },
+      {
+        key: "integrations",
+        label: "Integrations",
+        href: "/admin/settings/integrations",
+        featureKey: "module.integrations",
+      },
+    ];
+    return candidates
+      .filter((entry) => isVisible(entry.featureKey, permissionKeys, featureOverrides, hiddenKeys))
+      .map(({ featureKey, ...link }) => link);
+  }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
+
   const loadProfile = useCallback(async () => {
     if (!username || !password) return;
     try {
@@ -458,16 +482,7 @@ export default function InvoiceDetailPage() {
   if (!pageVisible) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <AdminNav
-          profile={profile}
-          featureConfig={featureConfig}
-          uiPrefs={uiPrefs}
-          onLogout={() => {
-            localStorage.removeItem(STORAGE_USERNAME_KEY);
-            localStorage.removeItem(STORAGE_PASSWORD_KEY);
-            setProfile(null);
-          }}
-        />
+        <AdminNav links={navLinks} activeKey="invoices" />
         <div className="p-8">
           <p>You don&apos;t have permission to view this page.</p>
         </div>
@@ -479,16 +494,7 @@ export default function InvoiceDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <AdminNav
-        profile={profile}
-        featureConfig={featureConfig}
-        uiPrefs={uiPrefs}
-        onLogout={() => {
-          localStorage.removeItem(STORAGE_USERNAME_KEY);
-          localStorage.removeItem(STORAGE_PASSWORD_KEY);
-          setProfile(null);
-        }}
-      />
+      <AdminNav links={navLinks} activeKey="invoices" />
 
       <div className="max-w-7xl mx-auto p-8">
         {/* Back button */}
