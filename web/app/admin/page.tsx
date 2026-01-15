@@ -2,19 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import AdminNav from "./components/AdminNav";
+import {
+  type AdminProfile,
+  type FeatureConfigResponse,
+  type UiPrefsResponse,
+  isVisible,
+} from "./lib/featureVisibility";
+
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const EDMONTON_TZ = "America/Edmonton";
 const KPI_PRESETS = [7, 28, 90];
-
-type AdminPermission = "view" | "dispatch" | "finance" | "admin";
-
-type AdminProfile = {
-  username: string;
-  role: string;
-  permissions: AdminPermission[];
-};
 
 type AdminMetricsResponse = {
   range_start: string;
@@ -166,6 +166,9 @@ export default function AdminPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [profile, setProfile] = useState<AdminProfile | null>(null);
+  const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
+  const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [exportEvents, setExportEvents] = useState<ExportEvent[]>([]);
@@ -191,6 +194,27 @@ export default function AdminPage() {
   const isReadOnly = !profile?.permissions?.some((permission) =>
     ["dispatch", "admin"].includes(permission)
   );
+  const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
+  const featureOverrides = featureConfig?.overrides ?? {};
+  const hiddenKeys = uiPrefs?.hidden_keys ?? [];
+  const dashboardVisible = visibilityReady
+    ? isVisible("module.dashboard", profile?.role, featureOverrides, hiddenKeys)
+    : true;
+  const financeReportsVisible = visibilityReady
+    ? isVisible("finance.reports", profile?.role, featureOverrides, hiddenKeys)
+    : true;
+
+  const navLinks = useMemo(() => {
+    if (!visibilityReady || !profile) return [];
+    const candidates = [
+      { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
+      { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
+    ];
+    return candidates
+      .filter((entry) => isVisible(entry.featureKey, profile.role, featureOverrides, hiddenKeys))
+      .map(({ featureKey, ...link }) => link);
+  }, [featureOverrides, hiddenKeys, profile, visibilityReady]);
 
   const loadProfile = useCallback(async () => {
     if (!username || !password) return;
@@ -206,6 +230,38 @@ export default function AdminPage() {
     }
   }, [authHeaders, password, username]);
 
+  const loadFeatureConfig = useCallback(async () => {
+    if (!username || !password) return;
+    setSettingsError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as FeatureConfigResponse;
+      setFeatureConfig(data);
+    } else {
+      setFeatureConfig(null);
+      setSettingsError("Failed to load module settings");
+    }
+  }, [authHeaders, password, username]);
+
+  const loadUiPrefs = useCallback(async () => {
+    if (!username || !password) return;
+    setSettingsError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as UiPrefsResponse;
+      setUiPrefs(data);
+    } else {
+      setUiPrefs(null);
+      setSettingsError("Failed to load UI preferences");
+    }
+  }, [authHeaders, password, username]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
@@ -217,6 +273,11 @@ export default function AdminPage() {
   useEffect(() => {
     void loadProfile();
   }, [loadProfile]);
+
+  useEffect(() => {
+    void loadFeatureConfig();
+    void loadUiPrefs();
+  }, [loadFeatureConfig, loadUiPrefs]);
 
   const loadMetrics = async () => {
     if (!username || !password) return;
@@ -352,16 +413,22 @@ export default function AdminPage() {
       window.localStorage.setItem(STORAGE_PASSWORD_KEY, password);
     }
     setMessage("Saved credentials");
+    void loadProfile();
+    void loadFeatureConfig();
+    void loadUiPrefs();
   };
 
   const clearCredentials = () => {
     setUsername("");
     setPassword("");
     setProfile(null);
+    setFeatureConfig(null);
+    setUiPrefs(null);
     setBookings([]);
     setLeads([]);
     setMetrics(null);
     setMetricsError(null);
+    setSettingsError(null);
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(STORAGE_USERNAME_KEY);
       window.localStorage.removeItem(STORAGE_PASSWORD_KEY);
@@ -467,12 +534,27 @@ export default function AdminPage() {
   const metricsFromInput = metricsRange.from.slice(0, 10);
   const metricsToInput = metricsRange.to.slice(0, 10);
 
+  if (visibilityReady && !dashboardVisible) {
+    return (
+      <div className="admin-page">
+        <AdminNav links={navLinks} activeKey="dashboard" />
+        <div className="admin-card admin-section">
+          <h1>Dashboard</h1>
+          <p className="alert alert-warning">Disabled by org settings.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="admin-page">
+      <AdminNav links={navLinks} activeKey="dashboard" />
       <div className="admin-section">
         <h1>Admin / Dispatcher</h1>
         <p className="muted">Save credentials locally, then load leads, bookings, and exports.</p>
       </div>
+
+      {settingsError ? <p className="alert alert-warning">{settingsError}</p> : null}
 
       {profile ? (
         <div className={`alert ${isReadOnly ? "alert-warning" : "alert-info"}`}>
@@ -503,11 +585,12 @@ export default function AdminPage() {
         </div>
       </div>
 
-      <section className="admin-card admin-section">
-        <div className="section-heading">
-          <h2>KPI Dashboard</h2>
-          <p className="muted">Preset ranges keep dates consistent while KPIs come directly from the backend.</p>
-        </div>
+      {financeReportsVisible ? (
+        <section className="admin-card admin-section">
+          <div className="section-heading">
+            <h2>KPI Dashboard</h2>
+            <p className="muted">Preset ranges keep dates consistent while KPIs come directly from the backend.</p>
+          </div>
         <div className="kpi-controls">
           <div className="chip-group">
             {KPI_PRESETS.map((days) => (
@@ -643,7 +726,8 @@ export default function AdminPage() {
         ) : metricsLoading ? null : (
           <div className="muted">Metrics will load after credentials are saved.</div>
         )}
-      </section>
+        </section>
+      ) : null}
 
       <div className="admin-grid">
         <section className="admin-card admin-section">
