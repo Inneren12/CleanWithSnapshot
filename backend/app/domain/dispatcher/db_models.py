@@ -34,3 +34,24 @@ class DispatcherCommunicationAudit(Base):
         Index("ix_dispatcher_comm_audits_org_sent", "org_id", "sent_at"),
         Index("ix_dispatcher_comm_audits_booking_sent", "booking_id", "sent_at"),
     )
+
+
+class DispatcherAlertState(Base):
+    __tablename__ = "dispatcher_alert_state"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    alert_key: Mapped[str] = mapped_column(String(120), primary_key=True, nullable=False)
+    acked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sms_throttle_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

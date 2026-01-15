@@ -17,7 +17,7 @@ from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.dispatcher.db_models import DispatcherCommunicationAudit
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment
-from app.domain.dispatcher import schemas
+from app.domain.dispatcher import alert_state_store, schemas
 from app.domain.dispatcher import route_estimates
 from app.domain.leads.db_models import Lead
 from app.domain.notifications.email_service import LOCAL_TZ
@@ -30,8 +30,6 @@ logger = logging.getLogger(__name__)
 
 _DISPATCHER_ALERT_ACK_TTL = timedelta(minutes=30)
 _DISPATCHER_ALERT_SMS_TTL = timedelta(minutes=30)
-_ALERT_ACKED_UNTIL: dict[str, datetime] = {}
-_ALERT_SMS_SENT_AT: dict[str, datetime] = {}
 
 
 @dataclass(frozen=True)
@@ -238,32 +236,31 @@ def _alert_signature(
     return hashlib.sha1(signature.encode("utf-8")).hexdigest()[:12]
 
 
-def _prune_alert_cache(now: datetime) -> None:
-    for cache in (_ALERT_ACKED_UNTIL, _ALERT_SMS_SENT_AT):
-        expired = [key for key, value in cache.items() if value <= now]
-        for key in expired:
-            cache.pop(key, None)
-
-
-def _filter_acknowledged_alerts(alerts: list[schemas.DispatcherAlert]) -> list[schemas.DispatcherAlert]:
+async def _filter_acknowledged_alerts(
+    session: AsyncSession,
+    *,
+    org_id,
+    alerts: list[schemas.DispatcherAlert],
+) -> list[schemas.DispatcherAlert]:
     now = datetime.now(timezone.utc)
-    _prune_alert_cache(now)
-    if not _ALERT_ACKED_UNTIL:
-        return alerts
-    return [alert for alert in alerts if _ALERT_ACKED_UNTIL.get(alert.alert_id, now) <= now]
+    store = alert_state_store.get_alert_state_store(session)
+    filtered: list[schemas.DispatcherAlert] = []
+    for alert in alerts:
+        if await store.is_acked(org_id, alert.alert_id, now):
+            continue
+        filtered.append(alert)
+    return filtered
 
 
-def acknowledge_dispatcher_alert(alert_id: str) -> None:
+async def acknowledge_dispatcher_alert(
+    session: AsyncSession,
+    *,
+    org_id,
+    alert_id: str,
+) -> None:
     now = datetime.now(timezone.utc)
-    _prune_alert_cache(now)
-    _ALERT_ACKED_UNTIL[alert_id] = now + _DISPATCHER_ALERT_ACK_TTL
-
-
-def _should_send_alert_sms(alert_id: str, now: datetime) -> bool:
-    sent_until = _ALERT_SMS_SENT_AT.get(alert_id)
-    if sent_until is None:
-        return True
-    return now >= sent_until
+    store = alert_state_store.get_alert_state_store(session)
+    await store.ack(org_id, alert_id, now + _DISPATCHER_ALERT_ACK_TTL)
 
 
 def _alert_sms_body(alert: schemas.DispatcherAlert) -> str:
@@ -285,17 +282,16 @@ async def send_critical_alert_sms(
     if not sms_to:
         return
     now = datetime.now(timezone.utc)
-    _prune_alert_cache(now)
     adapter = adapter or NoopCommunicationAdapter()
+    store = alert_state_store.get_alert_state_store(session)
     for alert in alerts:
         if alert.severity != "critical":
             continue
-        if _ALERT_ACKED_UNTIL.get(alert.alert_id, now) > now:
+        if await store.is_acked(org_id, alert.alert_id, now):
             continue
-        if not _should_send_alert_sms(alert.alert_id, now):
+        if not await store.allow_sms_send(org_id, alert.alert_id, now, _DISPATCHER_ALERT_SMS_TTL):
             continue
         result = await adapter.send_sms(to_number=sms_to, body=_alert_sms_body(alert))
-        _ALERT_SMS_SENT_AT[alert.alert_id] = now + _DISPATCHER_ALERT_SMS_TTL
         await audit_service.record_action(
             session,
             identity=identity,
@@ -311,6 +307,7 @@ async def send_critical_alert_sms(
                 "severity": alert.severity,
             },
         )
+        await session.commit()
 
 
 def resolve_day_window(target_date: date, tz_name: str) -> tuple[datetime, datetime]:
@@ -892,6 +889,8 @@ async def fetch_dispatcher_alerts(
     tz_name: str,
 ) -> DispatcherAlertsResult:
     start_utc, end_utc = resolve_day_window(target_date, tz_name)
+    grace = timedelta(minutes=15)
+    late_window_start = start_utc - timedelta(hours=1)
     cancellation_timestamp = (
         getattr(Booking, "cancelled_at", None)
         or getattr(Booking, "status_updated_at", None)
@@ -904,7 +903,7 @@ async def fetch_dispatcher_alerts(
             Booking.archived_at.is_(None),
             sa.or_(
                 sa.and_(
-                    Booking.starts_at >= start_utc,
+                    Booking.starts_at >= late_window_start,
                     Booking.starts_at < end_utc,
                 ),
                 sa.and_(
@@ -950,7 +949,6 @@ async def fetch_dispatcher_alerts(
             )
 
     now_utc = datetime.now(timezone.utc)
-    grace = timedelta(minutes=15)
     tzinfo = ZoneInfo(tz_name)
     for booking in bookings:
         if _normalize_status(booking.status) == "cancelled":
@@ -1005,4 +1003,6 @@ async def fetch_dispatcher_alerts(
             )
         )
 
-    return DispatcherAlertsResult(alerts=_filter_acknowledged_alerts(alerts))
+    return DispatcherAlertsResult(
+        alerts=await _filter_acknowledged_alerts(session, org_id=org_id, alerts=alerts)
+    )

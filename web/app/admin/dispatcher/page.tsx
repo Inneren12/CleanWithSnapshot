@@ -137,6 +137,32 @@ type DispatcherAssignmentSuggestionsResponse = {
   suggestions: DispatcherAssignmentSuggestion[];
 };
 
+type DispatcherWeatherNow = {
+  temp_c: number | null;
+  wind_kph: number | null;
+  precip_mm: number | null;
+  snow_cm: number | null;
+  summary: string | null;
+};
+
+type DispatcherWeatherHour = {
+  starts_at: string;
+  precip_mm: number | null;
+  snow_cm: number | null;
+};
+
+type DispatcherWeatherFlags = {
+  snow_risk: boolean;
+  freezing_risk: boolean;
+};
+
+type DispatcherContextResponse = {
+  weather_now: DispatcherWeatherNow;
+  next_6h: DispatcherWeatherHour[];
+  flags: DispatcherWeatherFlags;
+  traffic_risk: "low" | "medium" | "high";
+};
+
 const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, index) => START_HOUR + index);
 const RANGE_START_MINUTES = START_HOUR * 60;
 const RANGE_END_MINUTES = END_HOUR * 60;
@@ -293,6 +319,33 @@ function shortAddress(address: DispatcherAddress | null | undefined) {
   return street?.trim() || formatted;
 }
 
+function contextWeatherLabel(summary: string | null, temp: number | null) {
+  if (!summary && temp === null) return "Weather unavailable";
+  const tempLabel = temp === null ? "" : `${Math.round(temp)}°C`;
+  return [summary ?? "Now", tempLabel].filter(Boolean).join(" · ");
+}
+
+function contextWeatherIcon(summary: string | null) {
+  const normalized = summary?.toLowerCase() ?? "";
+  if (normalized.includes("snow")) return "❄️";
+  if (normalized.includes("rain") || normalized.includes("drizzle") || normalized.includes("showers")) return "🌧️";
+  if (normalized.includes("fog")) return "🌫️";
+  if (normalized.includes("cloud")) return "☁️";
+  if (normalized.includes("clear")) return "☀️";
+  return "🌤️";
+}
+
+function trafficBufferHint(risk: DispatcherContextResponse["traffic_risk"]) {
+  switch (risk) {
+    case "high":
+      return "add +15 min buffer";
+    case "medium":
+      return "add +10 min buffer";
+    default:
+      return "normal buffer";
+  }
+}
+
 export default function DispatcherPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -331,6 +384,8 @@ export default function DispatcherPage() {
   const [viewMode, setViewMode] = useState<"timeline" | "map" | "split">("split");
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [mobileTab, setMobileTab] = useState<"alerts" | "today" | "timeline">("alerts");
+  const [context, setContext] = useState<DispatcherContextResponse | null>(null);
+  const [contextExpanded, setContextExpanded] = useState(false);
   const [mapScriptsLoaded, setMapScriptsLoaded] = useState(false);
   const [clustererLoaded, setClustererLoaded] = useState(false);
   const hoursScrollRef = useRef<HTMLDivElement | null>(null);
@@ -468,6 +523,29 @@ export default function DispatcherPage() {
     }
   }, [authHeaders, password, username]);
 
+  const fetchContext = useCallback(async () => {
+    if (!username || !password) return;
+    try {
+      const response = await fetch(
+        `${API_BASE}/v1/admin/dispatcher/context?tz=${encodeURIComponent(EDMONTON_TZ)}`,
+        {
+          headers: authHeaders,
+          cache: "no-store",
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+      const payload = (await response.json()) as DispatcherContextResponse;
+      setContext(payload);
+    } catch (fetchError) {
+      console.warn(
+        "Failed to load dispatcher context",
+        fetchError instanceof Error ? fetchError.message : fetchError
+      );
+    }
+  }, [authHeaders, password, username]);
+
   const acknowledgeAlert = useCallback(
     async (alertId: string) => {
       if (!username || !password) return;
@@ -557,13 +635,20 @@ export default function DispatcherPage() {
     void fetchBoard();
     void fetchAlerts();
     void fetchStats();
+    void fetchContext();
     const interval = window.setInterval(() => {
       void fetchBoard();
       void fetchAlerts();
       void fetchStats();
     }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [fetchAlerts, fetchBoard, fetchStats, password, username]);
+    const contextInterval = window.setInterval(() => {
+      void fetchContext();
+    }, 10 * 60 * 1000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearInterval(contextInterval);
+    };
+  }, [fetchAlerts, fetchBoard, fetchContext, fetchStats, password, username]);
 
   useEffect(() => {
     if (!selectedBooking) return;
@@ -590,7 +675,8 @@ export default function DispatcherPage() {
     window.localStorage.setItem(STORAGE_PASSWORD_KEY, password);
     void fetchBoard();
     void fetchStats();
-  }, [fetchBoard, fetchStats, password, username]);
+    void fetchContext();
+  }, [fetchBoard, fetchContext, fetchStats, password, username]);
 
   const handleClearCredentials = useCallback(() => {
     window.localStorage.removeItem(STORAGE_USERNAME_KEY);
@@ -600,6 +686,7 @@ export default function DispatcherPage() {
     setBoard(null);
     setStats(null);
     setSelectedBooking(null);
+    setContext(null);
   }, []);
 
   const updateBookingState = useCallback(
@@ -926,6 +1013,24 @@ export default function DispatcherPage() {
     });
     return counts;
   }, [alerts]);
+
+  const contextSummary = useMemo(() => {
+    if (!context) return null;
+    return contextWeatherLabel(context.weather_now.summary, context.weather_now.temp_c);
+  }, [context]);
+
+  const trafficLabel = useMemo(() => {
+    if (!context) return "Traffic risk: —";
+    const risk = context.traffic_risk.charAt(0).toUpperCase() + context.traffic_risk.slice(1);
+    return `Traffic risk: ${risk}`;
+  }, [context]);
+
+  const trafficHint = useMemo(() => {
+    if (!context) return "buffer unavailable";
+    return trafficBufferHint(context.traffic_risk);
+  }, [context]);
+
+  const riskBadgeTone = context?.traffic_risk ?? "low";
 
   const isActionPending = useCallback(
     (bookingId: string) => pendingActionIds.includes(bookingId),
@@ -1590,6 +1695,77 @@ export default function DispatcherPage() {
           <h1>Dispatcher Timeline</h1>
           <p className="muted">Live schedule for today in {EDMONTON_TZ}.</p>
         </div>
+        <section className="dispatcher-context" aria-label="Context">
+          <button
+            type="button"
+            className="dispatcher-context-toggle"
+            onClick={() => setContextExpanded((prev) => !prev)}
+            aria-expanded={contextExpanded}
+          >
+            <div className="dispatcher-context-row">
+              <span className="dispatcher-context-icon">
+                {context ? contextWeatherIcon(context.weather_now.summary) : "🌤️"}
+              </span>
+              <div>
+                <div className="dispatcher-context-title">{contextSummary ?? "Weather unavailable"}</div>
+                <div className="dispatcher-context-subtitle">
+                  {context?.flags.snow_risk ? "Snow risk" : "No snow risk"}
+                  {context?.flags.freezing_risk ? " · Freezing risk" : ""}
+                </div>
+              </div>
+            </div>
+            <div className="dispatcher-context-row">
+              <span className={`dispatcher-context-badge ${riskBadgeTone}`} aria-hidden="true" />
+              <div>
+                <div className="dispatcher-context-title">{trafficLabel}</div>
+                <div className="dispatcher-context-subtitle">{trafficHint}</div>
+              </div>
+            </div>
+            <span className="dispatcher-context-action">{contextExpanded ? "Hide" : "Details"}</span>
+          </button>
+          {contextExpanded ? (
+            <div className="dispatcher-context-details">
+              <div className="dispatcher-context-detail-row">
+                <span>Wind</span>
+                <strong>
+                  {context?.weather_now.wind_kph ? `${Math.round(context.weather_now.wind_kph)} kph` : "—"}
+                </strong>
+              </div>
+              <div className="dispatcher-context-detail-row">
+                <span>Precip now</span>
+                <strong>
+                  {context?.weather_now.precip_mm ? `${context.weather_now.precip_mm.toFixed(1)} mm` : "—"}
+                </strong>
+              </div>
+              <div className="dispatcher-context-detail-row">
+                <span>Snow now</span>
+                <strong>
+                  {context?.weather_now.snow_cm ? `${context.weather_now.snow_cm.toFixed(1)} cm` : "—"}
+                </strong>
+              </div>
+              <div className="dispatcher-context-forecast">
+                <span className="dispatcher-context-forecast-title">Next 6 hours</span>
+                <div className="dispatcher-context-forecast-list">
+                  {(context?.next_6h ?? []).map((hour) => (
+                    <div key={hour.starts_at} className="dispatcher-context-forecast-item">
+                      <span className="muted">
+                        {new Intl.DateTimeFormat("en-CA", {
+                          timeZone: EDMONTON_TZ,
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: false,
+                        }).format(new Date(hour.starts_at))}
+                      </span>
+                      <span>{hour.precip_mm ? `${hour.precip_mm.toFixed(1)} mm` : "—"}</span>
+                      <span>{hour.snow_cm ? `${hour.snow_cm.toFixed(1)} cm` : "—"}</span>
+                    </div>
+                  ))}
+                  {context?.next_6h?.length ? null : <span className="muted">No forecast data.</span>}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </section>
         <div className="dispatcher-alert-counts" aria-label="Alert counts">
           <span className="muted">Alerts</span>
           <div className="dispatcher-badges">

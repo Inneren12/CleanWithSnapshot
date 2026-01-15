@@ -17,3 +17,4 @@ from app.domain.admin_idempotency import db_models as idempotency_db_models  # n
 from app.domain.break_glass import db_models as break_glass_db_models  # noqa: F401
 from app.domain.data_rights import db_models as data_rights_db_models  # noqa: F401
 from app.domain.addons import db_models as addons_db_models  # noqa: F401
+from app.domain.dispatcher import db_models as dispatcher_db_models  # noqa: F401
