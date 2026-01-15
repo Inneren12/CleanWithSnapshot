@@ -122,10 +122,13 @@ class InvoiceListResponse(BaseModel):
 
 class OverdueInvoiceSummary(BaseModel):
     invoice_id: str
+    invoice_number: str
     client: str | None = None
+    client_email: str | None = None
     amount_due: int
     due_at: date
     days_overdue: int
+    status: str
 
 
 class OverdueBucketSummary(BaseModel):

@@ -167,6 +167,12 @@ module.api                    # API access
 - Frontend: `web/app/admin/invoices/[id]/page.tsx`
 - API: `backend/app/api/routes_admin.py::/v1/admin/ui/invoices/{id}` (GET)
 
+#### Overdue Alerts
+- Frontend: `web/app/admin/invoices/page.tsx` (overdue summary cards + quick actions)
+- API: `backend/app/api/routes_admin.py::/v1/admin/invoices/overdue_summary` (GET)
+- API: `backend/app/api/routes_admin.py::/v1/admin/invoices/overdue_remind` (POST)
+- Where to change bucketing rules: `backend/app/api/routes_admin.py::_bucket_for_days_overdue()` and `_overdue_bucket_bounds()`
+
 #### Bulk Actions
 - API: `backend/app/api/routes_admin.py` (bulk status updates, exports)
 - Service: `backend/app/domain/invoices/service.py::bulk_update_status()`

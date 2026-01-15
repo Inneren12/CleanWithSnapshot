@@ -39,10 +39,13 @@ type InvoiceListResponse = {
 
 type OverdueInvoiceSummary = {
   invoice_id: string;
+  invoice_number: string;
   client: string | null;
+  client_email: string | null;
   amount_due: number;
   due_at: string;
   days_overdue: number;
+  status: string;
 };
 
 type OverdueBucketKey = "critical" | "attention" | "recent";
@@ -112,6 +115,9 @@ export default function InvoicesPage() {
     attention: false,
     recent: false,
   });
+  const [invoiceActionMessage, setInvoiceActionMessage] = useState<Record<string, string | null>>({});
+  const [invoiceActionError, setInvoiceActionError] = useState<Record<string, string | null>>({});
+  const [invoiceActionLoading, setInvoiceActionLoading] = useState<Record<string, boolean>>({});
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState("");
@@ -300,6 +306,10 @@ export default function InvoicesPage() {
     if (asOf) {
       setAsOfFilter(asOf);
     }
+    const status = params.get("status");
+    if (status) {
+      setStatusFilter(status.toUpperCase());
+    }
   }, []);
 
   useEffect(() => {
@@ -449,6 +459,45 @@ export default function InvoicesPage() {
     [authHeaders, username, password, loadOverdueSummary]
   );
 
+  const handleInvoiceRemind = useCallback(
+    async (bucket: OverdueBucketKey, invoiceId: string) => {
+      if (!username || !password) return;
+      setInvoiceActionMessage((prev) => ({ ...prev, [invoiceId]: null }));
+      setInvoiceActionError((prev) => ({ ...prev, [invoiceId]: null }));
+      setInvoiceActionLoading((prev) => ({ ...prev, [invoiceId]: true }));
+      try {
+        const response = await fetch(`${API_BASE}/v1/admin/invoices/overdue_remind`, {
+          method: "POST",
+          headers: {
+            ...authHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ bucket, invoice_ids: [invoiceId] }),
+        });
+        if (response.ok) {
+          const result = await response.json();
+          if (result.succeeded?.includes(invoiceId)) {
+            setInvoiceActionMessage((prev) => ({ ...prev, [invoiceId]: "Reminder sent." }));
+          } else {
+            const failure = result.failed?.find((item: { invoice_id: string }) => item.invoice_id === invoiceId);
+            setInvoiceActionError((prev) => ({
+              ...prev,
+              [invoiceId]: failure?.error ?? "Failed to send reminder",
+            }));
+          }
+          void loadOverdueSummary();
+        } else {
+          setInvoiceActionError((prev) => ({ ...prev, [invoiceId]: "Failed to send reminder" }));
+        }
+      } catch (err) {
+        setInvoiceActionError((prev) => ({ ...prev, [invoiceId]: "Network error sending reminder" }));
+      } finally {
+        setInvoiceActionLoading((prev) => ({ ...prev, [invoiceId]: false }));
+      }
+    },
+    [authHeaders, username, password, loadOverdueSummary]
+  );
+
   const handleSearch = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
@@ -561,14 +610,49 @@ export default function InvoicesPage() {
                       {bucket.invoices.map((invoice) => (
                         <li key={invoice.invoice_id} className="overdue-item">
                           <div className="overdue-item-main">
-                            <span className="overdue-client">{invoice.client ?? "Unknown client"}</span>
+                            <div className="overdue-item-title">
+                              <a href={`/admin/invoices/${invoice.invoice_id}`} className="overdue-link">
+                                {invoice.invoice_number}
+                              </a>
+                              <span className="overdue-client">{invoice.client ?? "Unknown client"}</span>
+                              {invoice.client_email && (
+                                <span className="overdue-email">{invoice.client_email}</span>
+                              )}
+                            </div>
                             <span className="overdue-amount">
                               {formatMoney(invoice.amount_due, "CAD")}
                             </span>
                           </div>
                           <div className="overdue-item-meta">
-                            Due {formatDate(invoice.due_at)} · {invoice.days_overdue} days overdue
+                            Due {formatDate(invoice.due_at)} · {invoice.days_overdue} days overdue · Status{" "}
+                            {invoice.status}
                           </div>
+                          <div className="overdue-item-actions">
+                            <a className="btn secondary" href={`/admin/invoices/${invoice.invoice_id}`}>
+                              View invoice
+                            </a>
+                            {hasSendPermission && (
+                              <button
+                                className="btn"
+                                type="button"
+                                onClick={() => handleInvoiceRemind(bucket.bucket, invoice.invoice_id)}
+                                disabled={
+                                  invoiceActionLoading[invoice.invoice_id] || !invoice.client_email
+                                }
+                              >
+                                {invoiceActionLoading[invoice.invoice_id] ? "Sending..." : "Send reminder"}
+                              </button>
+                            )}
+                          </div>
+                          {!invoice.client_email && hasSendPermission && (
+                            <div className="muted small">Missing client email for reminder.</div>
+                          )}
+                          {invoiceActionMessage[invoice.invoice_id] && (
+                            <div className="bulk-message success">{invoiceActionMessage[invoice.invoice_id]}</div>
+                          )}
+                          {invoiceActionError[invoice.invoice_id] && (
+                            <div className="bulk-message error">{invoiceActionError[invoice.invoice_id]}</div>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -585,7 +669,7 @@ export default function InvoicesPage() {
                       )}
                       <a
                         className="btn secondary"
-                        href={`/admin/invoices?overdue_bucket=${bucket.bucket}${
+                        href={`/admin/invoices?status=OVERDUE&overdue_bucket=${bucket.bucket}${
                           overdueSummary.as_of ? `&as_of=${overdueSummary.as_of}` : ""
                         }`}
                       >
@@ -946,11 +1030,39 @@ export default function InvoicesPage() {
           justify-content: space-between;
           gap: 0.5rem;
           font-weight: 500;
+          align-items: flex-start;
+        }
+
+        .overdue-item-title {
+          display: flex;
+          flex-direction: column;
+          gap: 0.15rem;
+        }
+
+        .overdue-link {
+          color: #1976d2;
+          text-decoration: none;
+          font-weight: 600;
+        }
+
+        .overdue-link:hover {
+          text-decoration: underline;
+        }
+
+        .overdue-email {
+          font-size: 0.75rem;
+          color: #777;
         }
 
         .overdue-item-meta {
           font-size: 0.75rem;
           color: #666;
+        }
+
+        .overdue-item-actions {
+          display: flex;
+          gap: 0.5rem;
+          flex-wrap: wrap;
         }
 
         .overdue-actions {
