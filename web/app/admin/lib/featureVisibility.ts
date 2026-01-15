@@ -23,31 +23,22 @@ export type FeatureTreeItem = {
   children?: FeatureTreeItem[];
 };
 
-const ROLE_PERMISSIONS: Record<string, Set<string>> = {
-  owner: new Set(["view", "dispatch", "finance", "admin"]),
-  admin: new Set(["view", "dispatch", "finance", "admin"]),
-  dispatcher: new Set(["view", "dispatch"]),
-  accountant: new Set(["view", "finance"]),
-  finance: new Set(["view", "finance"]),
-  viewer: new Set(["view"]),
-};
-
 const MODULE_PERMISSIONS: Record<string, string> = {
-  dashboard: "view",
-  schedule: "dispatch",
-  invoices: "finance",
-  quality: "view",
-  teams: "admin",
-  analytics: "finance",
-  finance: "finance",
-  pricing: "view",
-  marketing: "view",
-  leads: "view",
-  inventory: "view",
-  training: "view",
-  notifications_center: "admin",
-  settings: "admin",
-  api: "admin",
+  dashboard: "core.view",
+  schedule: "bookings.view",
+  invoices: "invoices.view",
+  quality: "bookings.view",
+  teams: "users.manage",
+  analytics: "finance.view",
+  finance: "finance.view",
+  pricing: "settings.manage",
+  marketing: "core.view",
+  leads: "contacts.view",
+  inventory: "core.view",
+  training: "core.view",
+  notifications_center: "admin.manage",
+  settings: "settings.manage",
+  api: "settings.manage",
 };
 
 export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
@@ -139,21 +130,20 @@ export function isHidden(hiddenKeys: string[], key: string): boolean {
   return normalized.has(trimmed) || normalized.has(moduleKey);
 }
 
-export function roleAllows(role: string | undefined, key: string): boolean {
-  if (!role) return false;
+export function permissionsAllow(permissions: string[] | undefined, key: string): boolean {
+  if (!permissions) return false;
   const base = moduleBaseForKey(key);
-  const required = MODULE_PERMISSIONS[base] ?? "view";
-  const permissions = ROLE_PERMISSIONS[role.toLowerCase()] ?? new Set();
-  return permissions.has(required);
+  const required = MODULE_PERMISSIONS[base] ?? "core.view";
+  return permissions.includes(required);
 }
 
 export function isVisible(
   key: string,
-  role: string | undefined,
+  permissions: string[] | undefined,
   overrides: Record<string, boolean>,
   hiddenKeys: string[]
 ): boolean {
-  if (!roleAllows(role, key)) return false;
+  if (!permissionsAllow(permissions, key)) return false;
   if (isHidden(hiddenKeys, key)) return false;
   return effectiveFeatureEnabled(overrides, key);
 }

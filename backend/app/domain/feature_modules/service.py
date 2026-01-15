@@ -7,6 +7,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.feature_modules.db_models import OrgFeatureConfig, UserUiPreference
+from app.domain.iam import permissions as iam_permissions
 
 MODULE_KEYS = [
     "module.dashboard",
@@ -38,31 +39,22 @@ SUBFEATURE_KEYS = [
 
 FEATURE_KEYS = MODULE_KEYS + SUBFEATURE_KEYS
 
-ROLE_PERMISSIONS: dict[str, set[str]] = {
-    "owner": {"view", "dispatch", "finance", "admin"},
-    "admin": {"view", "dispatch", "finance", "admin"},
-    "dispatcher": {"view", "dispatch"},
-    "accountant": {"view", "finance"},
-    "finance": {"view", "finance"},
-    "viewer": {"view"},
-}
-
 MODULE_PERMISSIONS: dict[str, str] = {
-    "dashboard": "view",
-    "schedule": "dispatch",
-    "invoices": "finance",
-    "quality": "view",
-    "teams": "admin",
-    "analytics": "finance",
-    "finance": "finance",
-    "pricing": "view",
-    "marketing": "view",
-    "leads": "view",
-    "inventory": "view",
-    "training": "view",
-    "notifications_center": "admin",
-    "settings": "admin",
-    "api": "admin",
+    dashboard: "core.view",
+    schedule: "bookings.view",
+    invoices: "invoices.view",
+    quality: "bookings.view",
+    teams: "users.manage",
+    analytics: "finance.view",
+    finance: "finance.view",
+    pricing: "settings.manage",
+    marketing: "core.view",
+    leads: "contacts.view",
+    inventory: "core.view",
+    training: "core.view",
+    notifications_center: "admin.manage",
+    settings: "settings.manage",
+    api: "settings.manage",
 }
 
 
@@ -130,13 +122,13 @@ def resolve_effective_features(
 
 def required_permission_for_key(key: str) -> str:
     base = module_base_for_key(key)
-    return MODULE_PERMISSIONS.get(base, "view")
+    return MODULE_PERMISSIONS.get(base, "core.view")
 
 
 def role_allows_key(role: str | None, key: str) -> bool:
     if not role:
         return False
-    permissions = ROLE_PERMISSIONS.get(role.lower(), set())
+    permissions = iam_permissions.permissions_for_role(role)
     required = required_permission_for_key(key)
     return required in permissions
 

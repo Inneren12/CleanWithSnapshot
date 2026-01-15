@@ -13,6 +13,7 @@ from fastapi.security.utils import get_authorization_scheme_param
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.settings import settings
+from app.domain.iam import permissions as iam_permissions
 from app.infra.logging import update_log_context
 from app.infra.org_context import set_current_org_id
 
@@ -204,9 +205,35 @@ def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> Admin
     raise _build_auth_exception(reason="invalid_credentials")
 
 
-def _assert_permissions(identity: AdminIdentity, required: Iterable[AdminPermission]) -> None:
-    granted = ROLE_PERMISSIONS.get(identity.role, set())
-    missing = set(required) - granted
+def _resolve_permission_keys(request: Request, identity: AdminIdentity) -> set[str]:
+    saas_identity = getattr(request.state, "saas_identity", None)
+    if saas_identity is not None:
+        role_key = getattr(saas_identity, "role_key", None) or getattr(
+            getattr(saas_identity, "role", None), "value", None
+        )
+        custom_permissions = getattr(saas_identity, "permission_keys", None)
+        return iam_permissions.effective_permissions(
+            role_key=role_key,
+            custom_permissions=custom_permissions,
+        )
+    return iam_permissions.permissions_for_role(getattr(identity.role, "value", str(identity.role)))
+
+
+def permission_keys_for_request(request: Request, identity: AdminIdentity) -> set[str]:
+    return _resolve_permission_keys(request, identity)
+
+
+def _assert_permissions(
+    request: Request, identity: AdminIdentity, required: Iterable[AdminPermission]
+) -> None:
+    permission_keys = _resolve_permission_keys(request, identity)
+    required_keys: set[str] = set()
+    for permission in required:
+        required_keys |= iam_permissions.LEGACY_ADMIN_PERMISSION_MAP.get(
+            getattr(permission, "value", str(permission)),
+            set(),
+        )
+    missing = required_keys - permission_keys
     if missing:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
@@ -252,8 +279,23 @@ async def get_admin_identity(
 
 
 def require_permissions(*permissions: AdminPermission):
-    async def _require(identity: AdminIdentity = Depends(get_admin_identity)) -> AdminIdentity:
-        _assert_permissions(identity, permissions or [AdminPermission.VIEW])
+    async def _require(
+        request: Request, identity: AdminIdentity = Depends(get_admin_identity)
+    ) -> AdminIdentity:
+        _assert_permissions(request, identity, permissions or [AdminPermission.VIEW])
+        return identity
+
+    return _require
+
+
+def require_permission_keys(*permission_keys: str):
+    async def _require(
+        request: Request, identity: AdminIdentity = Depends(get_admin_identity)
+    ) -> AdminIdentity:
+        granted = _resolve_permission_keys(request, identity)
+        missing = {key for key in permission_keys if key} - granted
+        if missing:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         return identity
 
     return _require
@@ -339,7 +381,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
         try:
             credentials = _credentials_from_header(request)
             identity = _authenticate_credentials(credentials)
-            _assert_permissions(identity, [AdminPermission.VIEW])
+            _assert_permissions(request, identity, [AdminPermission.VIEW])
             request.state.admin_identity = identity
             request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
             set_current_org_id(request.state.current_org_id)

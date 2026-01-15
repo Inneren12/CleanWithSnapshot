@@ -194,112 +194,45 @@ export default function AdminPage() {
     return { Authorization: `Basic ${encoded}` };
   }, [username, password]);
 
-  const isReadOnly = !profile?.permissions?.some((permission) =>
-    ["dispatch", "admin"].includes(permission)
-  );
-  const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
-  const featureOverrides = featureConfig?.overrides ?? {};
-  const hiddenKeys = uiPrefs?.hidden_keys ?? [];
-  const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
-  const dashboardVisible = visibilityReady
-    ? isVisible("module.dashboard", profile?.role, featureOverrides, hiddenKeys)
-    : true;
-  const financeReportsVisible = visibilityReady
-    ? isVisible("finance.reports", profile?.role, featureOverrides, hiddenKeys)
-    : true;
+  
+  const permissionKeys = profile?.permissions ?? [];
+const canManageBookings =
+  permissionKeys.includes("bookings.edit") || permissionKeys.includes("bookings.assign");
+const isReadOnly = !canManageBookings;
 
-  const navLinks = useMemo(() => {
-    if (!visibilityReady || !profile) return [];
-    const candidates = [
-      { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
-      { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
-      {
-        key: "org-settings",
-        label: "Org Settings",
-        href: "/admin/settings/org",
-        featureKey: "module.settings",
-      },
-      {
-        key: "pricing",
-        label: "Service Types & Pricing",
-        href: "/admin/settings/pricing",
-        featureKey: "module.settings",
-      },
-      {
-        key: "policies",
-        label: "Booking Policies",
-        href: "/admin/settings/booking-policies",
-        featureKey: "module.settings",
-      },
+const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
+const featureOverrides = featureConfig?.overrides ?? {};
+const hiddenKeys = uiPrefs?.hidden_keys ?? [];
 
-      { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
-    ];
-    return candidates
-      .filter((entry) => isVisible(entry.featureKey, profile.role, featureOverrides, hiddenKeys))
-      .map(({ featureKey, ...link }) => link);
-  }, [featureOverrides, hiddenKeys, profile, visibilityReady]);
+const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
 
-  const loadProfile = useCallback(async () => {
-    if (!username || !password) return;
-    const response = await fetch(`${API_BASE}/v1/admin/profile`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as AdminProfile;
-      setProfile(data);
-    } else {
-      setProfile(null);
-    }
-  }, [authHeaders, password, username]);
+const dashboardVisible = visibilityReady
+  ? isVisible("module.dashboard", permissionKeys, featureOverrides, hiddenKeys)
+  : true;
 
-  const loadFeatureConfig = useCallback(async () => {
-    if (!username || !password) return;
-    setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as FeatureConfigResponse;
-      setFeatureConfig(data);
-    } else {
-      setFeatureConfig(null);
-      setSettingsError("Failed to load module settings");
-    }
-  }, [authHeaders, password, username]);
+const financeReportsVisible = visibilityReady
+  ? isVisible("finance.reports", permissionKeys, featureOverrides, hiddenKeys)
+  : true;
 
-  const loadUiPrefs = useCallback(async () => {
-    if (!username || !password) return;
-    setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as UiPrefsResponse;
-      setUiPrefs(data);
-    } else {
-      setUiPrefs(null);
-      setSettingsError("Failed to load UI preferences");
-    }
-  }, [authHeaders, password, username]);
+const navLinks = useMemo(() => {
+  if (!visibilityReady || !profile) return [];
 
-  const loadOrgSettings = useCallback(async () => {
-    if (!username || !password) return;
-    setOrgSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/settings/org`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as OrgSettingsResponse;
-      setOrgSettings(data);
-    } else {
-      setOrgSettings(null);
-      setOrgSettingsError("Failed to load org settings");
-    }
-  }, [authHeaders, password, username]);
+  const candidates = [
+    { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
+    { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+
+    { key: "org-settings", label: "Org Settings", href: "/admin/settings/org", featureKey: "module.settings" },
+    { key: "pricing", label: "Service Types & Pricing", href: "/admin/settings/pricing", featureKey: "module.settings" },
+    { key: "policies", label: "Booking Policies", href: "/admin/settings/booking-policies", featureKey: "module.settings" },
+
+    { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "module.settings" },
+    { key: "roles", label: "Roles & Permissions", href: "/admin/iam/roles", featureKey: "module.settings" },
+  ];
+
+  return candidates
+    .filter((entry) => isVisible(entry.featureKey, permissionKeys, featureOverrides, hiddenKeys))
+    .map(({ featureKey, ...link }) => link);
+}, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -320,6 +253,11 @@ export default function AdminPage() {
 
   const loadMetrics = async () => {
     if (!username || !password) return;
+    if (profile && !canAdminMetrics) {
+      setMetrics(null);
+      setMetricsError("Metrics require admin access");
+      return;
+    }
     setMetricsLoading(true);
     setMetricsError(null);
     try {
@@ -337,7 +275,7 @@ export default function AdminPage() {
       } else {
         setMetrics(null);
         if (response.status === 403) {
-          setMetricsError("Metrics require an admin permission");
+          setMetricsError("Metrics require admin access");
         } else {
           setMetricsError("Failed to load metrics");
         }
@@ -349,6 +287,10 @@ export default function AdminPage() {
 
   const downloadMetricsCsv = async () => {
     if (!username || !password) return;
+    if (profile && !canAdminMetrics) {
+      setMetricsError("Metrics require admin access");
+      return;
+    }
     const params = new URLSearchParams({
       from: metricsRange.from,
       to: metricsRange.to,
@@ -571,39 +513,39 @@ export default function AdminPage() {
   };
 
   const metricsFromInput = metricsRange.from.slice(0, 10);
-  const metricsToInput = metricsRange.to.slice(0, 10);
+const metricsToInput = metricsRange.to.slice(0, 10);
 
-  if (visibilityReady && !dashboardVisible) {
-    return (
-      <div className="admin-page">
-        <AdminNav links={navLinks} activeKey="dashboard" />
-        <div className="admin-card admin-section">
-          <h1>Dashboard</h1>
-          <p className="alert alert-warning">Disabled by org settings.</p>
-        </div>
-      </div>
-    );
-  }
-
+if (visibilityReady && !dashboardVisible) {
   return (
     <div className="admin-page">
       <AdminNav links={navLinks} activeKey="dashboard" />
-      <div className="admin-section">
-        <h1>Admin / Dispatcher</h1>
-        <p className="muted">Save credentials locally, then load leads, bookings, and exports.</p>
+      <div className="admin-card admin-section">
+        <h1>Dashboard</h1>
+        <p className="alert alert-warning">Disabled by org settings.</p>
       </div>
+    </div>
+  );
+}
 
-      {settingsError ? <p className="alert alert-warning">{settingsError}</p> : null}
-      {orgSettingsError ? <p className="alert alert-warning">{orgSettingsError}</p> : null}
+return (
+  <div className="admin-page">
+    <AdminNav links={navLinks} activeKey="dashboard" />
+    <div className="admin-section">
+      <h1>Admin / Dispatcher</h1>
+      <p className="muted">Save credentials locally, then load leads, bookings, and exports.</p>
+    </div>
 
-      {profile ? (
-        <div className={`alert ${isReadOnly ? "alert-warning" : "alert-info"}`}>
-          Signed in as <strong>{profile.username}</strong> ({profile.role})
-          {isReadOnly ? " · Your account is read-only without dispatch/admin permissions." : ""}
-        </div>
-      ) : null}
+    {settingsError ? <p className="alert alert-warning">{settingsError}</p> : null}
+    {orgSettingsError ? <p className="alert alert-warning">{orgSettingsError}</p> : null}
 
-      <div className="admin-card">
+    {profile ? (
+      <div className={`alert ${isReadOnly ? "alert-warning" : "alert-info"}`}>
+        Signed in as <strong>{profile.username}</strong> ({profile.role})
+        {isReadOnly ? " · Your account is read-only without booking edit/assign permissions." : ""}
+      </div>
+    ) : null}
+
+    <div className="admin-card">
         <div className="admin-section">
           <h2>Credentials</h2>
           <div className="admin-actions">
@@ -655,14 +597,19 @@ export default function AdminPage() {
             </label>
           </div>
           <div className="admin-actions" style={{ marginLeft: "auto" }}>
-            <button className="btn btn-ghost" type="button" onClick={() => void loadMetrics()} disabled={metricsLoading}>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={() => void loadMetrics()}
+              disabled={metricsLoading || (profile ? !canAdminMetrics : false)}
+            >
               Refresh
             </button>
             <button
               className="btn btn-secondary"
               type="button"
               onClick={() => void downloadMetricsCsv()}
-              disabled={metricsLoading || !!metricsError}
+              disabled={metricsLoading || !!metricsError || (profile ? !canAdminMetrics : false)}
             >
               Download CSV
             </button>

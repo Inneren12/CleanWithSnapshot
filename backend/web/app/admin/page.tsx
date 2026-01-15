@@ -8,12 +8,10 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
 const EDMONTON_TZ = "America/Edmonton";
 const KPI_PRESETS = [7, 28, 90];
 
-type AdminPermission = "view" | "dispatch" | "finance" | "admin";
-
 type AdminProfile = {
   username: string;
   role: string;
-  permissions: AdminPermission[];
+  permissions: string[];
 };
 
 type AdminMetricsResponse = {
@@ -188,9 +186,9 @@ export default function AdminPage() {
     return { Authorization: `Basic ${encoded}` };
   }, [username, password]);
 
-  const isReadOnly = !profile?.permissions?.some((permission) =>
-    ["dispatch", "admin"].includes(permission)
-  );
+  const permissionKeys = profile?.permissions ?? [];
+  const isReadOnly =
+    !permissionKeys.includes("bookings.edit") && !permissionKeys.includes("bookings.assign");
 
   const loadProfile = useCallback(async () => {
     if (!username || !password) return;
@@ -477,7 +475,7 @@ export default function AdminPage() {
       {profile ? (
         <div className={`alert ${isReadOnly ? "alert-warning" : "alert-info"}`}>
           Signed in as <strong>{profile.username}</strong> ({profile.role})
-          {isReadOnly ? " · Your account is read-only without dispatch/admin permissions." : ""}
+          {isReadOnly ? " · Your account is read-only without booking edit/assign permissions." : ""}
         </div>
       ) : null}
 
