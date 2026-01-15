@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 import sqlalchemy as sa
 from sqlalchemy import and_, func, select, or_
@@ -3060,9 +3060,14 @@ async def update_booking(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     if conflicts:
-        raise HTTPException(
+        return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"message": "conflict_with_existing_booking", "conflicts": conflicts},
+            content={
+                "detail": {
+                    "message": "conflict_with_existing_booking",
+                    "conflicts": jsonable_encoder(conflicts),
+                }
+            },
         )
 
     before_state = {
