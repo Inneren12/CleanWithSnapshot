@@ -9,6 +9,8 @@ from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, requir
 from app.api.org_context import require_org_context
 from app.domain.feature_modules import schemas as feature_schemas
 from app.domain.feature_modules import service as feature_service
+from app.domain.org_settings import schemas as org_settings_schemas
+from app.domain.org_settings import service as org_settings_service
 from app.infra.db import get_db_session
 
 router = APIRouter(tags=["admin-settings"])
@@ -73,6 +75,66 @@ async def update_feature_config(
         defaults=defaults,
         effective=effective,
         keys=feature_service.FEATURE_KEYS,
+    )
+
+
+@router.get(
+    "/v1/admin/settings/org",
+    response_model=org_settings_schemas.OrgSettingsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_org_settings(
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_viewer),
+    session: AsyncSession = Depends(get_db_session),
+) -> org_settings_schemas.OrgSettingsResponse:
+    record = await org_settings_service.get_or_create_org_settings(session, org_id)
+    return org_settings_schemas.OrgSettingsResponse(
+        org_id=org_id,
+        timezone=org_settings_service.resolve_timezone(record),
+        currency=org_settings_service.resolve_currency(record),
+        language=org_settings_service.resolve_language(record),
+        business_hours=org_settings_service.resolve_business_hours(record),
+        holidays=org_settings_service.resolve_holidays(record),
+        legal_name=record.legal_name,
+        legal_bn=record.legal_bn,
+        legal_gst_hst=record.legal_gst_hst,
+        legal_address=record.legal_address,
+        legal_phone=record.legal_phone,
+        legal_email=record.legal_email,
+        legal_website=record.legal_website,
+        branding=org_settings_service.resolve_branding(record),
+    )
+
+
+@router.patch(
+    "/v1/admin/settings/org",
+    response_model=org_settings_schemas.OrgSettingsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_org_settings(
+    payload: org_settings_schemas.OrgSettingsUpdateRequest,
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> org_settings_schemas.OrgSettingsResponse:
+    record = await org_settings_service.apply_org_settings_update(session, org_id, payload=payload)
+    await session.commit()
+    return org_settings_schemas.OrgSettingsResponse(
+        org_id=org_id,
+        timezone=org_settings_service.resolve_timezone(record),
+        currency=org_settings_service.resolve_currency(record),
+        language=org_settings_service.resolve_language(record),
+        business_hours=org_settings_service.resolve_business_hours(record),
+        holidays=org_settings_service.resolve_holidays(record),
+        legal_name=record.legal_name,
+        legal_bn=record.legal_bn,
+        legal_gst_hst=record.legal_gst_hst,
+        legal_address=record.legal_address,
+        legal_phone=record.legal_phone,
+        legal_email=record.legal_email,
+        legal_website=record.legal_website,
+        branding=org_settings_service.resolve_branding(record),
     )
 
 
