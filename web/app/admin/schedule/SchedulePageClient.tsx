@@ -54,6 +54,16 @@ type ScheduleResponse = {
   bookings: ScheduleBooking[];
 };
 
+type AvailabilityBlock = {
+  id: number;
+  scope_type: "worker" | "team" | "org";
+  scope_id: number | null;
+  block_type: "vacation" | "sick" | "training" | "holiday";
+  starts_at: string;
+  ends_at: string;
+  reason: string | null;
+};
+
 type ToastMessage = {
   message: string;
   kind: "error" | "success";
@@ -189,6 +199,10 @@ function parseDateTimeLocal(value: string) {
   return date;
 }
 
+function formatBlockType(value: AvailabilityBlock["block_type"]) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 function centsFromInput(value: string) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
@@ -262,6 +276,7 @@ export default function SchedulePage() {
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
   const [orgSettings, setOrgSettings] = useState<OrgSettingsResponse | null>(null);
   const [schedule, setSchedule] = useState<ScheduleResponse | null>(null);
+  const [availabilityBlocks, setAvailabilityBlocks] = useState<AvailabilityBlock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -325,6 +340,12 @@ export default function SchedulePage() {
       { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "org-settings", label: "Org Settings", href: "/admin/settings/org", featureKey: "module.settings" },
+      {
+        key: "availability-blocks",
+        label: "Availability Blocks",
+        href: "/admin/settings/availability-blocks",
+        featureKey: "module.settings",
+      },
       {
         key: "pricing",
         label: "Service Types & Pricing",
@@ -678,6 +699,34 @@ export default function SchedulePage() {
     workerFilter,
   ]);
 
+  useEffect(() => {
+    if (!isAuthenticated || !scheduleVisible) return;
+    const weekStartDate = weekStartFromDay(selectedDate, orgTimezone);
+    const rangeStart = buildOrgZonedInstant(weekStartDate, 0, orgTimezone);
+    const rangeEnd = buildOrgZonedInstant(addDaysYMD(weekStartDate, 7, orgTimezone), 0, orgTimezone);
+    const params = new URLSearchParams({
+      from: rangeStart.toISOString(),
+      to: rangeEnd.toISOString(),
+    });
+    fetch(`${API_BASE}/v1/admin/availability-blocks?${params.toString()}`, {
+      headers: authHeaders,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Failed to load availability blocks");
+        }
+        return response.json();
+      })
+      .then((payload: AvailabilityBlock[]) => {
+        setAvailabilityBlocks(Array.isArray(payload) ? payload : []);
+      })
+      .catch(() => {
+        setAvailabilityBlocks([]);
+      });
+  }, [authHeaders, isAuthenticated, orgTimezone, refreshToken, scheduleVisible, selectedDate]);
+
   const weekStart = useMemo(() => weekStartFromDay(selectedDate, orgTimezone), [selectedDate, orgTimezone]);
   const weekDays = useMemo(
     () => WEEKDAY_LABELS.map((_, index) => addDaysYMD(weekStart, index, orgTimezone)),
@@ -711,6 +760,31 @@ export default function SchedulePage() {
     );
     return mapping;
   }, [orgTimezone, schedule, weekDays]);
+
+  const bookingWarnings = useMemo(() => {
+    const mapping = new Map<string, string[]>();
+    if (!schedule || availabilityBlocks.length === 0) return mapping;
+    for (const booking of schedule.bookings) {
+      const bookingStart = new Date(booking.starts_at).getTime();
+      const bookingEnd = new Date(booking.ends_at).getTime();
+      const matches = availabilityBlocks.filter((block) => {
+        if (block.scope_type === "worker" && booking.worker_id !== block.scope_id) return false;
+        if (block.scope_type === "team" && booking.team_id !== block.scope_id) return false;
+        const blockStart = new Date(block.starts_at).getTime();
+        const blockEnd = new Date(block.ends_at).getTime();
+        return bookingStart < blockEnd && bookingEnd > blockStart;
+      });
+      if (!matches.length) continue;
+      mapping.set(
+        booking.booking_id,
+        matches.map((block) => {
+          const typeLabel = formatBlockType(block.block_type);
+          return `Blocked: ${typeLabel}${block.reason ? ` — ${block.reason}` : ""}`;
+        })
+      );
+    }
+    return mapping;
+  }, [availabilityBlocks, schedule]);
 
   const workerOptions = useMemo(() => {
     const map = new Map<number, string>();
@@ -1205,6 +1279,7 @@ export default function SchedulePage() {
                 {bookings.map((booking) => {
                   const bookingStartMinutes = minutesFromTime(booking.starts_at, orgTimezone);
                   const bookingEndMinutes = minutesFromTime(booking.ends_at, orgTimezone);
+                  const warnings = bookingWarnings.get(booking.booking_id) ?? [];
                   const top =
                     ((bookingStartMinutes - START_HOUR * 60) / SLOT_MINUTES) * SLOT_HEIGHT;
                   const height =
@@ -1245,6 +1320,11 @@ export default function SchedulePage() {
                       <div className="schedule-booking-meta">
                         {formatCurrencyFromCents(booking.price_cents)}
                       </div>
+                      {warnings.map((warning) => (
+                        <div className="schedule-booking-warning" key={warning}>
+                          ⚠️ {warning}
+                        </div>
+                      ))}
                     </div>
                   );
                 })}

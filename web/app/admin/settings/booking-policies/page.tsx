@@ -100,6 +100,12 @@ export default function BookingPoliciesPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      {
+        key: "availability-blocks",
+        label: "Availability Blocks",
+        href: "/admin/settings/availability-blocks",
+        featureKey: "module.settings",
+      },
       { key: "pricing", label: "Service Types & Pricing", href: "/admin/settings/pricing", featureKey: "pricing.service_types" },
       { key: "policies", label: "Booking Policies", href: "/admin/settings/booking-policies", featureKey: "pricing.booking_policies" },
       {

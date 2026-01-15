@@ -17,6 +17,7 @@ from app.domain.bookings.service import (
     ensure_default_team,
     generate_slots,
 )
+from app.domain.availability import service as availability_service
 from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.leads.db_models import Lead
@@ -268,6 +269,12 @@ def _conflicts(existing_start: datetime, existing_duration: int, candidate_start
     return candidate_start < existing_end + buffer_delta and candidate_end > existing_start - buffer_delta
 
 
+def _availability_note(block_type: str, reason: str | None) -> str:
+    if reason:
+        return f"{block_type}: {reason}"
+    return block_type
+
+
 async def _blocking_bookings(
     session: AsyncSession,
     team_id: int,
@@ -351,6 +358,24 @@ async def _team_conflicts(
             }
         )
 
+    blocks = await availability_service.list_team_blocks(
+        session,
+        team.org_id,
+        team.team_id,
+        starts_at=window_start,
+        ends_at=window_end,
+    )
+    for block in blocks:
+        conflicts.append(
+            {
+                "kind": "availability_block",
+                "reference": str(block.id),
+                "starts_at": _normalize(block.starts_at),
+                "ends_at": _normalize(block.ends_at),
+                "note": _availability_note(block.block_type, block.reason),
+            }
+        )
+
     return conflicts
 
 
@@ -397,6 +422,24 @@ async def _worker_conflicts(
                     "note": "worker has a conflicting booking",
                 }
             )
+
+    blocks = await availability_service.list_worker_blocks(
+        session,
+        worker.org_id,
+        worker.worker_id,
+        starts_at=window_start,
+        ends_at=window_end,
+    )
+    for block in blocks:
+        conflicts.append(
+            {
+                "kind": "availability_block",
+                "reference": str(block.id),
+                "starts_at": _normalize(block.starts_at),
+                "ends_at": _normalize(block.ends_at),
+                "note": _availability_note(block.block_type, block.reason),
+            }
+        )
     return conflicts
 
 
@@ -676,6 +719,16 @@ async def move_booking(
     blackout = (await session.execute(blackout_stmt)).scalar_one_or_none()
     if blackout:
         raise ValueError("conflict_with_blackout")
+
+    blocks = await availability_service.list_team_blocks(
+        session,
+        target_team.org_id,
+        target_team.team_id,
+        starts_at=normalized_start,
+        ends_at=normalized_end,
+    )
+    if blocks:
+        raise ValueError("conflict_with_availability_block")
 
     booking.starts_at = normalized_start
     booking.duration_minutes = duration

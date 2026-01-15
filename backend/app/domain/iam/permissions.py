@@ -47,6 +47,12 @@ PERMISSION_CATALOG: list[PermissionDefinition] = [
         group="bookings",
     ),
     PermissionDefinition(
+        key="schedule.blocking.manage",
+        label="Manage availability blocks",
+        description="Create, update, and delete availability blocks.",
+        group="schedule",
+    ),
+    PermissionDefinition(
         key="bookings.status",
         label="Update booking status",
         description="Update booking status and job progress.",
