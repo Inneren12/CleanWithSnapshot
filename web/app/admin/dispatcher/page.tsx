@@ -1852,15 +1852,14 @@ export default function DispatcherPage() {
                   </div>
                 </div>
               </div>
-            </div>
-            <div className="dispatcher-context-row">
-              <span className={`dispatcher-context-badge ${riskBadgeTone}`} aria-hidden="true" />
-              <div>
-                <div className="dispatcher-context-title">{trafficLabel}</div>
-                <div className="dispatcher-context-subtitle">{trafficHint}</div>
+              <div className="dispatcher-context-row">
+                <span className={`dispatcher-context-badge ${riskBadgeTone}`} aria-hidden="true" />
+                <div>
+                  <div className="dispatcher-context-title">{trafficLabel}</div>
+                  <div className="dispatcher-context-subtitle">{trafficHint}</div>
+                </div>
               </div>
-            </div>
-            <span className="dispatcher-context-action">{contextExpanded ? "Hide" : "Details"}</span>
+              <span className="dispatcher-context-action">{contextExpanded ? "Hide" : "Details"}</span>
           </button>
           {contextExpanded ? (
             <div className="dispatcher-context-details">
@@ -1902,7 +1901,8 @@ export default function DispatcherPage() {
                   {context?.next_6h?.length ? null : <span className="muted">No forecast data.</span>}
                 </div>
               </div>
-            ) : null}
+            </div>
+          ) : null}
           </section>
         ) : null}
         <div className="dispatcher-alert-counts" aria-label="Alert counts">
