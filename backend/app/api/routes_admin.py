@@ -67,6 +67,8 @@ from app.domain.bookings.db_models import (
     TeamBlackout,
     TeamWorkingHours,
 )
+from app.domain.availability import schemas as availability_schemas
+from app.domain.availability import service as availability_service
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
@@ -323,6 +325,22 @@ def _parse_since_timestamp(since: str | None) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _parse_availability_scope(scope: str | None) -> tuple[str | None, int | None]:
+    if not scope:
+        return (None, None)
+    normalized = scope.strip().lower()
+    if normalized == "org":
+        return ("org", None)
+    if ":" not in normalized:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid scope format")
+    prefix, value = normalized.split(":", 1)
+    if prefix not in {"team", "worker"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid scope type")
+    if not value.isdigit():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid scope id")
+    return (prefix, int(value))
 
 
 async def _chat_stream(
@@ -1363,6 +1381,107 @@ async def list_schedule(
         status=status,
     )
     return ScheduleResponse(**payload)
+
+
+@router.get(
+    "/v1/admin/availability-blocks",
+    response_model=list[availability_schemas.AvailabilityBlockResponse],
+)
+async def list_availability_blocks(
+    request: Request,
+    from_at: datetime | None = Query(default=None, alias="from"),
+    to_at: datetime | None = Query(default=None, alias="to"),
+    scope: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("bookings.view")),
+) -> list[availability_schemas.AvailabilityBlockResponse]:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    scope_type, scope_id = _parse_availability_scope(scope)
+    blocks = await availability_service.list_blocks(
+        session,
+        org_id,
+        starts_at=from_at,
+        ends_at=to_at,
+        scope_type=scope_type,
+        scope_id=scope_id,
+    )
+    return [availability_schemas.AvailabilityBlockResponse.model_validate(block) for block in blocks]
+
+
+@router.post(
+    "/v1/admin/availability-blocks",
+    response_model=availability_schemas.AvailabilityBlockResponse,
+)
+async def create_availability_block(
+    request: Request,
+    payload: availability_schemas.AvailabilityBlockCreate,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(
+        require_any_permission_keys("settings.manage", "schedule.blocking.manage")
+    ),
+) -> availability_schemas.AvailabilityBlockResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        block = await availability_service.create_block(
+            session,
+            org_id,
+            payload=payload,
+            created_by=identity.username,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return availability_schemas.AvailabilityBlockResponse.model_validate(block)
+
+
+@router.patch(
+    "/v1/admin/availability-blocks/{block_id}",
+    response_model=availability_schemas.AvailabilityBlockResponse,
+)
+async def update_availability_block(
+    block_id: int,
+    request: Request,
+    payload: availability_schemas.AvailabilityBlockUpdate,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(
+        require_any_permission_keys("settings.manage", "schedule.blocking.manage")
+    ),
+) -> availability_schemas.AvailabilityBlockResponse:
+    fields_set = payload.model_fields_set
+    if not fields_set:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No updates provided")
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        block = await availability_service.update_block(
+            session,
+            org_id,
+            block_id,
+            payload=payload,
+            reason_set="reason" in fields_set,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return availability_schemas.AvailabilityBlockResponse.model_validate(block)
+
+
+@router.delete("/v1/admin/availability-blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_availability_block(
+    block_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(
+        require_any_permission_keys("settings.manage", "schedule.blocking.manage")
+    ),
+) -> Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        await availability_service.delete_block(session, org_id, block_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/v1/admin/schedule/suggestions", response_model=ScheduleSuggestions)

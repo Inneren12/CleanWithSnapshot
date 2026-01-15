@@ -110,6 +110,12 @@ export default function ModulesVisibilityPage() {
         featureKey: "module.settings",
       },
       {
+        key: "availability-blocks",
+        label: "Availability Blocks",
+        href: "/admin/settings/availability-blocks",
+        featureKey: "module.settings",
+      },
+      {
         key: "pricing",
         label: "Service Types & Pricing",
         href: "/admin/settings/pricing",

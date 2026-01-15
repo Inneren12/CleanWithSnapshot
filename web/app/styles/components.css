@@ -321,6 +321,11 @@
   color: var(--muted);
 }
 
+.schedule-booking-warning {
+  color: #b45309;
+  font-weight: 600;
+}
+
 .schedule-modal {
   position: fixed;
   inset: 0;

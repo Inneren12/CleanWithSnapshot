@@ -380,6 +380,31 @@ async def reassign_dispatcher_booking(
     if worker.team_id != booking.team_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
 
+    duration_minutes = booking.duration_minutes or ops_service.DEFAULT_SLOT_DURATION_MINUTES
+    ends_at = booking.starts_at + timedelta(minutes=duration_minutes)
+    try:
+        conflicts = await ops_service.check_schedule_conflicts(
+            session,
+            org_id,
+            starts_at=booking.starts_at,
+            ends_at=ends_at,
+            team_id=booking.team_id,
+            booking_id=booking.booking_id,
+            worker_id=payload.worker_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    if conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "conflict_with_existing_booking", "conflicts": conflicts},
+        )
+
     previous_worker_ids = (
         await session.execute(select(BookingWorker.worker_id).where(BookingWorker.booking_id == booking_id))
     ).scalars().all()

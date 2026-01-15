@@ -385,3 +385,30 @@ class TeamBlackout(Base):
     )
 
     team: Mapped[Team] = relationship("Team", backref="blackouts")
+
+
+class AvailabilityBlock(Base):
+    __tablename__ = "availability_blocks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE, ForeignKey("organizations.org_id", ondelete="CASCADE"), nullable=False
+    )
+    scope_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    scope_id: Mapped[int | None] = mapped_column(Integer)
+    block_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(255))
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_availability_blocks_org", "org_id"),
+        Index("ix_availability_blocks_scope", "scope_type", "scope_id"),
+        Index("ix_availability_blocks_window", "starts_at", "ends_at"),
+    )

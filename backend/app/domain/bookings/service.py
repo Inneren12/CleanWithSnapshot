@@ -28,6 +28,7 @@ from app.domain.policy_overrides.schemas import OverrideType
 from app.domain.policy_overrides import service as override_service
 from app.domain.notifications import email_service
 from app.domain.pricing.models import CleaningType
+from app.domain.availability import service as availability_service
 from app.domain.leads.db_models import Lead
 from app.domain.leads.service import grant_referral_credit
 from app.domain.invoices import statuses as invoice_statuses
@@ -665,7 +666,15 @@ async def generate_slots(
     team_id: int | None = None,
     excluded_booking_id: str | None = None,
 ) -> list[datetime]:
-    team = team_id or (await ensure_default_team(session)).team_id
+    team_obj = None
+    if team_id is None:
+        team_obj = await ensure_default_team(session)
+        team = team_obj.team_id
+    else:
+        team_obj = await session.get(Team, team_id)
+        if team_obj is None:
+            return []
+        team = team_id
     working_hours = await _working_hours_for_day(session, team, target_date.weekday())
     day_window = _day_window(target_date, working_hours)
     if day_window is None:
@@ -693,6 +702,22 @@ async def generate_slots(
                 _normalize_datetime(blackout.ends_at),
             )
         )
+
+    if team_obj is not None:
+        blocks = await availability_service.list_team_blocks(
+            session,
+            team_obj.org_id,
+            team_obj.team_id,
+            starts_at=day_start,
+            ends_at=day_end,
+        )
+        for block in blocks:
+            blocked_windows.append(
+                (
+                    _normalize_datetime(block.starts_at),
+                    _normalize_datetime(block.ends_at),
+                )
+            )
 
     candidate = day_start
     slots: list[datetime] = []
@@ -994,9 +1019,29 @@ async def reschedule_booking(
     team_stmt = select(Team).where(Team.team_id == booking.team_id).with_for_update()
     team_result = await session.execute(team_stmt)
     team = team_result.scalar_one()
+    window_end = normalized + timedelta(minutes=duration_minutes)
 
     if booking.status == "CANCELLED":
         raise ValueError("Cannot reschedule a cancelled booking")
+    blocks = await availability_service.list_team_blocks(
+        session,
+        booking.org_id,
+        team.team_id,
+        starts_at=normalized,
+        ends_at=window_end,
+    )
+    if blocks:
+        raise ValueError("conflict_with_availability_block")
+    if booking.assigned_worker_id is not None:
+        worker_blocks = await availability_service.list_worker_blocks(
+            session,
+            booking.org_id,
+            booking.assigned_worker_id,
+            starts_at=normalized,
+            ends_at=window_end,
+        )
+        if worker_blocks:
+            raise ValueError("conflict_with_availability_block")
     if not allow_conflicts:
         if not await is_slot_available(
             normalized,

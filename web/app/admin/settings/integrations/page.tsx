@@ -96,6 +96,12 @@ export default function IntegrationsPage() {
       { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "org-settings", label: "Org Settings", href: "/admin/settings/org", featureKey: "module.settings" },
+      {
+        key: "availability-blocks",
+        label: "Availability Blocks",
+        href: "/admin/settings/availability-blocks",
+        featureKey: "module.settings",
+      },
       { key: "pricing", label: "Service Types & Pricing", href: "/admin/settings/pricing", featureKey: "module.settings" },
       {
         key: "integrations",
