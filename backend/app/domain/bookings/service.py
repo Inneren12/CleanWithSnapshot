@@ -426,13 +426,28 @@ def _day_window(target_date: date, working_hours: TeamWorkingHours | None) -> tu
     return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
 
 
-def _booking_window_filters(day_start: datetime, day_end: datetime, team_id: int) -> Select:
+def _booking_window_filters(
+    session: AsyncSession,
+    day_start: datetime,
+    day_end: datetime,
+    team_id: int,
+) -> Select:
+    bind = session.get_bind()
+    booking_end = Booking.ends_at if hasattr(Booking, "ends_at") else None
+    if booking_end is None:
+        if bind and bind.dialect.name == "sqlite":
+            booking_end = func.datetime(
+                Booking.starts_at, func.printf("+%d minutes", Booking.duration_minutes)
+            )
+        else:
+            booking_end = Booking.starts_at + func.make_interval(mins=Booking.duration_minutes)
+
     buffer_delta = timedelta(minutes=BUFFER_MINUTES)
     return select(Booking).where(
         and_(
             Booking.team_id == team_id,
             Booking.starts_at < day_end + buffer_delta,
-            Booking.starts_at > day_start - buffer_delta - timedelta(hours=12),
+            booking_end > day_start - buffer_delta,
             Booking.status.in_(BLOCKING_STATUSES),
         )
     )
@@ -659,7 +674,7 @@ async def generate_slots(
     duration_delta = timedelta(minutes=duration_minutes)
     buffer_delta = timedelta(minutes=BUFFER_MINUTES)
 
-    bookings_result = await session.execute(_booking_window_filters(day_start, day_end, team))
+    bookings_result = await session.execute(_booking_window_filters(session, day_start, day_end, team))
     bookings = bookings_result.scalars().all()
 
     blocked_windows: list[tuple[datetime, datetime]] = []

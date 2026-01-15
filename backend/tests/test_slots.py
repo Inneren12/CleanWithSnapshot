@@ -61,6 +61,22 @@ def test_slots_skip_booked_ranges(async_session_maker):
     asyncio.run(_run())
 
 
+def test_slots_block_spanning_booking(async_session_maker):
+    async def _run() -> None:
+        async with async_session_maker() as session:
+            target_date = date(2025, 1, 2)
+            start_local = datetime(2025, 1, 1, 18, 0, tzinfo=ZoneInfo("America/Edmonton"))
+            start_utc = start_local.astimezone(timezone.utc)
+            await _insert_booking(session, start_utc, 16 * 60, status="CONFIRMED")
+
+            slots = await generate_slots(target_date, 60, session)
+            day_start_local = datetime(2025, 1, 2, 9, 0, tzinfo=ZoneInfo("America/Edmonton"))
+            day_start_utc = day_start_local.astimezone(timezone.utc)
+            assert day_start_utc not in slots
+
+    asyncio.run(_run())
+
+
 def test_client_booking_api_blocks_slot(client, async_session_maker):
     start = datetime(2025, 1, 1, 9, 0, tzinfo=ZoneInfo("America/Edmonton"))
     end = start + timedelta(hours=8)
