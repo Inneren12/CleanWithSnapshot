@@ -120,11 +120,12 @@ export default function ServiceTypesPricingPage() {
   }, [username, password]);
 
   const isOwner = profile?.role === "owner";
+  const permissionKeys = profile?.permissions ?? [];
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
   const featureOverrides = featureConfig?.overrides ?? {};
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
   const pageVisible = visibilityReady
-    ? isVisible("pricing.service_types", profile?.role, featureOverrides, hiddenKeys)
+    ? isVisible("pricing.service_types", permissionKeys, featureOverrides, hiddenKeys)
     : true;
 
   const navLinks = useMemo(() => {
@@ -137,9 +138,9 @@ export default function ServiceTypesPricingPage() {
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
     ];
     return candidates
-      .filter((entry) => isVisible(entry.featureKey, profile.role, featureOverrides, hiddenKeys))
+      .filter((entry) => isVisible(entry.featureKey, permissionKeys, featureOverrides, hiddenKeys))
       .map(({ featureKey, ...link }) => link);
-  }, [featureOverrides, hiddenKeys, profile, visibilityReady]);
+  }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
 
   const loadProfile = useCallback(async () => {
     if (!username || !password) return;
