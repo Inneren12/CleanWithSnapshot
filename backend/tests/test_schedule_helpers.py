@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from app.domain.bookings.db_models import Booking, TeamBlackout, Team
+from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.bookings.service import BUFFER_MINUTES, ensure_default_team
 from app.domain.saas.db_models import Organization
 from app.domain.workers.db_models import Worker
@@ -148,6 +149,57 @@ async def test_suggestions_filter_by_conflict_and_skill(client, async_session_ma
 
 
 @pytest.mark.anyio
+async def test_suggestions_with_duration_min_returns_available_ranked_workers(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        secondary_team = Team(name="Secondary", org_id=team.org_id)
+        session.add(secondary_team)
+        await session.flush()
+        available_worker = Worker(
+            name="Available",
+            phone="+1 555",
+            team_id=team.team_id,
+            email="available@example.com",
+            role="standard",
+            is_active=True,
+        )
+        busy_worker = Worker(
+            name="Busy",
+            phone="+1 666",
+            team_id=secondary_team.team_id,
+            email="busy@example.com",
+            role="standard",
+            is_active=True,
+        )
+        session.add_all([available_worker, busy_worker])
+        await session.flush()
+
+        start = dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(days=4)
+        session.add(
+            Booking(
+                team_id=secondary_team.team_id,
+                assigned_worker_id=busy_worker.worker_id,
+                starts_at=start,
+                duration_minutes=60,
+                status="PENDING",
+            )
+        )
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    params = {
+        "starts_at": start.isoformat(),
+        "duration_min": 60,
+    }
+    resp = client.get("/v1/admin/schedule/suggestions", headers=headers, params=params)
+    assert resp.status_code == 200
+    body = resp.json()
+    ranked_names = {worker["name"] for worker in body["ranked_workers"]}
+    assert "Available" in ranked_names
+    assert "Busy" not in ranked_names
+
+
+@pytest.mark.anyio
 async def test_conflicts_and_suggestions_are_org_scoped(client, async_session_maker):
     other_org_id = uuid.uuid4()
     async with async_session_maker() as session:
@@ -191,3 +243,46 @@ async def test_conflicts_and_suggestions_are_org_scoped(client, async_session_ma
     team_ids = {team["team_id"] for team in suggestion_body["teams"]}
     assert default_team.team_id in team_ids
     assert all(team_id != other_team.team_id for team_id in team_ids)
+
+
+@pytest.mark.anyio
+async def test_quick_create_requires_booking_permission(client, async_session_maker):
+    original_viewer_user = settings.viewer_basic_username
+    original_viewer_pass = settings.viewer_basic_password
+    settings.viewer_basic_username = "viewer"
+    settings.viewer_basic_password = "viewer-secret"
+    try:
+        async with async_session_maker() as session:
+            client_user = ClientUser(
+                org_id=settings.default_org_id,
+                email="viewer-client@example.com",
+                name="Viewer Client",
+                phone="555-0101",
+            )
+            session.add(client_user)
+            await session.flush()
+            address = ClientAddress(
+                org_id=settings.default_org_id,
+                client_id=client_user.client_id,
+                label="Home",
+                address_text="123 Main St",
+                is_active=True,
+            )
+            session.add(address)
+            await session.commit()
+
+        headers = _basic_auth("viewer", "viewer-secret")
+        start = dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(days=2)
+        payload = {
+            "starts_at": start.isoformat(),
+            "duration_minutes": 90,
+            "client_id": client_user.client_id,
+            "address_id": address.address_id,
+            "price_cents": 12500,
+            "deposit_cents": 0,
+        }
+        resp = client.post("/v1/admin/schedule/quick-create", headers=headers, json=payload)
+        assert resp.status_code == 403
+    finally:
+        settings.viewer_basic_username = original_viewer_user
+        settings.viewer_basic_password = original_viewer_pass

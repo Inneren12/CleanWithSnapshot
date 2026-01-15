@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class JobStatusResponse(BaseModel):
@@ -89,9 +89,47 @@ class SuggestedWorker(BaseModel):
     team_name: str
 
 
+class RankedWorkerSuggestion(BaseModel):
+    worker_id: int
+    name: str
+    team_id: int
+    team_name: str
+    reasons: list[str] = Field(default_factory=list)
+
+
 class ScheduleSuggestions(BaseModel):
     teams: list[SuggestedTeam]
     workers: list[SuggestedWorker]
+    ranked_workers: list[RankedWorkerSuggestion] = Field(default_factory=list)
+
+
+class QuickCreateClientInput(BaseModel):
+    name: str
+    email: EmailStr
+    phone: str
+
+
+class QuickCreateBookingRequest(BaseModel):
+    starts_at: datetime
+    duration_minutes: int = Field(gt=0)
+    client_id: str | None = None
+    client: QuickCreateClientInput | None = None
+    address_id: int | None = None
+    address_text: str | None = None
+    address_label: str | None = None
+    service_type_id: int | None = None
+    addon_ids: list[int] = Field(default_factory=list)
+    assigned_worker_id: int | None = None
+    price_cents: int = Field(ge=0)
+    deposit_cents: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_inputs(self) -> "QuickCreateBookingRequest":
+        if not self.client_id and not self.client:
+            raise ValueError("client_id or client is required")
+        if not self.address_id and not self.address_text:
+            raise ValueError("address_id or address_text is required")
+        return self
 
 
 class ConflictDetail(BaseModel):
