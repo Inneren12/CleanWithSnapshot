@@ -54,6 +54,7 @@ class DispatcherBoardResponse(BaseModel):
 
 
 class DispatcherAlert(BaseModel):
+    alert_id: str
     type: Literal["DOUBLE_BOOKING", "LATE_WORKER", "CLIENT_CANCELLED_TODAY", "WORKER_SHORTAGE"]
     severity: Literal["info", "warn", "critical"]
     message: str
@@ -64,6 +65,14 @@ class DispatcherAlert(BaseModel):
 
 class DispatcherAlertsResponse(BaseModel):
     alerts: list[DispatcherAlert] = Field(default_factory=list)
+
+
+class DispatcherAlertAckRequest(BaseModel):
+    alert_id: str = Field(min_length=3)
+
+
+class DispatcherAlertAckResponse(BaseModel):
+    status: Literal["ok"]
 
 
 class DispatcherStatsResponse(BaseModel):

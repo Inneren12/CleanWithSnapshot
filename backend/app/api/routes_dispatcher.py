@@ -102,7 +102,6 @@ async def get_dispatcher_board(
     Returns booking timeline data, worker list, server time, and a polling-friendly
     data_version derived from the most recently updated booking in the window.
     """
-    del identity
     try:
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
@@ -145,7 +144,6 @@ async def get_dispatcher_stats(
 
     Revenue is derived from succeeded payments received during the day window (cents).
     """
-    del identity
     try:
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
@@ -177,6 +175,7 @@ async def get_dispatcher_stats(
     status_code=status.HTTP_200_OK,
 )
 async def get_dispatcher_alerts(
+    request: Request,
     board_date: date = Query(..., alias="date", description="Target date in YYYY-MM-DD"),
     tz: str = Query("America/Edmonton", description="IANA timezone, e.g. America/Edmonton"),
     session: AsyncSession = Depends(get_db_session),
@@ -187,7 +186,6 @@ async def get_dispatcher_alerts(
 
     Requires: DISPATCH permission (dispatcher/admin/owner roles).
     """
-    del identity
     try:
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
@@ -200,7 +198,30 @@ async def get_dispatcher_alerts(
         tz_name=tz,
     )
 
+    adapter = resolve_app_communication_adapter(request)
+    await dispatcher_service.send_critical_alert_sms(
+        session,
+        org_id=org_id,
+        identity=identity,
+        alerts=result.alerts,
+        adapter=adapter,
+    )
+
     return schemas.DispatcherAlertsResponse(alerts=result.alerts)
+
+
+@router.post(
+    "/v1/admin/dispatcher/alerts/ack",
+    response_model=schemas.DispatcherAlertAckResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def ack_dispatcher_alert(
+    payload: schemas.DispatcherAlertAckRequest,
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> schemas.DispatcherAlertAckResponse:
+    del identity
+    dispatcher_service.acknowledge_dispatcher_alert(payload.alert_id)
+    return schemas.DispatcherAlertAckResponse(status="ok")
 
 
 @router.post(
