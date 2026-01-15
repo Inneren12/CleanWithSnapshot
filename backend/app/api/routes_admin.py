@@ -4731,7 +4731,9 @@ async def get_invoice(
     # Get or create public token for payment link
     public_link = None
     if invoice.status != invoice_statuses.INVOICE_STATUS_VOID:
-        token = await invoice_service.upsert_public_token(session, invoice, mark_sent=False)
+        token, created = await invoice_service.get_or_create_public_token_hash(session, invoice)
+        if created:
+            await session.commit()
         base_url = settings.public_base_url.rstrip("/") if settings.public_base_url else None
         if base_url:
             public_link = f"{base_url}/i/{token}"

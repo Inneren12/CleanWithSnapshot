@@ -500,6 +500,111 @@ def test_invoice_detail_endpoint_includes_enhanced_data(client, async_session_ma
         settings.public_base_url = previous_public_base_url
 
 
+def test_invoice_detail_public_link_is_reachable(client, async_session_maker):
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    previous_public_base_url = settings.public_base_url
+    settings.public_base_url = None
+
+    async def _seed_invoice() -> str:
+        async with async_session_maker() as session:
+            lead = Lead(**_lead_payload("Reachable Customer"))
+            session.add(lead)
+            await session.flush()
+            booking = Booking(
+                team_id=1,
+                lead_id=lead.lead_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=60,
+                status="CONFIRMED",
+            )
+            session.add(booking)
+            await session.flush()
+            invoice = await invoice_service.create_invoice_from_order(
+                session=session,
+                order=booking,
+                items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=12000)],
+                currency="CAD",
+            )
+            await session.commit()
+            return invoice.invoice_id
+
+    invoice_id = asyncio.run(_seed_invoice())
+    headers = _auth_headers("admin", "secret")
+
+    try:
+        resp = client.get(f"/v1/admin/invoices/{invoice_id}", headers=headers)
+        assert resp.status_code == 200
+        payload = resp.json()
+        public_link = payload["public_link"]
+        assert public_link is not None
+        token = public_link.rsplit("/", 1)[-1]
+
+        public_resp = client.get(f"/i/{token}")
+        assert public_resp.status_code == 200
+
+        resp_again = client.get(f"/v1/admin/invoices/{invoice_id}", headers=headers)
+        assert resp_again.status_code == 200
+        assert resp_again.json()["public_link"] == public_link
+    finally:
+        settings.public_base_url = previous_public_base_url
+
+
+def test_void_invoice_has_no_public_link(client, async_session_maker):
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    previous_public_base_url = settings.public_base_url
+    settings.public_base_url = None
+
+    async def _seed_void_invoice() -> str:
+        async with async_session_maker() as session:
+            lead = Lead(**_lead_payload("Void Customer"))
+            session.add(lead)
+            await session.flush()
+            booking = Booking(
+                team_id=1,
+                lead_id=lead.lead_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=45,
+                status="CONFIRMED",
+            )
+            session.add(booking)
+            await session.flush()
+            invoice = await invoice_service.create_invoice_from_order(
+                session=session,
+                order=booking,
+                items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=8000)],
+                currency="CAD",
+            )
+            invoice.status = statuses.INVOICE_STATUS_VOID
+            await session.commit()
+            return invoice.invoice_id
+
+    invoice_id = asyncio.run(_seed_void_invoice())
+    headers = _auth_headers("admin", "secret")
+
+    try:
+        resp = client.get(f"/v1/admin/invoices/{invoice_id}", headers=headers)
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["public_link"] is None
+
+        async def _count_tokens() -> int:
+            async with async_session_maker() as session:
+                return int(
+                    await session.scalar(
+                        sa.select(sa.func.count())
+                        .select_from(InvoicePublicToken)
+                        .where(InvoicePublicToken.invoice_id == invoice_id)
+                    )
+                )
+
+        token_count = asyncio.run(_count_tokens())
+        assert token_count == 0
+    finally:
+        settings.public_base_url = previous_public_base_url
+
+
 def test_send_invoice_reminder_endpoint(client, async_session_maker):
     """Test the single invoice reminder endpoint"""
     settings.admin_basic_username = "admin"
