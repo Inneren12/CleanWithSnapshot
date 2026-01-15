@@ -3,6 +3,14 @@
 import Script from "next/script";
 import { type DragEvent, type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import AdminNav from "../components/AdminNav";
+import {
+  type AdminProfile,
+  type FeatureConfigResponse,
+  type UiPrefsResponse,
+  isVisible,
+} from "../lib/featureVisibility";
+
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -367,6 +375,10 @@ function trafficBufferHint(risk: DispatcherContextResponse["traffic_risk"]) {
 export default function DispatcherPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [profile, setProfile] = useState<AdminProfile | null>(null);
+  const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
+  const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [board, setBoard] = useState<DispatcherBoardResponse | null>(null);
   const [stats, setStats] = useState<DispatcherStatsResponse | null>(null);
   const [alerts, setAlerts] = useState<DispatcherAlert[]>([]);
@@ -422,12 +434,82 @@ export default function DispatcherPage() {
   const hasMapKey = Boolean(mapApiKey);
 
   const isAuthenticated = Boolean(username && password);
+  const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
+  const featureOverrides = featureConfig?.overrides ?? {};
+  const hiddenKeys = uiPrefs?.hidden_keys ?? [];
+  const scheduleVisible = visibilityReady
+    ? isVisible("module.schedule", profile?.role, featureOverrides, hiddenKeys)
+    : true;
+  const weatherVisible = visibilityReady
+    ? isVisible("dashboard.weather", profile?.role, featureOverrides, hiddenKeys)
+    : true;
+  const suggestionsVisible = visibilityReady
+    ? isVisible("schedule.optimization_ai", profile?.role, featureOverrides, hiddenKeys)
+    : true;
+
+  const navLinks = useMemo(() => {
+    if (!visibilityReady || !profile) return [];
+    const candidates = [
+      { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
+      { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
+    ];
+    return candidates
+      .filter((entry) => isVisible(entry.featureKey, profile.role, featureOverrides, hiddenKeys))
+      .map(({ featureKey, ...link }) => link);
+  }, [featureOverrides, hiddenKeys, profile, visibilityReady]);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
     const encoded = btoa(`${username}:${password}`);
     return { Authorization: `Basic ${encoded}` };
   }, [username, password]);
+
+  const loadProfile = useCallback(async () => {
+    if (!username || !password) return;
+    const response = await fetch(`${API_BASE}/v1/admin/profile`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as AdminProfile;
+      setProfile(data);
+    } else {
+      setProfile(null);
+    }
+  }, [authHeaders, password, username]);
+
+  const loadFeatureConfig = useCallback(async () => {
+    if (!username || !password) return;
+    setSettingsError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as FeatureConfigResponse;
+      setFeatureConfig(data);
+    } else {
+      setFeatureConfig(null);
+      setSettingsError("Failed to load module settings");
+    }
+  }, [authHeaders, password, username]);
+
+  const loadUiPrefs = useCallback(async () => {
+    if (!username || !password) return;
+    setSettingsError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as UiPrefsResponse;
+      setUiPrefs(data);
+    } else {
+      setUiPrefs(null);
+      setSettingsError("Failed to load UI preferences");
+    }
+  }, [authHeaders, password, username]);
 
   const showToast = useCallback((message: string, kind: "error" | "success" = "error") => {
     setToast({ message, kind });
@@ -438,6 +520,12 @@ export default function DispatcherPage() {
     const timeout = window.setTimeout(() => setToast(null), 4000);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    void loadProfile();
+    void loadFeatureConfig();
+    void loadUiPrefs();
+  }, [loadFeatureConfig, loadProfile, loadUiPrefs]);
 
   useEffect(() => {
     if (!selectedBooking) {
@@ -694,13 +782,20 @@ export default function DispatcherPage() {
     void fetchBoard();
     void fetchStats();
     void fetchContext();
-  }, [fetchBoard, fetchContext, fetchStats, password, username]);
+    void loadProfile();
+    void loadFeatureConfig();
+    void loadUiPrefs();
+  }, [fetchBoard, fetchContext, fetchStats, loadFeatureConfig, loadProfile, loadUiPrefs, password, username]);
 
   const handleClearCredentials = useCallback(() => {
     window.localStorage.removeItem(STORAGE_USERNAME_KEY);
     window.localStorage.removeItem(STORAGE_PASSWORD_KEY);
     setUsername("");
     setPassword("");
+    setProfile(null);
+    setFeatureConfig(null);
+    setUiPrefs(null);
+    setSettingsError(null);
     setBoard(null);
     setStats(null);
     setSelectedBooking(null);
@@ -1704,8 +1799,22 @@ export default function DispatcherPage() {
     </div>
   );
 
+  if (visibilityReady && !scheduleVisible) {
+    return (
+      <div className="dispatcher-page">
+        <AdminNav links={navLinks} activeKey="dispatcher" />
+        <div className="admin-card admin-section">
+          <h1>Dispatcher Timeline</h1>
+          <p className="alert alert-warning">Disabled by org settings.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="dispatcher-page">
+      <AdminNav links={navLinks} activeKey="dispatcher" />
+      {settingsError ? <p className="alert alert-warning">{settingsError}</p> : null}
       {hasMapKey ? (
         <>
           <Script
@@ -1723,77 +1832,85 @@ export default function DispatcherPage() {
           <h1>Dispatcher Timeline</h1>
           <p className="muted">Live schedule for today in {EDMONTON_TZ}.</p>
         </div>
-        <section className="dispatcher-context" aria-label="Context">
-          <button
-            type="button"
-            className="dispatcher-context-toggle"
-            onClick={() => setContextExpanded((prev) => !prev)}
-            aria-expanded={contextExpanded}
-          >
-            <div className="dispatcher-context-row">
-              <span className="dispatcher-context-icon">
-                {context ? contextWeatherIcon(context.weather_now.summary) : "🌤️"}
-              </span>
-              <div>
-                <div className="dispatcher-context-title">{contextSummary ?? "Weather unavailable"}</div>
-                <div className="dispatcher-context-subtitle">
-                  {context?.flags.snow_risk ? "Snow risk" : "No snow risk"}
-                  {context?.flags.freezing_risk ? " · Freezing risk" : ""}
+        {weatherVisible ? (
+          <section className="dispatcher-context" aria-label="Context">
+            <button
+              type="button"
+              className="dispatcher-context-toggle"
+              onClick={() => setContextExpanded((prev) => !prev)}
+              aria-expanded={contextExpanded}
+            >
+              <div className="dispatcher-context-row">
+                <span className="dispatcher-context-icon">
+                  {context ? contextWeatherIcon(context.weather_now.summary) : "🌤️"}
+                </span>
+                <div>
+                  <div className="dispatcher-context-title">{contextSummary ?? "Weather unavailable"}</div>
+                  <div className="dispatcher-context-subtitle">
+                    {context?.flags.snow_risk ? "Snow risk" : "No snow risk"}
+                    {context?.flags.freezing_risk ? " · Freezing risk" : ""}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="dispatcher-context-row">
-              <span className={`dispatcher-context-badge ${riskBadgeTone}`} aria-hidden="true" />
-              <div>
-                <div className="dispatcher-context-title">{trafficLabel}</div>
-                <div className="dispatcher-context-subtitle">{trafficHint}</div>
-              </div>
-            </div>
-            <span className="dispatcher-context-action">{contextExpanded ? "Hide" : "Details"}</span>
-          </button>
-          {contextExpanded ? (
-            <div className="dispatcher-context-details">
-              <div className="dispatcher-context-detail-row">
-                <span>Wind</span>
-                <strong>
-                  {context?.weather_now.wind_kph ? `${Math.round(context.weather_now.wind_kph)} kph` : "—"}
-                </strong>
-              </div>
-              <div className="dispatcher-context-detail-row">
-                <span>Precip now</span>
-                <strong>
-                  {context?.weather_now.precip_mm ? `${context.weather_now.precip_mm.toFixed(1)} mm` : "—"}
-                </strong>
-              </div>
-              <div className="dispatcher-context-detail-row">
-                <span>Snow now</span>
-                <strong>
-                  {context?.weather_now.snow_cm ? `${context.weather_now.snow_cm.toFixed(1)} cm` : "—"}
-                </strong>
-              </div>
-              <div className="dispatcher-context-forecast">
-                <span className="dispatcher-context-forecast-title">Next 6 hours</span>
-                <div className="dispatcher-context-forecast-list">
-                  {(context?.next_6h ?? []).map((hour) => (
-                    <div key={hour.starts_at} className="dispatcher-context-forecast-item">
-                      <span className="muted">
-                        {new Intl.DateTimeFormat("en-CA", {
-                          timeZone: EDMONTON_TZ,
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          hour12: false,
-                        }).format(new Date(hour.starts_at))}
-                      </span>
-                      <span>{hour.precip_mm ? `${hour.precip_mm.toFixed(1)} mm` : "—"}</span>
-                      <span>{hour.snow_cm ? `${hour.snow_cm.toFixed(1)} cm` : "—"}</span>
-                    </div>
-                  ))}
-                  {context?.next_6h?.length ? null : <span className="muted">No forecast data.</span>}
+              <div className="dispatcher-context-row">
+                <span className={`dispatcher-context-badge ${riskBadgeTone}`} aria-hidden="true" />
+                <div>
+                  <div className="dispatcher-context-title">{trafficLabel}</div>
+                  <div className="dispatcher-context-subtitle">{trafficHint}</div>
                 </div>
               </div>
-            </div>
-          ) : null}
-        </section>
+              <span className="dispatcher-context-action">{contextExpanded ? "Hide" : "Details"}</span>
+            </button>
+            {contextExpanded ? (
+              <div className="dispatcher-context-details">
+                <div className="dispatcher-context-detail-row">
+                  <span>Wind</span>
+                  <strong>
+                    {context?.weather_now.wind_kph != null
+                      ? `${Math.round(context.weather_now.wind_kph)} kph`
+                      : "—"}
+                  </strong>
+                </div>
+                <div className="dispatcher-context-detail-row">
+                  <span>Precip now</span>
+                  <strong>
+                    {context?.weather_now.precip_mm != null
+                      ? `${context.weather_now.precip_mm.toFixed(1)} mm`
+                      : "—"}
+                  </strong>
+                </div>
+                <div className="dispatcher-context-detail-row">
+                  <span>Snow now</span>
+                  <strong>
+                    {context?.weather_now.snow_cm != null
+                      ? `${context.weather_now.snow_cm.toFixed(1)} cm`
+                      : "—"}
+                  </strong>
+                </div>
+                <div className="dispatcher-context-forecast">
+                  <span className="dispatcher-context-forecast-title">Next 6 hours</span>
+                  <div className="dispatcher-context-forecast-list">
+                    {(context?.next_6h ?? []).map((hour) => (
+                      <div key={hour.starts_at} className="dispatcher-context-forecast-item">
+                        <span className="muted">
+                          {new Intl.DateTimeFormat("en-CA", {
+                            timeZone: EDMONTON_TZ,
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: false,
+                          }).format(new Date(hour.starts_at))}
+                        </span>
+                        <span>{hour.precip_mm != null ? `${hour.precip_mm.toFixed(1)} mm` : "—"}</span>
+                        <span>{hour.snow_cm != null ? `${hour.snow_cm.toFixed(1)} cm` : "—"}</span>
+                      </div>
+                    ))}
+                    {context?.next_6h?.length ? null : <span className="muted">No forecast data.</span>}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
         <div className="dispatcher-alert-counts" aria-label="Alert counts">
           <span className="muted">Alerts</span>
           <div className="dispatcher-badges">
@@ -2057,63 +2174,65 @@ export default function DispatcherPage() {
                     </button>
                   </div>
                 </div>
-                <div className="dispatcher-action-group">
-                  <span className="detail-label">Smart Assignment</span>
-                  <div className="dispatcher-action-row dispatcher-smart-actions">
-                    <button
-                      className="btn btn-secondary"
-                      type="button"
-                      onClick={() => void fetchSuggestions()}
-                      disabled={!isAuthenticated || selectedPending || suggestionsPending}
-                    >
-                      {suggestionsPending ? "Suggesting..." : "Suggest"}
-                    </button>
-                    {suggestionsError ? <span className="muted">{suggestionsError}</span> : null}
-                  </div>
-                  {suggestions.length ? (
-                    <ul className="dispatcher-smart-list">
-                      {suggestions.map((suggestion) => {
-                        const isAssigned = suggestion.worker_id === selectedBooking.assigned_worker?.id;
-                        return (
-                          <li key={suggestion.worker_id} className="dispatcher-smart-card">
-                            <div className="dispatcher-smart-main">
-                              <div>
-                                <strong>{suggestion.display_name ?? `Worker ${suggestion.worker_id}`}</strong>
-                                <div className="dispatcher-smart-meta">
-                                  <span className="muted">
-                                    {suggestion.eta_min != null
-                                      ? `ETA ${formatDurationMinutes(suggestion.eta_min)}`
-                                      : "ETA unknown"}
-                                  </span>
-                                  <span className="dispatcher-smart-score">
-                                    Score {suggestion.score_total.toFixed(2)}
-                                  </span>
-                                </div>
-                                <div className="dispatcher-smart-reasons">
-                                  {suggestion.reasons.map((reason) => (
-                                    <span key={reason} className="dispatcher-smart-reason">
-                                      {reason}
+                {suggestionsVisible ? (
+                  <div className="dispatcher-action-group">
+                    <span className="detail-label">Smart Assignment</span>
+                    <div className="dispatcher-action-row dispatcher-smart-actions">
+                      <button
+                        className="btn btn-secondary"
+                        type="button"
+                        onClick={() => void fetchSuggestions()}
+                        disabled={!isAuthenticated || selectedPending || suggestionsPending}
+                      >
+                        {suggestionsPending ? "Suggesting..." : "Suggest"}
+                      </button>
+                      {suggestionsError ? <span className="muted">{suggestionsError}</span> : null}
+                    </div>
+                    {suggestions.length ? (
+                      <ul className="dispatcher-smart-list">
+                        {suggestions.map((suggestion) => {
+                          const isAssigned = suggestion.worker_id === selectedBooking.assigned_worker?.id;
+                          return (
+                            <li key={suggestion.worker_id} className="dispatcher-smart-card">
+                              <div className="dispatcher-smart-main">
+                                <div>
+                                  <strong>{suggestion.display_name ?? `Worker ${suggestion.worker_id}`}</strong>
+                                  <div className="dispatcher-smart-meta">
+                                    <span className="muted">
+                                      {suggestion.eta_min != null
+                                        ? `ETA ${formatDurationMinutes(suggestion.eta_min)}`
+                                        : "ETA unknown"}
                                     </span>
-                                  ))}
+                                    <span className="dispatcher-smart-score">
+                                      Score {suggestion.score_total.toFixed(2)}
+                                    </span>
+                                  </div>
+                                  <div className="dispatcher-smart-reasons">
+                                    {suggestion.reasons.map((reason) => (
+                                      <span key={reason} className="dispatcher-smart-reason">
+                                        {reason}
+                                      </span>
+                                    ))}
+                                  </div>
                                 </div>
+                                <button
+                                  className="btn"
+                                  type="button"
+                                  disabled={!isAuthenticated || selectedPending || isAssigned}
+                                  onClick={() => void handleReassign(selectedBooking.booking_id, suggestion.worker_id)}
+                                >
+                                  {isAssigned ? "Assigned" : "Assign"}
+                                </button>
                               </div>
-                              <button
-                                className="btn"
-                                type="button"
-                                disabled={!isAuthenticated || selectedPending || isAssigned}
-                                onClick={() => void handleReassign(selectedBooking.booking_id, suggestion.worker_id)}
-                              >
-                                {isAssigned ? "Assigned" : "Assign"}
-                              </button>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  ) : (
-                    <p className="muted">Select suggest to see top available workers.</p>
-                  )}
-                </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      <p className="muted">Select suggest to see top available workers.</p>
+                    )}
+                  </div>
+                ) : null}
                 <div className="dispatcher-action-group">
                   <span className="detail-label">Reschedule</span>
                   <div className="dispatcher-action-row">
