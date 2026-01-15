@@ -6,6 +6,7 @@ import asyncio
 import hmac
 import io
 import logging
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import secrets
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 _SQLITE_INVOICE_NUMBER_LOCK = asyncio.Lock()
 _DANGEROUS_CSV_PREFIXES = ("=", "+", "-", "@", "\t")
+_PUBLIC_TOKEN_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 DEFAULT_ACCOUNTING_STATUSES: set[str] = {
     statuses.INVOICE_STATUS_SENT,
     statuses.INVOICE_STATUS_PAID,
@@ -678,6 +680,8 @@ def _public_token_secret() -> str:
 
 
 def hash_public_token(token: str) -> str:
+    if _PUBLIC_TOKEN_HASH_RE.fullmatch(token):
+        return token
     secret = _public_token_secret().encode("utf-8")
     return hmac.new(secret, token.encode("utf-8"), hashlib.sha256).hexdigest()
 
@@ -709,6 +713,27 @@ async def upsert_public_token(
 
     await session.flush()
     return token
+
+
+async def get_or_create_public_token_hash(
+    session: AsyncSession, invoice: Invoice
+) -> tuple[str, bool]:
+    existing = await session.scalar(
+        select(InvoicePublicToken).where(InvoicePublicToken.invoice_id == invoice.invoice_id)
+    )
+    if existing:
+        return existing.token_hash, False
+
+    token_hash = hash_public_token(generate_public_token())
+    now = datetime.now(tz=timezone.utc)
+    record = InvoicePublicToken(
+        invoice_id=invoice.invoice_id,
+        token_hash=token_hash,
+        created_at=now,
+    )
+    session.add(record)
+    await session.flush()
+    return token_hash, True
 
 
 async def get_invoice_by_public_token(session: AsyncSession, token: str) -> Invoice | None:
