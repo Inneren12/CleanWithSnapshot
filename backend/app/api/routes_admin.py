@@ -3608,7 +3608,9 @@ async def _query_invoice_list(
         )
 
     base_query = select(Invoice).outerjoin(Lead, Invoice.customer_id == Lead.lead_id).where(Invoice.org_id == org_id, *filters)
-    count_stmt = select(func.count(Invoice.invoice_id.distinct())).select_from(base_query.subquery())
+    # Count distinct invoices from the filtered subquery to avoid inflated counts from joins
+    subq = base_query.subquery()
+    count_stmt = select(func.count(func.distinct(subq.c.invoice_id)))
     total = int((await session.scalar(count_stmt)) or 0)
 
     stmt = (
@@ -3641,7 +3643,7 @@ async def list_invoices(
     page_size: int = Query(default=50, ge=1, le=100),
     http_request: Request = None,
     session: AsyncSession = Depends(get_db_session),
-    _admin: AdminIdentity = Depends(require_finance),
+    _admin: AdminIdentity = Depends(require_permission_keys("invoices.view")),
 ) -> invoice_schemas.InvoiceListResponse:
     org_id = entitlements.resolve_org_id(http_request)
     return await _query_invoice_list(
@@ -4816,8 +4818,14 @@ async def bulk_mark_paid_invoices(
                 failed.append({"invoice_id": invoice_id, "error": "Cannot mark void invoice as paid"})
                 continue
 
-            # Calculate remaining balance
-            paid_cents = sum(p.amount_cents for p in invoice.payments if p.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED)
+            # Calculate remaining balance by querying database directly for accuracy
+            paid_result = await session.scalar(
+                select(func.coalesce(func.sum(Payment.amount_cents), 0)).where(
+                    Payment.invoice_id == invoice.invoice_id,
+                    Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+                )
+            )
+            paid_cents = int(paid_result or 0)
             balance_due = max(invoice.total_cents - paid_cents, 0)
 
             # Skip if already paid
