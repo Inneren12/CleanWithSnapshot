@@ -134,6 +134,8 @@ from app.domain.ops.schemas import (
     ConflictCheckResponse,
     ConflictDetail,
     JobStatusResponse,
+    OpsDashboardAlert,
+    OpsDashboardAlertAction,
     OpsDashboardBookingStatusToday,
     OpsDashboardBookingStatusTotals,
     OpsDashboardResponse,
@@ -208,6 +210,178 @@ class AdminWhoamiResponse(BaseModel):
     org_id: uuid.UUID | None = None
 
 
+async def _overdue_invoice_summary_totals(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    as_of_date: date,
+) -> tuple[int, int]:
+    paid_subq = (
+        select(
+            Payment.invoice_id.label("invoice_id"),
+            func.coalesce(func.sum(Payment.amount_cents), 0).label("paid_cents"),
+        )
+        .where(Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED)
+        .group_by(Payment.invoice_id)
+        .subquery()
+    )
+    balance_expr = Invoice.total_cents - func.coalesce(paid_subq.c.paid_cents, 0)
+    overdue_cutoff = as_of_date - timedelta(days=7)
+    stmt = (
+        select(
+            func.count(Invoice.invoice_id),
+            func.coalesce(func.sum(balance_expr), 0),
+        )
+        .outerjoin(paid_subq, paid_subq.c.invoice_id == Invoice.invoice_id)
+        .where(
+            Invoice.org_id == org_id,
+            Invoice.due_date.is_not(None),
+            Invoice.due_date <= overdue_cutoff,
+            Invoice.status.notin_(
+                [invoice_statuses.INVOICE_STATUS_PAID, invoice_statuses.INVOICE_STATUS_VOID]
+            ),
+            balance_expr > 0,
+        )
+    )
+    row = (await session.execute(stmt)).one()
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+async def _unassigned_bookings_count(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    window_start_utc: datetime,
+    window_end_utc: datetime,
+) -> int:
+    stmt = (
+        select(func.count(Booking.booking_id))
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= window_start_utc,
+            Booking.starts_at < window_end_utc,
+            Booking.assigned_worker_id.is_(None),
+            Booking.status != "CANCELLED",
+        )
+    )
+    count = await session.scalar(stmt)
+    return int(count or 0)
+
+
+async def _build_ops_critical_alerts(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    permission_keys: set[str],
+    org_settings: org_settings_service.OrganizationSettings,
+    now_local: datetime,
+    next24_start_local: datetime,
+    next24_end_local: datetime,
+    next24_start_utc: datetime,
+    next24_end_utc: datetime,
+) -> list[OpsDashboardAlert]:
+    alerts: list[OpsDashboardAlert] = []
+    created_at = datetime.now(timezone.utc)
+    currency_code = org_settings_service.resolve_currency(org_settings)
+
+    if "invoices.view" in permission_keys and "finance.view" in permission_keys:
+        overdue_count, overdue_total = await _overdue_invoice_summary_totals(
+            session,
+            org_id,
+            as_of_date=now_local.date(),
+        )
+        if overdue_count > 0:
+            invoice_label = "invoice" if overdue_count == 1 else "invoices"
+            description = (
+                f"{overdue_count} {invoice_label} are overdue by 7+ days "
+                f"totaling {_format_money(overdue_total, currency_code)}."
+            )
+            alerts.append(
+                OpsDashboardAlert(
+                    type="overdue_invoices",
+                    severity="critical",
+                    title="Overdue invoices (7+ days)",
+                    description=description,
+                    entity_ref={
+                        "kind": "invoice",
+                        "count": overdue_count,
+                        "total_cents": overdue_total,
+                        "currency": currency_code,
+                        "min_days_overdue": 7,
+                    },
+                    actions=[
+                        OpsDashboardAlertAction(
+                            label="Open overdue invoices",
+                            href="/admin/invoices?overdue_bucket=attention",
+                        ),
+                        OpsDashboardAlertAction(
+                            label="Open 14+ day overdue",
+                            href="/admin/invoices?overdue_bucket=critical",
+                        ),
+                    ],
+                    created_at=created_at,
+                )
+            )
+
+    if "bookings.view" in permission_keys:
+        unassigned_count = await _unassigned_bookings_count(
+            session,
+            org_id,
+            window_start_utc=next24_start_utc,
+            window_end_utc=next24_end_utc,
+        )
+        if unassigned_count > 0:
+            booking_label = "booking" if unassigned_count == 1 else "bookings"
+            description = (
+                f"{unassigned_count} {booking_label} in the next 24 hours "
+                "have no assigned worker."
+            )
+            alerts.append(
+                OpsDashboardAlert(
+                    type="unassigned_bookings_24h",
+                    severity="warning",
+                    title="Upcoming bookings missing workers",
+                    description=description,
+                    entity_ref={
+                        "kind": "booking",
+                        "count": unassigned_count,
+                        "window_start": next24_start_local.isoformat(),
+                        "window_end": next24_end_local.isoformat(),
+                    },
+                    actions=[
+                        OpsDashboardAlertAction(
+                            label="Open schedule",
+                            href=f"/admin/schedule?date={next24_start_local.date().isoformat()}",
+                        )
+                    ],
+                    created_at=created_at,
+                )
+            )
+
+    alerts.append(
+        OpsDashboardAlert(
+            type="negative_review_placeholder",
+            severity="info",
+            title="Negative review alerts",
+            description="Quality module disabled/no data.",
+            entity_ref={
+                "kind": "quality",
+                "status": "disabled",
+            },
+            actions=[
+                OpsDashboardAlertAction(
+                    label="Open modules",
+                    href="/admin/settings/modules",
+                )
+            ],
+            created_at=created_at,
+        )
+    )
+
+    return alerts
+
+
 @router.get("/v1/admin/whoami", response_model=AdminWhoamiResponse)
 async def admin_whoami(identity: AdminIdentity = Depends(require_viewer)) -> AdminWhoamiResponse:
     return AdminWhoamiResponse(
@@ -244,6 +418,7 @@ async def get_ops_dashboard(
     guard = await _require_dashboard_enabled(request, session, org_id)
     if guard is not None:
         return guard
+    permission_keys = permission_keys_for_request(request, _identity)
 
     org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
     org_timezone = org_settings_service.resolve_timezone(org_settings)
@@ -314,10 +489,22 @@ async def get_ops_dashboard(
             )
         )
 
+    critical_alerts = await _build_ops_critical_alerts(
+        session,
+        org_id,
+        permission_keys=permission_keys,
+        org_settings=org_settings,
+        now_local=now_local,
+        next24_start_local=next24_start_local,
+        next24_end_local=next24_end_local,
+        next24_start_utc=next24_start_utc,
+        next24_end_utc=next24_end_utc,
+    )
+
     return OpsDashboardResponse(
         as_of=datetime.now(timezone.utc),
         org_timezone=org_timezone,
-        critical_alerts=[],
+        critical_alerts=critical_alerts,
         upcoming_events=upcoming_events,
         worker_availability=[],
         booking_status_today=OpsDashboardBookingStatusToday(
