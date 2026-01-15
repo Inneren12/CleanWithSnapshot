@@ -5266,17 +5266,20 @@ async def record_manual_invoice_payment(
     admin: AdminIdentity = Depends(require_permission_keys("payments.record")),
 ) -> invoice_schemas.ManualPaymentResult:
     org_id = entitlements.resolve_org_id(http_request)
-    idempotency = await require_idempotency(http_request, session, org_id, "record_payment")
-    if isinstance(idempotency, Response):
-        return idempotency
-    if idempotency.existing_response:
-        return idempotency.existing_response
+    idempotency = None
+    if http_request.headers.get("Idempotency-Key"):
+        idempotency = await require_idempotency(http_request, session, org_id, "record_payment")
+        if isinstance(idempotency, Response):
+            return idempotency
+        if idempotency.existing_response:
+            return idempotency.existing_response
     result = await _record_manual_invoice_payment(invoice_id, request, session, org_id, admin)
-    await idempotency.save_response(
-        session,
-        status_code=status.HTTP_201_CREATED,
-        body=result.model_dump(mode="json"),
-    )
+    if idempotency:
+        await idempotency.save_response(
+            session,
+            status_code=status.HTTP_201_CREATED,
+            body=result.model_dump(mode="json"),
+        )
     await session.commit()
     return result
 
@@ -5362,10 +5365,13 @@ async def send_invoice_reminder(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
     _csrf: None = Depends(require_csrf),
-    _admin: AdminIdentity = Depends(require_permission_keys("invoices.edit")),
+    admin: AdminIdentity = Depends(require_viewer),
 ) -> invoice_schemas.InvoiceReminderResponse:
     """Send a reminder email for a single invoice."""
     org_id = entitlements.resolve_org_id(http_request)
+    permission_keys = permission_keys_for_request(http_request, admin)
+    if "invoices.edit" not in permission_keys:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     invoice = await _get_org_invoice(
         session,
