@@ -94,6 +94,7 @@ from app.domain.chat_threads import service as chat_service
 from app.domain.chat_threads.service import PARTICIPANT_ADMIN
 from app.domain.message_templates import service as message_template_service
 from app.domain.disputes.db_models import Dispute, FinancialAdjustmentEvent
+from app.domain.documents import service as document_service
 from app.domain.invoices.db_models import Invoice, InvoiceItem, InvoicePublicToken, Payment
 from app.domain.leads import statuses as lead_statuses
 from app.domain.leads.db_models import Lead, ReferralCredit
@@ -4427,12 +4428,69 @@ async def get_invoice(
         session,
         invoice_id,
         org_id,
+        options=(
+            selectinload(Invoice.items),
+            selectinload(Invoice.payments),
+            selectinload(Invoice.email_events),
+        ),
+    )
+    if invoice is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+    # Get customer and booking info
+    customer = await invoice_service.fetch_customer(session, invoice)
+    booking = None
+    if invoice.order_id:
+        booking_result = await session.execute(
+            select(Booking).where(Booking.booking_id == invoice.order_id)
+        )
+        booking = booking_result.scalar_one_or_none()
+
+    # Get or create public token for payment link
+    public_link = None
+    if invoice.status != invoice_statuses.INVOICE_STATUS_VOID:
+        token = await invoice_service.upsert_public_token(session, invoice, mark_sent=False)
+        base_url = settings.public_base_url.rstrip("/") if settings.public_base_url else None
+        if base_url:
+            public_link = f"{base_url}/i/{token}"
+        else:
+            public_link = str(http_request.url_for("public_invoice_view", token=token))
+
+    # Build enhanced response
+    data = invoice_service.build_invoice_detail_response(
+        invoice, public_link=public_link, customer=customer, booking=booking
+    )
+    return invoice_schemas.InvoiceResponse(**data)
+
+
+@router.get("/v1/admin/invoices/{invoice_id}/pdf", response_class=Response)
+async def download_invoice_pdf_admin(
+    invoice_id: str,
+    http_request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _admin: AdminIdentity = Depends(require_permission_keys("invoices.view")),
+) -> Response:
+    """Download invoice PDF (admin endpoint with authentication)."""
+    org_id = entitlements.resolve_org_id(http_request)
+    invoice = await _get_org_invoice(
+        session,
+        invoice_id,
+        org_id,
         options=(selectinload(Invoice.items), selectinload(Invoice.payments)),
     )
     if invoice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
 
-    return _invoice_response(invoice)
+    if invoice.status == invoice_statuses.INVOICE_STATUS_VOID:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice is void")
+
+    lead = await invoice_service.fetch_customer(session, invoice)
+    document = await document_service.get_or_create_invoice_document(session, invoice=invoice, lead=lead)
+    await session.commit()
+    pdf_bytes = document_service.pdf_bytes(document)
+    filename = f"{invoice.invoice_number}.pdf"
+    headers = {"Content-Disposition": f"inline; filename=\"{filename}\""}
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
 @router.get("/v1/admin/ui/invoices/{invoice_id}", response_class=HTMLResponse)
@@ -5292,6 +5350,125 @@ async def _record_manual_invoice_payment(
             after=response_body.model_dump(mode="json"),
         )
     return response_body
+
+
+@router.post(
+    "/v1/admin/invoices/{invoice_id}/remind",
+    response_model=invoice_schemas.InvoiceReminderResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def send_invoice_reminder(
+    invoice_id: str,
+    http_request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _csrf: None = Depends(require_csrf),
+    _admin: AdminIdentity = Depends(require_permission_keys("invoices.edit")),
+) -> invoice_schemas.InvoiceReminderResponse:
+    """Send a reminder email for a single invoice."""
+    org_id = entitlements.resolve_org_id(http_request)
+
+    invoice = await _get_org_invoice(
+        session,
+        invoice_id,
+        org_id,
+        options=(
+            selectinload(Invoice.items),
+            selectinload(Invoice.payments),
+            selectinload(Invoice.email_events),
+        ),
+    )
+    if invoice is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+    # Don't send reminders for void or paid invoices
+    if invoice.status in {invoice_statuses.INVOICE_STATUS_VOID, invoice_statuses.INVOICE_STATUS_PAID}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot send reminder for {invoice.status} invoice",
+        )
+
+    lead = await invoice_service.fetch_customer(session, invoice)
+    if lead is None or not lead.email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice missing customer email"
+        )
+
+    adapter = _email_adapter(http_request)
+    if adapter is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Email adapter unavailable")
+
+    # Generate or get existing token
+    token = await invoice_service.upsert_public_token(session, invoice, mark_sent=True)
+    base_url = settings.public_base_url.rstrip("/") if settings.public_base_url else None
+    if base_url:
+        public_link = f"{base_url}/i/{token}"
+        public_link_pdf = f"{base_url}/i/{token}.pdf"
+    else:
+        public_link = str(http_request.url_for("public_invoice_view", token=token))
+        public_link_pdf = str(http_request.url_for("public_invoice_pdf", token=token))
+
+    # Send reminder email
+    subject = f"Reminder: Invoice {invoice.invoice_number}"
+    balance = max(
+        invoice.total_cents
+        - sum(p.amount_cents for p in invoice.payments if p.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED),
+        0,
+    )
+    body = (
+        f"Hi {lead.name},\n\n"
+        f"This is a reminder about invoice {invoice.invoice_number}.\n"
+        f"View online: {public_link}\n"
+        f"Download PDF: {public_link_pdf}\n"
+        f"Balance due: {_format_money(balance, invoice.currency)}\n\n"
+        "If you have questions or already paid, please reply to this email."
+    )
+
+    try:
+        delivered = await adapter.send_email(recipient=lead.email, subject=subject, body=body)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "invoice_reminder_failed",
+            extra={"extra": {"invoice_id": invoice_id, "reason": type(exc).__name__}},
+        )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Email send failed") from exc
+
+    if not delivered:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Email send failed")
+
+    # Update invoice status if it was draft
+    if invoice.status == invoice_statuses.INVOICE_STATUS_DRAFT:
+        invoice.status = invoice_statuses.INVOICE_STATUS_SENT
+
+    await session.commit()
+
+    # Refresh invoice to get updated email_events
+    refreshed = await session.get(
+        Invoice,
+        invoice_id,
+        options=(
+            selectinload(Invoice.items),
+            selectinload(Invoice.payments),
+            selectinload(Invoice.email_events),
+        ),
+    )
+    assert refreshed is not None
+    await session.refresh(refreshed)
+
+    # Get customer and booking for detailed response
+    customer = await invoice_service.fetch_customer(session, refreshed)
+    booking = None
+    if refreshed.order_id:
+        booking_result = await session.execute(select(Booking).where(Booking.booking_id == refreshed.order_id))
+        booking = booking_result.scalar_one_or_none()
+
+    data = invoice_service.build_invoice_detail_response(
+        refreshed, public_link=public_link, customer=customer, booking=booking
+    )
+    invoice_response = invoice_schemas.InvoiceResponse(**data)
+
+    return invoice_schemas.InvoiceReminderResponse(
+        invoice=invoice_response, email_sent=True, recipient=lead.email
+    )
 
 
 @router.post(

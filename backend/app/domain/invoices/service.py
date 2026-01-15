@@ -591,6 +591,58 @@ def build_invoice_response(invoice: Invoice) -> dict:
     }
 
 
+def build_invoice_detail_response(
+    invoice: Invoice,
+    public_link: str | None = None,
+    customer: Lead | None = None,
+    booking: Booking | None = None,
+) -> dict:
+    """Build enhanced invoice response with email events, public link, customer, and booking info."""
+    base_response = build_invoice_response(invoice)
+
+    # Add email events
+    email_events = []
+    if hasattr(invoice, "email_events") and invoice.email_events:
+        email_events = [
+            {
+                "event_id": event.event_id,
+                "email_type": event.email_type,
+                "recipient": event.recipient,
+                "subject": event.subject,
+                "created_at": event.created_at,
+            }
+            for event in sorted(invoice.email_events, key=lambda e: e.created_at, reverse=True)
+        ]
+
+    base_response["email_events"] = email_events
+    base_response["public_link"] = public_link
+
+    # Add customer info
+    if customer:
+        base_response["customer"] = {
+            "customer_id": customer.lead_id,
+            "name": customer.name,
+            "email": customer.email,
+            "phone": customer.phone if hasattr(customer, "phone") else None,
+            "address": customer.address if hasattr(customer, "address") else None,
+        }
+    else:
+        base_response["customer"] = None
+
+    # Add booking info
+    if booking:
+        base_response["booking"] = {
+            "booking_id": booking.booking_id,
+            "booking_number": booking.booking_number if hasattr(booking, "booking_number") else None,
+            "scheduled_start": booking.scheduled_start if hasattr(booking, "scheduled_start") else None,
+            "status": booking.status if hasattr(booking, "status") else None,
+        }
+    else:
+        base_response["booking"] = None
+
+    return base_response
+
+
 def build_invoice_list_item(invoice: Invoice) -> dict:
     paid_cents = _paid_cents(invoice)
     return {

@@ -419,3 +419,267 @@ def test_admin_send_invoice_sets_status_and_token(client, async_session_maker):
         app.state.email_adapter = original_adapter
         settings.public_base_url = previous_public_base_url
         settings.invoice_public_token_secret = previous_token_secret
+
+
+def test_invoice_detail_endpoint_includes_enhanced_data(client, async_session_maker):
+    """Test that the invoice detail endpoint returns email events, public link, customer, and booking info"""
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    previous_public_base_url = settings.public_base_url
+    settings.public_base_url = "https://example.com"
+
+    async def _seed_invoice_with_customer() -> str:
+        async with async_session_maker() as session:
+            lead = Lead(**_lead_payload("Test Customer"))
+            session.add(lead)
+            await session.flush()
+            booking = Booking(
+                team_id=1,
+                lead_id=lead.lead_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="CONFIRMED",
+            )
+            session.add(booking)
+            await session.flush()
+            invoice = await invoice_service.create_invoice_from_order(
+                session=session,
+                order=booking,
+                items=[
+                    InvoiceItemCreate(description="Service", qty=1, unit_price_cents=15000, tax_rate=0.13),
+                ],
+                currency="CAD",
+            )
+            await session.commit()
+            return invoice.invoice_id
+
+    invoice_id = asyncio.run(_seed_invoice_with_customer())
+    headers = _auth_headers("admin", "secret")
+
+    try:
+        resp = client.get(f"/v1/admin/invoices/{invoice_id}", headers=headers)
+        assert resp.status_code == 200
+        payload = resp.json()
+
+        # Check basic invoice data
+        assert payload["invoice_id"] == invoice_id
+        assert payload["status"] == statuses.INVOICE_STATUS_DRAFT
+        assert payload["total_cents"] == 16950  # 15000 + 13% tax (1950)
+
+        # Check items are included
+        assert len(payload["items"]) == 1
+        assert payload["items"][0]["description"] == "Service"
+        assert payload["items"][0]["tax_rate"] == 0.13
+
+        # Check payments are included (should be empty)
+        assert "payments" in payload
+        assert payload["payments"] == []
+
+        # Check email_events are included (should be empty initially)
+        assert "email_events" in payload
+        assert payload["email_events"] == []
+
+        # Check public_link is generated
+        assert "public_link" in payload
+        assert payload["public_link"] is not None
+        assert payload["public_link"].startswith("https://example.com/i/")
+
+        # Check customer info is included
+        assert "customer" in payload
+        assert payload["customer"] is not None
+        assert payload["customer"]["name"] == "Test Customer"
+        assert payload["customer"]["email"] == "lead@example.com"
+        assert payload["customer"]["phone"] == "780-555-1234"
+
+        # Check booking info is included
+        assert "booking" in payload
+        assert payload["booking"] is not None
+        assert "booking_id" in payload["booking"]
+
+    finally:
+        settings.public_base_url = previous_public_base_url
+
+
+def test_send_invoice_reminder_endpoint(client, async_session_maker):
+    """Test the single invoice reminder endpoint"""
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    previous_public_base_url = settings.public_base_url
+    settings.public_base_url = "https://example.com"
+    adapter = StubEmailAdapter()
+    from app.main import app
+
+    original_adapter = getattr(app.state, "email_adapter", None)
+    app.state.email_adapter = adapter
+
+    async def _seed_invoice() -> str:
+        async with async_session_maker() as session:
+            lead = Lead(**_lead_payload("Reminder Customer"))
+            session.add(lead)
+            await session.flush()
+            booking = Booking(
+                team_id=1,
+                lead_id=lead.lead_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="PENDING",
+            )
+            session.add(booking)
+            await session.flush()
+            invoice = await invoice_service.create_invoice_from_order(
+                session=session,
+                order=booking,
+                items=[
+                    InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000),
+                ],
+                currency="CAD",
+            )
+            # Mark as sent so it can receive reminders
+            invoice.status = statuses.INVOICE_STATUS_SENT
+            await session.commit()
+            return invoice.invoice_id
+
+    invoice_id = asyncio.run(_seed_invoice())
+    headers = _auth_headers("admin", "secret")
+
+    try:
+        resp = client.post(f"/v1/admin/invoices/{invoice_id}/remind", headers=headers)
+        assert resp.status_code == 200
+        payload = resp.json()
+
+        # Check response includes invoice data
+        assert "invoice" in payload
+        assert payload["invoice"]["invoice_id"] == invoice_id
+
+        # Check email was sent
+        assert payload["email_sent"] is True
+        assert payload["recipient"] == "lead@example.com"
+
+        # Verify email was sent via adapter
+        assert len(adapter.sent) == 1
+        recipient, subject, body = adapter.sent[0]
+        assert recipient == "lead@example.com"
+        assert "Reminder" in subject
+        assert "https://example.com/i/" in body
+
+    finally:
+        app.state.email_adapter = original_adapter
+        settings.public_base_url = previous_public_base_url
+
+
+def test_send_reminder_requires_invoices_edit_permission(client, async_session_maker):
+    """Test that sending reminders requires invoices.edit permission"""
+    settings.admin_basic_username = "viewer"
+    settings.admin_basic_password = "viewpass"
+
+    async def _seed_invoice() -> str:
+        async with async_session_maker() as session:
+            lead = Lead(**_lead_payload())
+            session.add(lead)
+            await session.flush()
+            booking = Booking(
+                team_id=1,
+                lead_id=lead.lead_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="PENDING",
+            )
+            session.add(booking)
+            await session.flush()
+            invoice = await invoice_service.create_invoice_from_order(
+                session=session,
+                order=booking,
+                items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000)],
+                currency="CAD",
+            )
+            invoice.status = statuses.INVOICE_STATUS_SENT
+            await session.commit()
+            return invoice.invoice_id
+
+    invoice_id = asyncio.run(_seed_invoice())
+    headers = _auth_headers("viewer", "viewpass")
+
+    # Viewer doesn't have invoices.edit permission, should get 403
+    resp = client.post(f"/v1/admin/invoices/{invoice_id}/remind", headers=headers)
+    assert resp.status_code == 403
+
+
+def test_download_invoice_pdf_admin_endpoint(client, async_session_maker):
+    """Test the admin PDF download endpoint requires invoices.view permission"""
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    async def _seed_invoice() -> str:
+        async with async_session_maker() as session:
+            lead = Lead(**_lead_payload())
+            session.add(lead)
+            await session.flush()
+            booking = Booking(
+                team_id=1,
+                lead_id=lead.lead_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="PENDING",
+            )
+            session.add(booking)
+            await session.flush()
+            invoice = await invoice_service.create_invoice_from_order(
+                session=session,
+                order=booking,
+                items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000)],
+                currency="CAD",
+            )
+            await session.commit()
+            return invoice.invoice_id
+
+    invoice_id = asyncio.run(_seed_invoice())
+    headers = _auth_headers("admin", "secret")
+
+    resp = client.get(f"/v1/admin/invoices/{invoice_id}/pdf", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/pdf"
+    assert "Content-Disposition" in resp.headers
+    assert "INV-" in resp.headers["Content-Disposition"]
+
+
+def test_record_manual_payment_requires_permission(client, async_session_maker):
+    """Test that recording manual payments requires payments.record permission"""
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    async def _seed_invoice() -> str:
+        async with async_session_maker() as session:
+            lead = Lead(**_lead_payload())
+            session.add(lead)
+            await session.flush()
+            booking = Booking(
+                team_id=1,
+                lead_id=lead.lead_id,
+                starts_at=datetime.now(tz=timezone.utc),
+                duration_minutes=90,
+                status="PENDING",
+            )
+            session.add(booking)
+            await session.flush()
+            invoice = await invoice_service.create_invoice_from_order(
+                session=session,
+                order=booking,
+                items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000)],
+                currency="CAD",
+            )
+            await session.commit()
+            return invoice.invoice_id
+
+    invoice_id = asyncio.run(_seed_invoice())
+    headers = _auth_headers("admin", "secret")
+
+    # Record payment endpoint already exists and should work
+    resp = client.post(
+        f"/v1/admin/invoices/{invoice_id}/record-payment",
+        headers=headers,
+        json={"amount_cents": 5000, "method": "cash", "reference": "test"},
+    )
+    assert resp.status_code == 201
+    payload = resp.json()
+    assert payload["invoice"]["status"] == statuses.INVOICE_STATUS_PARTIAL
+    assert payload["payment"]["amount_cents"] == 5000
