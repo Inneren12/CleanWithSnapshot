@@ -16,6 +16,7 @@ MODULE_KEYS = [
     "module.teams",
     "module.analytics",
     "module.finance",
+    "module.pricing",
     "module.marketing",
     "module.leads",
     "module.inventory",
@@ -29,6 +30,8 @@ SUBFEATURE_KEYS = [
     "schedule.optimization_ai",
     "finance.reports",
     "finance.cash_flow",
+    "pricing.service_types",
+    "pricing.booking_policies",
     "api.settings",
 ]
 
@@ -51,6 +54,7 @@ MODULE_PERMISSIONS: dict[str, str] = {
     "teams": "admin",
     "analytics": "finance",
     "finance": "finance",
+    "pricing": "view",
     "marketing": "view",
     "leads": "view",
     "inventory": "view",
