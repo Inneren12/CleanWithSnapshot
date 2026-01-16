@@ -47,6 +47,7 @@ class ScheduleBooking(BaseModel):
     address: str | None = None
     service_label: str | None = None
     price_cents: int | None = None
+    notes: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -143,7 +143,7 @@ module.api                    # API access
 - Service: `backend/app/domain/ops/service.py::list_worker_timeline()` (org TZ aggregation)
 
 #### Schedule List View (table + bulk actions)
-- Frontend: `web/app/admin/schedule/SchedulePageClient.tsx` (list mode UI, filters, bulk export/print)
+- Frontend: `web/app/admin/schedule/SchedulePageClient.tsx` (list mode UI, filters, export/print panel with week/month/custom range + notes toggle)
 - Styles: `web/app/styles/components.css` (schedule list/table styles)
 - API: `backend/app/api/routes_admin.py::/v1/admin/schedule` (date range + paging + query params)
 

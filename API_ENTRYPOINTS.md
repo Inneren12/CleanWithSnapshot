@@ -276,6 +276,8 @@ curl -X POST https://api.panidobro.com/v1/admin/ui/bookings/create \
 
 **List response fields:** `total`, `limit`, `offset`, `query` (in addition to `from_date`, `to_date`, `bookings`).
 
+**Schedule booking fields:** Each `booking` includes `worker_name`, `team_name`, `client_label`, `address`, `service_label`, `price_cents`, and optional `notes` (client/address notes when present).
+
 **Team calendar query params (`GET /v1/admin/schedule/team_calendar`):**
 
 | Param | Type | Description |

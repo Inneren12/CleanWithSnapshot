@@ -47,6 +47,7 @@ type ScheduleBooking = {
   address: string | null;
   service_label: string | null;
   price_cents: number | null;
+  notes: string | null;
 };
 
 type ScheduleResponse = {
@@ -290,6 +291,11 @@ function csvEscape(value: string) {
   return `"${escaped}"`;
 }
 
+function formatNotesForPrint(value: string | null) {
+  if (!value) return "—";
+  return value.replace(/\n/g, "<br/>");
+}
+
 function formatDateTimeInput(date: Date) {
   if (Number.isNaN(date.getTime())) return "";
   const year = date.getFullYear();
@@ -404,6 +410,11 @@ export default function SchedulePage() {
     return Number.isNaN(raw) || raw < 1 ? 1 : raw;
   });
   const [selectedBookingIds, setSelectedBookingIds] = useState<Set<string>>(new Set());
+  const [exportRange, setExportRange] = useState<"week" | "month" | "custom">("week");
+  const [exportFrom, setExportFrom] = useState("");
+  const [exportTo, setExportTo] = useState("");
+  const [includeNotes, setIncludeNotes] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
 
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
@@ -1034,6 +1045,30 @@ export default function SchedulePage() {
     () => WEEKDAY_LABELS.map((_, index) => addDaysYMD(weekStart, index, orgTimezone)),
     [orgTimezone, weekStart]
   );
+  useEffect(() => {
+    if (exportRange === "custom") {
+      if (!exportFrom) setExportFrom(defaultWeekRange.from);
+      if (!exportTo) setExportTo(defaultWeekRange.to);
+      return;
+    }
+    if (exportRange === "month") {
+      setExportFrom(defaultMonthRange.from);
+      setExportTo(defaultMonthRange.to);
+      return;
+    }
+    setExportFrom(weekStart);
+    setExportTo(addDaysYMD(weekStart, 6, orgTimezone));
+  }, [
+    defaultMonthRange.from,
+    defaultMonthRange.to,
+    defaultWeekRange.from,
+    defaultWeekRange.to,
+    exportFrom,
+    exportRange,
+    exportTo,
+    orgTimezone,
+    weekStart,
+  ]);
   const visibleDays = useMemo(() => {
     if (isDayView) return [selectedDate];
     return weekDays;
@@ -1167,6 +1202,253 @@ export default function SchedulePage() {
   }, [timelineDays, workerTimeline]);
 
   const timelineAvailableMinutes = timelineDays.length * (END_HOUR - START_HOUR) * 60;
+  const exportRangeLabel = exportFrom && exportTo ? `${exportFrom} → ${exportTo}` : "range";
+  const exportFiltersLabel = useMemo(() => {
+    const filters: string[] = [];
+    if (teamFilter) filters.push(`Team ${teamFilter}`);
+    if (workerFilter) filters.push(`Worker ${workerFilter}`);
+    if (statusFilter) filters.push(`Status ${statusFilter}`);
+    if (searchQuery) filters.push(`Search "${searchQuery}"`);
+    return filters.length ? `Filters: ${filters.join(", ")}` : "No filters applied.";
+  }, [searchQuery, statusFilter, teamFilter, workerFilter]);
+
+  const buildCsvContent = useCallback(
+    (bookings: ScheduleBooking[], includeNotesColumn: boolean) => {
+      const header = [
+        "Date/Time",
+        "Booking ID",
+        "Status",
+        "Client",
+        "Address",
+        "Service",
+        "Worker",
+        "Team",
+        "Duration (min)",
+        "Amount",
+      ];
+      if (includeNotesColumn) header.push("Notes");
+
+      const rows = bookings.map((booking) => {
+        const baseRow = [
+          formatDateTimeLabel(booking.starts_at, orgTimezone),
+          booking.booking_id,
+          booking.status,
+          booking.client_label ?? "",
+          booking.address ?? "",
+          booking.service_label ?? "",
+          booking.worker_name ?? "",
+          booking.team_name ?? "",
+          String(booking.duration_minutes ?? ""),
+          booking.price_cents !== null ? formatCurrencyFromCents(booking.price_cents) : "",
+        ];
+        if (includeNotesColumn) {
+          baseRow.push(booking.notes ?? "");
+        }
+        return baseRow;
+      });
+      return [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
+    },
+    [orgTimezone]
+  );
+
+  const downloadCsv = useCallback((csv: string, filename: string) => {
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const openPrintView = useCallback(
+    (bookings: ScheduleBooking[], title: string, includeNotesColumn: boolean) => {
+      const printable = bookings
+        .map((booking) => {
+          const worker = booking.worker_name ?? "Unassigned";
+          const team = booking.team_name ?? "—";
+          return `<tr>
+            <td>${formatDateTimeLabel(booking.starts_at, orgTimezone)}</td>
+            <td>${booking.booking_id}</td>
+            <td>${booking.status}</td>
+            <td>${booking.client_label ?? "—"}</td>
+            <td>${booking.address ?? "—"}</td>
+            <td>${booking.service_label ?? "—"}</td>
+            <td>${worker}<br/><span class="muted">${team}</span></td>
+            <td>${booking.duration_minutes ?? "—"}</td>
+            <td>${booking.price_cents !== null ? formatCurrencyFromCents(booking.price_cents) : "—"}</td>
+            ${
+              includeNotesColumn
+                ? `<td>${formatNotesForPrint(booking.notes)}</td>`
+                : ""
+            }
+          </tr>`;
+        })
+        .join("");
+      const printWindow = window.open("", "schedule-print");
+      if (!printWindow) {
+        showToast("Unable to open print dialog.");
+        return;
+      }
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>${title}</title>
+            <style>
+              body { font-family: "Inter", sans-serif; padding: 24px; color: #0f172a; }
+              h1 { font-size: 20px; margin-bottom: 12px; }
+              table { width: 100%; border-collapse: collapse; font-size: 12px; }
+              th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; vertical-align: top; }
+              th { background: #f8fafc; }
+              .muted { color: #64748b; font-size: 11px; }
+              @media print {
+                body { padding: 0; }
+                h1 { margin-top: 0; }
+              }
+            </style>
+          </head>
+          <body>
+            <h1>${title}</h1>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date/Time</th>
+                  <th>Booking ID</th>
+                  <th>Status</th>
+                  <th>Client</th>
+                  <th>Address</th>
+                  <th>Service</th>
+                  <th>Worker/Team</th>
+                  <th>Duration (min)</th>
+                  <th>Amount</th>
+                  ${includeNotesColumn ? "<th>Notes</th>" : ""}
+                </tr>
+              </thead>
+              <tbody>${printable}</tbody>
+            </table>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.print();
+    },
+    [orgTimezone, showToast]
+  );
+
+  const fetchScheduleBookings = useCallback(
+    async (from: string, to: string) => {
+      const collected: ScheduleBooking[] = [];
+      const limit = 500;
+      let offset = 0;
+      while (true) {
+        const params = new URLSearchParams({
+          from,
+          to,
+          limit: String(limit),
+          offset: String(offset),
+        });
+        if (teamFilter) params.set("team_id", teamFilter);
+        if (workerFilter) params.set("worker_id", workerFilter);
+        if (statusFilter) params.set("status", statusFilter);
+        if (searchQuery) params.set("q", searchQuery);
+        const response = await fetch(`${API_BASE}/v1/admin/schedule?${params.toString()}`, {
+          headers: authHeaders,
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Failed to load schedule export");
+        }
+        const payload = (await response.json()) as ScheduleResponse;
+        collected.push(...payload.bookings);
+        const total = payload.total ?? collected.length;
+        if (payload.bookings.length < limit || collected.length >= total) {
+          break;
+        }
+        offset += limit;
+      }
+      return collected;
+    },
+    [authHeaders, searchQuery, statusFilter, teamFilter, workerFilter]
+  );
+
+  const handleRangeExportCsv = useCallback(async () => {
+    if (!isAuthenticated) {
+      showToast("Save credentials to export.");
+      return;
+    }
+    if (!exportFrom || !exportTo) {
+      showToast("Select an export date range.");
+      return;
+    }
+    if (exportFrom > exportTo) {
+      showToast("Export start date must be before the end date.");
+      return;
+    }
+    setExportLoading(true);
+    try {
+      const bookings = await fetchScheduleBookings(exportFrom, exportTo);
+      if (!bookings.length) {
+        showToast("No bookings found for this range.");
+        return;
+      }
+      const csv = buildCsvContent(bookings, includeNotes);
+      downloadCsv(csv, `schedule-${exportFrom}-to-${exportTo}.csv`);
+    } catch (exportError) {
+      showToast(exportError instanceof Error ? exportError.message : "Export failed");
+    } finally {
+      setExportLoading(false);
+    }
+  }, [
+    buildCsvContent,
+    downloadCsv,
+    exportFrom,
+    exportTo,
+    fetchScheduleBookings,
+    includeNotes,
+    isAuthenticated,
+    showToast,
+  ]);
+
+  const handleRangePrint = useCallback(async () => {
+    if (!isAuthenticated) {
+      showToast("Save credentials to print.");
+      return;
+    }
+    if (!exportFrom || !exportTo) {
+      showToast("Select an export date range.");
+      return;
+    }
+    if (exportFrom > exportTo) {
+      showToast("Export start date must be before the end date.");
+      return;
+    }
+    setExportLoading(true);
+    try {
+      const bookings = await fetchScheduleBookings(exportFrom, exportTo);
+      if (!bookings.length) {
+        showToast("No bookings found for this range.");
+        return;
+      }
+      openPrintView(bookings, `Schedule Export (${exportRangeLabel})`, includeNotes);
+    } catch (exportError) {
+      showToast(exportError instanceof Error ? exportError.message : "Print failed");
+    } finally {
+      setExportLoading(false);
+    }
+  }, [
+    exportFrom,
+    exportRangeLabel,
+    exportTo,
+    fetchScheduleBookings,
+    includeNotes,
+    isAuthenticated,
+    openPrintView,
+    showToast,
+  ]);
 
   const handleDrop = useCallback(
     async (event: DragEvent<HTMLDivElement>, day: string) => {
@@ -1290,96 +1572,18 @@ export default function SchedulePage() {
 
   const handleExportCsv = useCallback(() => {
     if (selectedBookings.length === 0) return;
-    const rows = selectedBookings.map((booking) => [
-      formatDateTimeLabel(booking.starts_at, orgTimezone),
-      booking.booking_id,
-      booking.worker_name ?? "",
-      booking.team_name ?? "",
-      booking.client_label ?? "",
-      booking.address ?? "",
-      booking.status,
-      booking.price_cents !== null ? formatCurrencyFromCents(booking.price_cents) : "",
-    ]);
-    const header = [
-      "Date/Time",
-      "Booking ID",
-      "Worker",
-      "Team",
-      "Client",
-      "Address",
-      "Status",
-      "Amount",
-    ];
-    const csv = [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `schedule-list-${listFrom || "range"}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, [listFrom, orgTimezone, selectedBookings]);
+    const csv = buildCsvContent(selectedBookings, includeNotes);
+    downloadCsv(csv, `schedule-list-${listFrom || "range"}.csv`);
+  }, [buildCsvContent, downloadCsv, includeNotes, listFrom, selectedBookings]);
 
   const handlePrint = useCallback(() => {
     if (selectedBookings.length === 0) return;
-    const printable = selectedBookings
-      .map((booking) => {
-        const worker = booking.worker_name ?? "Unassigned";
-        const team = booking.team_name ?? "—";
-        return `<tr>
-          <td>${formatDateTimeLabel(booking.starts_at, orgTimezone)}</td>
-          <td>${booking.booking_id}</td>
-          <td>${worker}<br/><span class="muted">${team}</span></td>
-          <td>${booking.client_label ?? "—"}</td>
-          <td>${booking.address ?? "—"}</td>
-          <td>${booking.status}</td>
-          <td>${booking.price_cents !== null ? formatCurrencyFromCents(booking.price_cents) : "—"}</td>
-        </tr>`;
-      })
-      .join("");
-    const printWindow = window.open("", "schedule-print");
-    if (!printWindow) {
-      showToast("Unable to open print dialog.");
-      return;
-    }
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Schedule List</title>
-          <style>
-            body { font-family: "Inter", sans-serif; padding: 24px; color: #0f172a; }
-            h1 { font-size: 20px; margin-bottom: 12px; }
-            table { width: 100%; border-collapse: collapse; font-size: 12px; }
-            th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; vertical-align: top; }
-            th { background: #f8fafc; }
-            .muted { color: #64748b; font-size: 11px; }
-          </style>
-        </head>
-        <body>
-          <h1>Schedule List (${listFrom || "range"} → ${listTo || ""})</h1>
-          <table>
-            <thead>
-              <tr>
-                <th>Date/Time</th>
-                <th>Booking ID</th>
-                <th>Worker/Team</th>
-                <th>Client</th>
-                <th>Address</th>
-                <th>Status</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>${printable}</tbody>
-          </table>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
-  }, [listFrom, listTo, orgTimezone, selectedBookings, showToast]);
+    openPrintView(
+      selectedBookings,
+      `Schedule List (${listFrom || "range"} → ${listTo || ""})`,
+      includeNotes
+    );
+  }, [includeNotes, listFrom, listTo, openPrintView, selectedBookings]);
 
   const openQuickCreate = useCallback(
     (day: string, minutes: number) => {
@@ -1791,6 +1995,89 @@ export default function SchedulePage() {
           ) : null}
           {error ? <p className="muted schedule-error">{error}</p> : null}
           {loading ? <p className="muted">Loading schedule…</p> : null}
+        </div>
+      </section>
+
+      <section className="card schedule-export">
+        <div className="card-body">
+          <div className="schedule-export-header">
+            <div>
+              <h2>Export & Print</h2>
+              <p className="muted">
+                Export the current schedule range with booking details and worker assignments.
+              </p>
+            </div>
+            <div className="schedule-export-actions">
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => void handleRangeExportCsv()}
+                disabled={exportLoading}
+              >
+                {exportLoading ? "Exporting…" : "Export CSV"}
+              </button>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => void handleRangePrint()}
+                disabled={exportLoading}
+              >
+                {exportLoading ? "Preparing…" : "Print"}
+              </button>
+            </div>
+          </div>
+          <div className="schedule-export-controls">
+            <label className="stack">
+              <span className="muted">Range</span>
+              <select
+                className="input"
+                value={exportRange}
+                onChange={(event) =>
+                  setExportRange(event.target.value as "week" | "month" | "custom")
+                }
+              >
+                <option value="week">Current week</option>
+                <option value="month">Current month</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </label>
+            {exportRange === "custom" ? (
+              <>
+                <label className="stack">
+                  <span className="muted">From</span>
+                  <input
+                    className="input"
+                    type="date"
+                    value={exportFrom}
+                    onChange={(event) => setExportFrom(event.target.value)}
+                  />
+                </label>
+                <label className="stack">
+                  <span className="muted">To</span>
+                  <input
+                    className="input"
+                    type="date"
+                    value={exportTo}
+                    onChange={(event) => setExportTo(event.target.value)}
+                  />
+                </label>
+              </>
+            ) : (
+              <div className="schedule-export-summary">
+                <span className="muted">Range summary</span>
+                <strong>{exportRangeLabel}</strong>
+              </div>
+            )}
+            <label className="schedule-toggle schedule-export-notes">
+              <input
+                type="checkbox"
+                checked={includeNotes}
+                onChange={(event) => setIncludeNotes(event.target.checked)}
+              />
+              <span>Include notes (client/address)</span>
+            </label>
+          </div>
+          <p className="muted schedule-export-filters">{exportFiltersLabel}</p>
         </div>
       </section>
 
