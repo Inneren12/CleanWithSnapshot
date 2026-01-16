@@ -126,3 +126,46 @@ class QualityIssueTriageBucket(BaseModel):
 class QualityIssueTriageResponse(BaseModel):
     as_of: datetime
     buckets: list[QualityIssueTriageBucket]
+
+
+class QualityReviewTemplate(BaseModel):
+    key: str
+    label: str
+    body: str
+
+
+class QualityReviewItem(BaseModel):
+    feedback_id: int
+    booking_id: str
+    booking_starts_at: datetime | None = None
+    worker_id: int | None = None
+    worker_name: str | None = None
+    client_id: str
+    client_name: str | None = None
+    client_email: str | None = None
+    rating: int
+    comment: str | None = None
+    created_at: datetime
+    has_issue: bool
+
+
+class QualityReviewListResponse(BaseModel):
+    items: list[QualityReviewItem]
+    total: int
+    page: int
+    page_size: int
+    templates: list[QualityReviewTemplate]
+
+
+class QualityReviewReplyRequest(BaseModel):
+    template_key: str | None = None
+    message: str | None = None
+
+
+class QualityReviewReplyResponse(BaseModel):
+    reply_id: uuid.UUID
+    feedback_id: int
+    template_key: str | None = None
+    message: str
+    created_by: str | None = None
+    created_at: datetime
