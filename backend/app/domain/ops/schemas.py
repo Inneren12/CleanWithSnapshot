@@ -172,13 +172,43 @@ class OpsDashboardBookingStatusToday(BaseModel):
     bands: list[OpsDashboardBookingStatusBand] = Field(default_factory=list)
 
 
+class OpsDashboardHeroMetrics(BaseModel):
+    bookings_today: int
+    revenue_today_cents: int
+    workers_available: int
+    workers_total: int
+    worker_rating_avg: float | None = None
+
+
+class OpsDashboardRevenueDay(BaseModel):
+    date: date
+    revenue_cents: int
+
+
+class OpsDashboardRevenueGoal(BaseModel):
+    goal_cents: int
+    remaining_cents: int
+
+
+class OpsDashboardRevenueWeek(BaseModel):
+    week_start: date
+    week_end: date
+    days: list[OpsDashboardRevenueDay] = Field(default_factory=list)
+    total_revenue_cents: int
+    currency: str
+    goal: OpsDashboardRevenueGoal | None = None
+
+
 class OpsDashboardResponse(BaseModel):
     as_of: datetime
     org_timezone: str
+    org_currency: str
     critical_alerts: list[OpsDashboardAlert] = Field(default_factory=list)
     upcoming_events: list[OpsDashboardUpcomingEvent] = Field(default_factory=list)
     worker_availability: list[OpsDashboardWorkerAvailability] = Field(default_factory=list)
     booking_status_today: OpsDashboardBookingStatusToday
+    hero_metrics: OpsDashboardHeroMetrics
+    revenue_week: OpsDashboardRevenueWeek
 
 
 class MoveBookingRequest(BaseModel):

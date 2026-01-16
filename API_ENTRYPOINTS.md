@@ -171,11 +171,14 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 #### Ops Dashboard Response (critical alerts)
 
 `GET /v1/admin/dashboard/ops` includes `critical_alerts` for the Critical Alerts widget.
+`hero_metrics` and `revenue_week` summarize today and week-to-date totals in the org timezone.
+If org settings branding includes `weekly_revenue_goal_cents` (or `weekly_revenue_goal`), the `goal` object is included in `revenue_week`.
 
 ```json
 {
   "as_of": "2026-01-20T15:04:05Z",
   "org_timezone": "America/Denver",
+  "org_currency": "CAD",
   "critical_alerts": [
     {
       "type": "overdue_invoices",
@@ -228,6 +231,27 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
       "cancelled": 0
     },
     "bands": []
+  },
+  "hero_metrics": {
+    "bookings_today": 12,
+    "revenue_today_cents": 184000,
+    "workers_available": 4,
+    "workers_total": 9,
+    "worker_rating_avg": 4.7
+  },
+  "revenue_week": {
+    "week_start": "2026-01-20",
+    "week_end": "2026-01-26",
+    "days": [
+      { "date": "2026-01-20", "revenue_cents": 32000 },
+      { "date": "2026-01-21", "revenue_cents": 45000 }
+    ],
+    "total_revenue_cents": 184000,
+    "currency": "CAD",
+    "goal": {
+      "goal_cents": 200000,
+      "remaining_cents": 16000
+    }
   }
 }
 ```

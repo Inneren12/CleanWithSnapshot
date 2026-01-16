@@ -57,13 +57,43 @@ type OpsDashboardBookingStatusToday = {
   bands: OpsDashboardBookingStatusBand[];
 };
 
+type OpsDashboardHeroMetrics = {
+  bookings_today: number;
+  revenue_today_cents: number;
+  workers_available: number;
+  workers_total: number;
+  worker_rating_avg?: number | null;
+};
+
+type OpsDashboardRevenueDay = {
+  date: string;
+  revenue_cents: number;
+};
+
+type OpsDashboardRevenueGoal = {
+  goal_cents: number;
+  remaining_cents: number;
+};
+
+type OpsDashboardRevenueWeek = {
+  week_start: string;
+  week_end: string;
+  days: OpsDashboardRevenueDay[];
+  total_revenue_cents: number;
+  currency: string;
+  goal?: OpsDashboardRevenueGoal;
+};
+
 type OpsDashboardResponse = {
   as_of: string;
   org_timezone: string;
+  org_currency: string;
   critical_alerts: OpsDashboardAlert[];
   upcoming_events: OpsDashboardUpcomingEvent[];
   worker_availability: OpsDashboardWorkerAvailability[];
   booking_status_today: OpsDashboardBookingStatusToday;
+  hero_metrics: OpsDashboardHeroMetrics;
+  revenue_week: OpsDashboardRevenueWeek;
 };
 
 function formatDateTime(value: string, timeZone: string) {
@@ -84,6 +114,22 @@ function formatDateForQuery(value: Date, timeZone: string) {
   }).formatToParts(value);
   const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${lookup.year}-${lookup.month}-${lookup.day}`;
+}
+
+function formatCurrency(valueCents: number, currency: string) {
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0,
+  }).format(valueCents / 100);
+}
+
+function formatWeekday(value: string, timeZone: string) {
+  const dt = new Date(`${value}T00:00:00`);
+  return new Intl.DateTimeFormat("en-CA", {
+    weekday: "short",
+    timeZone,
+  }).format(dt);
 }
 
 export default function OpsDashboardPage() {
@@ -278,6 +324,7 @@ export default function OpsDashboardPage() {
   const totalWorkers = opsData?.worker_availability.length ?? 0;
   const bookingTotals = opsData?.booking_status_today.totals;
   const timezoneLabel = opsData?.org_timezone ?? "UTC";
+  const currencyLabel = opsData?.org_currency ?? "CAD";
   const asOfLabel = opsData
     ? `As of ${formatDateTime(opsData.as_of, opsData.org_timezone)} (${opsData.org_timezone})`
     : "Awaiting ops data.";
@@ -391,6 +438,79 @@ export default function OpsDashboardPage() {
 
       {opsError ? <p className="alert alert-warning">{opsError}</p> : null}
       {opsLoading ? <p className="muted">Loading ops dashboard…</p> : null}
+
+      {opsData ? (
+        <>
+          <div className="hero-metrics-grid">
+            <section className="admin-card admin-section">
+              <div className="muted">Bookings today</div>
+              <div className="hero-metric-value">{opsData.hero_metrics.bookings_today}</div>
+              <div className="muted">{timezoneLabel} schedule</div>
+            </section>
+            <section className="admin-card admin-section">
+              <div className="muted">Revenue today</div>
+              <div className="hero-metric-value">
+                {formatCurrency(opsData.hero_metrics.revenue_today_cents, currencyLabel)}
+              </div>
+              <div className="muted">{timezoneLabel} totals</div>
+            </section>
+            <section className="admin-card admin-section">
+              <div className="muted">Workers available</div>
+              <div className="hero-metric-value">
+                {opsData.hero_metrics.workers_available} / {opsData.hero_metrics.workers_total}
+              </div>
+              <div className="muted">Currently free</div>
+            </section>
+            <section className="admin-card admin-section">
+              <div className="muted">Average rating</div>
+              <div className="hero-metric-value">
+                {opsData.hero_metrics.worker_rating_avg ? opsData.hero_metrics.worker_rating_avg.toFixed(1) : "—"}
+              </div>
+              <div className="muted">Worker reviews</div>
+            </section>
+          </div>
+
+          <section className="admin-card admin-section revenue-chart">
+            <div className="section-heading">
+              <h2>Revenue (Mon–Sun)</h2>
+              <p className="muted">
+                Week of {opsData.revenue_week.week_start} · Total{" "}
+                {formatCurrency(opsData.revenue_week.total_revenue_cents, opsData.revenue_week.currency)}
+              </p>
+            </div>
+            <div className="revenue-chart-bars">
+              {(() => {
+                const maxRevenue = Math.max(
+                  ...opsData.revenue_week.days.map((day) => day.revenue_cents),
+                  1
+                );
+                return opsData.revenue_week.days.map((day) => {
+                  const heightPercent = Math.max((day.revenue_cents / maxRevenue) * 100, 2);
+                  return (
+                    <div key={day.date} className="revenue-chart-bar">
+                      <div className="revenue-bar" style={{ height: `${heightPercent}%` }} />
+                      <div className="revenue-bar-label">{formatWeekday(day.date, timezoneLabel)}</div>
+                      <div className="muted revenue-bar-value">
+                        {formatCurrency(day.revenue_cents, opsData.revenue_week.currency)}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            {opsData.revenue_week.goal ? (
+              <div className="muted">
+                Goal: {formatCurrency(opsData.revenue_week.goal.goal_cents, opsData.revenue_week.currency)} · Remaining{" "}
+                {formatCurrency(opsData.revenue_week.goal.remaining_cents, opsData.revenue_week.currency)}
+              </div>
+            ) : null}
+          </section>
+        </>
+      ) : (
+        <div className="admin-card admin-section">
+          <p className="muted">Hero metrics and revenue trends will load after ops data.</p>
+        </div>
+      )}
 
       <div className="admin-grid">
         <section className="admin-card admin-section">
