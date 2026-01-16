@@ -155,6 +155,7 @@ module.api                    # API access
 #### Conflict Detection
 - Service: `backend/app/domain/bookings/service.py::check_conflicts()`
 - Logic: Checks for overlapping bookings by team/worker
+- Availability/busy status respects booking buffer minutes (`BUFFER_MINUTES`).
 
 #### Availability Blocking
 - Frontend: `web/app/admin/settings/availability-blocks/page.tsx`

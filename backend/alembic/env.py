@@ -40,6 +40,10 @@ config.set_main_option("sqlalchemy.url", _sync_database_url(settings.database_ur
 target_metadata = Base.metadata
 
 
+def _is_sqlite_url(raw_url: str) -> bool:
+    return make_url(raw_url).drivername.startswith("sqlite")
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
@@ -47,6 +51,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_as_batch=_is_sqlite_url(url),
     )
 
     with context.begin_transaction():
@@ -61,7 +66,11 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=connection.dialect.name == "sqlite",
+        )
 
         with context.begin_transaction():
             context.run_migrations()

@@ -7872,20 +7872,22 @@ async def _worker_busy_until_map(
     )
     rows = (await session.execute(stmt)).all()
     busy_until_map: dict[int, datetime] = {}
+    buffer_delta = timedelta(minutes=booking_service.BUFFER_MINUTES)
     for assigned_worker_id, starts_at, duration_minutes, crew_worker_id in rows:
         if starts_at is None or duration_minutes is None:
             continue
         if starts_at.tzinfo is None:
             starts_at = starts_at.replace(tzinfo=timezone.utc)
         ends_at = starts_at + timedelta(minutes=duration_minutes)
-        if now >= ends_at:
+        busy_until = ends_at + buffer_delta
+        if now >= busy_until:
             continue
         for worker_id in (assigned_worker_id, crew_worker_id):
             if worker_id is None:
                 continue
             current = busy_until_map.get(worker_id)
-            if current is None or ends_at > current:
-                busy_until_map[worker_id] = ends_at
+            if current is None or busy_until > current:
+                busy_until_map[worker_id] = busy_until
     return busy_until_map
 
 

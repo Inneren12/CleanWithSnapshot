@@ -176,6 +176,11 @@ def downgrade() -> None:
 
 **Always review auto-generated migrations!**
 
+### SQLite Constraint Changes (Batch Mode)
+
+SQLite cannot `ALTER` constraints directly. When dropping or creating constraints (FKs, unique constraints), wrap the
+changes in `op.batch_alter_table()` so Alembic uses the copy-and-move strategy during SQLite tests.
+
 ---
 
 ## Running Migrations
