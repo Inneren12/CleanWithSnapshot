@@ -219,6 +219,12 @@ class OpsDashboardRevenueWeek(BaseModel):
     goal: OpsDashboardRevenueGoal | None = None
 
 
+class OpsDashboardQualityToday(BaseModel):
+    avg_rating: float | None = None
+    reviews_count: int
+    open_critical_issues: int
+
+
 class OpsDashboardTopWorker(BaseModel):
     worker_id: int
     name: str | None = None
@@ -270,6 +276,7 @@ class OpsDashboardResponse(BaseModel):
     booking_status_today: OpsDashboardBookingStatusToday
     hero_metrics: OpsDashboardHeroMetrics
     revenue_week: OpsDashboardRevenueWeek
+    quality_today: OpsDashboardQualityToday | None = None
     top_performers: OpsDashboardTopPerformers
 
 

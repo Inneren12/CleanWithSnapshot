@@ -84,6 +84,12 @@ type OpsDashboardRevenueWeek = {
   goal?: OpsDashboardRevenueGoal;
 };
 
+type OpsDashboardQualityToday = {
+  avg_rating?: number | null;
+  reviews_count: number;
+  open_critical_issues: number;
+};
+
 type OpsDashboardTopWorker = {
   worker_id: number;
   name?: string | null;
@@ -135,6 +141,7 @@ type OpsDashboardResponse = {
   booking_status_today: OpsDashboardBookingStatusToday;
   hero_metrics: OpsDashboardHeroMetrics;
   revenue_week: OpsDashboardRevenueWeek;
+  quality_today?: OpsDashboardQualityToday | null;
   top_performers: OpsDashboardTopPerformers;
 };
 
@@ -246,6 +253,10 @@ export default function OpsDashboardPage() {
   const dashboardVisible = visibilityReady
     ? isVisible("module.dashboard", permissionKeys, featureOverrides, hiddenKeys)
     : true;
+  const qualityVisible = visibilityReady
+    ? isVisible("module.quality", permissionKeys, featureOverrides, hiddenKeys) &&
+      permissionKeys.includes("quality.view")
+    : false;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -486,6 +497,7 @@ export default function OpsDashboardPage() {
   const timezoneLabel = opsData?.org_timezone ?? "UTC";
   const currencyLabel = opsData?.org_currency ?? "CAD";
   const topPerformers = opsData?.top_performers ?? null;
+  const qualityToday = opsData?.quality_today ?? null;
   const monthLabel = topPerformers ? formatMonthLabel(topPerformers.month_start, timezoneLabel) : "";
   const asOfLabel = opsData
     ? `As of ${formatDateTime(opsData.as_of, opsData.org_timezone)} (${opsData.org_timezone})`
@@ -680,254 +692,291 @@ export default function OpsDashboardPage() {
       <div className="ops-dashboard-layout">
         <div className="ops-dashboard-main">
           <div className="admin-grid">
-        <section className="admin-card admin-section">
-          <div className="section-heading">
-            <h2>Critical Alerts</h2>
-            <p className="muted">Escalations needing immediate attention.</p>
-          </div>
-          <p className="muted">{asOfLabel}</p>
-          {opsData ? (
-            visibleAlerts.length === 0 ? (
-              <p className="muted">No critical alerts reported.</p>
-            ) : (
-              <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch", gap: "12px" }}>
-                {visibleAlerts.map((alert) => (
-                  <div key={alert.type} className={alertClassName(alert.severity)}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+            {qualityVisible ? (
+              <section className="admin-card admin-section">
+                <div className="section-heading">
+                  <h2>Quality today</h2>
+                  <p className="muted">Reviews and critical issues in {timezoneLabel}.</p>
+                </div>
+                {qualityToday ? (
+                  <>
+                    <div className="admin-actions" style={{ justifyContent: "space-between", gap: "16px" }}>
                       <div>
-                        <strong>{alert.title}</strong>
-                        <div className="muted">{alert.description}</div>
+                        <div className="muted">Avg rating</div>
+                        <div className="hero-metric-value">
+                          {qualityToday.avg_rating ? qualityToday.avg_rating.toFixed(1) : "—"}
+                        </div>
                       </div>
-                      <span className="muted">{alert.severity.toUpperCase()}</span>
+                      <div>
+                        <div className="muted">Reviews</div>
+                        <div className="hero-metric-value">{qualityToday.reviews_count}</div>
+                      </div>
+                      <div>
+                        <div className="muted">Open critical issues</div>
+                        <div className="hero-metric-value">{qualityToday.open_critical_issues}</div>
+                      </div>
                     </div>
-                    {alert.actions.length > 0 ? (
-                      <div className="admin-actions" style={{ marginTop: "8px", flexWrap: "wrap" }}>
-                        {alert.actions.map((action) => (
-                          <a key={action.href} className="btn btn-secondary" href={action.href}>
-                            {action.label}
-                          </a>
+                    <div className="admin-actions" style={{ marginTop: "12px" }}>
+                      <a className="btn btn-secondary" href="/admin/quality/issues?severity=critical">
+                        Review critical issues
+                      </a>
+                    </div>
+                  </>
+                ) : (
+                  <p className="muted">Quality metrics are not available for this account.</p>
+                )}
+              </section>
+            ) : null}
+
+            <section className="admin-card admin-section">
+              <div className="section-heading">
+                <h2>Critical Alerts</h2>
+                <p className="muted">Escalations needing immediate attention.</p>
+              </div>
+              <p className="muted">{asOfLabel}</p>
+              {opsData ? (
+                visibleAlerts.length === 0 ? (
+                  <p className="muted">No critical alerts reported.</p>
+                ) : (
+                  <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch", gap: "12px" }}>
+                    {visibleAlerts.map((alert) => (
+                      <div key={alert.type} className={alertClassName(alert.severity)}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+                          <div>
+                            <strong>{alert.title}</strong>
+                            <div className="muted">{alert.description}</div>
+                          </div>
+                          <span className="muted">{alert.severity.toUpperCase()}</span>
+                        </div>
+                        {alert.actions.length > 0 ? (
+                          <div className="admin-actions" style={{ marginTop: "8px", flexWrap: "wrap" }}>
+                            {alert.actions.map((action) => (
+                              <a key={action.href} className="btn btn-secondary" href={action.href}>
+                                {action.label}
+                              </a>
+                            ))}
+                            <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert.type)}>
+                              Dismiss
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="admin-actions" style={{ marginTop: "8px" }}>
+                            <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert.type)}>
+                              Dismiss
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : (
+                <p className="muted">Alerts will populate after credentials are saved.</p>
+              )}
+            </section>
+
+            <section className="admin-card admin-section">
+              <div className="section-heading">
+                <h2>Upcoming 24h</h2>
+                <p className="muted">Next 24 hours in {timezoneLabel}.</p>
+              </div>
+              {opsData ? (
+                opsData.upcoming_events.length > 0 ? (
+                  <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch", gap: "12px" }}>
+                    {opsData.upcoming_events.map((event, index) => (
+                      <div key={`${event.title}-${event.starts_at}-${index}`} className="alert alert-info">
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+                          <div>
+                            <strong>{event.title}</strong>
+                            <div className="muted">
+                              {formatDateTime(event.starts_at, opsData.org_timezone)}
+                            </div>
+                          </div>
+                          {event.entity_ref ? <span className="muted">{String(event.entity_ref.kind ?? "")}</span> : null}
+                        </div>
+                        {event.actions.length > 0 ? (
+                          <div className="admin-actions" style={{ marginTop: "8px", flexWrap: "wrap" }}>
+                            {event.actions.map((action) => (
+                              <a key={action.href} className="btn btn-secondary" href={action.href}>
+                                {action.label}
+                              </a>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted">No critical events in the next 24 hours.</p>
+                )
+              ) : (
+                <p className="muted">Upcoming events will appear here.</p>
+              )}
+            </section>
+
+            <section className="admin-card admin-section">
+              <div className="section-heading">
+                <h2>Workers Availability Matrix</h2>
+                <p className="muted">Staffing status for today.</p>
+              </div>
+              {opsData ? (
+                <p className="muted">
+                  {availableWorkers} of {totalWorkers} workers available. Matrix placeholder.
+                </p>
+              ) : (
+                <p className="muted">Availability matrix will load after ops data.</p>
+              )}
+            </section>
+
+            <section className="admin-card admin-section">
+              <div className="section-heading">
+                <h2>Booking Status Overview</h2>
+                <p className="muted">Today&apos;s totals by status.</p>
+              </div>
+              {bookingTotals ? (
+                <div className="muted">
+                  Total: {bookingTotals.total} · Pending: {bookingTotals.pending} · Confirmed: {bookingTotals.confirmed} ·
+                  Done: {bookingTotals.done} · Cancelled: {bookingTotals.cancelled}
+                </div>
+              ) : (
+                <p className="muted">Status summary will populate here.</p>
+              )}
+            </section>
+
+            <section className="admin-card admin-section">
+              <div className="section-heading">
+                <h2>Top performers (month)</h2>
+                {topPerformers ? (
+                  <p className="muted">
+                    {monthLabel} · Total {formatCurrency(topPerformers.total_revenue_cents, currencyLabel)}
+                  </p>
+                ) : (
+                  <p className="muted">Top performers will appear after ops data.</p>
+                )}
+              </div>
+              {topPerformers ? (
+                <div
+                  className="admin-grid"
+                  style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}
+                >
+                  <div>
+                    <strong>Workers</strong>
+                    {topPerformers.workers.length ? (
+                      <ol>
+                        {topPerformers.workers.map((worker) => (
+                          <li key={worker.worker_id} style={{ marginTop: "8px" }}>
+                            <div>{worker.name ?? `Worker ${worker.worker_id}`}</div>
+                            <div className="muted">
+                              {worker.team_name ? `${worker.team_name} · ` : ""}
+                              {worker.bookings_count} bookings ·{" "}
+                              {formatCurrency(worker.revenue_cents, currencyLabel)}
+                            </div>
+                          </li>
                         ))}
-                        <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert.type)}>
-                          Dismiss
-                        </button>
-                      </div>
+                      </ol>
                     ) : (
-                      <div className="admin-actions" style={{ marginTop: "8px" }}>
-                        <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert.type)}>
-                          Dismiss
-                        </button>
-                      </div>
+                      <p className="muted">No worker bookings this month.</p>
                     )}
                   </div>
-                ))}
-              </div>
-            )
-          ) : (
-            <p className="muted">Alerts will populate after credentials are saved.</p>
-          )}
-        </section>
-
-        <section className="admin-card admin-section">
-          <div className="section-heading">
-            <h2>Upcoming 24h</h2>
-            <p className="muted">Next 24 hours in {timezoneLabel}.</p>
-          </div>
-          {opsData ? (
-            opsData.upcoming_events.length > 0 ? (
-              <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch", gap: "12px" }}>
-                {opsData.upcoming_events.map((event, index) => (
-                  <div key={`${event.title}-${event.starts_at}-${index}`} className="alert alert-info">
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
-                      <div>
-                        <strong>{event.title}</strong>
-                        <div className="muted">
-                          {formatDateTime(event.starts_at, opsData.org_timezone)}
-                        </div>
-                      </div>
-                      {event.entity_ref ? <span className="muted">{String(event.entity_ref.kind ?? "")}</span> : null}
-                    </div>
-                    {event.actions.length > 0 ? (
-                      <div className="admin-actions" style={{ marginTop: "8px", flexWrap: "wrap" }}>
-                        {event.actions.map((action) => (
-                          <a key={action.href} className="btn btn-secondary" href={action.href}>
-                            {action.label}
-                          </a>
+                  <div>
+                    <strong>Clients</strong>
+                    {topPerformers.clients.length ? (
+                      <ol>
+                        {topPerformers.clients.map((client) => (
+                          <li key={client.client_id} style={{ marginTop: "8px" }}>
+                            <div>{client.name || client.email || client.client_id}</div>
+                            <div className="muted">
+                              {client.bookings_count} bookings ·{" "}
+                              {formatCurrency(client.revenue_cents, currencyLabel)}
+                            </div>
+                          </li>
                         ))}
-                      </div>
-                    ) : null}
+                      </ol>
+                    ) : (
+                      <p className="muted">No client spend this month.</p>
+                    )}
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="muted">No critical events in the next 24 hours.</p>
-            )
-          ) : (
-            <p className="muted">Upcoming events will appear here.</p>
-          )}
-        </section>
+                  <div>
+                    <strong>Teams</strong>
+                    {topPerformers.teams.length ? (
+                      <ol>
+                        {topPerformers.teams.map((team) => (
+                          <li key={team.team_id} style={{ marginTop: "8px" }}>
+                            <div>{team.name}</div>
+                            <div className="muted">
+                              {team.bookings_count} bookings ·{" "}
+                              {formatCurrency(team.revenue_cents, currencyLabel)}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="muted">No team revenue this month.</p>
+                    )}
+                  </div>
+                  <div>
+                    <strong>Services</strong>
+                    {topPerformers.services.length ? (
+                      <ol>
+                        {topPerformers.services.map((service) => (
+                          <li key={service.label} style={{ marginTop: "8px" }}>
+                            <div>{service.label}</div>
+                            <div className="muted">
+                              {service.bookings_count} bookings ·{" "}
+                              {formatCurrency(service.revenue_cents, currencyLabel)} ·{" "}
+                              {formatPercent(service.share_of_revenue)} share
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="muted">No service revenue this month.</p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </section>
 
-        <section className="admin-card admin-section">
-          <div className="section-heading">
-            <h2>Workers Availability Matrix</h2>
-            <p className="muted">Staffing status for today.</p>
-          </div>
-          {opsData ? (
-            <p className="muted">
-              {availableWorkers} of {totalWorkers} workers available. Matrix placeholder.
-            </p>
-          ) : (
-            <p className="muted">Availability matrix will load after ops data.</p>
-          )}
-        </section>
-
-        <section className="admin-card admin-section">
-          <div className="section-heading">
-            <h2>Booking Status Overview</h2>
-            <p className="muted">Today&apos;s totals by status.</p>
-          </div>
-          {bookingTotals ? (
-            <div className="muted">
-              Total: {bookingTotals.total} · Pending: {bookingTotals.pending} · Confirmed: {bookingTotals.confirmed} ·
-              Done: {bookingTotals.done} · Cancelled: {bookingTotals.cancelled}
-            </div>
-          ) : (
-            <p className="muted">Status summary will populate here.</p>
-          )}
-        </section>
-
-        <section className="admin-card admin-section">
-          <div className="section-heading">
-            <h2>Top performers (month)</h2>
-            {topPerformers ? (
-              <p className="muted">
-                {monthLabel} · Total {formatCurrency(topPerformers.total_revenue_cents, currencyLabel)}
-              </p>
-            ) : (
-              <p className="muted">Top performers will appear after ops data.</p>
-            )}
-          </div>
-          {topPerformers ? (
-            <div
-              className="admin-grid"
-              style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}
-            >
-              <div>
-                <strong>Workers</strong>
-                {topPerformers.workers.length ? (
-                  <ol>
-                    {topPerformers.workers.map((worker) => (
-                      <li key={worker.worker_id} style={{ marginTop: "8px" }}>
-                        <div>{worker.name ?? `Worker ${worker.worker_id}`}</div>
-                        <div className="muted">
-                          {worker.team_name ? `${worker.team_name} · ` : ""}
-                          {worker.bookings_count} bookings ·{" "}
-                          {formatCurrency(worker.revenue_cents, currencyLabel)}
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="muted">No worker bookings this month.</p>
-                )}
+            <section className="admin-card admin-section">
+              <div className="section-heading">
+                <h2>Quick Actions</h2>
+                <p className="muted">Shortcuts are disabled without permission.</p>
               </div>
-              <div>
-                <strong>Clients</strong>
-                {topPerformers.clients.length ? (
-                  <ol>
-                    {topPerformers.clients.map((client) => (
-                      <li key={client.client_id} style={{ marginTop: "8px" }}>
-                        <div>{client.name || client.email || client.client_id}</div>
-                        <div className="muted">
-                          {client.bookings_count} bookings ·{" "}
-                          {formatCurrency(client.revenue_cents, currencyLabel)}
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="muted">No client spend this month.</p>
-                )}
+              <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                {quickActions.map((action) => {
+                  const featureAllowed = visibilityReady
+                    ? isVisible(action.featureKey, permissionKeys, featureOverrides, hiddenKeys)
+                    : true;
+                  const permissionAllowed = permissionKeys.includes(action.permission);
+                  const allowed = featureAllowed && permissionAllowed && !action.disabled;
+                  const disabledReason = action.disabled
+                    ? "Not implemented"
+                    : !featureAllowed
+                      ? "Feature disabled"
+                      : "Permission required";
+                  return allowed ? (
+                    <a
+                      key={action.key}
+                      className="btn btn-secondary"
+                      href={action.href}
+                      title="Open"
+                    >
+                      {action.label} · <span className="muted">{action.description}</span>
+                    </a>
+                  ) : (
+                    <button
+                      key={action.key}
+                      className="btn btn-secondary"
+                      type="button"
+                      disabled
+                      title={disabledReason}
+                    >
+                      {action.label} · <span className="muted">{action.description}</span>
+                    </button>
+                  );
+                })}
               </div>
-              <div>
-                <strong>Teams</strong>
-                {topPerformers.teams.length ? (
-                  <ol>
-                    {topPerformers.teams.map((team) => (
-                      <li key={team.team_id} style={{ marginTop: "8px" }}>
-                        <div>{team.name}</div>
-                        <div className="muted">
-                          {team.bookings_count} bookings · {formatCurrency(team.revenue_cents, currencyLabel)}
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="muted">No team revenue this month.</p>
-                )}
-              </div>
-              <div>
-                <strong>Services</strong>
-                {topPerformers.services.length ? (
-                  <ol>
-                    {topPerformers.services.map((service) => (
-                      <li key={service.label} style={{ marginTop: "8px" }}>
-                        <div>{service.label}</div>
-                        <div className="muted">
-                          {service.bookings_count} bookings ·{" "}
-                          {formatCurrency(service.revenue_cents, currencyLabel)} ·{" "}
-                          {formatPercent(service.share_of_revenue)} share
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="muted">No service revenue this month.</p>
-                )}
-              </div>
-            </div>
-          ) : null}
-        </section>
-
-        <section className="admin-card admin-section">
-          <div className="section-heading">
-            <h2>Quick Actions</h2>
-            <p className="muted">Shortcuts are disabled without permission.</p>
-          </div>
-          <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch" }}>
-            {quickActions.map((action) => {
-              const featureAllowed = visibilityReady
-                ? isVisible(action.featureKey, permissionKeys, featureOverrides, hiddenKeys)
-                : true;
-              const permissionAllowed = permissionKeys.includes(action.permission);
-              const allowed = featureAllowed && permissionAllowed && !action.disabled;
-              const disabledReason = action.disabled
-                ? "Not implemented"
-                : !featureAllowed
-                  ? "Feature disabled"
-                  : "Permission required";
-              return allowed ? (
-                <a
-                  key={action.key}
-                  className="btn btn-secondary"
-                  href={action.href}
-                  title="Open"
-                >
-                  {action.label} · <span className="muted">{action.description}</span>
-                </a>
-              ) : (
-                <button
-                  key={action.key}
-                  className="btn btn-secondary"
-                  type="button"
-                  disabled
-                  title={disabledReason}
-                >
-                  {action.label} · <span className="muted">{action.description}</span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
+            </section>
           </div>
         </div>
         <aside className="ops-dashboard-activity">
