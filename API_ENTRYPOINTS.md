@@ -239,6 +239,7 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
 | GET | `/v1/admin/schedule` | `bookings.view` | Schedule view |
+| GET | `/v1/admin/schedule/team_calendar` | `bookings.view` | Team calendar aggregates (org TZ boundaries) |
 | GET | `/v1/admin/schedule/worker_timeline` | `bookings.view` | Worker timeline aggregates (org TZ boundaries) |
 | GET | `/v1/admin/ui/bookings` | `bookings.view` | List bookings |
 | GET | `/v1/admin/ui/bookings/{id}` | `bookings.view` | Booking detail |
@@ -274,6 +275,40 @@ curl -X POST https://api.panidobro.com/v1/admin/ui/bookings/create \
 | `offset` | `int` | Offset for list view paging |
 
 **List response fields:** `total`, `limit`, `offset`, `query` (in addition to `from_date`, `to_date`, `bookings`).
+
+**Team calendar query params (`GET /v1/admin/schedule/team_calendar`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `from` | `YYYY-MM-DD` | Start date (org timezone) |
+| `to` | `YYYY-MM-DD` | End date (org timezone) |
+| `team_id` | `int` | (Optional) Filter by team |
+| `status` | `string` | (Optional) Filter by booking status |
+
+**Team calendar response shape:**
+
+```json
+{
+  "from_date": "2026-01-20",
+  "to_date": "2026-01-26",
+  "org_timezone": "America/Denver",
+  "days": ["2026-01-20", "2026-01-21"],
+  "teams": [
+    {
+      "team_id": 1,
+      "name": "Alpha Team",
+      "days": [
+        {
+          "date": "2026-01-20",
+          "bookings": 3,
+          "revenue": 42000,
+          "workers_used": 2
+        }
+      ]
+    }
+  ]
+}
+```
 
 ---
 

@@ -150,6 +150,7 @@ from app.domain.ops.schemas import (
     ScheduleBooking,
     ScheduleSuggestions,
     ScheduleResponse,
+    TeamCalendarResponse,
     TemplatePreviewRequest,
     TemplatePreviewResponse,
     WorkerTimelineResponse,
@@ -1892,6 +1893,33 @@ async def list_schedule(
         query=query,
     )
     return ScheduleResponse(**payload)
+
+
+@router.get("/v1/admin/schedule/team_calendar", response_model=TeamCalendarResponse)
+async def get_team_calendar(
+    request: Request,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    team_id: int | None = None,
+    status: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("bookings.view")),
+) -> TeamCalendarResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    resolved_from = from_date or date.today()
+    resolved_to = to_date or resolved_from
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
+    payload = await ops_service.list_team_calendar(
+        session,
+        org_id,
+        resolved_from,
+        resolved_to,
+        org_timezone=org_timezone,
+        team_id=team_id,
+        status=status,
+    )
+    return TeamCalendarResponse(**payload)
 
 
 @router.get("/v1/admin/schedule/worker_timeline", response_model=WorkerTimelineResponse)

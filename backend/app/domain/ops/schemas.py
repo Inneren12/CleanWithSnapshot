@@ -101,6 +101,28 @@ class WorkerTimelineResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TeamCalendarDay(BaseModel):
+    date: date
+    bookings: int
+    revenue: int
+    workers_used: int
+
+
+class TeamCalendarTeam(BaseModel):
+    team_id: int
+    name: str
+    days: list[TeamCalendarDay] = Field(default_factory=list)
+
+
+class TeamCalendarResponse(BaseModel):
+    from_date: date
+    to_date: date
+    org_timezone: str
+    days: list[date] = Field(default_factory=list)
+    teams: list[TeamCalendarTeam] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OpsDashboardAlertAction(BaseModel):
     label: str
     href: str

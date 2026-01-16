@@ -132,6 +132,11 @@ module.api                    # API access
 - Frontend: `web/app/admin/schedule/page.tsx`
 - API: `backend/app/api/routes_admin.py::/v1/admin/schedule`
 
+#### Schedule Team Calendar View
+- Frontend: `web/app/admin/schedule/SchedulePageClient.tsx` (Teams tab)
+- API: `backend/app/api/routes_admin.py::/v1/admin/schedule/team_calendar`
+- Service: `backend/app/domain/ops/service.py::list_team_calendar()` (org TZ aggregation)
+
 #### Worker Timeline View
 - Frontend: `web/app/admin/schedule/SchedulePageClient.tsx` (Timeline tab)
 - API: `backend/app/api/routes_admin.py::/v1/admin/schedule/worker_timeline`
