@@ -436,6 +436,58 @@
   margin-top: 12px;
 }
 
+.schedule-timeline {
+  overflow-x: auto;
+}
+
+.schedule-timeline-table-wrapper {
+  overflow-x: auto;
+}
+
+.schedule-timeline-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 820px;
+}
+
+.schedule-timeline-table th,
+.schedule-timeline-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.schedule-timeline-table th {
+  text-align: left;
+  background: var(--surface-muted);
+  font-weight: 600;
+  font-size: var(--type-sizes-sm);
+}
+
+.schedule-timeline-worker {
+  min-width: 160px;
+}
+
+.schedule-timeline-link {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.schedule-timeline-link:hover {
+  background: var(--surface-muted);
+  border-color: var(--border);
+}
+
+.schedule-timeline-total-row td {
+  background: var(--surface-muted);
+  font-weight: 600;
+}
+
 .schedule-modal {
   position: fixed;
   inset: 0;

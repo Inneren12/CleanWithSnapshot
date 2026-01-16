@@ -59,6 +59,38 @@ type ScheduleResponse = {
   query?: string | null;
 };
 
+type WorkerTimelineTotals = {
+  booked_minutes: number;
+  booking_count: number;
+  revenue_cents: number;
+};
+
+type WorkerTimelineDay = {
+  date: string;
+  booked_minutes: number;
+  booking_count: number;
+  revenue_cents: number;
+  booking_ids: string[];
+};
+
+type WorkerTimelineWorker = {
+  worker_id: number;
+  name: string;
+  team_id: number | null;
+  team_name: string | null;
+  days: WorkerTimelineDay[];
+  totals: WorkerTimelineTotals;
+};
+
+type WorkerTimelineResponse = {
+  from_date: string;
+  to_date: string;
+  org_timezone: string;
+  days: string[];
+  workers: WorkerTimelineWorker[];
+  totals: WorkerTimelineTotals;
+};
+
 type AvailabilityBlock = {
   id: number;
   scope_type: "worker" | "team" | "org";
@@ -211,6 +243,16 @@ function formatCurrencyFromCents(value: number | null) {
   }).format(value / 100);
 }
 
+function formatHoursFromMinutes(minutes: number) {
+  if (!minutes) return "—";
+  return `${(minutes / 60).toFixed(1)}h`;
+}
+
+function formatBookingCount(count: number) {
+  if (!count) return "—";
+  return `${count} booking${count === 1 ? "" : "s"}`;
+}
+
 const DANGEROUS_CSV_PREFIXES = ["=", "+", "-", "@", "\t"];
 
 function sanitizeCsvValue(value: string) {
@@ -321,6 +363,9 @@ export default function SchedulePage() {
   const [orgSettings, setOrgSettings] = useState<OrgSettingsResponse | null>(null);
   const [schedule, setSchedule] = useState<ScheduleResponse | null>(null);
   const [availabilityBlocks, setAvailabilityBlocks] = useState<AvailabilityBlock[]>([]);
+  const [workerTimeline, setWorkerTimeline] = useState<WorkerTimelineResponse | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -396,18 +441,24 @@ export default function SchedulePage() {
   const isListView = viewMode === "list";
   const isMonthView = viewMode === "month";
   const isDayView = viewMode === "day";
+  const isTimelineView = viewMode === "timeline";
   const isListLikeView = isListView || isMonthView;
   const showCalendar = viewMode === "week" || isDayView;
+  const showWeekControls = showCalendar || isTimelineView;
   const viewTitle = isListView
     ? "Schedule List"
     : isMonthView
       ? "Month Schedule"
       : isDayView
         ? "Day Schedule"
+        : isTimelineView
+          ? "Worker Timeline"
         : "Week Schedule";
   const viewSubtitle = isListLikeView
     ? "List view with filters, bulk actions, and exports."
-    : "Dispatcher view in the organization timezone.";
+    : isTimelineView
+      ? "Weekly utilization by worker in the organization timezone."
+      : "Dispatcher view in the organization timezone.";
   const navigationStep = isDayView ? 1 : 7;
 
   const navLinks = useMemo(() => {
@@ -802,6 +853,55 @@ export default function SchedulePage() {
   ]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+    if (!scheduleVisible) return;
+    if (!isTimelineView) return;
+    setTimelineLoading(true);
+    setTimelineError(null);
+    const weekStartDate = weekStartFromDay(selectedDate, orgTimezone);
+    const weekEndDate = addDaysYMD(weekStartDate, 6, orgTimezone);
+    const params = new URLSearchParams({
+      from: weekStartDate,
+      to: weekEndDate,
+    });
+    if (teamFilter) params.set("team_id", teamFilter);
+    if (workerFilter) params.set("worker_id", workerFilter);
+    if (statusFilter) params.set("status", statusFilter);
+    fetch(`${API_BASE}/v1/admin/schedule/worker_timeline?${params.toString()}`, {
+      headers: authHeaders,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Failed to load worker timeline");
+        }
+        return response.json();
+      })
+      .then((payload: WorkerTimelineResponse) => {
+        setWorkerTimeline(payload);
+      })
+      .catch((fetchError) => {
+        setWorkerTimeline(null);
+        setTimelineError(
+          fetchError instanceof Error ? fetchError.message : "Failed to load worker timeline"
+        );
+      })
+      .finally(() => setTimelineLoading(false));
+  }, [
+    authHeaders,
+    isAuthenticated,
+    isTimelineView,
+    orgTimezone,
+    refreshToken,
+    scheduleVisible,
+    selectedDate,
+    statusFilter,
+    teamFilter,
+    workerFilter,
+  ]);
+
+  useEffect(() => {
     if (!isAuthenticated || !scheduleVisible) return;
     if (!showCalendar) return;
     const weekStartDate = weekStartFromDay(selectedDate, orgTimezone);
@@ -860,6 +960,10 @@ export default function SchedulePage() {
     if (isDayView) return [selectedDate];
     return weekDays;
   }, [isDayView, selectedDate, weekDays]);
+  const timelineDays = useMemo(() => {
+    if (workerTimeline?.days?.length) return workerTimeline.days;
+    return weekDays;
+  }, [weekDays, workerTimeline]);
 
   const timeSlots = useMemo(() => {
     const slots: number[] = [];
@@ -958,6 +1062,26 @@ export default function SchedulePage() {
     selectedBookingIds.size > 0
       ? listBookings.filter((booking) => selectedBookingIds.has(booking.booking_id))
       : listBookings;
+
+  const timelineTotalsByDay = useMemo(() => {
+    const map = new Map<string, WorkerTimelineTotals>();
+    if (!workerTimeline) return map;
+    for (const day of timelineDays) {
+      map.set(day, { booked_minutes: 0, booking_count: 0, revenue_cents: 0 });
+    }
+    workerTimeline.workers.forEach((worker) => {
+      worker.days.forEach((dayEntry) => {
+        const current = map.get(dayEntry.date);
+        if (!current) return;
+        current.booked_minutes += dayEntry.booked_minutes;
+        current.booking_count += dayEntry.booking_count;
+        current.revenue_cents += dayEntry.revenue_cents;
+      });
+    });
+    return map;
+  }, [timelineDays, workerTimeline]);
+
+  const timelineAvailableMinutes = timelineDays.length * (END_HOUR - START_HOUR) * 60;
 
   const handleDrop = useCallback(
     async (event: DragEvent<HTMLDivElement>, day: string) => {
@@ -1435,6 +1559,7 @@ export default function SchedulePage() {
               {[
                 { key: "day", label: "Day" },
                 { key: "week", label: "Week" },
+                { key: "timeline", label: "Timeline" },
                 { key: "month", label: "Month" },
                 { key: "list", label: "List" },
               ].map((view) => (
@@ -1450,7 +1575,7 @@ export default function SchedulePage() {
                 </button>
               ))}
             </div>
-            {showCalendar ? (
+            {showWeekControls ? (
               <div className="schedule-week-controls">
                 <button
                   className="btn btn-secondary"
@@ -1700,6 +1825,128 @@ export default function SchedulePage() {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {isTimelineView ? (
+        <section className="card schedule-timeline">
+          <div className="card-body">
+            {timelineLoading ? <p className="muted">Loading worker timeline…</p> : null}
+            {timelineError ? <p className="muted schedule-error">{timelineError}</p> : null}
+            {workerTimeline && workerTimeline.workers.length > 0 ? (
+              <div className="schedule-timeline-table-wrapper">
+                <table className="schedule-timeline-table">
+                  <thead>
+                    <tr>
+                      <th>Worker</th>
+                      {timelineDays.map((day) => (
+                        <th key={day}>{formatDayLabel(day, orgTimezone)}</th>
+                      ))}
+                      <th>Utilization</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {workerTimeline.workers.map((worker) => {
+                      const dayMap = new Map(
+                        worker.days.map((entry) => [entry.date, entry] as const)
+                      );
+                      const utilization = timelineAvailableMinutes
+                        ? Math.round((worker.totals.booked_minutes / timelineAvailableMinutes) * 100)
+                        : 0;
+                      return (
+                        <tr key={worker.worker_id}>
+                          <td className="schedule-timeline-worker">
+                            <div>{worker.name}</div>
+                            <div className="muted">{worker.team_name ?? "—"}</div>
+                          </td>
+                          {timelineDays.map((day) => {
+                            const entry = dayMap.get(day) ?? {
+                              booked_minutes: 0,
+                              booking_count: 0,
+                              revenue_cents: 0,
+                              booking_ids: [],
+                            };
+                            const revenueLabel = entry.revenue_cents
+                              ? formatCurrencyFromCents(entry.revenue_cents)
+                              : "—";
+                            return (
+                              <td key={`${worker.worker_id}-${day}`}>
+                                <button
+                                  className="schedule-timeline-link"
+                                  type="button"
+                                  onClick={() =>
+                                    updateQuery({
+                                      view: "day",
+                                      date: day,
+                                      worker_id: String(worker.worker_id),
+                                      from: "",
+                                      to: "",
+                                      page: "",
+                                      q: "",
+                                    })
+                                  }
+                                >
+                                  <div>{formatHoursFromMinutes(entry.booked_minutes)}</div>
+                                  <div className="muted">
+                                    {formatBookingCount(entry.booking_count)}
+                                  </div>
+                                  <div className="muted">{revenueLabel}</div>
+                                </button>
+                              </td>
+                            );
+                          })}
+                          <td>
+                            <div>{formatHoursFromMinutes(worker.totals.booked_minutes)}</div>
+                            <div className="muted">
+                              {timelineAvailableMinutes ? `${utilization}%` : "—"}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="schedule-timeline-total-row">
+                      <td>
+                        <strong>Totals</strong>
+                      </td>
+                      {timelineDays.map((day) => {
+                        const totals = timelineTotalsByDay.get(day) ?? {
+                          booked_minutes: 0,
+                          booking_count: 0,
+                          revenue_cents: 0,
+                        };
+                        const revenueLabel = totals.revenue_cents
+                          ? formatCurrencyFromCents(totals.revenue_cents)
+                          : "—";
+                        return (
+                          <td key={`total-${day}`}>
+                            <div>{formatHoursFromMinutes(totals.booked_minutes)}</div>
+                            <div className="muted">
+                              {formatBookingCount(totals.booking_count)}
+                            </div>
+                            <div className="muted">{revenueLabel}</div>
+                          </td>
+                        );
+                      })}
+                      <td>
+                        <div>{formatHoursFromMinutes(workerTimeline.totals.booked_minutes)}</div>
+                        <div className="muted">
+                          {timelineAvailableMinutes && workerTimeline.workers.length
+                            ? `${Math.round(
+                                (workerTimeline.totals.booked_minutes /
+                                  (timelineAvailableMinutes * workerTimeline.workers.length)) *
+                                  100
+                              )}%`
+                            : "—"}
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="muted schedule-empty">No workers found for this range.</p>
             )}
           </div>
         </section>
