@@ -4,7 +4,16 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infra.db import Base, UUID_TYPE
@@ -67,6 +76,11 @@ class QualityIssue(Base):
 
     responses: Mapped[list["QualityIssueResponse"]] = relationship(
         "QualityIssueResponse",
+        back_populates="issue",
+        cascade="all, delete-orphan",
+    )
+    tags: Mapped[list["QualityIssueTag"]] = relationship(
+        "QualityIssueTag",
         back_populates="issue",
         cascade="all, delete-orphan",
     )
@@ -133,3 +147,42 @@ class QualityReviewReply(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class QualityTagCatalog(Base):
+    __tablename__ = "quality_tag_catalog"
+
+    tag_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+
+
+class QualityIssueTag(Base):
+    __tablename__ = "quality_issue_tags"
+    __table_args__ = (
+        UniqueConstraint("issue_id", "tag_key", name="uq_quality_issue_tags_issue_id_tag_key"),
+        Index("ix_quality_issue_tags_org_id", "org_id"),
+        Index("ix_quality_issue_tags_issue_id", "issue_id"),
+        Index("ix_quality_issue_tags_tag_key", "tag_key"),
+    )
+
+    issue_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("quality_issues.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tag_key: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("quality_tag_catalog.tag_key", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    issue: Mapped["QualityIssue"] = relationship("QualityIssue", back_populates="tags")

@@ -79,12 +79,19 @@ class QualityIssueResponseLog(BaseModel):
     created_at: datetime
 
 
+class QualityIssueTag(BaseModel):
+    tag_key: str
+    label: str
+
+
 class QualityIssueDetailResponse(BaseModel):
     issue: QualityIssueResponse
     booking: QualityIssueRelatedBooking | None = None
     worker: QualityIssueRelatedWorker | None = None
     client: QualityIssueRelatedClient | None = None
     responses: list[QualityIssueResponseLog]
+    tags: list[QualityIssueTag]
+    tag_catalog: list[QualityIssueTag]
 
 
 class QualityIssueUpdateRequest(BaseModel):
@@ -97,6 +104,15 @@ class QualityIssueUpdateRequest(BaseModel):
 class QualityIssueRespondRequest(BaseModel):
     response_type: QualityIssueResponseType = QualityIssueResponseType.RESPONSE
     message: str
+
+
+class QualityIssueTagUpdateRequest(BaseModel):
+    tag_keys: list[str]
+
+
+class QualityIssueTagsResponse(BaseModel):
+    issue_id: uuid.UUID
+    tags: list[QualityIssueTag]
 
 
 class QualityIssueListResponse(BaseModel):
@@ -209,3 +225,24 @@ class WorkerQualityLeaderboardResponse(BaseModel):
     to_date: date
     as_of: datetime
     workers: list[WorkerQualityLeaderboardEntry]
+
+
+class CommonIssueWorker(BaseModel):
+    worker_id: int
+    worker_name: str | None = None
+    issue_count: int
+
+
+class CommonIssueTagEntry(BaseModel):
+    tag_key: str
+    label: str
+    issue_count: int
+    worker_count: int
+    workers: list[CommonIssueWorker]
+
+
+class CommonIssueTagsResponse(BaseModel):
+    from_date: date
+    to_date: date
+    as_of: datetime
+    tags: list[CommonIssueTagEntry]

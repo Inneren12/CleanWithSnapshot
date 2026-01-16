@@ -284,6 +284,9 @@ export default function QualityLeaderboardPage() {
           <Link className="btn btn-ghost" href="/admin/quality/reviews">
             View reviews
           </Link>
+          <Link className="btn btn-ghost" href="/admin/quality/common">
+            Common issues
+          </Link>
         </div>
       </header>
 

@@ -2741,12 +2741,62 @@ async def get_quality_issue_detail(
     responses = await quality_service.list_issue_responses(
         session, org_id=org_id, issue_id=issue_id
     )
+    tags = await quality_service.list_issue_tags(
+        session, org_id=org_id, issue_id=issue_id
+    )
     return quality_schemas.QualityIssueDetailResponse(
         issue=_serialize_quality_issue(issue),
         booking=_serialize_quality_booking(issue),
         worker=_serialize_quality_worker(issue),
         client=_serialize_quality_client(issue),
         responses=[_serialize_quality_response(entry) for entry in responses],
+        tags=[quality_schemas.QualityIssueTag(**tag) for tag in tags],
+        tag_catalog=[
+            quality_schemas.QualityIssueTag(**tag)
+            for tag in quality_service.list_quality_tag_catalog()
+        ],
+    )
+
+
+@router.patch(
+    "/v1/admin/quality/issues/{issue_id}/tags",
+    response_model=quality_schemas.QualityIssueTagsResponse,
+)
+async def update_quality_issue_tags(
+    request: Request,
+    issue_id: uuid.UUID,
+    payload: quality_schemas.QualityIssueTagUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.manage")),
+) -> quality_schemas.QualityIssueTagsResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    issue = await quality_service.get_quality_issue(
+        session, org_id=org_id, issue_id=issue_id
+    )
+    if not issue:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Quality Issue Not Found",
+            detail="Quality issue does not exist or is not accessible.",
+        )
+    try:
+        tags = await quality_service.replace_issue_tags(
+            session,
+            org_id=org_id,
+            issue_id=issue_id,
+            tag_keys=payload.tag_keys,
+        )
+    except ValueError as exc:
+        return problem_details(
+            request=request,
+            status=400,
+            title="Invalid Tag Keys",
+            detail=str(exc),
+        )
+    return quality_schemas.QualityIssueTagsResponse(
+        issue_id=issue_id,
+        tags=[quality_schemas.QualityIssueTag(**tag) for tag in tags],
     )
 
 
@@ -2792,6 +2842,34 @@ async def update_quality_issue(
     await session.commit()
     await session.refresh(issue)
     return _serialize_quality_issue(issue)
+
+
+@router.get(
+    "/v1/admin/quality/issues/common",
+    response_model=quality_schemas.CommonIssueTagsResponse,
+)
+async def get_common_quality_issue_tags(
+    request: Request,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.CommonIssueTagsResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    resolved_to = to_date or date.today()
+    resolved_from = from_date or (resolved_to - timedelta(days=30))
+    tags = await quality_service.list_common_issue_tags(
+        session,
+        org_id=org_id,
+        from_date=resolved_from,
+        to_date=resolved_to,
+    )
+    return quality_schemas.CommonIssueTagsResponse(
+        from_date=resolved_from,
+        to_date=resolved_to,
+        as_of=datetime.now(timezone.utc),
+        tags=[quality_schemas.CommonIssueTagEntry(**entry) for entry in tags],
+    )
 
 
 @router.post(
