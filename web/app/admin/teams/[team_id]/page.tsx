@@ -11,6 +11,8 @@ import {
   type UiPrefsResponse,
   isVisible,
 } from "../../lib/featureVisibility";
+import { DEFAULT_ORG_TIMEZONE, type OrgSettingsResponse } from "../../lib/orgSettings";
+import { formatDateKeyInTz } from "../../lib/timezone";
 
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
@@ -148,6 +150,14 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatDateTimeInTz(value: string, timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone,
+  }).format(new Date(value));
+}
+
 function formatDateInput(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -174,6 +184,10 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(value));
 }
 
+function formatDateInTz(value: string, timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeZone }).format(new Date(value));
+}
+
 function statusBadge(status?: string) {
   const normalized = (status ?? "").toLowerCase();
   const className = `status-badge ${normalized}`;
@@ -190,6 +204,7 @@ export default function TeamDetailPage() {
   const [profile, setProfile] = useState<AdminProfile | null>(null);
   const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
+  const [orgSettings, setOrgSettings] = useState<OrgSettingsResponse | null>(null);
   const [team, setTeam] = useState<TeamDetail | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [recentBookings, setRecentBookings] = useState<TeamRecentBooking[]>([]);
@@ -237,6 +252,7 @@ export default function TeamDetailPage() {
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
   const featureOverrides = featureConfig?.overrides ?? {};
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
+  const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
   const pageVisible = visibilityReady
     ? isVisible("module.teams", permissionKeys, featureOverrides, hiddenKeys)
     : true;
@@ -268,13 +284,13 @@ export default function TeamDetailPage() {
     const map: Record<string, ScheduleBooking[]> = {};
     if (!schedule?.bookings) return map;
     schedule.bookings.forEach((booking) => {
-      const key = new Date(booking.starts_at).toISOString().slice(0, 10);
+      const key = formatDateKeyInTz(booking.starts_at, orgTimezone);
       if (!map[key]) map[key] = [];
       map[key].push(booking);
     });
     Object.values(map).forEach((items) => items.sort((a, b) => a.starts_at.localeCompare(b.starts_at)));
     return map;
-  }, [schedule]);
+  }, [orgTimezone, schedule]);
 
   const loadProfile = useCallback(async () => {
     if (!username || !password) return;
@@ -311,6 +327,18 @@ export default function TeamDetailPage() {
     if (response.ok) {
       const data = (await response.json()) as UiPrefsResponse;
       setUiPrefs(data);
+    }
+  }, [authHeaders, password, username]);
+
+  const loadOrgSettings = useCallback(async () => {
+    if (!username || !password) return;
+    const response = await fetch(`${API_BASE}/v1/admin/settings/org`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as OrgSettingsResponse;
+      setOrgSettings(data);
     }
   }, [authHeaders, password, username]);
 
@@ -399,6 +427,7 @@ export default function TeamDetailPage() {
     void loadProfile();
     void loadFeatureConfig();
     void loadUiPrefs();
+    void loadOrgSettings();
     void loadTeam();
     void loadMembers();
     void loadRecentBookings();
@@ -407,6 +436,7 @@ export default function TeamDetailPage() {
     loadFeatureConfig,
     loadMembers,
     loadMetrics,
+    loadOrgSettings,
     loadProfile,
     loadRecentBookings,
     loadTeam,
@@ -734,7 +764,8 @@ export default function TeamDetailPage() {
             <div>
               <h3>Weekly schedule</h3>
               <p className="muted">
-                {formatDate(scheduleWeekStart)} → {formatDate(scheduleWeekEnd)}
+                {formatDateInTz(scheduleWeekStart, orgTimezone)} →{" "}
+                {formatDateInTz(scheduleWeekEnd, orgTimezone)}
               </p>
             </div>
             <div className="admin-actions">
@@ -760,7 +791,7 @@ export default function TeamDetailPage() {
               const dayBookings = scheduleByDay[day] ?? [];
               return (
                 <article className="admin-card" key={day}>
-                  <h4>{formatDate(day)}</h4>
+                  <h4>{formatDateInTz(day, orgTimezone)}</h4>
                   {dayBookings.length === 0 ? (
                     <p className="muted">No bookings.</p>
                   ) : (
@@ -768,7 +799,7 @@ export default function TeamDetailPage() {
                       {dayBookings.map((booking) => (
                         <li key={booking.booking_id}>
                           <div>
-                            <strong>{formatDateTime(booking.starts_at)}</strong>
+                            <strong>{formatDateTimeInTz(booking.starts_at, orgTimezone)}</strong>
                           </div>
                           <div className="muted">
                             {booking.client_label ?? "Client TBD"} • {booking.service_label ?? "Service TBD"}

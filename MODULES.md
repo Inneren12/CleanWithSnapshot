@@ -138,6 +138,9 @@ module.api                    # API access
 - API: `backend/app/api/routes_admin.py::/v1/admin/schedule/team_calendar`
 - Service: `backend/app/domain/ops/service.py::list_team_calendar()` (org TZ aggregation)
 
+**Recurring series behavior:** Removing or cancelling a recurring series preserves existing bookings;
+the series link is cleared while historical bookings remain.
+
 #### Worker Timeline View
 - Frontend: `web/app/admin/schedule/SchedulePageClient.tsx` (Timeline tab)
 - API: `backend/app/api/routes_admin.py::/v1/admin/schedule/worker_timeline`
@@ -275,6 +278,9 @@ module.api                    # API access
 - `web/app/admin/teams/page.tsx` - Teams list (`/admin/teams`)
 - `web/app/admin/teams/[team_id]/page.tsx` - Team detail (`/admin/teams/{id}`)
 - `web/app/admin/teams/compare/page.tsx` - Team comparison (`/admin/teams/compare`)
+
+**Team schedule note:** Weekly team schedule grouping uses the organization timezone for day buckets
+and headers to avoid UTC shifts for near-midnight bookings.
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - `/v1/admin/teams`, `/v1/admin/teams/{id}/*`, `/v1/admin/ui/teams/*`
