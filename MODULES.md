@@ -328,6 +328,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Key Pages:**
 - `web/app/admin/quality/issues/[id]/page.tsx` - Issue detail workflow (`/admin/quality/issues/{id}`)
 - `web/app/admin/quality/reviews/page.tsx` - Reviews timeline + reply tools (`/admin/quality/reviews`)
+- `web/app/admin/quality/leaderboard/page.tsx` - Worker quality leaderboard (`/admin/quality/leaderboard`)
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues` (list + filters)
@@ -337,6 +338,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/triage` (Critical/Medium/Low buckets)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/reviews` (client reviews list + filters)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/ratings/distribution` (monthly rating distribution)
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/workers/leaderboard` (worker rating/review/complaint leaderboard)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/reviews/{id}/reply` (review reply logging)
 - `backend/app/api/routes_checklists.py` - `/v1/checklists/*` (job checklists)
 

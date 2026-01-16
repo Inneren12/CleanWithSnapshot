@@ -2611,6 +2611,75 @@ async def get_quality_rating_distribution(
 
 
 @router.get(
+    "/v1/admin/quality/workers/leaderboard",
+    response_model=quality_schemas.WorkerQualityLeaderboardResponse,
+)
+async def get_quality_worker_leaderboard(
+    request: Request,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    include_trend: bool = False,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.WorkerQualityLeaderboardResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
+    resolved_from, resolved_to = _resolve_quality_distribution_range(
+        from_date,
+        to_date,
+        org_timezone,
+    )
+    workers, previous_aggregates = await quality_service.list_worker_quality_leaderboard(
+        session,
+        org_id=org_id,
+        from_date=resolved_from,
+        to_date=resolved_to,
+        include_trend=include_trend,
+    )
+    entries: list[quality_schemas.WorkerQualityLeaderboardEntry] = []
+    for entry in workers:
+        trend: quality_schemas.WorkerQualityTrend | None = None
+        if include_trend and previous_aggregates is not None:
+            previous = previous_aggregates.get(int(entry["worker_id"]))
+            previous_avg = previous.get("avg_rating") if previous else None
+            previous_reviews = int(previous.get("review_count", 0) if previous else 0)
+            previous_complaints = int(previous.get("complaint_count", 0) if previous else 0)
+            current_avg = entry["average_rating"]
+            average_delta = (
+                float(current_avg) - float(previous_avg)
+                if current_avg is not None and previous_avg is not None
+                else None
+            )
+            trend = quality_schemas.WorkerQualityTrend(
+                previous_average_rating=previous_avg,
+                previous_review_count=previous_reviews,
+                previous_complaint_count=previous_complaints,
+                average_rating_delta=average_delta,
+                review_count_delta=int(entry["review_count"]) - previous_reviews,
+                complaint_count_delta=int(entry["complaint_count"]) - previous_complaints,
+            )
+        entries.append(
+            quality_schemas.WorkerQualityLeaderboardEntry(
+                worker_id=int(entry["worker_id"]),
+                worker_name=str(entry["worker_name"]),
+                team_id=entry.get("team_id"),
+                team_name=entry.get("team_name"),
+                average_rating=entry.get("average_rating"),
+                review_count=int(entry.get("review_count", 0)),
+                complaint_count=int(entry.get("complaint_count", 0)),
+                trend=trend,
+            )
+        )
+    return quality_schemas.WorkerQualityLeaderboardResponse(
+        from_date=resolved_from,
+        to_date=resolved_to,
+        as_of=datetime.now(timezone.utc),
+        workers=entries,
+    )
+
+
+@router.get(
     "/v1/admin/quality/issues/triage",
     response_model=quality_schemas.QualityIssueTriageResponse,
 )
