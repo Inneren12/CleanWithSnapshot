@@ -182,3 +182,30 @@ class RatingDistributionResponse(BaseModel):
     total: int
     average_rating: float | None = None
     distribution: list[RatingDistributionEntry]
+
+
+class WorkerQualityTrend(BaseModel):
+    previous_average_rating: float | None = None
+    previous_review_count: int
+    previous_complaint_count: int
+    average_rating_delta: float | None = None
+    review_count_delta: int
+    complaint_count_delta: int
+
+
+class WorkerQualityLeaderboardEntry(BaseModel):
+    worker_id: int
+    worker_name: str
+    team_id: int | None = None
+    team_name: str | None = None
+    average_rating: float | None = None
+    review_count: int
+    complaint_count: int
+    trend: WorkerQualityTrend | None = None
+
+
+class WorkerQualityLeaderboardResponse(BaseModel):
+    from_date: date
+    to_date: date
+    as_of: datetime
+    workers: list[WorkerQualityLeaderboardEntry]

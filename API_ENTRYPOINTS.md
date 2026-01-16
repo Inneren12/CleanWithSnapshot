@@ -340,9 +340,38 @@ Query parameters:
 | POST | `/v1/admin/quality/issues/{id}/respond` | `quality.manage` | Log outbound response or note (sets `first_response_at` on first response) |
 | GET | `/v1/admin/quality/reviews` | `quality.view` | List client reviews with filters (`stars`, `from`, `to`, `worker_id`, `client_id`, `has_issue`, `page`) |
 | GET | `/v1/admin/quality/ratings/distribution` | `quality.view` | Rating distribution for a period (`from`, `to`, defaults to current month) |
+| GET | `/v1/admin/quality/workers/leaderboard` | `quality.view` | Worker quality leaderboard (`from`, `to`, `include_trend`) |
 | POST | `/v1/admin/quality/reviews/{id}/reply` | `quality.manage` | Log reply to a review using a template or custom message |
 
 **Review templates:** Stored in `backend/app/domain/quality/service.py` (`REVIEW_REPLY_TEMPLATES`) and returned with the reviews list response for UI selection.
+
+**Worker leaderboard response shape (example):**
+```json
+{
+  "from_date": "2026-01-01",
+  "to_date": "2026-01-31",
+  "as_of": "2026-02-01T02:15:00Z",
+  "workers": [
+    {
+      "worker_id": 12,
+      "worker_name": "Maria R.",
+      "team_id": 4,
+      "team_name": "Crew North",
+      "average_rating": 4.6,
+      "review_count": 18,
+      "complaint_count": 1,
+      "trend": {
+        "previous_average_rating": 4.4,
+        "previous_review_count": 12,
+        "previous_complaint_count": 2,
+        "average_rating_delta": 0.2,
+        "review_count_delta": 6,
+        "complaint_count_delta": -1
+      }
+    }
+  ]
+}
+```
 
 **Triage response shape (example):**
 ```json

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timezone, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.bookings.db_models import Booking
+from app.domain.bookings.db_models import Booking, Team
 from app.domain.clients.db_models import ClientFeedback, ClientUser
 from app.domain.quality.db_models import QualityIssue, QualityIssueResponse, QualityReviewReply
 from app.domain.quality.schemas import QualityIssueSeverity
@@ -316,3 +316,169 @@ async def create_review_reply(
     session.add(reply)
     await session.flush()
     return reply
+
+
+def _previous_period_range(from_date: date, to_date: date) -> tuple[date, date]:
+    span_days = (to_date - from_date).days + 1
+    previous_end = from_date - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=max(span_days - 1, 0))
+    return previous_start, previous_end
+
+
+def _review_aggregate_stmt(
+    *,
+    org_id,
+    from_date: date | None,
+    to_date: date | None,
+) -> sa.Select:
+    filters: list[sa.ColumnElement[bool]] = [
+        ClientFeedback.org_id == org_id,
+        Booking.org_id == org_id,
+        Booking.assigned_worker_id.is_not(None),
+    ]
+    if from_date:
+        filters.append(ClientFeedback.created_at >= _date_start(from_date))
+    if to_date:
+        filters.append(ClientFeedback.created_at <= _date_end(to_date))
+    return (
+        sa.select(
+            Booking.assigned_worker_id.label("worker_id"),
+            sa.func.avg(ClientFeedback.rating).label("avg_rating"),
+            sa.func.count(ClientFeedback.feedback_id).label("review_count"),
+        )
+        .select_from(ClientFeedback)
+        .join(Booking, Booking.booking_id == ClientFeedback.booking_id)
+        .where(*filters)
+        .group_by(Booking.assigned_worker_id)
+    )
+
+
+def _complaint_aggregate_stmt(
+    *,
+    org_id,
+    from_date: date | None,
+    to_date: date | None,
+) -> sa.Select:
+    filters: list[sa.ColumnElement[bool]] = [
+        QualityIssue.org_id == org_id,
+        QualityIssue.worker_id.is_not(None),
+    ]
+    if from_date:
+        filters.append(QualityIssue.created_at >= _date_start(from_date))
+    if to_date:
+        filters.append(QualityIssue.created_at <= _date_end(to_date))
+    return (
+        sa.select(
+            QualityIssue.worker_id.label("worker_id"),
+            sa.func.count(QualityIssue.id).label("complaint_count"),
+        )
+        .where(*filters)
+        .group_by(QualityIssue.worker_id)
+    )
+
+
+async def _fetch_worker_quality_aggregates(
+    session: AsyncSession,
+    *,
+    org_id,
+    from_date: date | None,
+    to_date: date | None,
+) -> dict[int, dict[str, float | int | None]]:
+    review_rows = (
+        await session.execute(
+            _review_aggregate_stmt(org_id=org_id, from_date=from_date, to_date=to_date)
+        )
+    ).all()
+    complaint_rows = (
+        await session.execute(
+            _complaint_aggregate_stmt(org_id=org_id, from_date=from_date, to_date=to_date)
+        )
+    ).all()
+
+    aggregates: dict[int, dict[str, float | int | None]] = {}
+    for worker_id, avg_rating, review_count in review_rows:
+        if worker_id is None:
+            continue
+        aggregates[int(worker_id)] = {
+            "avg_rating": float(avg_rating) if avg_rating is not None else None,
+            "review_count": int(review_count or 0),
+            "complaint_count": 0,
+        }
+
+    for worker_id, complaint_count in complaint_rows:
+        if worker_id is None:
+            continue
+        entry = aggregates.setdefault(
+            int(worker_id),
+            {"avg_rating": None, "review_count": 0, "complaint_count": 0},
+        )
+        entry["complaint_count"] = int(complaint_count or 0)
+
+    return aggregates
+
+
+async def list_worker_quality_leaderboard(
+    session: AsyncSession,
+    *,
+    org_id,
+    from_date: date,
+    to_date: date,
+    include_trend: bool = False,
+) -> tuple[list[dict[str, object]], dict[int, dict[str, float | int | None]] | None]:
+    current_aggregates = await _fetch_worker_quality_aggregates(
+        session,
+        org_id=org_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    previous_aggregates: dict[int, dict[str, float | int | None]] | None = None
+    if include_trend:
+        previous_start, previous_end = _previous_period_range(from_date, to_date)
+        previous_aggregates = await _fetch_worker_quality_aggregates(
+            session,
+            org_id=org_id,
+            from_date=previous_start,
+            to_date=previous_end,
+        )
+
+    workers_stmt = (
+        sa.select(
+            Worker.worker_id,
+            Worker.name,
+            Worker.team_id,
+            Team.name.label("team_name"),
+        )
+        .select_from(Worker)
+        .join(Team, Team.team_id == Worker.team_id)
+        .where(Worker.org_id == org_id, Worker.is_active.is_(True))
+        .order_by(Worker.name.asc())
+    )
+    worker_rows = (await session.execute(workers_stmt)).all()
+
+    entries: list[dict[str, object]] = []
+    for worker_id, worker_name, team_id, team_name in worker_rows:
+        metrics = current_aggregates.get(int(worker_id))
+        entries.append(
+            {
+                "worker_id": int(worker_id),
+                "worker_name": worker_name,
+                "team_id": int(team_id) if team_id is not None else None,
+                "team_name": team_name,
+                "average_rating": metrics.get("avg_rating") if metrics else None,
+                "review_count": int(metrics.get("review_count", 0) if metrics else 0),
+                "complaint_count": int(metrics.get("complaint_count", 0) if metrics else 0),
+            }
+        )
+
+    def _sort_key(entry: dict[str, object]) -> tuple[float, int, int, str]:
+        rating = entry.get("average_rating")
+        rating_value = float(rating) if isinstance(rating, (int, float)) else -1.0
+        review_count = int(entry.get("review_count", 0))
+        complaint_count = int(entry.get("complaint_count", 0))
+        worker_name = str(entry.get("worker_name", ""))
+        return (-rating_value, -review_count, complaint_count, worker_name)
+
+    entries.sort(key=_sort_key)
+
+    return entries, previous_aggregates

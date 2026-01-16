@@ -434,6 +434,11 @@ export default function QualityReviewsPage() {
           <h1>Reviews</h1>
           <p className="muted">Timeline of client feedback with follow-up tools.</p>
         </div>
+        <div className="admin-actions">
+          <a className="btn btn-ghost" href="/admin/quality/leaderboard">
+            Worker leaderboard
+          </a>
+        </div>
       </header>
 
       <section className="admin-card">
