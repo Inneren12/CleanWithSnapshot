@@ -488,6 +488,61 @@
   font-weight: 600;
 }
 
+.schedule-team-calendar {
+  overflow-x: auto;
+}
+
+.schedule-team-calendar-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.schedule-team-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.schedule-team-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.schedule-team-days {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.schedule-team-day {
+  text-align: left;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.schedule-team-day:hover {
+  background: var(--surface);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.schedule-team-day-label {
+  font-weight: 600;
+}
+
 .schedule-modal {
   position: fixed;
   inset: 0;

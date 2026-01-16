@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.bookings.db_models import Booking, EmailEvent, Team, TeamBlackout
+from app.domain.bookings.db_models import Booking, BookingWorker, EmailEvent, Team, TeamBlackout
 from app.domain.bookings.service import (
     BLOCKING_STATUSES,
     BUFFER_MINUTES,
@@ -776,6 +776,121 @@ async def list_schedule(
         "limit": limit,
         "offset": offset,
         "query": normalized_query or None,
+    }
+
+
+async def list_team_calendar(
+    session: AsyncSession,
+    org_id,
+    start_date: date,
+    end_date: date,
+    *,
+    org_timezone: str | None = None,
+    team_id: int | None = None,
+    status: str | None = None,
+) -> dict[str, object]:
+    resolved_timezone = org_timezone or org_settings_service.DEFAULT_TIMEZONE
+    try:
+        org_tz = ZoneInfo(resolved_timezone)
+    except Exception:
+        org_tz = ZoneInfo(org_settings_service.DEFAULT_TIMEZONE)
+
+    start_local = datetime.combine(start_date, time.min).replace(tzinfo=org_tz)
+    end_local = datetime.combine(end_date + timedelta(days=1), time.min).replace(tzinfo=org_tz)
+    window_start = start_local.astimezone(timezone.utc)
+    window_end = end_local.astimezone(timezone.utc)
+
+    days = [
+        start_date + timedelta(days=offset)
+        for offset in range((end_date - start_date).days + 1)
+    ]
+
+    team_conditions = [Team.org_id == org_id, Team.archived_at.is_(None)]
+    if team_id is not None:
+        team_conditions.append(Team.team_id == team_id)
+
+    team_stmt = select(Team.team_id, Team.name).where(*team_conditions).order_by(Team.name.asc())
+    team_rows = (await session.execute(team_stmt)).all()
+
+    team_day_map: dict[int, dict[date, dict[str, object]]] = {}
+    teams_payload: list[dict[str, object]] = []
+
+    for team_id_value, name in team_rows:
+        day_entries = {
+            day: {"date": day, "bookings": 0, "revenue": 0, "workers_used": 0} for day in days
+        }
+        team_day_map[team_id_value] = day_entries
+        teams_payload.append(
+            {"team_id": team_id_value, "name": name, "days": day_entries}
+        )
+
+    booking_conditions = [
+        Booking.org_id == org_id,
+        Booking.archived_at.is_(None),
+        Booking.starts_at >= window_start,
+        Booking.starts_at < window_end,
+    ]
+    if team_id is not None:
+        booking_conditions.append(Booking.team_id == team_id)
+    if status:
+        booking_conditions.append(Booking.status == status)
+
+    booking_stmt = select(
+        Booking.booking_id,
+        Booking.team_id,
+        Booking.starts_at,
+        Booking.base_charge_cents,
+        Booking.assigned_worker_id,
+    ).where(*booking_conditions)
+    booking_rows = (await session.execute(booking_stmt)).all()
+
+    worker_sets: dict[tuple[int, date], set[int]] = {}
+
+    for booking_id, booking_team_id, starts_at, base_charge_cents, assigned_worker_id in booking_rows:
+        day = starts_at.astimezone(org_tz).date()
+        day_entries = team_day_map.get(booking_team_id)
+        if not day_entries:
+            continue
+        day_payload = day_entries.get(day)
+        if not day_payload:
+            continue
+        day_payload["bookings"] += 1
+        day_payload["revenue"] += base_charge_cents or 0
+        if assigned_worker_id is not None:
+            worker_sets.setdefault((booking_team_id, day), set()).add(assigned_worker_id)
+
+    worker_stmt = (
+        select(
+            BookingWorker.booking_id,
+            BookingWorker.worker_id,
+            Booking.team_id,
+            Booking.starts_at,
+        )
+        .join(Booking, BookingWorker.booking_id == Booking.booking_id)
+        .where(*booking_conditions)
+    )
+    worker_rows = (await session.execute(worker_stmt)).all()
+
+    for _booking_id, worker_id, booking_team_id, starts_at in worker_rows:
+        day = starts_at.astimezone(org_tz).date()
+        worker_sets.setdefault((booking_team_id, day), set()).add(worker_id)
+
+    for team_id_value, day_entries in team_day_map.items():
+        for day, payload in day_entries.items():
+            payload["workers_used"] = len(worker_sets.get((team_id_value, day), set()))
+
+    formatted_teams = []
+    for team_data in teams_payload:
+        day_entries = team_data["days"]
+        team_data["days"] = [day_entries[day] for day in days]
+        formatted_teams.append(team_data)
+
+    return {
+        "from_date": start_date,
+        "to_date": end_date,
+        "org_timezone": resolved_timezone,
+        "days": days,
+        "teams": formatted_teams,
     }
 
 

@@ -91,6 +91,27 @@ type WorkerTimelineResponse = {
   totals: WorkerTimelineTotals;
 };
 
+type TeamCalendarDay = {
+  date: string;
+  bookings: number;
+  revenue: number;
+  workers_used: number;
+};
+
+type TeamCalendarTeam = {
+  team_id: number;
+  name: string;
+  days: TeamCalendarDay[];
+};
+
+type TeamCalendarResponse = {
+  from_date: string;
+  to_date: string;
+  org_timezone: string;
+  days: string[];
+  teams: TeamCalendarTeam[];
+};
+
 type AvailabilityBlock = {
   id: number;
   scope_type: "worker" | "team" | "org";
@@ -366,6 +387,9 @@ export default function SchedulePage() {
   const [workerTimeline, setWorkerTimeline] = useState<WorkerTimelineResponse | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [teamCalendar, setTeamCalendar] = useState<TeamCalendarResponse | null>(null);
+  const [teamCalendarLoading, setTeamCalendarLoading] = useState(false);
+  const [teamCalendarError, setTeamCalendarError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -442,9 +466,10 @@ export default function SchedulePage() {
   const isMonthView = viewMode === "month";
   const isDayView = viewMode === "day";
   const isTimelineView = viewMode === "timeline";
+  const isTeamView = viewMode === "teams";
   const isListLikeView = isListView || isMonthView;
   const showCalendar = viewMode === "week" || isDayView;
-  const showWeekControls = showCalendar || isTimelineView;
+  const showWeekControls = showCalendar || isTimelineView || isTeamView;
   const viewTitle = isListView
     ? "Schedule List"
     : isMonthView
@@ -453,11 +478,15 @@ export default function SchedulePage() {
         ? "Day Schedule"
         : isTimelineView
           ? "Worker Timeline"
-        : "Week Schedule";
+          : isTeamView
+            ? "Team Calendar"
+            : "Week Schedule";
   const viewSubtitle = isListLikeView
     ? "List view with filters, bulk actions, and exports."
     : isTimelineView
       ? "Weekly utilization by worker in the organization timezone."
+      : isTeamView
+        ? "Daily booking volume, workers, and revenue by team."
       : "Dispatcher view in the organization timezone.";
   const navigationStep = isDayView ? 1 : 7;
 
@@ -795,6 +824,7 @@ export default function SchedulePage() {
   useEffect(() => {
     if (!isAuthenticated) return;
     if (!scheduleVisible) return;
+    if (isTeamView) return;
     if (isListLikeView && (!listFrom || !listTo)) return;
     setLoading(true);
     setError(null);
@@ -850,6 +880,7 @@ export default function SchedulePage() {
     statusFilter,
     teamFilter,
     workerFilter,
+    isTeamView,
   ]);
 
   useEffect(() => {
@@ -899,6 +930,53 @@ export default function SchedulePage() {
     statusFilter,
     teamFilter,
     workerFilter,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (!scheduleVisible) return;
+    if (!isTeamView) return;
+    setTeamCalendarLoading(true);
+    setTeamCalendarError(null);
+    const weekStartDate = weekStartFromDay(selectedDate, orgTimezone);
+    const weekEndDate = addDaysYMD(weekStartDate, 6, orgTimezone);
+    const params = new URLSearchParams({
+      from: weekStartDate,
+      to: weekEndDate,
+    });
+    if (teamFilter) params.set("team_id", teamFilter);
+    if (statusFilter) params.set("status", statusFilter);
+    fetch(`${API_BASE}/v1/admin/schedule/team_calendar?${params.toString()}`, {
+      headers: authHeaders,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Failed to load team calendar");
+        }
+        return response.json();
+      })
+      .then((payload: TeamCalendarResponse) => {
+        setTeamCalendar(payload);
+      })
+      .catch((fetchError) => {
+        setTeamCalendar(null);
+        setTeamCalendarError(
+          fetchError instanceof Error ? fetchError.message : "Failed to load team calendar"
+        );
+      })
+      .finally(() => setTeamCalendarLoading(false));
+  }, [
+    authHeaders,
+    isAuthenticated,
+    isTeamView,
+    orgTimezone,
+    refreshToken,
+    scheduleVisible,
+    selectedDate,
+    statusFilter,
+    teamFilter,
   ]);
 
   useEffect(() => {
@@ -964,6 +1042,10 @@ export default function SchedulePage() {
     if (workerTimeline?.days?.length) return workerTimeline.days;
     return weekDays;
   }, [weekDays, workerTimeline]);
+  const teamCalendarDays = useMemo(() => {
+    if (teamCalendar?.days?.length) return teamCalendar.days;
+    return weekDays;
+  }, [teamCalendar, weekDays]);
 
   const timeSlots = useMemo(() => {
     const slots: number[] = [];
@@ -1035,8 +1117,11 @@ export default function SchedulePage() {
         map.set(booking.team_id, booking.team_name ?? `Team ${booking.team_id}`);
       }
     });
+    teamCalendar?.teams.forEach((team) => {
+      map.set(team.team_id, team.name);
+    });
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [schedule]);
+  }, [schedule, teamCalendar]);
 
   const selectedServiceType = useMemo(
     () => serviceTypes.find((service) => String(service.service_type_id) === selectedServiceTypeId),
@@ -1560,6 +1645,7 @@ export default function SchedulePage() {
                 { key: "day", label: "Day" },
                 { key: "week", label: "Week" },
                 { key: "timeline", label: "Timeline" },
+                { key: "teams", label: "Teams" },
                 { key: "month", label: "Month" },
                 { key: "list", label: "List" },
               ].map((view) => (
@@ -1947,6 +2033,84 @@ export default function SchedulePage() {
               </div>
             ) : (
               <p className="muted schedule-empty">No workers found for this range.</p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {isTeamView ? (
+        <section className="card schedule-team-calendar">
+          <div className="card-body">
+            {teamCalendarLoading ? <p className="muted">Loading team calendar…</p> : null}
+            {teamCalendarError ? <p className="muted schedule-error">{teamCalendarError}</p> : null}
+            {teamCalendar && teamCalendar.teams.length > 0 ? (
+              <div className="schedule-team-calendar-grid">
+                {teamCalendar.teams.map((team) => {
+                  const dayMap = new Map(team.days.map((entry) => [entry.date, entry] as const));
+                  return (
+                    <div key={team.team_id} className="schedule-team-card">
+                      <div className="schedule-team-card-header">
+                        <div>
+                          <h3>{team.name}</h3>
+                          <p className="muted">Team {team.team_id}</p>
+                        </div>
+                        <a
+                          className="btn btn-ghost"
+                          href={`/admin/schedule?view=week&team_id=${team.team_id}&date=${selectedDate}`}
+                        >
+                          Open schedule
+                        </a>
+                      </div>
+                      <div className="schedule-team-days">
+                        {teamCalendarDays.map((day) => {
+                          const entry = dayMap.get(day) ?? {
+                            date: day,
+                            bookings: 0,
+                            revenue: 0,
+                            workers_used: 0,
+                          };
+                          const revenueLabel = entry.revenue
+                            ? formatCurrencyFromCents(entry.revenue)
+                            : "—";
+                          return (
+                            <button
+                              key={`${team.team_id}-${day}`}
+                              className="schedule-team-day"
+                              type="button"
+                              onClick={() =>
+                                updateQuery({
+                                  view: "day",
+                                  date: day,
+                                  team_id: String(team.team_id),
+                                  from: "",
+                                  to: "",
+                                  page: "",
+                                  q: "",
+                                })
+                              }
+                            >
+                              <div className="schedule-team-day-label">
+                                {formatDayLabel(day, orgTimezone)}
+                              </div>
+                              <div>{formatBookingCount(entry.bookings)}</div>
+                              <div className="muted">
+                                {entry.workers_used
+                                  ? `${entry.workers_used} worker${
+                                      entry.workers_used === 1 ? "" : "s"
+                                    }`
+                                  : "—"}
+                              </div>
+                              <div className="muted">{revenueLabel}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="muted schedule-empty">No teams found for this range.</p>
             )}
           </div>
         </section>
