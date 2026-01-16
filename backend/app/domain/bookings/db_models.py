@@ -56,6 +56,15 @@ class Team(Base):
         nullable=False,
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lead_worker_id: Mapped[int | None] = mapped_column(
+        ForeignKey("workers.worker_id"),
+        nullable=True,
+    )
+    zones: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False, server_default="[]")
+    specializations: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False, server_default="[]"
+    )
+    calendar_color: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     bookings: Mapped[list["Booking"]] = relationship("Booking", back_populates="team")
 
