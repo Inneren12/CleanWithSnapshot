@@ -173,6 +173,7 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 
 `GET /v1/admin/dashboard/ops` includes `critical_alerts` for the Critical Alerts widget.
 `hero_metrics` and `revenue_week` summarize today and week-to-date totals in the org timezone.
+`top_performers` summarizes the current month (org timezone boundaries) across workers, clients, teams, and services.
 If org settings branding includes `weekly_revenue_goal_cents` (or `weekly_revenue_goal`), the `goal` object is included in `revenue_week`.
 
 ```json
@@ -253,6 +254,46 @@ If org settings branding includes `weekly_revenue_goal_cents` (or `weekly_revenu
       "goal_cents": 200000,
       "remaining_cents": 16000
     }
+  },
+  "top_performers": {
+    "month_start": "2026-01-01",
+    "month_end": "2026-01-31",
+    "total_revenue_cents": 720000,
+    "workers": [
+      {
+        "worker_id": 12,
+        "name": "Maria R.",
+        "team_id": 4,
+        "team_name": "Crew North",
+        "bookings_count": 18,
+        "revenue_cents": 240000
+      }
+    ],
+    "clients": [
+      {
+        "client_id": "client-123",
+        "name": "Acme Co.",
+        "email": "billing@acme.co",
+        "bookings_count": 6,
+        "revenue_cents": 180000
+      }
+    ],
+    "teams": [
+      {
+        "team_id": 4,
+        "name": "Crew North",
+        "bookings_count": 18,
+        "revenue_cents": 240000
+      }
+    ],
+    "services": [
+      {
+        "label": "deep_clean",
+        "bookings_count": 9,
+        "revenue_cents": 240000,
+        "share_of_revenue": 0.33
+      }
+    ]
   }
 }
 ```

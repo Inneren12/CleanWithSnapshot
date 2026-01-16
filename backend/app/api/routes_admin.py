@@ -148,6 +148,7 @@ from app.domain.ops.schemas import (
     OpsDashboardRevenueGoal,
     OpsDashboardRevenueWeek,
     OpsDashboardResponse,
+    OpsDashboardTopPerformers,
     OpsDashboardUpcomingEvent,
     MoveBookingRequest,
     QuickActionModel,
@@ -845,6 +846,29 @@ async def get_ops_dashboard(
         else None
     )
 
+    month_start_local = date(now_local.year, now_local.month, 1)
+    if now_local.month == 12:
+        next_month_local = date(now_local.year + 1, 1, 1)
+    else:
+        next_month_local = date(now_local.year, now_local.month + 1, 1)
+    month_end_local = next_month_local - timedelta(days=1)
+    month_start_utc = datetime.combine(month_start_local, time.min, tzinfo=org_tz).astimezone(
+        timezone.utc
+    )
+    month_end_utc = datetime.combine(next_month_local, time.min, tzinfo=org_tz).astimezone(
+        timezone.utc
+    )
+
+    top_performers_payload = await ops_service.build_top_performers_month(
+        session,
+        org_id,
+        window_start_utc=month_start_utc,
+        window_end_utc=month_end_utc,
+        month_start=month_start_local,
+        month_end=month_end_local,
+    )
+    top_performers = OpsDashboardTopPerformers(**top_performers_payload)
+
     return OpsDashboardResponse(
         as_of=datetime.now(timezone.utc),
         org_timezone=org_timezone,
@@ -871,6 +895,7 @@ async def get_ops_dashboard(
             currency=org_currency,
             goal=revenue_goal,
         ),
+        top_performers=top_performers,
     )
 
 

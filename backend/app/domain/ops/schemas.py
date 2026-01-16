@@ -219,6 +219,47 @@ class OpsDashboardRevenueWeek(BaseModel):
     goal: OpsDashboardRevenueGoal | None = None
 
 
+class OpsDashboardTopWorker(BaseModel):
+    worker_id: int
+    name: str | None = None
+    team_id: int | None = None
+    team_name: str | None = None
+    bookings_count: int
+    revenue_cents: int
+
+
+class OpsDashboardTopClient(BaseModel):
+    client_id: str
+    name: str | None = None
+    email: EmailStr | None = None
+    bookings_count: int
+    revenue_cents: int
+
+
+class OpsDashboardTopTeam(BaseModel):
+    team_id: int
+    name: str
+    bookings_count: int
+    revenue_cents: int
+
+
+class OpsDashboardTopService(BaseModel):
+    label: str
+    bookings_count: int
+    revenue_cents: int
+    share_of_revenue: float
+
+
+class OpsDashboardTopPerformers(BaseModel):
+    month_start: date
+    month_end: date
+    total_revenue_cents: int
+    workers: list[OpsDashboardTopWorker] = Field(default_factory=list)
+    clients: list[OpsDashboardTopClient] = Field(default_factory=list)
+    teams: list[OpsDashboardTopTeam] = Field(default_factory=list)
+    services: list[OpsDashboardTopService] = Field(default_factory=list)
+
+
 class OpsDashboardResponse(BaseModel):
     as_of: datetime
     org_timezone: str
@@ -229,6 +270,7 @@ class OpsDashboardResponse(BaseModel):
     booking_status_today: OpsDashboardBookingStatusToday
     hero_metrics: OpsDashboardHeroMetrics
     revenue_week: OpsDashboardRevenueWeek
+    top_performers: OpsDashboardTopPerformers
 
 
 class MoveBookingRequest(BaseModel):
