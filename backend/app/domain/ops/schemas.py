@@ -64,10 +64,19 @@ class ScheduleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OpsDashboardAlertAction(BaseModel):
+    label: str
+    href: str
+    method: str = "GET"
+
+
 class OpsDashboardAlert(BaseModel):
-    alert_id: str
+    type: str
     severity: str
-    message: str
+    title: str
+    description: str
+    entity_ref: dict[str, object] | None = None
+    actions: list[OpsDashboardAlertAction] = Field(default_factory=list)
     created_at: datetime | None = None
 
 

@@ -73,6 +73,14 @@ module.api                    # API access
 
 **Feature Key:** `module.dashboard`
 
+**How to add a new Critical Alert type:**
+
+1. **Backend schema:** Update `backend/app/domain/ops/schemas.py` to add new alert fields if needed and extend `OpsDashboardAlert` metadata.
+2. **Backend data:** Update `backend/app/api/routes_admin.py::get_ops_dashboard()` and `_build_ops_critical_alerts()` to calculate the new alert, respecting org scoping and permission checks.
+3. **Permissions:** Use `permission_keys_for_request()` and guard finance alerts with `invoices.view` + `finance.view`, scheduling alerts with `bookings.view`, etc.
+4. **Frontend:** Render the new alert in `web/app/admin/dashboard/ops/page.tsx` and provide CTA links.
+5. **Docs & tests:** Document the alert shape in `API_ENTRYPOINTS.md` and add coverage in `backend/tests/test_admin_ops_dashboard.py`.
+
 ---
 
 ### 2. Schedule

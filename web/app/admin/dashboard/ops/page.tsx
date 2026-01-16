@@ -10,10 +10,19 @@ const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 type OpsDashboardAlert = {
-  alert_id: string;
+  type: string;
   severity: string;
-  message: string;
+  title: string;
+  description: string;
+  entity_ref?: Record<string, unknown> | null;
+  actions: OpsDashboardAlertAction[];
   created_at?: string | null;
+};
+
+type OpsDashboardAlertAction = {
+  label: string;
+  href: string;
+  method?: string;
 };
 
 type OpsDashboardUpcomingEvent = {
@@ -79,6 +88,7 @@ export default function OpsDashboardPage() {
   const [opsData, setOpsData] = useState<OpsDashboardResponse | null>(null);
   const [opsLoading, setOpsLoading] = useState(false);
   const [opsError, setOpsError] = useState<string | null>(null);
+  const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -254,6 +264,10 @@ export default function OpsDashboardPage() {
   const asOfLabel = opsData
     ? `As of ${formatDateTime(opsData.as_of, opsData.org_timezone)} (${opsData.org_timezone})`
     : "Awaiting ops data.";
+  const visibleAlerts = useMemo(
+    () => opsData?.critical_alerts.filter((alert) => !dismissedAlerts.has(alert.type)) ?? [],
+    [dismissedAlerts, opsData?.critical_alerts]
+  );
 
   const quickActions = [
     {
@@ -287,6 +301,27 @@ export default function OpsDashboardPage() {
       permission: "exports.run",
     },
   ];
+
+  const alertClassName = useCallback((severity: string) => {
+    switch (severity) {
+      case "critical":
+      case "high":
+        return "alert alert-warning";
+      case "info":
+      case "low":
+        return "alert alert-info";
+      default:
+        return "alert alert-warning";
+    }
+  }, []);
+
+  const handleDismissAlert = useCallback((alertType: string) => {
+    setDismissedAlerts((previous) => {
+      const next = new Set(previous);
+      next.add(alertType);
+      return next;
+    });
+  }, []);
 
   if (visibilityReady && !dashboardVisible) {
     return (
@@ -341,11 +376,41 @@ export default function OpsDashboardPage() {
           </div>
           <p className="muted">{asOfLabel}</p>
           {opsData ? (
-            <p className="muted">
-              {opsData.critical_alerts.length === 0
-                ? "No critical alerts reported."
-                : `${opsData.critical_alerts.length} alert(s) flagged. Details coming soon.`}
-            </p>
+            visibleAlerts.length === 0 ? (
+              <p className="muted">No critical alerts reported.</p>
+            ) : (
+              <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch", gap: "12px" }}>
+                {visibleAlerts.map((alert) => (
+                  <div key={alert.type} className={alertClassName(alert.severity)}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+                      <div>
+                        <strong>{alert.title}</strong>
+                        <div className="muted">{alert.description}</div>
+                      </div>
+                      <span className="muted">{alert.severity.toUpperCase()}</span>
+                    </div>
+                    {alert.actions.length > 0 ? (
+                      <div className="admin-actions" style={{ marginTop: "8px", flexWrap: "wrap" }}>
+                        {alert.actions.map((action) => (
+                          <a key={action.href} className="btn btn-secondary" href={action.href}>
+                            {action.label}
+                          </a>
+                        ))}
+                        <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert.type)}>
+                          Dismiss
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="admin-actions" style={{ marginTop: "8px" }}>
+                        <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert.type)}>
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
           ) : (
             <p className="muted">Alerts will populate after credentials are saved.</p>
           )}

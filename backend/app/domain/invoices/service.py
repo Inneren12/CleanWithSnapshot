@@ -260,6 +260,7 @@ async def create_invoice_from_order(
     )
 
     invoice = Invoice(
+        org_id=order.org_id,
         invoice_number=invoice_number,
         order_id=order.booking_id,
         customer_id=order.lead_id,

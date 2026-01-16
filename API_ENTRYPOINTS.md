@@ -168,6 +168,52 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | GET | `/v1/admin/ui/dashboard` | `core.view` | Dashboard KPIs |
 | GET | `/v1/admin/dashboard/ops` | `core.view` + `module.dashboard` | Ops dashboard aggregates (org TZ windows) |
 
+#### Ops Dashboard Response (critical alerts)
+
+`GET /v1/admin/dashboard/ops` includes `critical_alerts` for the Critical Alerts widget.
+
+```json
+{
+  "as_of": "2026-01-20T15:04:05Z",
+  "org_timezone": "America/Denver",
+  "critical_alerts": [
+    {
+      "type": "overdue_invoices",
+      "severity": "critical",
+      "title": "Overdue invoices (7+ days)",
+      "description": "2 invoices are overdue by 7+ days totaling CAD 1,200.00.",
+      "entity_ref": {
+        "kind": "invoice",
+        "count": 2,
+        "total_cents": 120000,
+        "currency": "CAD",
+        "min_days_overdue": 7
+      },
+      "actions": [
+        {
+          "label": "Open overdue invoices",
+          "href": "/admin/invoices?overdue_bucket=attention",
+          "method": "GET"
+        }
+      ],
+      "created_at": "2026-01-20T15:04:05Z"
+    }
+  ],
+  "upcoming_events": [],
+  "worker_availability": [],
+  "booking_status_today": {
+    "totals": {
+      "total": 0,
+      "pending": 0,
+      "confirmed": 0,
+      "done": 0,
+      "cancelled": 0
+    },
+    "bands": []
+  }
+}
+```
+
 ---
 
 ### Bookings/Schedule
