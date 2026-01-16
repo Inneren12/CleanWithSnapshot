@@ -28,7 +28,7 @@ const MODULE_PERMISSIONS: Record<string, string> = {
   schedule: "bookings.view",
   invoices: "invoices.view",
   quality: "bookings.view",
-  teams: "users.manage",
+  teams: "core.view",
   analytics: "finance.view",
   finance: "finance.view",
   pricing: "settings.manage",

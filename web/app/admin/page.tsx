@@ -221,6 +221,7 @@ export default function AdminPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
       { key: "org-settings", label: "Org Settings", href: "/admin/settings/org", featureKey: "module.settings" },
       {
         key: "availability-blocks",
@@ -242,12 +243,19 @@ export default function AdminPage() {
         featureKey: "module.integrations",
       },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "module.settings" },
-      { key: "roles", label: "Roles & Permissions", href: "/admin/iam/roles", featureKey: "module.settings" },
+      {
+        key: "roles",
+        label: "Roles & Permissions",
+        href: "/admin/iam/roles",
+        featureKey: "module.teams",
+        requiresPermission: "users.manage",
+      },
     ];
 
     return candidates
+      .filter((entry) => !entry.requiresPermission || permissionKeys.includes(entry.requiresPermission))
       .filter((entry) => isVisible(entry.featureKey, permissionKeys, featureOverrides, hiddenKeys))
-      .map(({ featureKey, ...link }) => link);
+      .map(({ featureKey, requiresPermission, ...link }) => link);
   }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
 
   const loadProfile = useCallback(async () => {

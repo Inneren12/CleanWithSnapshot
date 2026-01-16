@@ -192,6 +192,7 @@ export default function InvoiceDetailPage() {
     const candidates = [
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
       { key: "invoices", label: "Invoices", href: "/admin/invoices", featureKey: "module.invoices" },
       {
         key: "org-settings",
@@ -205,10 +206,18 @@ export default function InvoiceDetailPage() {
         href: "/admin/settings/integrations",
         featureKey: "module.integrations",
       },
+      {
+        key: "roles",
+        label: "Roles & Permissions",
+        href: "/admin/iam/roles",
+        featureKey: "module.teams",
+        requiresPermission: "users.manage",
+      },
     ];
     return candidates
+      .filter((entry) => !entry.requiresPermission || permissionKeys.includes(entry.requiresPermission))
       .filter((entry) => isVisible(entry.featureKey, permissionKeys, featureOverrides, hiddenKeys))
-      .map(({ featureKey, ...link }) => link);
+      .map(({ featureKey, requiresPermission, ...link }) => link);
   }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
 
   const loadProfile = useCallback(async () => {

@@ -232,6 +232,34 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 }
 ```
 
+### Teams
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/teams` | `core.view` | List teams with lead, headcount, monthly bookings/revenue, ratings |
+| GET | `/v1/admin/teams/{id}` | `core.view` | Team detail summary |
+| GET | `/v1/admin/teams/{id}/members` | `core.view` | Team members roster |
+| GET | `/v1/admin/teams/{id}/recent_bookings` | `core.view` | Recent bookings for the team (`limit` query) |
+| GET | `/v1/admin/teams/{id}/metrics` | `core.view` | Performance metrics (`from`/`to` datetime query params) |
+| POST | `/v1/admin/teams` | `users.manage` | Create a new team |
+
+**List response shape (example):**
+```json
+[
+  {
+    "team_id": 3,
+    "name": "Crew North",
+    "created_at": "2026-02-01T08:00:00Z",
+    "lead": { "worker_id": 12, "name": "Maria R.", "role": "Lead", "rating_avg": 4.7 },
+    "worker_count": 5,
+    "monthly_bookings": 18,
+    "monthly_revenue_cents": 462000,
+    "rating_avg": 4.6,
+    "rating_count": 36
+  }
+]
+```
+
 ---
 
 ### Bookings/Schedule

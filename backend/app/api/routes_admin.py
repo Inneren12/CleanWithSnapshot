@@ -18,7 +18,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 import sqlalchemy as sa
-from sqlalchemy import and_, func, select, or_
+from sqlalchemy import and_, case, func, select, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -176,6 +176,7 @@ from app.domain.workers.db_models import (
     WorkerOnboarding,
     WorkerReview,
 )
+from app.domain.teams import schemas as team_schemas
 from app.infra.auth import hash_password
 from app.infra.export import send_export_with_retry, validate_webhook_url
 from app.infra.logging import update_log_context
@@ -6811,19 +6812,165 @@ def _render_team_delete_confirm_page(
     return "".join([message_html, details, *delete_forms])
 
 
-@router.get("/v1/admin/teams", response_model=list[booking_schemas.TeamResponse])
+async def _load_team_rollups(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    team_ids: list[int],
+    range_start: datetime,
+    range_end: datetime,
+) -> tuple[dict[int, dict[str, object]], dict[int, team_schemas.TeamLeadSummary], dict[int, int], dict[int, int]]:
+    if not team_ids:
+        return {}, {}, {}, {}
+
+    worker_stmt = (
+        select(
+            Worker.team_id.label("team_id"),
+            func.count(Worker.worker_id).label("worker_count"),
+            func.avg(Worker.rating_avg).label("rating_avg"),
+            func.coalesce(func.sum(Worker.rating_count), 0).label("rating_count"),
+        )
+        .where(
+            Worker.org_id == org_id,
+            Worker.team_id.in_(team_ids),
+            Worker.archived_at.is_(None),
+            Worker.is_active.is_(True),
+        )
+        .group_by(Worker.team_id)
+    )
+    worker_rows = await session.execute(worker_stmt)
+    worker_map: dict[int, dict[str, object]] = {}
+    for row in worker_rows:
+        worker_map[row.team_id] = {
+            "worker_count": int(row.worker_count or 0),
+            "rating_avg": float(row.rating_avg) if row.rating_avg is not None else None,
+            "rating_count": int(row.rating_count or 0),
+        }
+
+    role_value = func.lower(func.coalesce(Worker.role, ""))
+    lead_rank = func.row_number().over(
+        partition_by=Worker.team_id,
+        order_by=[
+            case((role_value.like("%lead%"), 1), else_=0).desc(),
+            Worker.rating_avg.desc().nullslast(),
+            Worker.created_at.asc(),
+        ],
+    )
+    lead_subq = (
+        select(
+            Worker.team_id.label("team_id"),
+            Worker.worker_id.label("worker_id"),
+            Worker.name.label("name"),
+            Worker.role.label("role"),
+            Worker.rating_avg.label("rating_avg"),
+            lead_rank.label("row_num"),
+        )
+        .where(
+            Worker.org_id == org_id,
+            Worker.team_id.in_(team_ids),
+            Worker.archived_at.is_(None),
+            Worker.is_active.is_(True),
+        )
+        .subquery()
+    )
+    lead_rows = await session.execute(select(lead_subq).where(lead_subq.c.row_num == 1))
+    lead_map: dict[int, team_schemas.TeamLeadSummary] = {}
+    for row in lead_rows:
+        lead_map[row.team_id] = team_schemas.TeamLeadSummary(
+            worker_id=row.worker_id,
+            name=row.name,
+            role=row.role,
+            rating_avg=float(row.rating_avg) if row.rating_avg is not None else None,
+        )
+
+    booking_stmt = (
+        select(
+            Booking.team_id.label("team_id"),
+            func.count(Booking.booking_id).label("booking_count"),
+        )
+        .where(
+            Booking.org_id == org_id,
+            Booking.team_id.in_(team_ids),
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= range_start,
+            Booking.starts_at <= range_end,
+        )
+        .group_by(Booking.team_id)
+    )
+    booking_rows = await session.execute(booking_stmt)
+    booking_map = {row.team_id: int(row.booking_count or 0) for row in booking_rows}
+
+    revenue_stmt = (
+        select(
+            Booking.team_id.label("team_id"),
+            func.coalesce(func.sum(Invoice.total_cents), 0).label("revenue_cents"),
+        )
+        .join(Invoice, Invoice.order_id == Booking.booking_id)
+        .where(
+            Booking.org_id == org_id,
+            Invoice.org_id == org_id,
+            Booking.team_id.in_(team_ids),
+            Booking.starts_at >= range_start,
+            Booking.starts_at <= range_end,
+        )
+        .group_by(Booking.team_id)
+    )
+    revenue_rows = await session.execute(revenue_stmt)
+    revenue_map = {row.team_id: int(row.revenue_cents or 0) for row in revenue_rows}
+
+    return worker_map, lead_map, booking_map, revenue_map
+
+
+async def _get_team_or_404(
+    request: Request, session: AsyncSession, org_id: uuid.UUID, team_id: int
+) -> Team | Response:
+    team = await session.scalar(select(Team).where(Team.team_id == team_id, Team.org_id == org_id))
+    if not team:
+        return problem_details(
+            request=request,
+            status=status.HTTP_404_NOT_FOUND,
+            title="Team not found",
+            detail="Team does not exist or is not available for this organization.",
+        )
+    return team
+
+
+@router.get("/v1/admin/teams", response_model=list[team_schemas.TeamListItem])
 async def list_teams(
     request: Request,
     include_archived: bool = Query(default=False),
     session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_dispatch),
-) -> list[Team]:
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+) -> list[team_schemas.TeamListItem]:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    now = datetime.now(tz=timezone.utc)
+    range_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     filters = [Team.org_id == org_id]
     if not include_archived:
         filters.append(Team.archived_at.is_(None))
     result = await session.execute(select(Team).where(*filters).order_by(Team.name))
-    return result.scalars().all()
+    teams = result.scalars().all()
+    team_ids = [team.team_id for team in teams]
+    worker_map, lead_map, booking_map, revenue_map = await _load_team_rollups(
+        session, org_id, team_ids, range_start, now
+    )
+
+    response: list[team_schemas.TeamListItem] = []
+    for team in teams:
+        worker_metrics = worker_map.get(team.team_id, {})
+        response.append(
+            team_schemas.TeamListItem(
+                team_id=team.team_id,
+                name=team.name,
+                created_at=team.created_at,
+                lead=lead_map.get(team.team_id),
+                worker_count=int(worker_metrics.get("worker_count", 0)),
+                monthly_bookings=booking_map.get(team.team_id, 0),
+                monthly_revenue_cents=revenue_map.get(team.team_id, 0),
+                rating_avg=worker_metrics.get("rating_avg"),
+                rating_count=int(worker_metrics.get("rating_count", 0)),
+            )
+        )
+    return response
 
 
 @router.post("/v1/admin/teams", response_model=booking_schemas.TeamResponse)
@@ -6831,7 +6978,7 @@ async def create_team(
     request: Request,
     payload: booking_schemas.TeamCreateRequest,
     session: AsyncSession = Depends(get_db_session),
-    identity: AdminIdentity = Depends(require_dispatch),
+    identity: AdminIdentity = Depends(require_permission_keys("users.manage")),
 ) -> Team:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     name = (payload.name or "").strip()
@@ -6859,6 +7006,190 @@ async def create_team(
     await session.commit()
     await session.refresh(team)
     return team
+
+
+@router.get("/v1/admin/teams/{team_id}", response_model=team_schemas.TeamDetailResponse)
+async def get_team_detail(
+    request: Request,
+    team_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+) -> team_schemas.TeamDetailResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    team = await _get_team_or_404(request, session, org_id, team_id)
+    if isinstance(team, Response):
+        return team
+    now = datetime.now(tz=timezone.utc)
+    range_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    worker_map, lead_map, booking_map, revenue_map = await _load_team_rollups(
+        session, org_id, [team_id], range_start, now
+    )
+    worker_metrics = worker_map.get(team_id, {})
+    return team_schemas.TeamDetailResponse(
+        team_id=team.team_id,
+        name=team.name,
+        created_at=team.created_at,
+        archived_at=team.archived_at,
+        lead=lead_map.get(team_id),
+        worker_count=int(worker_metrics.get("worker_count", 0)),
+        monthly_bookings=booking_map.get(team_id, 0),
+        monthly_revenue_cents=revenue_map.get(team_id, 0),
+        rating_avg=worker_metrics.get("rating_avg"),
+        rating_count=int(worker_metrics.get("rating_count", 0)),
+    )
+
+
+@router.get("/v1/admin/teams/{team_id}/members", response_model=team_schemas.TeamMembersResponse)
+async def list_team_members(
+    request: Request,
+    team_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+) -> team_schemas.TeamMembersResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    team = await _get_team_or_404(request, session, org_id, team_id)
+    if isinstance(team, Response):
+        return team
+    stmt = (
+        select(Worker)
+        .where(
+            Worker.org_id == org_id,
+            Worker.team_id == team_id,
+            Worker.archived_at.is_(None),
+        )
+        .order_by(Worker.name)
+    )
+    result = await session.execute(stmt)
+    members: list[team_schemas.TeamMemberSummary] = []
+    for worker in result.scalars():
+        members.append(
+            team_schemas.TeamMemberSummary(
+                worker_id=worker.worker_id,
+                name=worker.name,
+                role=worker.role,
+                phone=worker.phone,
+                email=worker.email,
+                rating_avg=worker.rating_avg,
+                rating_count=worker.rating_count,
+                is_active=worker.is_active,
+            )
+        )
+    return team_schemas.TeamMembersResponse(team_id=team_id, members=members)
+
+
+@router.get("/v1/admin/teams/{team_id}/recent_bookings", response_model=team_schemas.TeamRecentBookingsResponse)
+async def list_team_recent_bookings(
+    request: Request,
+    team_id: int,
+    limit: int = Query(default=5, ge=1, le=50),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+) -> team_schemas.TeamRecentBookingsResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    team = await _get_team_or_404(request, session, org_id, team_id)
+    if isinstance(team, Response):
+        return team
+    stmt = (
+        select(
+            Booking.booking_id,
+            Booking.starts_at,
+            Booking.duration_minutes,
+            Booking.status,
+            Lead.name.label("lead_name"),
+            Lead.email.label("lead_email"),
+        )
+        .outerjoin(Lead, and_(Lead.lead_id == Booking.lead_id, Lead.org_id == org_id))
+        .where(
+            Booking.org_id == org_id,
+            Booking.team_id == team_id,
+            Booking.archived_at.is_(None),
+        )
+        .order_by(Booking.starts_at.desc())
+        .limit(limit)
+    )
+    rows = await session.execute(stmt)
+    bookings = [
+        team_schemas.TeamRecentBooking(
+            booking_id=row.booking_id,
+            starts_at=row.starts_at,
+            duration_minutes=row.duration_minutes,
+            status=row.status,
+            lead_name=row.lead_name,
+            lead_email=row.lead_email,
+        )
+        for row in rows
+    ]
+    return team_schemas.TeamRecentBookingsResponse(team_id=team_id, bookings=bookings)
+
+
+@router.get("/v1/admin/teams/{team_id}/metrics", response_model=team_schemas.TeamMetricsResponse)
+async def get_team_metrics(
+    request: Request,
+    team_id: int,
+    from_ts: datetime | None = Query(default=None, alias="from"),
+    to_ts: datetime | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+) -> team_schemas.TeamMetricsResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    team = await _get_team_or_404(request, session, org_id, team_id)
+    if isinstance(team, Response):
+        return team
+    range_start, range_end = _normalize_range(from_ts, to_ts)
+
+    booking_stmt = select(
+        func.count(Booking.booking_id).label("bookings_count"),
+        func.coalesce(func.sum(case((Booking.status == "DONE", 1), else_=0)), 0).label(
+            "completed_count"
+        ),
+        func.coalesce(func.sum(case((Booking.status == "CANCELLED", 1), else_=0)), 0).label(
+            "cancelled_count"
+        ),
+    ).where(
+        Booking.org_id == org_id,
+        Booking.team_id == team_id,
+        Booking.archived_at.is_(None),
+        Booking.starts_at >= range_start,
+        Booking.starts_at <= range_end,
+    )
+    booking_row = (await session.execute(booking_stmt)).one()
+
+    revenue_stmt = (
+        select(func.coalesce(func.sum(Invoice.total_cents), 0))
+        .join(Invoice, Invoice.order_id == Booking.booking_id)
+        .where(
+            Booking.org_id == org_id,
+            Invoice.org_id == org_id,
+            Booking.team_id == team_id,
+            Booking.starts_at >= range_start,
+            Booking.starts_at <= range_end,
+        )
+    )
+    revenue_cents = int((await session.execute(revenue_stmt)).scalar() or 0)
+
+    rating_stmt = (
+        select(func.avg(WorkerReview.rating))
+        .join(Booking, Booking.booking_id == WorkerReview.booking_id)
+        .where(
+            Booking.org_id == org_id,
+            Booking.team_id == team_id,
+            WorkerReview.org_id == org_id,
+            Booking.starts_at >= range_start,
+            Booking.starts_at <= range_end,
+        )
+    )
+    rating_avg = (await session.execute(rating_stmt)).scalar()
+
+    return team_schemas.TeamMetricsResponse(
+        team_id=team_id,
+        range_start=range_start,
+        range_end=range_end,
+        bookings_count=int(booking_row.bookings_count or 0),
+        completed_count=int(booking_row.completed_count or 0),
+        cancelled_count=int(booking_row.cancelled_count or 0),
+        total_revenue_cents=revenue_cents,
+        average_rating=float(rating_avg) if rating_avg is not None else None,
+    )
 
 
 @router.get("/v1/admin/ui/teams", response_class=HTMLResponse)

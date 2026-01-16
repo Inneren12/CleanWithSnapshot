@@ -271,10 +271,11 @@ module.api                    # API access
 **Purpose:** Worker team management, team schedules, team assignments
 
 **Key Pages:**
-- `web/app/admin/teams/` (if exists)
+- `web/app/admin/teams/page.tsx` - Teams list (`/admin/teams`)
+- `web/app/admin/teams/[team_id]/page.tsx` - Team detail (`/admin/teams/{id}`)
 
 **Backend Routers:**
-- `backend/app/api/routes_admin.py` - `/v1/admin/ui/teams/*`
+- `backend/app/api/routes_admin.py` - `/v1/admin/teams`, `/v1/admin/teams/{id}/*`, `/v1/admin/ui/teams/*`
 
 **Key Services:**
 - `backend/app/domain/workers/service.py` - Worker/team CRUD
@@ -297,6 +298,11 @@ module.api                    # API access
 - API: `backend/app/api/routes_admin.py::/v1/admin/ui/workers`
 - Service: `backend/app/domain/workers/service.py`
 - Guide: [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
+
+#### Team Reporting
+- API: `backend/app/api/routes_admin.py::/v1/admin/teams`
+- Detail: `backend/app/api/routes_admin.py::/v1/admin/teams/{id}`, `/members`, `/recent_bookings`, `/metrics`
+- Frontend: `web/app/admin/teams/`
 
 ---
 
