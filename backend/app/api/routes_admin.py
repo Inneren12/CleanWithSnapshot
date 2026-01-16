@@ -147,6 +147,7 @@ from app.domain.ops.schemas import (
     OpsDashboardBookingStatusToday,
     OpsDashboardBookingStatusTotals,
     OpsDashboardHeroMetrics,
+    OpsDashboardQualityToday,
     OpsDashboardRevenueDay,
     OpsDashboardRevenueGoal,
     OpsDashboardRevenueWeek,
@@ -494,6 +495,60 @@ async def _build_ops_upcoming_events(
     return sorted(events, key=lambda event: event.starts_at)[:10]
 
 
+def _quality_critical_filter() -> sa.ColumnElement[bool]:
+    return sa.or_(
+        QualityIssue.severity == quality_schemas.QualityIssueSeverity.CRITICAL.value,
+        sa.and_(QualityIssue.severity.is_(None), QualityIssue.rating <= 2),
+    )
+
+
+async def _build_ops_quality_today(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    today_start_utc: datetime,
+    today_end_utc: datetime,
+) -> tuple[OpsDashboardQualityToday, int]:
+    reviews_stmt = (
+        select(
+            func.count(ClientFeedback.feedback_id),
+            func.avg(ClientFeedback.rating),
+            func.coalesce(
+                func.sum(case((ClientFeedback.rating <= 2, 1), else_=0)), 0
+            ),
+        )
+        .where(
+            ClientFeedback.org_id == org_id,
+            ClientFeedback.created_at >= today_start_utc,
+            ClientFeedback.created_at < today_end_utc,
+        )
+    )
+    reviews_count, avg_rating, negative_reviews_today = (await session.execute(reviews_stmt)).one()
+    reviews_count = int(reviews_count or 0)
+    negative_reviews_today = int(negative_reviews_today or 0)
+    avg_rating_value = round(float(avg_rating), 2) if avg_rating is not None else None
+
+    critical_issues_stmt = (
+        select(func.count())
+        .select_from(QualityIssue)
+        .where(
+            QualityIssue.org_id == org_id,
+            QualityIssue.status.in_(list(quality_service.ACTIVE_STATUSES)),
+            _quality_critical_filter(),
+        )
+    )
+    open_critical_issues = int((await session.execute(critical_issues_stmt)).scalar() or 0)
+
+    return (
+        OpsDashboardQualityToday(
+            avg_rating=avg_rating_value,
+            reviews_count=reviews_count,
+            open_critical_issues=open_critical_issues,
+        ),
+        negative_reviews_today,
+    )
+
+
 async def _build_ops_critical_alerts(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -501,6 +556,8 @@ async def _build_ops_critical_alerts(
     permission_keys: set[str],
     org_settings: org_settings_service.OrganizationSettings,
     now_local: datetime,
+    quality_today: OpsDashboardQualityToday | None,
+    negative_reviews_today: int,
     next24_start_local: datetime,
     next24_end_local: datetime,
     next24_start_utc: datetime,
@@ -549,6 +606,43 @@ async def _build_ops_critical_alerts(
                 )
             )
 
+    if quality_today and (negative_reviews_today > 0 or quality_today.open_critical_issues > 0):
+        def _pluralize(value: int, singular: str, plural: str | None = None) -> str:
+            return singular if value == 1 else (plural or f"{singular}s")
+
+        description_parts: list[str] = []
+        if negative_reviews_today > 0:
+            description_parts.append(
+                f"{negative_reviews_today} "
+                f"{_pluralize(negative_reviews_today, 'negative review')} today"
+            )
+        if quality_today.open_critical_issues > 0:
+            description_parts.append(
+                f"{quality_today.open_critical_issues} "
+                f"{_pluralize(quality_today.open_critical_issues, 'critical issue')} open"
+            )
+        description = " and ".join(description_parts) + "."
+        alerts.append(
+            OpsDashboardAlert(
+                type="quality_risk",
+                severity="critical",
+                title="Negative review / critical issue",
+                description=description,
+                entity_ref={
+                    "kind": "quality",
+                    "negative_reviews_today": negative_reviews_today,
+                    "open_critical_issues": quality_today.open_critical_issues,
+                },
+                actions=[
+                    OpsDashboardAlertAction(
+                        label="Review critical issues",
+                        href="/admin/quality/issues?severity=critical",
+                    )
+                ],
+                created_at=created_at,
+            )
+        )
+
     if "bookings.view" in permission_keys:
         unassigned_count = await _unassigned_bookings_count(
             session,
@@ -583,26 +677,6 @@ async def _build_ops_critical_alerts(
                     created_at=created_at,
                 )
             )
-
-    alerts.append(
-        OpsDashboardAlert(
-            type="negative_review_placeholder",
-            severity="info",
-            title="Negative review alerts",
-            description="Quality module disabled/no data.",
-            entity_ref={
-                "kind": "quality",
-                "status": "disabled",
-            },
-            actions=[
-                OpsDashboardAlertAction(
-                    label="Open modules",
-                    href="/admin/settings/modules",
-                )
-            ],
-            created_at=created_at,
-        )
-    )
 
     return alerts
 
@@ -670,6 +744,17 @@ async def get_ops_dashboard(
     next24_start_utc = next24_start_local.astimezone(timezone.utc)
     next24_end_utc = next24_end_local.astimezone(timezone.utc)
 
+    quality_today: OpsDashboardQualityToday | None = None
+    negative_reviews_today = 0
+    quality_enabled = await feature_service.effective_feature_enabled(session, org_id, "module.quality")
+    if quality_enabled and "quality.view" in permission_keys:
+        quality_today, negative_reviews_today = await _build_ops_quality_today(
+            session,
+            org_id,
+            today_start_utc=today_start_utc,
+            today_end_utc=today_end_utc,
+        )
+
     status_stmt = (
         select(Booking.status, func.count())
         .where(
@@ -717,6 +802,8 @@ async def get_ops_dashboard(
         permission_keys=permission_keys,
         org_settings=org_settings,
         now_local=now_local,
+        quality_today=quality_today,
+        negative_reviews_today=negative_reviews_today,
         next24_start_local=next24_start_local,
         next24_end_local=next24_end_local,
         next24_start_utc=next24_start_utc,
@@ -898,6 +985,7 @@ async def get_ops_dashboard(
             currency=org_currency,
             goal=revenue_goal,
         ),
+        quality_today=quality_today,
         top_performers=top_performers,
     )
 

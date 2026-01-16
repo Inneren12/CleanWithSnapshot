@@ -70,6 +70,8 @@ module.api                    # API access
 
 **Ops dashboard data sources:**
 - `critical_alerts` draws from invoices and bookings in `backend/app/api/routes_admin.py::_build_ops_critical_alerts()`.
+- `quality_today` and quality-driven critical alerts draw from client feedback and quality issues in
+  `backend/app/api/routes_admin.py::_build_ops_quality_today()` and `_build_ops_critical_alerts()`.
 - `upcoming_events` aggregates next-24h critical items from bookings, invoices, and availability blocks in
   `backend/app/api/routes_admin.py::_build_ops_upcoming_events()` (unassigned bookings, first booking tomorrow,
   invoices due today, training blocks).

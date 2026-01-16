@@ -1,5 +1,6 @@
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -7,10 +8,12 @@ from app.domain.org_settings import service as org_settings_service
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import MembershipRole
 from app.domain.bookings.db_models import Booking, Team
+from app.domain.clients.db_models import ClientFeedback, ClientUser
 from app.domain.invoices import service as invoice_service
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.schemas import InvoiceItemCreate
 from app.domain.leads.db_models import Lead
+from app.domain.quality.db_models import QualityIssue
 
 
 def _lead_payload(name: str = "Ops Lead") -> dict:
@@ -234,3 +237,188 @@ async def test_ops_dashboard_overdue_alert_ignores_draft_invoices(async_session_
     assert response.status_code == 200
     alerts = response.json()["critical_alerts"]
     assert not any(alert["type"] == "overdue_invoices" for alert in alerts)
+
+
+@pytest.mark.anyio
+async def test_ops_dashboard_quality_today_respects_org_timezone_and_alerts(
+    async_session_maker, client
+):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Ops Quality Org")
+        owner = await saas_service.create_user(session, "ops-quality@org.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+
+        org_settings = await org_settings_service.get_or_create_org_settings(session, org.org_id)
+        org_settings.timezone = "America/Los_Angeles"
+
+        team = Team(name="Quality Team", org_id=org.org_id)
+        session.add(team)
+        await session.flush()
+
+        client_user = ClientUser(
+            org_id=org.org_id,
+            name="Quality Client",
+            email="quality-client@example.com",
+            phone="+1 555-000-2222",
+            address="12 Quality Way",
+            is_active=True,
+        )
+        session.add(client_user)
+        await session.flush()
+
+        booking_before = Booking(
+            booking_id=str(uuid.uuid4()),
+            org_id=org.org_id,
+            client_id=client_user.client_id,
+            team_id=team.team_id,
+            starts_at=datetime.now(tz=timezone.utc),
+            duration_minutes=60,
+            status="COMPLETED",
+            deposit_cents=0,
+            base_charge_cents=0,
+            refund_total_cents=0,
+            credit_note_total_cents=0,
+        )
+        booking_today = Booking(
+            booking_id=str(uuid.uuid4()),
+            org_id=org.org_id,
+            client_id=client_user.client_id,
+            team_id=team.team_id,
+            starts_at=datetime.now(tz=timezone.utc) + timedelta(hours=1),
+            duration_minutes=60,
+            status="COMPLETED",
+            deposit_cents=0,
+            base_charge_cents=0,
+            refund_total_cents=0,
+            credit_note_total_cents=0,
+        )
+        session.add_all([booking_before, booking_today])
+        await session.flush()
+
+        org_tz = ZoneInfo("America/Los_Angeles")
+        now_local = datetime.now(org_tz)
+        today_start_local = datetime.combine(now_local.date(), time.min, tzinfo=org_tz)
+        before_today_local = today_start_local - timedelta(minutes=5)
+        today_local = today_start_local + timedelta(hours=1)
+
+        feedback_before = ClientFeedback(
+            org_id=org.org_id,
+            client_id=client_user.client_id,
+            booking_id=booking_before.booking_id,
+            rating=5,
+            comment="Yesterday review",
+            channel="admin",
+            created_at=before_today_local.astimezone(timezone.utc),
+        )
+        feedback_today = ClientFeedback(
+            org_id=org.org_id,
+            client_id=client_user.client_id,
+            booking_id=booking_today.booking_id,
+            rating=1,
+            comment="Negative review today",
+            channel="admin",
+            created_at=today_local.astimezone(timezone.utc),
+        )
+        session.add_all([feedback_before, feedback_today])
+
+        issue = QualityIssue(
+            org_id=org.org_id,
+            client_id=client_user.client_id,
+            rating=1,
+            status="open",
+        )
+        session.add(issue)
+        await session.commit()
+
+    token = saas_service.build_access_token(owner, membership)
+    response = client.get(
+        "/v1/admin/dashboard/ops",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    quality_today = payload["quality_today"]
+    assert quality_today["reviews_count"] == 1
+    assert quality_today["avg_rating"] == 1.0
+    assert quality_today["open_critical_issues"] == 1
+    assert any(alert["type"] == "quality_risk" for alert in payload["critical_alerts"])
+
+
+@pytest.mark.anyio
+async def test_ops_dashboard_quality_today_requires_permission(async_session_maker, client):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Ops Quality Permissions Org")
+        owner = await saas_service.create_user(session, "ops-quality-owner@org.com", "secret")
+        viewer = await saas_service.create_user(session, "ops-quality-viewer@org.com", "secret")
+        owner_membership = await saas_service.create_membership(
+            session, org, owner, MembershipRole.OWNER
+        )
+        viewer_membership = await saas_service.create_membership(
+            session, org, viewer, MembershipRole.VIEWER
+        )
+
+        team = Team(name="Quality Permissions Team", org_id=org.org_id)
+        session.add(team)
+        await session.flush()
+
+        client_user = ClientUser(
+            org_id=org.org_id,
+            name="Quality Viewer Client",
+            email="quality-viewer@example.com",
+            phone="+1 555-000-3333",
+            address="34 Quality Way",
+            is_active=True,
+        )
+        session.add(client_user)
+        await session.flush()
+
+        booking = Booking(
+            booking_id=str(uuid.uuid4()),
+            org_id=org.org_id,
+            client_id=client_user.client_id,
+            team_id=team.team_id,
+            starts_at=datetime.now(tz=timezone.utc),
+            duration_minutes=60,
+            status="COMPLETED",
+            deposit_cents=0,
+            base_charge_cents=0,
+            refund_total_cents=0,
+            credit_note_total_cents=0,
+        )
+        session.add(booking)
+        await session.flush()
+
+        feedback = ClientFeedback(
+            org_id=org.org_id,
+            client_id=client_user.client_id,
+            booking_id=booking.booking_id,
+            rating=2,
+            comment="Viewer review",
+            channel="admin",
+        )
+        issue = QualityIssue(
+            org_id=org.org_id,
+            client_id=client_user.client_id,
+            rating=1,
+            status="open",
+        )
+        session.add_all([feedback, issue])
+        await session.commit()
+
+    owner_token = saas_service.build_access_token(owner, owner_membership)
+    owner_response = client.get(
+        "/v1/admin/dashboard/ops",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert owner_response.status_code == 200
+    assert "quality_today" in owner_response.json()
+
+    viewer_token = saas_service.build_access_token(viewer, viewer_membership)
+    viewer_response = client.get(
+        "/v1/admin/dashboard/ops",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert viewer_response.status_code == 200
+    viewer_payload = viewer_response.json()
+    assert "quality_today" not in viewer_payload
+    assert not any(alert["type"] == "quality_risk" for alert in viewer_payload["critical_alerts"])
