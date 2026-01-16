@@ -65,7 +65,43 @@ class QualityIssue(Base):
         nullable=True,
     )
 
+    responses: Mapped[list["QualityIssueResponse"]] = relationship(
+        "QualityIssueResponse",
+        back_populates="issue",
+        cascade="all, delete-orphan",
+    )
     booking = relationship("Booking")
     worker = relationship("Worker")
     client = relationship("ClientUser")
     assignee = relationship("User")
+
+
+class QualityIssueResponse(Base):
+    __tablename__ = "quality_issue_responses"
+    __table_args__ = (
+        Index("ix_quality_issue_responses_org_id", "org_id"),
+        Index("ix_quality_issue_responses_issue_id", "issue_id"),
+    )
+
+    response_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE, primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    issue_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("quality_issues.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    response_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    message: Mapped[str] = mapped_column(Text(), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    issue = relationship("QualityIssue", back_populates="responses")

@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 
 import sqlalchemy as sa
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.quality.db_models import QualityIssue
+from app.domain.quality.db_models import QualityIssue, QualityIssueResponse
 from app.domain.quality.schemas import QualityIssueSeverity
 
 
@@ -110,4 +111,40 @@ async def list_active_issues(
     )
     if limit:
         stmt = stmt.limit(limit)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_quality_issue(
+    session: AsyncSession,
+    *,
+    org_id,
+    issue_id,
+) -> QualityIssue | None:
+    stmt = (
+        sa.select(QualityIssue)
+        .where(QualityIssue.org_id == org_id, QualityIssue.id == issue_id)
+        .options(
+            selectinload(QualityIssue.booking),
+            selectinload(QualityIssue.worker),
+            selectinload(QualityIssue.client),
+            selectinload(QualityIssue.responses),
+        )
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def list_issue_responses(
+    session: AsyncSession,
+    *,
+    org_id,
+    issue_id,
+) -> list[QualityIssueResponse]:
+    stmt = (
+        sa.select(QualityIssueResponse)
+        .where(
+            QualityIssueResponse.org_id == org_id,
+            QualityIssueResponse.issue_id == issue_id,
+        )
+        .order_by(QualityIssueResponse.created_at.desc())
+    )
     return list((await session.execute(stmt)).scalars().all())

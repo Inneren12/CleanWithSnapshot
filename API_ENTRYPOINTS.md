@@ -335,6 +335,9 @@ Query parameters:
 |--------|------|------------|---------|
 | GET | `/v1/admin/quality/issues` | `quality.view` | List quality issues with filters (`status`, `severity`, `from`, `to`, `worker_id`, `client_id`) |
 | GET | `/v1/admin/quality/issues/triage` | `quality.view` | Triage buckets (Critical/Medium/Low) + top items |
+| GET | `/v1/admin/quality/issues/{id}` | `quality.view` | Issue detail with booking/worker/client links + response history |
+| PATCH | `/v1/admin/quality/issues/{id}` | `quality.manage` | Update status, resolution, or assignee (updates `resolved_at` on close/resolution) |
+| POST | `/v1/admin/quality/issues/{id}/respond` | `quality.manage` | Log outbound response or note (sets `first_response_at` on first response) |
 
 **Triage response shape (example):**
 ```json
@@ -361,6 +364,10 @@ Query parameters:
   ]
 }
 ```
+
+**SLA timestamps:**
+- `first_response_at` is set when the first outbound response is logged via `POST /respond` with `response_type="response"`.
+- `resolved_at` is set when status transitions to `resolved` or `closed` (and cleared if re-opened).
 
 ### Teams
 

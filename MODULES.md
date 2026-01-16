@@ -324,10 +324,13 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Purpose:** Quality issue triage, complaints tracking, and operational checklists
 
 **Key Pages:**
-- TBD (admin UI not yet implemented)
+- `web/app/admin/quality/issues/[id]/page.tsx` - Issue detail workflow (`/admin/quality/issues/{id}`)
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues` (list + filters)
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/{id}` (detail)
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/{id}` (PATCH status/resolution)
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/{id}/respond` (response log + SLA timestamp)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/triage` (Critical/Medium/Low buckets)
 - `backend/app/api/routes_checklists.py` - `/v1/checklists/*` (job checklists)
 

@@ -125,7 +125,7 @@ from app.domain.reason_logs import service as reason_service
 from app.domain.reason_logs.db_models import ReasonLog
 from app.domain.quality import schemas as quality_schemas
 from app.domain.quality import service as quality_service
-from app.domain.quality.db_models import QualityIssue
+from app.domain.quality.db_models import QualityIssue, QualityIssueResponse
 from app.domain.saas import billing_service, service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, Organization, PasswordResetEvent, User
 from app.domain.ops import service as ops_service
@@ -2312,6 +2312,61 @@ def _serialize_quality_triage_item(
     )
 
 
+def _serialize_quality_response(
+    response: QualityIssueResponse,
+) -> quality_schemas.QualityIssueResponseLog:
+    return quality_schemas.QualityIssueResponseLog(
+        response_id=response.response_id,
+        response_type=quality_schemas.QualityIssueResponseType(response.response_type),
+        message=response.message,
+        created_by=response.created_by,
+        created_at=response.created_at,
+    )
+
+
+def _serialize_quality_booking(
+    issue: QualityIssue,
+) -> quality_schemas.QualityIssueRelatedBooking | None:
+    if not issue.booking:
+        return None
+    return quality_schemas.QualityIssueRelatedBooking(
+        booking_id=issue.booking.booking_id,
+        status=issue.booking.status,
+        starts_at=issue.booking.starts_at,
+        team_id=issue.booking.team_id,
+        assigned_worker_id=issue.booking.assigned_worker_id,
+    )
+
+
+def _serialize_quality_worker(
+    issue: QualityIssue,
+) -> quality_schemas.QualityIssueRelatedWorker | None:
+    if not issue.worker:
+        return None
+    return quality_schemas.QualityIssueRelatedWorker(
+        worker_id=issue.worker.worker_id,
+        name=issue.worker.name,
+        phone=issue.worker.phone,
+        email=issue.worker.email,
+        team_id=issue.worker.team_id,
+    )
+
+
+def _serialize_quality_client(
+    issue: QualityIssue,
+) -> quality_schemas.QualityIssueRelatedClient | None:
+    if not issue.client:
+        return None
+    return quality_schemas.QualityIssueRelatedClient(
+        client_id=issue.client.client_id,
+        name=issue.client.name,
+        email=issue.client.email,
+        phone=issue.client.phone,
+        address=issue.client.address,
+        is_blocked=issue.client.is_blocked,
+    )
+
+
 @router.get("/v1/admin/quality/issues", response_model=quality_schemas.QualityIssueListResponse)
 async def list_quality_issues(
     request: Request,
@@ -2375,6 +2430,125 @@ async def quality_issue_triage(
     return quality_schemas.QualityIssueTriageResponse(
         as_of=datetime.now(timezone.utc), buckets=response_buckets
     )
+
+
+@router.get(
+    "/v1/admin/quality/issues/{issue_id}",
+    response_model=quality_schemas.QualityIssueDetailResponse,
+)
+async def get_quality_issue_detail(
+    request: Request,
+    issue_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.QualityIssueDetailResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    issue = await quality_service.get_quality_issue(
+        session, org_id=org_id, issue_id=issue_id
+    )
+    if not issue:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Quality Issue Not Found",
+            detail="Quality issue does not exist or is not accessible.",
+        )
+    responses = await quality_service.list_issue_responses(
+        session, org_id=org_id, issue_id=issue_id
+    )
+    return quality_schemas.QualityIssueDetailResponse(
+        issue=_serialize_quality_issue(issue),
+        booking=_serialize_quality_booking(issue),
+        worker=_serialize_quality_worker(issue),
+        client=_serialize_quality_client(issue),
+        responses=[_serialize_quality_response(entry) for entry in responses],
+    )
+
+
+@router.patch(
+    "/v1/admin/quality/issues/{issue_id}",
+    response_model=quality_schemas.QualityIssueResponse,
+)
+async def update_quality_issue(
+    request: Request,
+    issue_id: uuid.UUID,
+    payload: quality_schemas.QualityIssueUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.manage")),
+) -> quality_schemas.QualityIssueResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    issue = await quality_service.get_quality_issue(
+        session, org_id=org_id, issue_id=issue_id
+    )
+    if not issue:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Quality Issue Not Found",
+            detail="Quality issue does not exist or is not accessible.",
+        )
+    if payload.status is not None:
+        resolved_status = payload.status.value
+        issue.status = resolved_status
+        if resolved_status in {
+            quality_schemas.QualityIssueStatus.RESOLVED.value,
+            quality_schemas.QualityIssueStatus.CLOSED.value,
+        }:
+            if issue.resolved_at is None:
+                issue.resolved_at = datetime.now(timezone.utc)
+        else:
+            issue.resolved_at = None
+    if payload.resolution_type is not None:
+        issue.resolution_type = payload.resolution_type
+    if payload.resolution_value is not None:
+        issue.resolution_value = payload.resolution_value
+    if payload.assignee_user_id is not None:
+        issue.assignee_user_id = payload.assignee_user_id
+    await session.commit()
+    await session.refresh(issue)
+    return _serialize_quality_issue(issue)
+
+
+@router.post(
+    "/v1/admin/quality/issues/{issue_id}/respond",
+    response_model=quality_schemas.QualityIssueResponseLog,
+)
+async def respond_quality_issue(
+    request: Request,
+    issue_id: uuid.UUID,
+    payload: quality_schemas.QualityIssueRespondRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_permission_keys("quality.manage")),
+) -> quality_schemas.QualityIssueResponseLog:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    issue = await quality_service.get_quality_issue(
+        session, org_id=org_id, issue_id=issue_id
+    )
+    if not issue:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Quality Issue Not Found",
+            detail="Quality issue does not exist or is not accessible.",
+        )
+    now = datetime.now(timezone.utc)
+    response_type = payload.response_type.value
+    if (
+        response_type == quality_schemas.QualityIssueResponseType.RESPONSE.value
+        and issue.first_response_at is None
+    ):
+        issue.first_response_at = now
+    response = QualityIssueResponse(
+        org_id=org_id,
+        issue_id=issue.id,
+        response_type=response_type,
+        message=payload.message,
+        created_by=identity.username,
+    )
+    session.add(response)
+    await session.commit()
+    await session.refresh(response)
+    return _serialize_quality_response(response)
 
 
 @router.get("/v1/admin/schedule", response_model=ScheduleResponse)
