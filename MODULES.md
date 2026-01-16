@@ -286,6 +286,10 @@ module.api                    # API access
 - `team_working_hours` - Regular schedules
 - `team_blackout` - Unavailability periods
 
+**ORM note:** `Team` and `Worker` models live in `backend/app/domain/bookings/db_models.py` and
+`backend/app/domain/workers/db_models.py`; membership and lead relationships use explicit
+`foreign_keys` to avoid ambiguity.
+
 **Permissions Required:**
 - `core.view` - View teams
 - `users.manage` - Manage workers/teams

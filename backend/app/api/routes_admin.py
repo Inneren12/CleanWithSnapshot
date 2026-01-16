@@ -6846,41 +6846,69 @@ async def _load_team_rollups(
             "rating_count": int(row.rating_count or 0),
         }
 
-    role_value = func.lower(func.coalesce(Worker.role, ""))
-    lead_rank = func.row_number().over(
-        partition_by=Worker.team_id,
-        order_by=[
-            case((role_value.like("%lead%"), 1), else_=0).desc(),
-            Worker.rating_avg.desc().nullslast(),
-            Worker.created_at.asc(),
-        ],
-    )
-    lead_subq = (
+    lead_map: dict[int, team_schemas.TeamLeadSummary] = {}
+    explicit_lead_rows = await session.execute(
         select(
-            Worker.team_id.label("team_id"),
-            Worker.worker_id.label("worker_id"),
-            Worker.name.label("name"),
-            Worker.role.label("role"),
-            Worker.rating_avg.label("rating_avg"),
-            lead_rank.label("row_num"),
+            Team.team_id,
+            Worker.worker_id,
+            Worker.name,
+            Worker.role,
+            Worker.rating_avg,
         )
+        .join(Worker, Worker.worker_id == Team.lead_worker_id)
         .where(
+            Team.org_id == org_id,
+            Team.team_id.in_(team_ids),
+            Team.lead_worker_id.is_not(None),
             Worker.org_id == org_id,
-            Worker.team_id.in_(team_ids),
             Worker.archived_at.is_(None),
             Worker.is_active.is_(True),
         )
-        .subquery()
     )
-    lead_rows = await session.execute(select(lead_subq).where(lead_subq.c.row_num == 1))
-    lead_map: dict[int, team_schemas.TeamLeadSummary] = {}
-    for row in lead_rows:
+    for row in explicit_lead_rows:
         lead_map[row.team_id] = team_schemas.TeamLeadSummary(
             worker_id=row.worker_id,
             name=row.name,
             role=row.role,
             rating_avg=float(row.rating_avg) if row.rating_avg is not None else None,
         )
+
+    remaining_team_ids = [team_id for team_id in team_ids if team_id not in lead_map]
+    if remaining_team_ids:
+        role_value = func.lower(func.coalesce(Worker.role, ""))
+        lead_rank = func.row_number().over(
+            partition_by=Worker.team_id,
+            order_by=[
+                case((role_value.like("%lead%"), 1), else_=0).desc(),
+                Worker.rating_avg.desc().nullslast(),
+                Worker.created_at.asc(),
+            ],
+        )
+        lead_subq = (
+            select(
+                Worker.team_id.label("team_id"),
+                Worker.worker_id.label("worker_id"),
+                Worker.name.label("name"),
+                Worker.role.label("role"),
+                Worker.rating_avg.label("rating_avg"),
+                lead_rank.label("row_num"),
+            )
+            .where(
+                Worker.org_id == org_id,
+                Worker.team_id.in_(remaining_team_ids),
+                Worker.archived_at.is_(None),
+                Worker.is_active.is_(True),
+            )
+            .subquery()
+        )
+        lead_rows = await session.execute(select(lead_subq).where(lead_subq.c.row_num == 1))
+        for row in lead_rows:
+            lead_map[row.team_id] = team_schemas.TeamLeadSummary(
+                worker_id=row.worker_id,
+                name=row.name,
+                role=row.role,
+                rating_avg=float(row.rating_avg) if row.rating_avg is not None else None,
+            )
 
     booking_stmt = (
         select(
@@ -6932,6 +6960,20 @@ async def _get_team_or_404(
             detail="Team does not exist or is not available for this organization.",
         )
     return team
+
+
+def _normalize_string_list(values: list[str] | None) -> list[str] | None:
+    if values is None:
+        return None
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = value.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        normalized.append(cleaned)
+        seen.add(cleaned)
+    return normalized
 
 
 @router.get("/v1/admin/teams", response_model=list[team_schemas.TeamListItem])
@@ -7031,6 +7073,113 @@ async def get_team_detail(
         created_at=team.created_at,
         archived_at=team.archived_at,
         lead=lead_map.get(team_id),
+        lead_worker_id=team.lead_worker_id,
+        zones=team.zones or [],
+        specializations=team.specializations or [],
+        calendar_color=team.calendar_color,
+        worker_count=int(worker_metrics.get("worker_count", 0)),
+        monthly_bookings=booking_map.get(team_id, 0),
+        monthly_revenue_cents=revenue_map.get(team_id, 0),
+        rating_avg=worker_metrics.get("rating_avg"),
+        rating_count=int(worker_metrics.get("rating_count", 0)),
+    )
+
+
+@router.patch("/v1/admin/teams/{team_id}", response_model=team_schemas.TeamDetailResponse)
+async def update_team_settings(
+    request: Request,
+    team_id: int,
+    payload: team_schemas.TeamSettingsUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_permission_keys("users.manage")),
+) -> team_schemas.TeamDetailResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    team = await _get_team_or_404(request, session, org_id, team_id)
+    if isinstance(team, Response):
+        return team
+
+    before = {
+        "lead_worker_id": team.lead_worker_id,
+        "zones": team.zones or [],
+        "specializations": team.specializations or [],
+        "calendar_color": team.calendar_color,
+    }
+
+    if "lead_worker_id" in payload.model_fields_set:
+        if payload.lead_worker_id is None:
+            team.lead_worker_id = None
+        else:
+            worker = await session.scalar(
+                select(Worker).where(
+                    Worker.worker_id == payload.lead_worker_id,
+                    Worker.org_id == org_id,
+                    Worker.team_id == team.team_id,
+                    Worker.archived_at.is_(None),
+                    Worker.is_active.is_(True),
+                )
+            )
+            if not worker:
+                return problem_details(
+                    request=request,
+                    status=status.HTTP_400_BAD_REQUEST,
+                    title="Invalid team lead",
+                    detail="Selected lead must be an active worker in this team.",
+                )
+            team.lead_worker_id = worker.worker_id
+
+    if "zones" in payload.model_fields_set:
+        team.zones = _normalize_string_list(payload.zones) or []
+
+    if "specializations" in payload.model_fields_set:
+        team.specializations = _normalize_string_list(payload.specializations) or []
+
+    if "calendar_color" in payload.model_fields_set:
+        raw_color = (payload.calendar_color or "").strip()
+        if not raw_color:
+            team.calendar_color = None
+        else:
+            if not re.fullmatch(r"#?[0-9a-fA-F]{6}", raw_color):
+                return problem_details(
+                    request=request,
+                    status=status.HTTP_400_BAD_REQUEST,
+                    title="Invalid calendar color",
+                    detail="Calendar color must be a 6-digit hex value.",
+                )
+            team.calendar_color = f"#{raw_color.lstrip('#')}"
+
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="UPDATE_TEAM_SETTINGS",
+        resource_type="team",
+        resource_id=str(team.team_id),
+        before=before,
+        after={
+            "lead_worker_id": team.lead_worker_id,
+            "zones": team.zones or [],
+            "specializations": team.specializations or [],
+            "calendar_color": team.calendar_color,
+        },
+    )
+    await session.commit()
+    await session.refresh(team)
+
+    now = datetime.now(tz=timezone.utc)
+    range_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    worker_map, lead_map, booking_map, revenue_map = await _load_team_rollups(
+        session, org_id, [team_id], range_start, now
+    )
+    worker_metrics = worker_map.get(team_id, {})
+    return team_schemas.TeamDetailResponse(
+        team_id=team.team_id,
+        name=team.name,
+        created_at=team.created_at,
+        archived_at=team.archived_at,
+        lead=lead_map.get(team_id),
+        lead_worker_id=team.lead_worker_id,
+        zones=team.zones or [],
+        specializations=team.specializations or [],
+        calendar_color=team.calendar_color,
         worker_count=int(worker_metrics.get("worker_count", 0)),
         monthly_bookings=booking_map.get(team_id, 0),
         monthly_revenue_cents=revenue_map.get(team_id, 0),

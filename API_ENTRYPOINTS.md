@@ -238,6 +238,7 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 |--------|------|------------|---------|
 | GET | `/v1/admin/teams` | `core.view` | List teams with lead, headcount, monthly bookings/revenue, ratings |
 | GET | `/v1/admin/teams/{id}` | `core.view` | Team detail summary |
+| PATCH | `/v1/admin/teams/{id}` | `users.manage` | Update team settings (lead, zones, specializations, calendar color) |
 | GET | `/v1/admin/teams/{id}/members` | `core.view` | Team members roster |
 | GET | `/v1/admin/teams/{id}/recent_bookings` | `core.view` | Recent bookings for the team (`limit` query) |
 | GET | `/v1/admin/teams/{id}/metrics` | `core.view` | Performance metrics (`from`/`to` datetime query params) |

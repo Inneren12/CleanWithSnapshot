@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TeamLeadSummary(BaseModel):
@@ -30,6 +30,10 @@ class TeamDetailResponse(BaseModel):
     created_at: datetime
     archived_at: datetime | None = None
     lead: TeamLeadSummary | None = None
+    lead_worker_id: int | None = None
+    zones: list[str] = Field(default_factory=list)
+    specializations: list[str] = Field(default_factory=list)
+    calendar_color: str | None = None
     worker_count: int
     monthly_bookings: int
     monthly_revenue_cents: int
@@ -76,3 +80,10 @@ class TeamMetricsResponse(BaseModel):
     cancelled_count: int
     total_revenue_cents: int
     average_rating: float | None = None
+
+
+class TeamSettingsUpdateRequest(BaseModel):
+    lead_worker_id: int | None = None
+    zones: list[str] | None = None
+    specializations: list[str] | None = None
+    calendar_color: str | None = None

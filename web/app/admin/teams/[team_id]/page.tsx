@@ -29,6 +29,10 @@ type TeamDetail = {
   created_at: string;
   archived_at?: string | null;
   lead?: TeamLeadSummary | null;
+  lead_worker_id?: number | null;
+  zones?: string[];
+  specializations?: string[];
+  calendar_color?: string | null;
   worker_count: number;
   monthly_bookings: number;
   monthly_revenue_cents: number;
@@ -77,6 +81,53 @@ type TeamMetrics = {
   average_rating?: number | null;
 };
 
+type ScheduleBooking = {
+  booking_id: string;
+  starts_at: string;
+  ends_at: string;
+  duration_minutes: number;
+  status: string;
+  worker_id?: number | null;
+  worker_name?: string | null;
+  team_id: number;
+  team_name?: string | null;
+  client_label?: string | null;
+  address?: string | null;
+  service_label?: string | null;
+  price_cents?: number | null;
+  notes?: string | null;
+};
+
+type ScheduleResponse = {
+  from_date: string;
+  to_date: string;
+  bookings: ScheduleBooking[];
+};
+
+type TeamSettingsForm = {
+  lead_worker_id: string;
+  zones: string[];
+  specializations: string[];
+  calendar_color: string;
+};
+
+const ZONE_OPTIONS = [
+  "Downtown",
+  "Whyte/Old Strathcona",
+  "West",
+  "South/Millwoods",
+  "North/Castle Downs",
+  "St. Albert",
+];
+
+const SPECIALIZATION_OPTIONS = [
+  "Residential",
+  "Commercial",
+  "Move-out",
+  "Deep clean",
+  "Post-construction",
+];
+
 function formatCurrency(cents: number) {
   return new Intl.NumberFormat("en-CA", {
     style: "currency",
@@ -101,6 +152,28 @@ function formatDateInput(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+function parseDateInput(value: string) {
+  return new Date(`${value}T00:00:00`);
+}
+
+function addDaysInput(value: string, offset: number) {
+  const date = parseDateInput(value);
+  date.setDate(date.getDate() + offset);
+  return formatDateInput(date);
+}
+
+function weekStartFromInput(value: string) {
+  const date = parseDateInput(value);
+  const day = date.getDay();
+  const diff = (day + 6) % 7;
+  date.setDate(date.getDate() - diff);
+  return formatDateInput(date);
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(value));
+}
+
 function statusBadge(status?: string) {
   const normalized = (status ?? "").toLowerCase();
   const className = `status-badge ${normalized}`;
@@ -121,9 +194,15 @@ export default function TeamDetailPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [recentBookings, setRecentBookings] = useState<TeamRecentBooking[]>([]);
   const [metrics, setMetrics] = useState<TeamMetrics | null>(null);
-  const [activeTab, setActiveTab] = useState<"overview" | "members" | "bookings">("overview");
+  const [schedule, setSchedule] = useState<ScheduleResponse | null>(null);
+  const [scheduleMessage, setScheduleMessage] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"overview" | "members" | "bookings" | "schedule" | "settings">(
+    "overview",
+  );
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [settingsForm, setSettingsForm] = useState<TeamSettingsForm | null>(null);
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
 
   const today = useMemo(() => new Date(), []);
   const defaultFrom = useMemo(() => {
@@ -133,12 +212,26 @@ export default function TeamDetailPage() {
   }, []);
   const [fromDate, setFromDate] = useState(formatDateInput(defaultFrom));
   const [toDate, setToDate] = useState(formatDateInput(today));
+  const [scheduleAnchorDate, setScheduleAnchorDate] = useState(formatDateInput(today));
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
     const encoded = btoa(`${username}:${password}`);
     return { Authorization: `Basic ${encoded}` };
   }, [username, password]);
+
+  const scheduleWeekStart = useMemo(
+    () => weekStartFromInput(scheduleAnchorDate),
+    [scheduleAnchorDate],
+  );
+  const scheduleWeekEnd = useMemo(
+    () => addDaysInput(scheduleWeekStart, 6),
+    [scheduleWeekStart],
+  );
+  const scheduleDays = useMemo(
+    () => Array.from({ length: 7 }, (_, index) => addDaysInput(scheduleWeekStart, index)),
+    [scheduleWeekStart],
+  );
 
   const permissionKeys = profile?.permissions ?? [];
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
@@ -170,6 +263,18 @@ export default function TeamDetailPage() {
       .filter((entry) => isVisible(entry.featureKey, permissionKeys, featureOverrides, hiddenKeys))
       .map(({ featureKey, requiresPermission, ...link }) => link);
   }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
+
+  const scheduleByDay = useMemo(() => {
+    const map: Record<string, ScheduleBooking[]> = {};
+    if (!schedule?.bookings) return map;
+    schedule.bookings.forEach((booking) => {
+      const key = new Date(booking.starts_at).toISOString().slice(0, 10);
+      if (!map[key]) map[key] = [];
+      map[key].push(booking);
+    });
+    Object.values(map).forEach((items) => items.sort((a, b) => a.starts_at.localeCompare(b.starts_at)));
+    return map;
+  }, [schedule]);
 
   const loadProfile = useCallback(async () => {
     if (!username || !password) return;
@@ -262,6 +367,27 @@ export default function TeamDetailPage() {
     }
   }, [authHeaders, fromDate, password, teamId, toDate, username]);
 
+  const loadSchedule = useCallback(async () => {
+    if (!username || !password || Number.isNaN(teamId)) return;
+    setScheduleMessage(null);
+    const params = new URLSearchParams({
+      from: scheduleWeekStart,
+      to: scheduleWeekEnd,
+      team_id: `${teamId}`,
+    });
+    const response = await fetch(`${API_BASE}/v1/admin/schedule?${params.toString()}`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as ScheduleResponse;
+      setSchedule(data);
+    } else {
+      setSchedule(null);
+      setScheduleMessage("Unable to load the team schedule for this week.");
+    }
+  }, [authHeaders, password, scheduleWeekEnd, scheduleWeekStart, teamId, username]);
+
   useEffect(() => {
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
     const storedPassword = window.localStorage.getItem(STORAGE_PASSWORD_KEY);
@@ -277,7 +403,29 @@ export default function TeamDetailPage() {
     void loadMembers();
     void loadRecentBookings();
     void loadMetrics();
-  }, [loadFeatureConfig, loadMembers, loadMetrics, loadProfile, loadRecentBookings, loadTeam, loadUiPrefs]);
+  }, [
+    loadFeatureConfig,
+    loadMembers,
+    loadMetrics,
+    loadProfile,
+    loadRecentBookings,
+    loadTeam,
+    loadUiPrefs,
+  ]);
+
+  useEffect(() => {
+    void loadSchedule();
+  }, [loadSchedule]);
+
+  useEffect(() => {
+    if (!team) return;
+    setSettingsForm({
+      lead_worker_id: team.lead_worker_id ? `${team.lead_worker_id}` : "",
+      zones: team.zones ?? [],
+      specializations: team.specializations ?? [],
+      calendar_color: team.calendar_color ?? "",
+    });
+  }, [team]);
 
   const handleSaveCredentials = () => {
     window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
@@ -291,6 +439,7 @@ export default function TeamDetailPage() {
     void loadMembers();
     void loadRecentBookings();
     void loadMetrics();
+    void loadSchedule();
   };
 
   const handleClearCredentials = () => {
@@ -300,6 +449,37 @@ export default function TeamDetailPage() {
     setPassword("");
     setStatusMessage("Cleared saved credentials.");
     setTimeout(() => setStatusMessage(null), 2000);
+  };
+
+  const toggleSelection = (values: string[], value: string) => {
+    if (values.includes(value)) {
+      return values.filter((item) => item !== value);
+    }
+    return [...values, value];
+  };
+
+  const handleSettingsSave = async () => {
+    if (!settingsForm || !username || !password || Number.isNaN(teamId)) return;
+    setSettingsMessage(null);
+    const payload = {
+      lead_worker_id: settingsForm.lead_worker_id ? Number(settingsForm.lead_worker_id) : null,
+      zones: settingsForm.zones,
+      specializations: settingsForm.specializations,
+      calendar_color: settingsForm.calendar_color || null,
+    };
+    const response = await fetch(`${API_BASE}/v1/admin/teams/${teamId}`, {
+      method: "PATCH",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (response.ok) {
+      const data = (await response.json()) as TeamDetail;
+      setTeam(data);
+      setSettingsMessage("Team settings updated.");
+    } else {
+      setSettingsMessage("Unable to save team settings.");
+    }
+    setTimeout(() => setSettingsMessage(null), 3000);
   };
 
   if (!pageVisible) {
@@ -388,6 +568,20 @@ export default function TeamDetailPage() {
           onClick={() => setActiveTab("bookings")}
         >
           Recent bookings
+        </button>
+        <button
+          className={activeTab === "schedule" ? "btn btn-primary" : "btn btn-secondary"}
+          type="button"
+          onClick={() => setActiveTab("schedule")}
+        >
+          Weekly schedule
+        </button>
+        <button
+          className={activeTab === "settings" ? "btn btn-primary" : "btn btn-secondary"}
+          type="button"
+          onClick={() => setActiveTab("settings")}
+        >
+          Settings
         </button>
       </section>
 
@@ -531,6 +725,164 @@ export default function TeamDetailPage() {
             </table>
           </div>
           {recentBookings.length === 0 ? <p className="muted">No bookings found.</p> : null}
+        </section>
+      ) : null}
+
+      {activeTab === "schedule" ? (
+        <section className="admin-card">
+          <div className="admin-actions" style={{ justifyContent: "space-between" }}>
+            <div>
+              <h3>Weekly schedule</h3>
+              <p className="muted">
+                {formatDate(scheduleWeekStart)} → {formatDate(scheduleWeekEnd)}
+              </p>
+            </div>
+            <div className="admin-actions">
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => setScheduleAnchorDate(addDaysInput(scheduleWeekStart, -7))}
+              >
+                Previous week
+              </button>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => setScheduleAnchorDate(addDaysInput(scheduleWeekStart, 7))}
+              >
+                Next week
+              </button>
+            </div>
+          </div>
+          {scheduleMessage ? <p className="muted">{scheduleMessage}</p> : null}
+          <div className="admin-grid">
+            {scheduleDays.map((day) => {
+              const dayBookings = scheduleByDay[day] ?? [];
+              return (
+                <article className="admin-card" key={day}>
+                  <h4>{formatDate(day)}</h4>
+                  {dayBookings.length === 0 ? (
+                    <p className="muted">No bookings.</p>
+                  ) : (
+                    <ul className="list">
+                      {dayBookings.map((booking) => (
+                        <li key={booking.booking_id}>
+                          <div>
+                            <strong>{formatDateTime(booking.starts_at)}</strong>
+                          </div>
+                          <div className="muted">
+                            {booking.client_label ?? "Client TBD"} • {booking.service_label ?? "Service TBD"}
+                          </div>
+                          <div className="muted">
+                            {booking.worker_name ?? "Unassigned"} • {booking.duration_minutes} min
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "settings" ? (
+        <section className="admin-card">
+          <h3>Team settings</h3>
+          {!settingsForm ? (
+            <p className="muted">Loading settings…</p>
+          ) : (
+            <>
+              <div className="form-group">
+                <label htmlFor="team-lead">Team lead</label>
+                <select
+                  id="team-lead"
+                  className="input"
+                  value={settingsForm.lead_worker_id}
+                  onChange={(event) =>
+                    setSettingsForm((prev) =>
+                      prev ? { ...prev, lead_worker_id: event.target.value } : prev,
+                    )
+                  }
+                >
+                  <option value="">Unassigned</option>
+                  {members.map((member) => (
+                    <option key={member.worker_id} value={`${member.worker_id}`}>
+                      {member.name} {member.role ? `• ${member.role}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Zones coverage</label>
+                <div className="checkbox-grid">
+                  {ZONE_OPTIONS.map((zone) => (
+                    <label key={zone} className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={settingsForm.zones.includes(zone)}
+                        onChange={() =>
+                          setSettingsForm((prev) =>
+                            prev ? { ...prev, zones: toggleSelection(prev.zones, zone) } : prev,
+                          )
+                        }
+                      />
+                      <span>{zone}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Specializations</label>
+                <div className="checkbox-grid">
+                  {SPECIALIZATION_OPTIONS.map((specialization) => (
+                    <label key={specialization} className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={settingsForm.specializations.includes(specialization)}
+                        onChange={() =>
+                          setSettingsForm((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  specializations: toggleSelection(prev.specializations, specialization),
+                                }
+                              : prev,
+                          )
+                        }
+                      />
+                      <span>{specialization}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="team-color">Calendar color</label>
+                <input
+                  id="team-color"
+                  className="input"
+                  type="color"
+                  value={settingsForm.calendar_color || "#2563eb"}
+                  onChange={(event) =>
+                    setSettingsForm((prev) =>
+                      prev ? { ...prev, calendar_color: event.target.value } : prev,
+                    )
+                  }
+                />
+              </div>
+
+              <div className="admin-actions">
+                <button className="btn btn-primary" type="button" onClick={() => void handleSettingsSave()}>
+                  Save settings
+                </button>
+              </div>
+              {settingsMessage ? <p className="muted">{settingsMessage}</p> : null}
+            </>
+          )}
         </section>
       ) : null}
     </div>
