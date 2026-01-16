@@ -242,6 +242,7 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | GET | `/v1/admin/teams/{id}/members` | `core.view` | Team members roster |
 | GET | `/v1/admin/teams/{id}/recent_bookings` | `core.view` | Recent bookings for the team (`limit` query) |
 | GET | `/v1/admin/teams/{id}/metrics` | `core.view` | Performance metrics (`from`/`to` datetime query params) |
+| GET | `/v1/admin/teams/compare` | `core.view` | Team comparison table (`from`/`to` datetime query params) |
 | POST | `/v1/admin/teams` | `users.manage` | Create a new team |
 
 **List response shape (example):**
@@ -259,6 +260,28 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
     "rating_count": 36
   }
 ]
+```
+
+**Comparison response shape (example):**
+```json
+{
+  "range_start": "2026-02-01T00:00:00Z",
+  "range_end": "2026-03-01T23:59:59Z",
+  "teams": [
+    {
+      "team_id": 3,
+      "name": "Crew North",
+      "bookings_count": 18,
+      "completed_count": 16,
+      "cancelled_count": 1,
+      "completion_rate": 0.8889,
+      "total_revenue_cents": 462000,
+      "average_booking_cents": 25667,
+      "rating_avg": 4.6,
+      "rating_count": 36
+    }
+  ]
+}
 ```
 
 ---

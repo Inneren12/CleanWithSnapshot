@@ -82,6 +82,25 @@ class TeamMetricsResponse(BaseModel):
     average_rating: float | None = None
 
 
+class TeamComparisonRow(BaseModel):
+    team_id: int
+    name: str
+    bookings_count: int
+    completed_count: int
+    cancelled_count: int
+    completion_rate: float
+    total_revenue_cents: int
+    average_booking_cents: int
+    rating_avg: float | None = None
+    rating_count: int
+
+
+class TeamComparisonResponse(BaseModel):
+    range_start: datetime
+    range_end: datetime
+    teams: list[TeamComparisonRow]
+
+
 class TeamSettingsUpdateRequest(BaseModel):
     lead_worker_id: int | None = None
     zones: list[str] | None = None

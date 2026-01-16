@@ -834,6 +834,18 @@ async def _require_dashboard_enabled(
     return None
 
 
+async def _require_teams_enabled(request: Request, session: AsyncSession, org_id: uuid.UUID):
+    enabled = await feature_service.effective_feature_enabled(session, org_id, "module.teams")
+    if not enabled:
+        return problem_details(
+            request=request,
+            status=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail="Disabled by org settings",
+        )
+    return None
+
+
 def _parse_availability_scope(scope: str | None) -> tuple[str | None, int | None]:
     if not scope:
         return (None, None)
@@ -7338,6 +7350,127 @@ async def get_team_metrics(
         cancelled_count=int(booking_row.cancelled_count or 0),
         total_revenue_cents=revenue_cents,
         average_rating=float(rating_avg) if rating_avg is not None else None,
+    )
+
+
+@router.get("/v1/admin/teams/compare", response_model=team_schemas.TeamComparisonResponse)
+async def compare_teams(
+    request: Request,
+    from_ts: datetime | None = Query(default=None, alias="from"),
+    to_ts: datetime | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+) -> team_schemas.TeamComparisonResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    feature_gate = await _require_teams_enabled(request, session, org_id)
+    if isinstance(feature_gate, Response):
+        return feature_gate
+    range_start, range_end = _normalize_range(from_ts, to_ts)
+
+    booking_stats = (
+        select(
+            Booking.team_id.label("team_id"),
+            func.count(Booking.booking_id).label("bookings_count"),
+            func.coalesce(func.sum(case((Booking.status == "DONE", 1), else_=0)), 0).label(
+                "completed_count"
+            ),
+            func.coalesce(func.sum(case((Booking.status == "CANCELLED", 1), else_=0)), 0).label(
+                "cancelled_count"
+            ),
+        )
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= range_start,
+            Booking.starts_at <= range_end,
+        )
+        .group_by(Booking.team_id)
+        .subquery()
+    )
+
+    revenue_stats = (
+        select(
+            Booking.team_id.label("team_id"),
+            func.coalesce(func.sum(Invoice.total_cents), 0).label("revenue_cents"),
+        )
+        .join(
+            Invoice,
+            and_(Invoice.order_id == Booking.booking_id, Invoice.org_id == org_id),
+        )
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= range_start,
+            Booking.starts_at <= range_end,
+        )
+        .group_by(Booking.team_id)
+        .subquery()
+    )
+
+    rating_stats = (
+        select(
+            Booking.team_id.label("team_id"),
+            func.avg(WorkerReview.rating).label("rating_avg"),
+            func.count(WorkerReview.review_id).label("rating_count"),
+        )
+        .join(Booking, Booking.booking_id == WorkerReview.booking_id)
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            WorkerReview.org_id == org_id,
+            Booking.starts_at >= range_start,
+            Booking.starts_at <= range_end,
+        )
+        .group_by(Booking.team_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            Team.team_id,
+            Team.name,
+            booking_stats.c.bookings_count,
+            booking_stats.c.completed_count,
+            booking_stats.c.cancelled_count,
+            revenue_stats.c.revenue_cents,
+            rating_stats.c.rating_avg,
+            rating_stats.c.rating_count,
+        )
+        .outerjoin(booking_stats, booking_stats.c.team_id == Team.team_id)
+        .outerjoin(revenue_stats, revenue_stats.c.team_id == Team.team_id)
+        .outerjoin(rating_stats, rating_stats.c.team_id == Team.team_id)
+        .where(Team.org_id == org_id, Team.archived_at.is_(None))
+        .order_by(Team.name.asc())
+    )
+    rows = await session.execute(stmt)
+    teams: list[team_schemas.TeamComparisonRow] = []
+    for row in rows:
+        bookings_count = int(row.bookings_count or 0)
+        completed_count = int(row.completed_count or 0)
+        cancelled_count = int(row.cancelled_count or 0)
+        revenue_cents = int(row.revenue_cents or 0)
+        rating_avg = float(row.rating_avg) if row.rating_avg is not None else None
+        rating_count = int(row.rating_count or 0)
+        average_booking_cents = int(round(revenue_cents / bookings_count)) if bookings_count else 0
+        teams.append(
+            team_schemas.TeamComparisonRow(
+                team_id=row.team_id,
+                name=row.name,
+                bookings_count=bookings_count,
+                completed_count=completed_count,
+                cancelled_count=cancelled_count,
+                completion_rate=_rate(completed_count, bookings_count),
+                total_revenue_cents=revenue_cents,
+                average_booking_cents=average_booking_cents,
+                rating_avg=rating_avg,
+                rating_count=rating_count,
+            )
+        )
+
+    return team_schemas.TeamComparisonResponse(
+        range_start=range_start,
+        range_end=range_end,
+        teams=teams,
     )
 
 
