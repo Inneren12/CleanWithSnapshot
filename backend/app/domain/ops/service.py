@@ -649,6 +649,13 @@ def _serialize_schedule_booking(
             or lead.structured_inputs.get("service")
         )
 
+    notes_parts: list[str] = []
+    if client and client.notes:
+        notes_parts.append(f"Client: {client.notes}")
+    if address and address.notes:
+        notes_parts.append(f"Address: {address.notes}")
+    notes = "\n".join(notes_parts) if notes_parts else None
+
     duration = booking.duration_minutes or DEFAULT_SLOT_DURATION_MINUTES
     normalized_start = _normalize(booking.starts_at)
     ends_at = normalized_start + timedelta(minutes=duration)
@@ -666,6 +673,7 @@ def _serialize_schedule_booking(
         "address": address_value,
         "service_label": service_label,
         "price_cents": booking.base_charge_cents,
+        "notes": notes,
     }
 
 
