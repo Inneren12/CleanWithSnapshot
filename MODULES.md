@@ -321,26 +321,37 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 ### 6. Quality
 
-**Purpose:** Quality checks, inspections, checklists
+**Purpose:** Quality issue triage, complaints tracking, and operational checklists
 
 **Key Pages:**
-- TBD (not fully implemented)
+- TBD (admin UI not yet implemented)
 
 **Backend Routers:**
-- `backend/app/api/routes_checklists.py` - `/v1/checklists/*`
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues` (list + filters)
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/triage` (Critical/Medium/Low buckets)
+- `backend/app/api/routes_checklists.py` - `/v1/checklists/*` (job checklists)
 
 **Key Services:**
+- `backend/app/domain/quality/service.py` - Issue triage + severity logic
 - `backend/app/domain/checklists/service.py` - Checklist CRUD
 
 **Key Tables:**
+- `quality_issues` - Issue/complaint records
 - `checklists` - Checklist templates
 - `checklist_items` - Individual check items
 
 **Permissions Required:**
-- `bookings.view` - View checklists
+- `quality.view` - View issue triage + issue details
+- `quality.manage` - Resolve/manage issues (future mutations)
+- `bookings.view` - View job checklists
 - `bookings.edit` - Update checklists
 
 **Feature Key:** `module.quality`
+
+**Where to Change:**
+- API: `backend/app/api/routes_admin.py::/v1/admin/quality/issues`
+- Service: `backend/app/domain/quality/service.py`
+- Models: `backend/app/domain/quality/db_models.py`
 
 ---
 

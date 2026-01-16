@@ -123,6 +123,9 @@ from app.domain.policy_overrides.db_models import PolicyOverrideAudit
 from app.domain.reason_logs import schemas as reason_schemas
 from app.domain.reason_logs import service as reason_service
 from app.domain.reason_logs.db_models import ReasonLog
+from app.domain.quality import schemas as quality_schemas
+from app.domain.quality import service as quality_service
+from app.domain.quality.db_models import QualityIssue
 from app.domain.saas import billing_service, service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, Organization, PasswordResetEvent, User
 from app.domain.ops import service as ops_service
@@ -2267,6 +2270,111 @@ async def list_client_addresses(
         )
         for address in addresses
     ]
+
+
+def _serialize_quality_issue(issue: QualityIssue) -> quality_schemas.QualityIssueResponse:
+    severity = quality_service.resolve_severity(issue.severity, issue.rating)
+    return quality_schemas.QualityIssueResponse(
+        id=issue.id,
+        org_id=issue.org_id,
+        booking_id=issue.booking_id,
+        worker_id=issue.worker_id,
+        client_id=issue.client_id,
+        rating=issue.rating,
+        summary=issue.summary,
+        details=issue.details,
+        status=quality_schemas.QualityIssueStatus(issue.status),
+        severity=severity,
+        created_at=issue.created_at,
+        first_response_at=issue.first_response_at,
+        resolved_at=issue.resolved_at,
+        resolution_type=issue.resolution_type,
+        resolution_value=issue.resolution_value,
+        assignee_user_id=issue.assignee_user_id,
+    )
+
+
+def _serialize_quality_triage_item(
+    issue: QualityIssue,
+) -> quality_schemas.QualityIssueTriageItem:
+    severity = quality_service.resolve_severity(issue.severity, issue.rating)
+    return quality_schemas.QualityIssueTriageItem(
+        id=issue.id,
+        summary=issue.summary,
+        status=quality_schemas.QualityIssueStatus(issue.status),
+        severity=severity,
+        rating=issue.rating,
+        created_at=issue.created_at,
+        booking_id=issue.booking_id,
+        worker_id=issue.worker_id,
+        client_id=issue.client_id,
+        assignee_user_id=issue.assignee_user_id,
+    )
+
+
+@router.get("/v1/admin/quality/issues", response_model=quality_schemas.QualityIssueListResponse)
+async def list_quality_issues(
+    request: Request,
+    status: quality_schemas.QualityIssueStatus | None = None,
+    severity: quality_schemas.QualityIssueSeverity | None = None,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    worker_id: int | None = None,
+    client_id: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.QualityIssueListResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    issues = await quality_service.list_quality_issues(
+        session,
+        org_id=org_id,
+        status=status.value if status else None,
+        severity=severity,
+        from_date=from_date,
+        to_date=to_date,
+        worker_id=worker_id,
+        client_id=client_id,
+    )
+    items = [_serialize_quality_issue(issue) for issue in issues]
+    return quality_schemas.QualityIssueListResponse(items=items, total=len(items))
+
+
+@router.get(
+    "/v1/admin/quality/issues/triage",
+    response_model=quality_schemas.QualityIssueTriageResponse,
+)
+async def quality_issue_triage(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.QualityIssueTriageResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    issues = await quality_service.list_active_issues(session, org_id=org_id)
+    buckets: dict[quality_schemas.QualityIssueSeverity, list[QualityIssue]] = {
+        quality_schemas.QualityIssueSeverity.CRITICAL: [],
+        quality_schemas.QualityIssueSeverity.MEDIUM: [],
+        quality_schemas.QualityIssueSeverity.LOW: [],
+    }
+    for issue in issues:
+        severity = quality_service.resolve_severity(issue.severity, issue.rating)
+        buckets[severity].append(issue)
+    response_buckets: list[quality_schemas.QualityIssueTriageBucket] = []
+    for severity in (
+        quality_schemas.QualityIssueSeverity.CRITICAL,
+        quality_schemas.QualityIssueSeverity.MEDIUM,
+        quality_schemas.QualityIssueSeverity.LOW,
+    ):
+        bucket_issues = buckets[severity]
+        response_buckets.append(
+            quality_schemas.QualityIssueTriageBucket(
+                severity=severity,
+                total=len(bucket_issues),
+                items=[_serialize_quality_triage_item(issue) for issue in bucket_issues[:5]],
+            )
+        )
+    return quality_schemas.QualityIssueTriageResponse(
+        as_of=datetime.now(timezone.utc), buckets=response_buckets
+    )
 
 
 @router.get("/v1/admin/schedule", response_model=ScheduleResponse)

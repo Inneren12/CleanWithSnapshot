@@ -44,7 +44,7 @@ MODULE_PERMISSIONS: dict[str, str] = {
     "dashboard": "core.view",
     "schedule": "bookings.view",
     "invoices": "invoices.view",
-    "quality": "bookings.view",
+    "quality": "quality.view",
     "teams": "users.manage",
     "analytics": "finance.view",
     "finance": "finance.view",
