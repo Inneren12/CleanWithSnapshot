@@ -63,6 +63,11 @@ module.api                    # API access
 **Key Services:**
 - N/A (dashboard aggregates data from other modules)
 
+**Ops dashboard availability + booking bands:**
+- Backend logic: `backend/app/domain/ops/service.py::build_worker_availability()` and `build_booking_status_today()` (band definitions + availability logic).
+- API response schema: `backend/app/domain/ops/schemas.py` (`OpsDashboardWorkerAvailability`, `OpsDashboardBookingStatusToday`).
+- Frontend rendering: `web/app/admin/dashboard/ops/page.tsx` (matrix + status bars).
+
 **Key Tables:**
 - `events` - Analytics events
 - `bookings` - Recent bookings

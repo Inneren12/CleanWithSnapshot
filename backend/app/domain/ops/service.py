@@ -6,10 +6,17 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.bookings.db_models import Booking, EmailEvent, Team, TeamBlackout
+from app.domain.bookings.db_models import (
+    AvailabilityBlock,
+    Booking,
+    BookingWorker,
+    EmailEvent,
+    Team,
+    TeamBlackout,
+)
 from app.domain.bookings.service import (
     BLOCKING_STATUSES,
     BUFFER_MINUTES,
@@ -29,6 +36,14 @@ logger = logging.getLogger(__name__)
 
 
 DANGEROUS_CSV_PREFIXES = ("=", "+", "-", "@", "\t")
+AVAILABILITY_LOOKAHEAD_DAYS = 30
+AVAILABILITY_LOOKBACK_HOURS = 24
+BOOKING_STATUS_BANDS = (
+    ("8–10", 8, 10),
+    ("10–12", 10, 12),
+    ("12–14", 12, 14),
+    ("14–18", 14, 18),
+)
 
 
 def safe_csv_value(value: object) -> str:
@@ -110,6 +125,206 @@ def _calculate_relevance(q: str, text_fields: list[str | None]) -> int:
             score += 10  # Contains
 
     return score
+
+
+async def build_booking_status_today(
+    session: AsyncSession,
+    org_id,
+    *,
+    today_start_utc: datetime,
+    today_end_utc: datetime,
+    today_local_date: date,
+    org_timezone: ZoneInfo,
+) -> tuple[dict[str, int], list[tuple[str, int]]]:
+    status_stmt = (
+        select(Booking.status, func.count())
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= today_start_utc,
+            Booking.starts_at < today_end_utc,
+        )
+        .group_by(Booking.status)
+    )
+    status_rows = (await session.execute(status_stmt)).all()
+    status_counts = {status: count for status, count in status_rows}
+
+    band_cases = []
+    for index, (_, start_hour, end_hour) in enumerate(BOOKING_STATUS_BANDS):
+        band_start_local = datetime.combine(
+            today_local_date, time(hour=start_hour, tzinfo=org_timezone)
+        )
+        band_end_local = datetime.combine(
+            today_local_date, time(hour=end_hour, tzinfo=org_timezone)
+        )
+        band_start_utc = band_start_local.astimezone(timezone.utc)
+        band_end_utc = band_end_local.astimezone(timezone.utc)
+        band_cases.append(
+            func.sum(
+                case(
+                    (
+                        and_(
+                            Booking.starts_at >= band_start_utc,
+                            Booking.starts_at < band_end_utc,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label(f"band_{index}")
+        )
+
+    bands_stmt = (
+        select(*band_cases)
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= today_start_utc,
+            Booking.starts_at < today_end_utc,
+        )
+    )
+    band_row = (await session.execute(bands_stmt)).one_or_none()
+    band_counts = []
+    if band_row is None:
+        band_counts = [(label, 0) for label, _, _ in BOOKING_STATUS_BANDS]
+    else:
+        for (label, _, _), count in zip(BOOKING_STATUS_BANDS, band_row):
+            band_counts.append((label, int(count or 0)))
+
+    return status_counts, band_counts
+
+
+async def build_worker_availability(
+    session: AsyncSession,
+    org_id,
+    *,
+    now_utc: datetime,
+) -> list[dict[str, object]]:
+    workers_stmt = (
+        select(Worker.worker_id, Worker.name, Worker.team_id, Team.name)
+        .join(Team, Worker.team_id == Team.team_id)
+        .where(
+            Worker.org_id == org_id,
+            Worker.archived_at.is_(None),
+            Worker.is_active.is_(True),
+        )
+        .order_by(Worker.name.asc())
+    )
+    workers = (await session.execute(workers_stmt)).all()
+    worker_ids = [worker_id for worker_id, *_ in workers]
+    workers_by_team: dict[int, list[int]] = {}
+    for worker_id, _name, team_id, _team_name in workers:
+        workers_by_team.setdefault(team_id, []).append(worker_id)
+
+    blocked_worker_ids: set[int] = set()
+    blocks_stmt = select(AvailabilityBlock).where(
+        AvailabilityBlock.org_id == org_id,
+        AvailabilityBlock.starts_at < now_utc,
+        AvailabilityBlock.ends_at > now_utc,
+    )
+    blocks = list((await session.execute(blocks_stmt)).scalars().all())
+    has_org_block = any(block.scope_type == "org" for block in blocks)
+    if has_org_block:
+        blocked_worker_ids.update(worker_ids)
+    else:
+        for block in blocks:
+            if block.scope_type == "worker" and block.scope_id is not None:
+                blocked_worker_ids.add(block.scope_id)
+            elif block.scope_type == "team" and block.scope_id is not None:
+                blocked_worker_ids.update(workers_by_team.get(block.scope_id, []))
+
+    lookback_start = now_utc - timedelta(hours=AVAILABILITY_LOOKBACK_HOURS)
+    active_stmt = (
+        select(Booking.booking_id, Booking.starts_at, Booking.duration_minutes, Booking.assigned_worker_id)
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.status.in_(BLOCKING_STATUSES),
+            Booking.starts_at < now_utc,
+            Booking.starts_at >= lookback_start,
+        )
+        .order_by(Booking.starts_at.asc())
+    )
+    active_bookings = (await session.execute(active_stmt)).all()
+    active_booking_ids = [booking_id for booking_id, *_ in active_bookings]
+    assigned_workers: dict[str, list[int]] = {}
+    if active_booking_ids:
+        workers_stmt = select(BookingWorker.booking_id, BookingWorker.worker_id).where(
+            BookingWorker.booking_id.in_(active_booking_ids)
+        )
+        worker_rows = (await session.execute(workers_stmt)).all()
+        for booking_id, worker_id in worker_rows:
+            assigned_workers.setdefault(booking_id, []).append(worker_id)
+
+    busy_worker_ids: set[int] = set()
+    for booking_id, starts_at, duration_minutes, assigned_worker_id in active_bookings:
+        duration = duration_minutes or DEFAULT_SLOT_DURATION_MINUTES
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=timezone.utc)
+        ends_at = starts_at + timedelta(minutes=duration)
+        if ends_at <= now_utc:
+            continue
+        if assigned_worker_id:
+            busy_worker_ids.add(assigned_worker_id)
+        for worker_id in assigned_workers.get(booking_id, []):
+            busy_worker_ids.add(worker_id)
+
+    lookahead_end = now_utc + timedelta(days=AVAILABILITY_LOOKAHEAD_DAYS)
+    upcoming_assigned_stmt = (
+        select(Booking.assigned_worker_id, func.min(Booking.starts_at))
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.status.in_(BLOCKING_STATUSES),
+            Booking.assigned_worker_id.is_not(None),
+            Booking.starts_at >= now_utc,
+            Booking.starts_at < lookahead_end,
+        )
+        .group_by(Booking.assigned_worker_id)
+    )
+    next_by_worker: dict[int, datetime] = {}
+    for worker_id, next_start in (await session.execute(upcoming_assigned_stmt)).all():
+        if worker_id is None or next_start is None:
+            continue
+        next_by_worker[int(worker_id)] = next_start
+
+    upcoming_worker_stmt = (
+        select(BookingWorker.worker_id, func.min(Booking.starts_at))
+        .join(Booking, BookingWorker.booking_id == Booking.booking_id)
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.status.in_(BLOCKING_STATUSES),
+            Booking.starts_at >= now_utc,
+            Booking.starts_at < lookahead_end,
+        )
+        .group_by(BookingWorker.worker_id)
+    )
+    for worker_id, next_start in (await session.execute(upcoming_worker_stmt)).all():
+        if worker_id is None or next_start is None:
+            continue
+        current = next_by_worker.get(worker_id)
+        if current is None or next_start < current:
+            next_by_worker[worker_id] = next_start
+
+    availability = []
+    for worker_id, name, _team_id, team_name in workers:
+        status = "available"
+        if worker_id in busy_worker_ids:
+            status = "busy"
+        elif worker_id in blocked_worker_ids:
+            status = "blocked"
+        availability.append(
+            {
+                "worker_id": worker_id,
+                "name": name,
+                "status": status,
+                "zone": team_name,
+                "next_booking_at": next_by_worker.get(worker_id),
+            }
+        )
+
+    return availability
 
 
 async def global_search(session: AsyncSession, org_id, q: str, limit: int = 20) -> list[SearchHit]:

@@ -443,18 +443,14 @@ async def get_ops_dashboard(
     next24_start_utc = next24_start_local.astimezone(timezone.utc)
     next24_end_utc = next24_end_local.astimezone(timezone.utc)
 
-    status_stmt = (
-        select(Booking.status, func.count())
-        .where(
-            Booking.org_id == org_id,
-            Booking.archived_at.is_(None),
-            Booking.starts_at >= today_start_utc,
-            Booking.starts_at < today_end_utc,
-        )
-        .group_by(Booking.status)
+    status_counts, band_counts = await ops_service.build_booking_status_today(
+        session,
+        org_id,
+        today_start_utc=today_start_utc,
+        today_end_utc=today_end_utc,
+        today_local_date=now_local.date(),
+        org_timezone=org_tz,
     )
-    status_rows = (await session.execute(status_stmt)).all()
-    status_counts = {status: count for status, count in status_rows}
     total_count = sum(status_counts.values())
     totals = OpsDashboardBookingStatusTotals(
         total=total_count,
@@ -463,6 +459,10 @@ async def get_ops_dashboard(
         done=status_counts.get("DONE", 0),
         cancelled=status_counts.get("CANCELLED", 0),
     )
+    bands = [
+        OpsDashboardBookingStatusBand(label=label, count=count)
+        for label, count in band_counts
+    ]
 
     upcoming_stmt = (
         select(Booking)
@@ -505,15 +505,21 @@ async def get_ops_dashboard(
         next24_end_utc=next24_end_utc,
     )
 
+    worker_availability = await ops_service.build_worker_availability(
+        session,
+        org_id,
+        now_utc=now_local.astimezone(timezone.utc),
+    )
+
     return OpsDashboardResponse(
         as_of=datetime.now(timezone.utc),
         org_timezone=org_timezone,
         critical_alerts=critical_alerts,
         upcoming_events=upcoming_events,
-        worker_availability=[],
+        worker_availability=worker_availability,
         booking_status_today=OpsDashboardBookingStatusToday(
             totals=totals,
-            bands=[],
+            bands=bands,
         ),
     )
 
