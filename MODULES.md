@@ -67,6 +67,14 @@ module.api                    # API access
 - Booking status band model: `backend/app/domain/ops/schemas.py::OpsDashboardBookingStatusBand`.
 - Band definitions: `backend/app/domain/ops/service.py::BOOKING_STATUS_BANDS` (edit here to change ranges).
 
+**Ops dashboard data sources:**
+- `critical_alerts` draws from invoices and bookings in `backend/app/api/routes_admin.py::_build_ops_critical_alerts()`.
+- `upcoming_events` aggregates next-24h critical items from bookings, invoices, and availability blocks in
+  `backend/app/api/routes_admin.py::_build_ops_upcoming_events()` (unassigned bookings, first booking tomorrow,
+  invoices due today, training blocks).
+- `booking_status_today` counts bookings from `backend/app/api/routes_admin.py::get_ops_dashboard()` and uses
+  `backend/app/domain/ops/service.py::build_booking_status_bands()`.
+
 **Key Tables:**
 - `events` - Analytics events
 - `bookings` - Recent bookings

@@ -70,6 +70,52 @@ async def test_ops_dashboard_returns_schema_and_timezone(async_session_maker, cl
 
 
 @pytest.mark.anyio
+async def test_ops_dashboard_upcoming_unassigned_booking(async_session_maker, client):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Ops Upcoming Org")
+        owner = await saas_service.create_user(session, "ops-upcoming@org.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+
+        team = Team(name="Upcoming Team", org_id=org.org_id)
+        session.add(team)
+        await session.flush()
+
+        lead = Lead(org_id=org.org_id, **_lead_payload())
+        session.add(lead)
+        await session.flush()
+
+        booking = Booking(
+            booking_id=str(uuid.uuid4()),
+            org_id=org.org_id,
+            team_id=team.team_id,
+            lead_id=lead.lead_id,
+            starts_at=datetime.now(tz=timezone.utc) + timedelta(hours=2),
+            duration_minutes=90,
+            status="PENDING",
+            deposit_cents=0,
+            base_charge_cents=0,
+            refund_total_cents=0,
+            credit_note_total_cents=0,
+        )
+        session.add(booking)
+        await session.commit()
+
+    token = saas_service.build_access_token(owner, membership)
+    response = client.get(
+        "/v1/admin/dashboard/ops",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    events = response.json()["upcoming_events"]
+    assert any(
+        event["entity_ref"]
+        and event["entity_ref"].get("booking_id") == booking.booking_id
+        and "Unassigned booking" in event["title"]
+        for event in events
+    )
+
+
+@pytest.mark.anyio
 async def test_ops_dashboard_overdue_alert_respects_permissions(async_session_maker, client):
     as_of = date.today()
     async with async_session_maker() as session:
