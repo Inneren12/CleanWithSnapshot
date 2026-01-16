@@ -539,6 +539,9 @@ async def list_schedule(
     worker_id: int | None = None,
     team_id: int | None = None,
     status: str | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+    query: str | None = None,
 ) -> dict[str, object]:
     resolved_timezone = org_timezone or org_settings_service.DEFAULT_TIMEZONE
     try:
@@ -551,6 +554,38 @@ async def list_schedule(
     window_start = start_local.astimezone(timezone.utc)
     window_end = end_local.astimezone(timezone.utc)
 
+    conditions = [
+        Booking.org_id == org_id,
+        Booking.archived_at.is_(None),
+        Booking.starts_at >= window_start,
+        Booking.starts_at < window_end,
+    ]
+
+    if team_id is not None:
+        conditions.append(Booking.team_id == team_id)
+    if worker_id is not None:
+        conditions.append(Booking.assigned_worker_id == worker_id)
+    if status:
+        conditions.append(Booking.status == status)
+
+    normalized_query = (query or "").strip()
+    if normalized_query:
+        like_value = f"%{normalized_query}%"
+        conditions.append(
+            or_(
+                Booking.booking_id.ilike(like_value),
+                Booking.status.ilike(like_value),
+                Lead.name.ilike(like_value),
+                Lead.email.ilike(like_value),
+                Lead.phone.ilike(like_value),
+                ClientUser.name.ilike(like_value),
+                ClientUser.email.ilike(like_value),
+                ClientUser.phone.ilike(like_value),
+                ClientAddress.address_text.ilike(like_value),
+                ClientUser.address.ilike(like_value),
+            )
+        )
+
     stmt = (
         select(Booking, Team, Worker, Lead, ClientUser, ClientAddress)
         .join(Team, Booking.team_id == Team.team_id)
@@ -558,21 +593,27 @@ async def list_schedule(
         .outerjoin(Lead, Booking.lead_id == Lead.lead_id)
         .outerjoin(ClientUser, Booking.client_id == ClientUser.client_id)
         .outerjoin(ClientAddress, Booking.address_id == ClientAddress.address_id)
-        .where(
-            Booking.org_id == org_id,
-            Booking.archived_at.is_(None),
-            Booking.starts_at >= window_start,
-            Booking.starts_at < window_end,
-        )
+        .where(*conditions)
         .order_by(Booking.starts_at.asc())
     )
 
-    if team_id is not None:
-        stmt = stmt.where(Booking.team_id == team_id)
-    if worker_id is not None:
-        stmt = stmt.where(Booking.assigned_worker_id == worker_id)
-    if status:
-        stmt = stmt.where(Booking.status == status)
+    count_stmt = (
+        select(func.count(func.distinct(Booking.booking_id)))
+        .select_from(Booking)
+        .join(Team, Booking.team_id == Team.team_id)
+        .outerjoin(Worker, Booking.assigned_worker_id == Worker.worker_id)
+        .outerjoin(Lead, Booking.lead_id == Lead.lead_id)
+        .outerjoin(ClientUser, Booking.client_id == ClientUser.client_id)
+        .outerjoin(ClientAddress, Booking.address_id == ClientAddress.address_id)
+        .where(*conditions)
+    )
+
+    total = (await session.execute(count_stmt)).scalar_one()
+
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
 
     rows = (await session.execute(stmt)).all()
     bookings = [
@@ -591,6 +632,10 @@ async def list_schedule(
         "from_date": start_date,
         "to_date": end_date,
         "bookings": bookings,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "query": normalized_query or None,
     }
 
 

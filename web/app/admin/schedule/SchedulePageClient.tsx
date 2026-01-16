@@ -19,6 +19,7 @@ const START_HOUR = 8;
 const END_HOUR = 18;
 const SLOT_MINUTES = 30;
 const SLOT_HEIGHT = 28;
+const LIST_PAGE_SIZE = 25;
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -52,6 +53,10 @@ type ScheduleResponse = {
   from_date: string;
   to_date: string;
   bookings: ScheduleBooking[];
+  total?: number;
+  limit?: number | null;
+  offset?: number | null;
+  query?: string | null;
 };
 
 type AvailabilityBlock = {
@@ -137,6 +142,16 @@ function ymdToDate(ymd: string) {
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 }
 
+function monthRangeForDay(day: string, timeZone: string) {
+  const base = ymdToDate(day);
+  const start = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), 1, 12, 0, 0));
+  const end = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0, 12, 0, 0));
+  return {
+    from: formatYMDInTz(start, timeZone),
+    to: formatYMDInTz(end, timeZone),
+  };
+}
+
 function addDaysYMD(day: string, delta: number, timeZone: string) {
   const base = ymdToDate(day);
   base.setUTCDate(base.getUTCDate() + delta);
@@ -174,6 +189,19 @@ function formatTimeRange(startsAt: string, endsAt: string, timeZone: string) {
   return `${formatter.format(new Date(startsAt))}–${formatter.format(new Date(endsAt))}`;
 }
 
+function formatDateTimeLabel(value: string, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone,
+  });
+  return formatter.format(new Date(value));
+}
+
 function formatCurrencyFromCents(value: number | null) {
   if (value === null) return "—";
   return new Intl.NumberFormat("en-CA", {
@@ -181,6 +209,22 @@ function formatCurrencyFromCents(value: number | null) {
     currency: "CAD",
     maximumFractionDigits: 0,
   }).format(value / 100);
+}
+
+const DANGEROUS_CSV_PREFIXES = ["=", "+", "-", "@", "\t"];
+
+function sanitizeCsvValue(value: string) {
+  if (!value) return "";
+  if (DANGEROUS_CSV_PREFIXES.some((prefix) => value.startsWith(prefix))) {
+    return `'${value}`;
+  }
+  return value;
+}
+
+function csvEscape(value: string) {
+  const sanitized = sanitizeCsvValue(value);
+  const escaped = sanitized.replace(/"/g, '""');
+  return `"${escaped}"`;
 }
 
 function formatDateTimeInput(date: Date) {
@@ -282,6 +326,15 @@ export default function SchedulePage() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [draggingBookingId, setDraggingBookingId] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [viewMode, setViewMode] = useState(searchParams.get("view") ?? "week");
+  const [listFrom, setListFrom] = useState(searchParams.get("from") ?? "");
+  const [listTo, setListTo] = useState(searchParams.get("to") ?? "");
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("q") ?? "");
+  const [currentPage, setCurrentPage] = useState(() => {
+    const raw = Number(searchParams.get("page") ?? "1");
+    return Number.isNaN(raw) || raw < 1 ? 1 : raw;
+  });
+  const [selectedBookingIds, setSelectedBookingIds] = useState<Set<string>>(new Set());
 
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
@@ -313,6 +366,14 @@ export default function SchedulePage() {
 
   const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
   const defaultDate = useMemo(() => formatYMDInTz(new Date(), orgTimezone), [orgTimezone]);
+  const defaultWeekRange = useMemo(() => {
+    const start = weekStartFromDay(defaultDate, orgTimezone);
+    return { from: start, to: addDaysYMD(start, 6, orgTimezone) };
+  }, [defaultDate, orgTimezone]);
+  const defaultMonthRange = useMemo(
+    () => monthRangeForDay(defaultDate, orgTimezone),
+    [defaultDate, orgTimezone]
+  );
 
   const [selectedDate, setSelectedDate] = useState<string>(searchParams.get("date") ?? defaultDate);
   const [teamFilter, setTeamFilter] = useState<string>(searchParams.get("team_id") ?? "");
@@ -332,6 +393,22 @@ export default function SchedulePage() {
   const scheduleVisible = visibilityReady
     ? isVisible("module.schedule", permissionKeys, featureOverrides, hiddenKeys)
     : true;
+  const isListView = viewMode === "list";
+  const isMonthView = viewMode === "month";
+  const isDayView = viewMode === "day";
+  const isListLikeView = isListView || isMonthView;
+  const showCalendar = viewMode === "week" || isDayView;
+  const viewTitle = isListView
+    ? "Schedule List"
+    : isMonthView
+      ? "Month Schedule"
+      : isDayView
+        ? "Day Schedule"
+        : "Week Schedule";
+  const viewSubtitle = isListLikeView
+    ? "List view with filters, bulk actions, and exports."
+    : "Dispatcher view in the organization timezone.";
+  const navigationStep = isDayView ? 1 : 7;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -406,6 +483,17 @@ export default function SchedulePage() {
     setWorkerFilter(searchParams.get("worker_id") ?? "");
     setStatusFilter(searchParams.get("status") ?? "");
   }, [searchParams]);
+
+  useEffect(() => {
+    const viewParam = searchParams.get("view") ?? "week";
+    setViewMode(viewParam);
+    const rangeDefaults = viewParam === "month" ? defaultMonthRange : defaultWeekRange;
+    setListFrom(searchParams.get("from") ?? rangeDefaults.from);
+    setListTo(searchParams.get("to") ?? rangeDefaults.to);
+    setSearchQuery(searchParams.get("q") ?? "");
+    const rawPage = Number(searchParams.get("page") ?? "1");
+    setCurrentPage(Number.isNaN(rawPage) || rawPage < 1 ? 1 : rawPage);
+  }, [defaultMonthRange, defaultWeekRange, searchParams]);
 
   const updateQuery = useCallback(
     (updates: Record<string, string>) => {
@@ -656,17 +744,25 @@ export default function SchedulePage() {
   useEffect(() => {
     if (!isAuthenticated) return;
     if (!scheduleVisible) return;
+    if (isListLikeView && (!listFrom || !listTo)) return;
     setLoading(true);
     setError(null);
     const weekStart = weekStartFromDay(selectedDate, orgTimezone);
     const weekEnd = addDaysYMD(weekStart, 6, orgTimezone);
+    const rangeFrom = isListLikeView ? listFrom : isDayView ? selectedDate : weekStart;
+    const rangeTo = isListLikeView ? listTo : isDayView ? selectedDate : weekEnd;
     const params = new URLSearchParams({
-      from: weekStart,
-      to: weekEnd,
+      from: rangeFrom,
+      to: rangeTo,
     });
     if (teamFilter) params.set("team_id", teamFilter);
     if (workerFilter) params.set("worker_id", workerFilter);
     if (statusFilter) params.set("status", statusFilter);
+    if (isListLikeView) {
+      params.set("limit", String(LIST_PAGE_SIZE));
+      params.set("offset", String((currentPage - 1) * LIST_PAGE_SIZE));
+      if (searchQuery) params.set("q", searchQuery);
+    }
 
     fetch(`${API_BASE}/v1/admin/schedule?${params.toString()}`, {
       headers: authHeaders,
@@ -690,9 +786,15 @@ export default function SchedulePage() {
   }, [
     authHeaders,
     isAuthenticated,
+    isDayView,
+    isListLikeView,
     orgTimezone,
     refreshToken,
     scheduleVisible,
+    currentPage,
+    listFrom,
+    listTo,
+    searchQuery,
     selectedDate,
     statusFilter,
     teamFilter,
@@ -701,6 +803,7 @@ export default function SchedulePage() {
 
   useEffect(() => {
     if (!isAuthenticated || !scheduleVisible) return;
+    if (!showCalendar) return;
     const weekStartDate = weekStartFromDay(selectedDate, orgTimezone);
     const rangeStart = buildOrgZonedInstant(weekStartDate, 0, orgTimezone);
     const rangeEnd = buildOrgZonedInstant(addDaysYMD(weekStartDate, 7, orgTimezone), 0, orgTimezone);
@@ -725,13 +828,38 @@ export default function SchedulePage() {
       .catch(() => {
         setAvailabilityBlocks([]);
       });
-  }, [authHeaders, isAuthenticated, orgTimezone, refreshToken, scheduleVisible, selectedDate]);
+  }, [
+    authHeaders,
+    isAuthenticated,
+    orgTimezone,
+    refreshToken,
+    scheduleVisible,
+    selectedDate,
+    showCalendar,
+  ]);
+
+  useEffect(() => {
+    if (!schedule) {
+      setSelectedBookingIds(new Set());
+      return;
+    }
+    setSelectedBookingIds((current) => {
+      const activeIds = new Set(schedule.bookings.map((booking) => booking.booking_id));
+      const next = new Set(Array.from(current).filter((id) => activeIds.has(id)));
+      if (next.size === current.size) return current;
+      return next;
+    });
+  }, [schedule, viewMode]);
 
   const weekStart = useMemo(() => weekStartFromDay(selectedDate, orgTimezone), [selectedDate, orgTimezone]);
   const weekDays = useMemo(
     () => WEEKDAY_LABELS.map((_, index) => addDaysYMD(weekStart, index, orgTimezone)),
     [orgTimezone, weekStart]
   );
+  const visibleDays = useMemo(() => {
+    if (isDayView) return [selectedDate];
+    return weekDays;
+  }, [isDayView, selectedDate, weekDays]);
 
   const timeSlots = useMemo(() => {
     const slots: number[] = [];
@@ -747,7 +875,7 @@ export default function SchedulePage() {
   const bookingsByDay = useMemo(() => {
     const mapping = new Map<string, ScheduleBooking[]>();
     if (!schedule) return mapping;
-    for (const day of weekDays) {
+    for (const day of visibleDays) {
       mapping.set(day, []);
     }
     for (const booking of schedule.bookings) {
@@ -759,7 +887,7 @@ export default function SchedulePage() {
       entries.sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
     );
     return mapping;
-  }, [orgTimezone, schedule, weekDays]);
+  }, [orgTimezone, schedule, visibleDays]);
 
   const bookingWarnings = useMemo(() => {
     const mapping = new Map<string, string[]>();
@@ -818,6 +946,18 @@ export default function SchedulePage() {
     });
     return Array.from(set.values()).sort();
   }, [schedule]);
+
+  const listBookings = schedule?.bookings ?? [];
+  const totalBookings = schedule?.total ?? listBookings.length;
+  const totalPages = Math.max(1, Math.ceil(totalBookings / LIST_PAGE_SIZE));
+  const currentRangeStart = totalBookings === 0 ? 0 : (currentPage - 1) * LIST_PAGE_SIZE + 1;
+  const currentRangeEnd = Math.min(totalBookings, currentPage * LIST_PAGE_SIZE);
+  const allVisibleSelected =
+    listBookings.length > 0 && listBookings.every((booking) => selectedBookingIds.has(booking.booking_id));
+  const selectedBookings =
+    selectedBookingIds.size > 0
+      ? listBookings.filter((booking) => selectedBookingIds.has(booking.booking_id))
+      : listBookings;
 
   const handleDrop = useCallback(
     async (event: DragEvent<HTMLDivElement>, day: string) => {
@@ -897,6 +1037,140 @@ export default function SchedulePage() {
     },
     [authHeaders, canAssign, dayMinutes, orgTimezone, schedule, showToast]
   );
+
+  const handleViewChange = useCallback(
+    (nextView: string) => {
+      const updates: Record<string, string> = { view: nextView };
+      if (nextView === "list" || nextView === "month") {
+        const rangeDefaults = nextView === "month" ? defaultMonthRange : defaultWeekRange;
+        updates.from = listFrom || rangeDefaults.from;
+        updates.to = listTo || rangeDefaults.to;
+        updates.page = "1";
+      } else {
+        updates.from = "";
+        updates.to = "";
+        updates.q = "";
+        updates.page = "";
+      }
+      updateQuery(updates);
+    },
+    [defaultMonthRange, defaultWeekRange, listFrom, listTo, updateQuery]
+  );
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedBookingIds((current) => {
+      if (listBookings.length === 0) return current;
+      if (allVisibleSelected) {
+        return new Set();
+      }
+      return new Set(listBookings.map((booking) => booking.booking_id));
+    });
+  }, [allVisibleSelected, listBookings]);
+
+  const toggleBookingSelection = useCallback((bookingId: string) => {
+    setSelectedBookingIds((current) => {
+      const next = new Set(current);
+      if (next.has(bookingId)) {
+        next.delete(bookingId);
+      } else {
+        next.add(bookingId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleExportCsv = useCallback(() => {
+    if (selectedBookings.length === 0) return;
+    const rows = selectedBookings.map((booking) => [
+      formatDateTimeLabel(booking.starts_at, orgTimezone),
+      booking.booking_id,
+      booking.worker_name ?? "",
+      booking.team_name ?? "",
+      booking.client_label ?? "",
+      booking.address ?? "",
+      booking.status,
+      booking.price_cents !== null ? formatCurrencyFromCents(booking.price_cents) : "",
+    ]);
+    const header = [
+      "Date/Time",
+      "Booking ID",
+      "Worker",
+      "Team",
+      "Client",
+      "Address",
+      "Status",
+      "Amount",
+    ];
+    const csv = [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `schedule-list-${listFrom || "range"}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [listFrom, orgTimezone, selectedBookings]);
+
+  const handlePrint = useCallback(() => {
+    if (selectedBookings.length === 0) return;
+    const printable = selectedBookings
+      .map((booking) => {
+        const worker = booking.worker_name ?? "Unassigned";
+        const team = booking.team_name ?? "—";
+        return `<tr>
+          <td>${formatDateTimeLabel(booking.starts_at, orgTimezone)}</td>
+          <td>${booking.booking_id}</td>
+          <td>${worker}<br/><span class="muted">${team}</span></td>
+          <td>${booking.client_label ?? "—"}</td>
+          <td>${booking.address ?? "—"}</td>
+          <td>${booking.status}</td>
+          <td>${booking.price_cents !== null ? formatCurrencyFromCents(booking.price_cents) : "—"}</td>
+        </tr>`;
+      })
+      .join("");
+    const printWindow = window.open("", "schedule-print");
+    if (!printWindow) {
+      showToast("Unable to open print dialog.");
+      return;
+    }
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Schedule List</title>
+          <style>
+            body { font-family: "Inter", sans-serif; padding: 24px; color: #0f172a; }
+            h1 { font-size: 20px; margin-bottom: 12px; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; vertical-align: top; }
+            th { background: #f8fafc; }
+            .muted { color: #64748b; font-size: 11px; }
+          </style>
+        </head>
+        <body>
+          <h1>Schedule List (${listFrom || "range"} → ${listTo || ""})</h1>
+          <table>
+            <thead>
+              <tr>
+                <th>Date/Time</th>
+                <th>Booking ID</th>
+                <th>Worker/Team</th>
+                <th>Client</th>
+                <th>Address</th>
+                <th>Status</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>${printable}</tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  }, [listFrom, listTo, orgTimezone, selectedBookings, showToast]);
 
   const openQuickCreate = useCallback(
     (day: string, minutes: number) => {
@@ -1089,8 +1363,10 @@ export default function SchedulePage() {
       <AdminNav links={navLinks} activeKey="schedule" />
       <header className="schedule-header">
         <div>
-          <h1>Week Schedule</h1>
-          <p className="muted">Dispatcher week view in {orgTimezone}.</p>
+          <h1>{viewTitle}</h1>
+          <p className="muted">
+            {isListLikeView ? viewSubtitle : `${viewSubtitle} (${orgTimezone}).`}
+          </p>
         </div>
         {toast ? (
           <div className={`schedule-toast ${toast.kind}`}>{toast.message}</div>
@@ -1155,42 +1431,98 @@ export default function SchedulePage() {
       <section className="card">
         <div className="card-body">
           <div className="schedule-controls">
-            <div className="schedule-week-controls">
-              <button
-                className="btn btn-secondary"
-                type="button"
-                onClick={() => updateQuery({ date: addDaysYMD(selectedDate, -7, orgTimezone) })}
-              >
-                Previous
-              </button>
-              <button
-                className="btn btn-secondary"
-                type="button"
-                onClick={() => updateQuery({ date: defaultDate })}
-              >
-                Today
-              </button>
-              <button
-                className="btn btn-secondary"
-                type="button"
-                onClick={() => updateQuery({ date: addDaysYMD(selectedDate, 7, orgTimezone) })}
-              >
-                Next
-              </button>
-              <input
-                className="input"
-                type="date"
-                value={selectedDate}
-                onChange={(event) => updateQuery({ date: event.target.value })}
-              />
+            <div className="schedule-view-tabs" role="tablist">
+              {[
+                { key: "day", label: "Day" },
+                { key: "week", label: "Week" },
+                { key: "month", label: "Month" },
+                { key: "list", label: "List" },
+              ].map((view) => (
+                <button
+                  key={view.key}
+                  className={`schedule-view-tab${viewMode === view.key ? " active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === view.key}
+                  onClick={() => handleViewChange(view.key)}
+                >
+                  {view.label}
+                </button>
+              ))}
             </div>
+            {showCalendar ? (
+              <div className="schedule-week-controls">
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => updateQuery({ date: addDaysYMD(selectedDate, -navigationStep, orgTimezone) })}
+                >
+                  Previous
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => updateQuery({ date: defaultDate })}
+                >
+                  Today
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => updateQuery({ date: addDaysYMD(selectedDate, navigationStep, orgTimezone) })}
+                >
+                  Next
+                </button>
+                <input
+                  className="input"
+                  type="date"
+                  value={selectedDate}
+                  onChange={(event) => updateQuery({ date: event.target.value })}
+                />
+              </div>
+            ) : (
+              <div className="schedule-list-controls">
+                <label className="stack">
+                  <span className="muted">From</span>
+                  <input
+                    className="input"
+                    type="date"
+                    value={listFrom}
+                    onChange={(event) => updateQuery({ from: event.target.value, page: "1" })}
+                  />
+                </label>
+                <label className="stack">
+                  <span className="muted">To</span>
+                  <input
+                    className="input"
+                    type="date"
+                    value={listTo}
+                    onChange={(event) => updateQuery({ to: event.target.value, page: "1" })}
+                  />
+                </label>
+                <label className="stack schedule-search">
+                  <span className="muted">Search</span>
+                  <input
+                    className="input"
+                    value={searchQuery}
+                    onChange={(event) => updateQuery({ q: event.target.value, page: "1" })}
+                    placeholder="Booking id, client, address..."
+                  />
+                </label>
+              </div>
+            )}
             <div className="schedule-filters">
               <label className="stack">
                 <span className="muted">Team</span>
                 <select
                   className="input"
                   value={teamFilter}
-                  onChange={(event) => updateQuery({ team_id: event.target.value })}
+                  onChange={(event) =>
+                    updateQuery({
+                      team_id: event.target.value,
+                      page: isListLikeView ? "1" : "",
+                    })
+                  }
                 >
                   <option value="">All teams</option>
                   {teamOptions.map((team) => (
@@ -1205,7 +1537,12 @@ export default function SchedulePage() {
                 <select
                   className="input"
                   value={workerFilter}
-                  onChange={(event) => updateQuery({ worker_id: event.target.value })}
+                  onChange={(event) =>
+                    updateQuery({
+                      worker_id: event.target.value,
+                      page: isListLikeView ? "1" : "",
+                    })
+                  }
                 >
                   <option value="">All workers</option>
                   {workerOptions.map((worker) => (
@@ -1220,7 +1557,12 @@ export default function SchedulePage() {
                 <select
                   className="input"
                   value={statusFilter}
-                  onChange={(event) => updateQuery({ status: event.target.value })}
+                  onChange={(event) =>
+                    updateQuery({
+                      status: event.target.value,
+                      page: isListLikeView ? "1" : "",
+                    })
+                  }
                 >
                   <option value="">All statuses</option>
                   {statusOptions.map((status) => (
@@ -1233,7 +1575,7 @@ export default function SchedulePage() {
             </div>
           </div>
 
-          {!canAssign ? (
+          {showCalendar && !canAssign ? (
             <p className="muted schedule-readonly">Read-only role: drag & drop disabled.</p>
           ) : null}
           {error ? <p className="muted schedule-error">{error}</p> : null}
@@ -1241,98 +1583,225 @@ export default function SchedulePage() {
         </div>
       </section>
 
-      <section className="schedule-grid">
-        <div className="schedule-time-column">
-          <div className="schedule-day-header">Time</div>
-          <div className="schedule-time-body" style={{ height: gridHeight }}>
-            {timeSlots.map((hour, index) => (
-              <div
-                key={hour}
-                className="schedule-time-slot"
-                style={{ height: SLOT_HEIGHT * (index === timeSlots.length - 1 ? 1 : 2) }}
-              >
-                {formatTimeLabel(hour)}
+      {isListLikeView ? (
+        <section className="card schedule-list">
+          <div className="card-body">
+            <div className="schedule-list-toolbar">
+              <div className="schedule-bulk-actions">
+                <label className="schedule-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleSelectAll}
+                  />
+                  <span>Select page</span>
+                </label>
+                <span className="muted">
+                  {selectedBookingIds.size > 0
+                    ? `${selectedBookingIds.size} selected`
+                    : `${listBookings.length} visible`}
+                </span>
               </div>
-            ))}
-          </div>
-        </div>
-
-        {weekDays.map((day) => {
-          const bookings = bookingsByDay.get(day) ?? [];
-          return (
-            <div
-              key={day}
-              className="schedule-day-column"
-              onDragOver={(event) => {
-                if (!canAssign) return;
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "move";
-              }}
-              onDrop={(event) => handleDrop(event, day)}
-            >
-              <div className="schedule-day-header">{formatDayLabel(day, orgTimezone)}</div>
-              <div
-                className="schedule-day-body"
-                style={{ height: gridHeight }}
-                onClick={(event) => handleSlotClick(event, day)}
-              >
-                {bookings.map((booking) => {
-                  const bookingStartMinutes = minutesFromTime(booking.starts_at, orgTimezone);
-                  const bookingEndMinutes = minutesFromTime(booking.ends_at, orgTimezone);
-                  const warnings = bookingWarnings.get(booking.booking_id) ?? [];
-                  const top =
-                    ((bookingStartMinutes - START_HOUR * 60) / SLOT_MINUTES) * SLOT_HEIGHT;
-                  const height =
-                    ((bookingEndMinutes - bookingStartMinutes) / SLOT_MINUTES) * SLOT_HEIGHT;
-                  const clampedTop = Math.max(0, top);
-                  const clampedHeight = Math.max(SLOT_HEIGHT, Math.min(height, gridHeight - clampedTop));
-                  return (
-                    <div
-                      key={booking.booking_id}
-                      className={`schedule-booking${
-                        draggingBookingId === booking.booking_id ? " dragging" : ""
-                      }`}
-                      style={{
-                        top: clampedTop,
-                        height: clampedHeight,
-                      }}
-                      draggable={canAssign}
-                      onDragStart={(event) => {
-                        if (!canAssign) return;
-                        setDraggingBookingId(booking.booking_id);
-                        event.dataTransfer.setData("text/plain", booking.booking_id);
-                        event.dataTransfer.effectAllowed = "move";
-                      }}
-                      onDragEnd={() => setDraggingBookingId(null)}
-                    >
-                      <div className="schedule-booking-title">
-                        {booking.client_label ?? "Booking"}
-                      </div>
-                      <div className="schedule-booking-subtitle">
-                        {booking.service_label ?? booking.status}
-                      </div>
-                      <div className="schedule-booking-meta">
-                        {formatTimeRange(booking.starts_at, booking.ends_at, orgTimezone)}
-                      </div>
-                      <div className="schedule-booking-meta">
-                        {booking.worker_name ? `Worker: ${booking.worker_name}` : "Unassigned"}
-                      </div>
-                      <div className="schedule-booking-meta">
-                        {formatCurrencyFromCents(booking.price_cents)}
-                      </div>
-                      {warnings.map((warning) => (
-                        <div className="schedule-booking-warning" key={warning}>
-                          ⚠️ {warning}
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
+              <div className="schedule-list-actions">
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={handleExportCsv}
+                  disabled={selectedBookings.length === 0}
+                >
+                  Export CSV
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={handlePrint}
+                  disabled={selectedBookings.length === 0}
+                >
+                  Print
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  disabled
+                  title="Bulk reminders are not available for schedule yet."
+                >
+                  Remind
+                </button>
+              </div>
+              <div className="schedule-pagination">
+                <span className="muted">
+                  {totalBookings === 0
+                    ? "No bookings"
+                    : `${currentRangeStart}-${currentRangeEnd} of ${totalBookings}`}
+                </span>
+                <div className="schedule-pagination-actions">
+                  <button
+                    className="btn btn-ghost"
+                    type="button"
+                    disabled={currentPage <= 1}
+                    onClick={() => updateQuery({ page: String(currentPage - 1) })}
+                  >
+                    Previous
+                  </button>
+                  <span className="muted">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    className="btn btn-ghost"
+                    type="button"
+                    disabled={currentPage >= totalPages}
+                    onClick={() => updateQuery({ page: String(currentPage + 1) })}
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             </div>
-          );
-        })}
-      </section>
+
+            {listBookings.length === 0 ? (
+              <p className="muted schedule-empty">No bookings found for this range.</p>
+            ) : (
+              <div className="schedule-list-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th />
+                      <th>Date/Time</th>
+                      <th>Booking ID</th>
+                      <th>Worker/Team</th>
+                      <th>Client</th>
+                      <th>Address</th>
+                      <th>Status</th>
+                      <th>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listBookings.map((booking) => (
+                      <tr key={booking.booking_id}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedBookingIds.has(booking.booking_id)}
+                            onChange={() => toggleBookingSelection(booking.booking_id)}
+                          />
+                        </td>
+                        <td>{formatDateTimeLabel(booking.starts_at, orgTimezone)}</td>
+                        <td>{booking.booking_id}</td>
+                        <td>
+                          <div>{booking.worker_name ?? "Unassigned"}</div>
+                          <div className="muted">{booking.team_name ?? "—"}</div>
+                        </td>
+                        <td>{booking.client_label ?? "—"}</td>
+                        <td>{booking.address ?? "—"}</td>
+                        <td>{booking.status}</td>
+                        <td>{formatCurrencyFromCents(booking.price_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {showCalendar ? (
+        <section className={`schedule-grid${isDayView ? " day" : ""}`}>
+          <div className="schedule-time-column">
+            <div className="schedule-day-header">Time</div>
+            <div className="schedule-time-body" style={{ height: gridHeight }}>
+              {timeSlots.map((hour, index) => (
+                <div
+                  key={hour}
+                  className="schedule-time-slot"
+                  style={{ height: SLOT_HEIGHT * (index === timeSlots.length - 1 ? 1 : 2) }}
+                >
+                  {formatTimeLabel(hour)}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {visibleDays.map((day) => {
+            const bookings = bookingsByDay.get(day) ?? [];
+            return (
+              <div
+                key={day}
+                className="schedule-day-column"
+                onDragOver={(event) => {
+                  if (!canAssign) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => handleDrop(event, day)}
+              >
+                <div className="schedule-day-header">{formatDayLabel(day, orgTimezone)}</div>
+                <div
+                  className="schedule-day-body"
+                  style={{ height: gridHeight }}
+                  onClick={(event) => handleSlotClick(event, day)}
+                >
+                  {bookings.map((booking) => {
+                    const bookingStartMinutes = minutesFromTime(booking.starts_at, orgTimezone);
+                    const bookingEndMinutes = minutesFromTime(booking.ends_at, orgTimezone);
+                    const warnings = bookingWarnings.get(booking.booking_id) ?? [];
+                    const top =
+                      ((bookingStartMinutes - START_HOUR * 60) / SLOT_MINUTES) * SLOT_HEIGHT;
+                    const height =
+                      ((bookingEndMinutes - bookingStartMinutes) / SLOT_MINUTES) * SLOT_HEIGHT;
+                    const clampedTop = Math.max(0, top);
+                    const clampedHeight = Math.max(
+                      SLOT_HEIGHT,
+                      Math.min(height, gridHeight - clampedTop)
+                    );
+                    return (
+                      <div
+                        key={booking.booking_id}
+                        className={`schedule-booking${
+                          draggingBookingId === booking.booking_id ? " dragging" : ""
+                        }`}
+                        style={{
+                          top: clampedTop,
+                          height: clampedHeight,
+                        }}
+                        draggable={canAssign}
+                        onDragStart={(event) => {
+                          if (!canAssign) return;
+                          setDraggingBookingId(booking.booking_id);
+                          event.dataTransfer.setData("text/plain", booking.booking_id);
+                          event.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => setDraggingBookingId(null)}
+                      >
+                        <div className="schedule-booking-title">
+                          {booking.client_label ?? "Booking"}
+                        </div>
+                        <div className="schedule-booking-subtitle">
+                          {booking.service_label ?? booking.status}
+                        </div>
+                        <div className="schedule-booking-meta">
+                          {formatTimeRange(booking.starts_at, booking.ends_at, orgTimezone)}
+                        </div>
+                        <div className="schedule-booking-meta">
+                          {booking.worker_name ? `Worker: ${booking.worker_name}` : "Unassigned"}
+                        </div>
+                        <div className="schedule-booking-meta">
+                          {formatCurrencyFromCents(booking.price_cents)}
+                        </div>
+                        {warnings.map((warning) => (
+                          <div className="schedule-booking-warning" key={warning}>
+                            ⚠️ {warning}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      ) : null}
 
       {quickCreateOpen ? (
         <div className="schedule-modal" role="dialog" aria-modal="true">

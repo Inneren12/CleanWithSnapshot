@@ -130,7 +130,12 @@ module.api                    # API access
 
 #### Schedule Week/Day View
 - Frontend: `web/app/admin/schedule/page.tsx`
-- API: `backend/app/api/routes_admin.py::/v1/admin/ui/schedule`
+- API: `backend/app/api/routes_admin.py::/v1/admin/schedule`
+
+#### Schedule List View (table + bulk actions)
+- Frontend: `web/app/admin/schedule/SchedulePageClient.tsx` (list mode UI, filters, bulk export/print)
+- Styles: `web/app/styles/components.css` (schedule list/table styles)
+- API: `backend/app/api/routes_admin.py::/v1/admin/schedule` (date range + paging + query params)
 
 #### Quick Create Booking
 - Frontend: `web/app/admin/schedule/` (quick create form)

@@ -238,7 +238,7 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
-| GET | `/v1/admin/ui/schedule` | `bookings.view` | Schedule view |
+| GET | `/v1/admin/schedule` | `bookings.view` | Schedule view |
 | GET | `/v1/admin/ui/bookings` | `bookings.view` | List bookings |
 | GET | `/v1/admin/ui/bookings/{id}` | `bookings.view` | Booking detail |
 | POST | `/v1/admin/ui/bookings/create` | `bookings.edit` | Create booking |
@@ -258,6 +258,21 @@ curl -X POST https://api.panidobro.com/v1/admin/ui/bookings/create \
   -d "starts_at=2026-01-20T10:00" \
   -d "duration_minutes=120"
 ```
+
+**Schedule list query params (`GET /v1/admin/schedule`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `from` | `YYYY-MM-DD` | Start date (org timezone) |
+| `to` | `YYYY-MM-DD` | End date (org timezone) |
+| `team_id` | `int` | Filter by team |
+| `worker_id` | `int` | Filter by worker |
+| `status` | `string` | Filter by status |
+| `q` | `string` | Search booking id, client, or address |
+| `limit` | `int` | Page size for list view (max 500) |
+| `offset` | `int` | Offset for list view paging |
+
+**List response fields:** `total`, `limit`, `offset`, `query` (in addition to `from_date`, `to_date`, `bookings`).
 
 ---
 
