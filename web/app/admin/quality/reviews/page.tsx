@@ -43,6 +43,19 @@ type QualityReviewListResponse = {
   templates: QualityReviewTemplate[];
 };
 
+type RatingDistributionEntry = {
+  stars: number;
+  count: number;
+};
+
+type RatingDistributionResponse = {
+  from_date: string;
+  to_date: string;
+  total: number;
+  average_rating: number | null;
+  distribution: RatingDistributionEntry[];
+};
+
 const STAR_OPTIONS = [
   { value: "", label: "All stars" },
   { value: "5", label: "5 stars" },
@@ -69,6 +82,15 @@ function formatDateTime(value: string | null): string {
   });
 }
 
+function formatDate(value: string | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export default function QualityReviewsPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -82,6 +104,9 @@ export default function QualityReviewsPage() {
   const [pageSize, setPageSize] = useState(25);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ratingDistribution, setRatingDistribution] = useState<RatingDistributionResponse | null>(null);
+  const [distributionLoading, setDistributionLoading] = useState(false);
+  const [distributionError, setDistributionError] = useState<string | null>(null);
 
   const [stars, setStars] = useState("");
   const [fromDate, setFromDate] = useState("");
@@ -227,6 +252,37 @@ export default function QualityReviewsPage() {
     }
   }, [authHeaders, clientId, fromDate, hasIssue, page, password, stars, toDate, username, workerId]);
 
+  const loadDistribution = useCallback(async () => {
+    if (!username || !password) return;
+    setDistributionLoading(true);
+    setDistributionError(null);
+    const params = new URLSearchParams();
+    if (fromDate) params.set("from", fromDate);
+    if (toDate) params.set("to", toDate);
+    try {
+      const response = await fetch(
+        `${API_BASE}/v1/admin/quality/ratings/distribution${
+          params.toString() ? `?${params.toString()}` : ""
+        }`,
+        {
+          headers: authHeaders,
+          cache: "no-store",
+        }
+      );
+      if (response.ok) {
+        const data = (await response.json()) as RatingDistributionResponse;
+        setRatingDistribution(data);
+      } else {
+        setDistributionError("Unable to load rating distribution.");
+      }
+    } catch (err) {
+      console.error("Failed to load rating distribution", err);
+      setDistributionError("Network error");
+    } finally {
+      setDistributionLoading(false);
+    }
+  }, [authHeaders, fromDate, password, toDate, username]);
+
   useEffect(() => {
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
     const storedPassword = window.localStorage.getItem(STORAGE_PASSWORD_KEY);
@@ -249,6 +305,12 @@ export default function QualityReviewsPage() {
   }, [hasViewPermission, loadReviews]);
 
   useEffect(() => {
+    if (hasViewPermission) {
+      void loadDistribution();
+    }
+  }, [hasViewPermission, loadDistribution]);
+
+  useEffect(() => {
     setPage(1);
   }, [stars, fromDate, toDate, workerId, clientId, hasIssue]);
 
@@ -261,6 +323,7 @@ export default function QualityReviewsPage() {
     void loadFeatureConfig();
     void loadUiPrefs();
     void loadReviews();
+    void loadDistribution();
   };
 
   const handleClearCredentials = () => {
@@ -357,6 +420,11 @@ export default function QualityReviewsPage() {
       </div>
     );
   }
+
+  const distributionMax = Math.max(
+    1,
+    ...(ratingDistribution?.distribution.map((entry) => entry.count) ?? [1])
+  );
 
   return (
     <div className="admin-page">
@@ -476,6 +544,64 @@ export default function QualityReviewsPage() {
             </select>
           </div>
         </div>
+      </section>
+
+      <section className="admin-card">
+        <header className="admin-section" style={{ marginBottom: "16px" }}>
+          <div>
+            <h2>Rating distribution</h2>
+            <p className="muted">
+              {distributionLoading
+                ? "Loading ratings…"
+                : ratingDistribution
+                ? `${ratingDistribution.total} reviews · ${formatDate(ratingDistribution.from_date)} - ${formatDate(
+                    ratingDistribution.to_date
+                  )}`
+                : "No rating data yet."}
+            </p>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div className="muted small">Average rating</div>
+            <div style={{ fontSize: "20px", fontWeight: 600 }}>
+              {ratingDistribution?.average_rating !== null && ratingDistribution?.average_rating !== undefined
+                ? ratingDistribution.average_rating.toFixed(2)
+                : "—"}
+            </div>
+          </div>
+        </header>
+
+        {distributionError ? <p className="error">{distributionError}</p> : null}
+
+        {ratingDistribution ? (
+          <div style={{ display: "grid", gap: "10px" }}>
+            {ratingDistribution.distribution.map((entry) => (
+              <div key={entry.stars} style={{ display: "grid", gap: "6px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "14px" }}>
+                  <span>{entry.stars}★</span>
+                  <span className="muted">{entry.count}</span>
+                </div>
+                <div
+                  style={{
+                    background: "var(--border-color)",
+                    borderRadius: "999px",
+                    height: "8px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${(entry.count / distributionMax) * 100}%`,
+                      background: "var(--primary-color)",
+                      height: "100%",
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">No ratings found for the selected period.</p>
+        )}
       </section>
 
       <section className="admin-card">

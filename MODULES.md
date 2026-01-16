@@ -336,6 +336,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/{id}/respond` (response log + SLA timestamp)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/triage` (Critical/Medium/Low buckets)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/reviews` (client reviews list + filters)
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/ratings/distribution` (monthly rating distribution)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/reviews/{id}/reply` (review reply logging)
 - `backend/app/api/routes_checklists.py` - `/v1/checklists/*` (job checklists)
 

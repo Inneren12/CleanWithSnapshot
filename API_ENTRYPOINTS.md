@@ -339,6 +339,7 @@ Query parameters:
 | PATCH | `/v1/admin/quality/issues/{id}` | `quality.manage` | Update status, resolution, or assignee (updates `resolved_at` on close/resolution) |
 | POST | `/v1/admin/quality/issues/{id}/respond` | `quality.manage` | Log outbound response or note (sets `first_response_at` on first response) |
 | GET | `/v1/admin/quality/reviews` | `quality.view` | List client reviews with filters (`stars`, `from`, `to`, `worker_id`, `client_id`, `has_issue`, `page`) |
+| GET | `/v1/admin/quality/ratings/distribution` | `quality.view` | Rating distribution for a period (`from`, `to`, defaults to current month) |
 | POST | `/v1/admin/quality/reviews/{id}/reply` | `quality.manage` | Log reply to a review using a template or custom message |
 
 **Review templates:** Stored in `backend/app/domain/quality/service.py` (`REVIEW_REPLY_TEMPLATES`) and returned with the reviews list response for UI selection.

@@ -1,4 +1,5 @@
 import asyncio
+import calendar
 import csv
 import io
 import html
@@ -2478,6 +2479,28 @@ def _serialize_quality_review_item(
     )
 
 
+def _resolve_quality_distribution_range(
+    from_date: date | None,
+    to_date: date | None,
+    org_timezone: str,
+) -> tuple[date, date]:
+    if from_date and to_date:
+        return from_date, to_date
+    if from_date and not to_date:
+        return from_date, from_date
+    if to_date and not from_date:
+        return to_date, to_date
+    try:
+        org_tz = ZoneInfo(org_timezone)
+    except Exception:  # noqa: BLE001
+        org_tz = ZoneInfo(org_settings_service.DEFAULT_TIMEZONE)
+    today_local = datetime.now(org_tz).date()
+    month_start = date(today_local.year, today_local.month, 1)
+    last_day = calendar.monthrange(today_local.year, today_local.month)[1]
+    month_end = date(today_local.year, today_local.month, last_day)
+    return month_start, month_end
+
+
 @router.get("/v1/admin/quality/issues", response_model=quality_schemas.QualityIssueListResponse)
 async def list_quality_issues(
     request: Request,
@@ -2545,6 +2568,45 @@ async def list_quality_reviews(
         page=page,
         page_size=25,
         templates=templates,
+    )
+
+
+@router.get(
+    "/v1/admin/quality/ratings/distribution",
+    response_model=quality_schemas.RatingDistributionResponse,
+)
+async def get_quality_rating_distribution(
+    request: Request,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.RatingDistributionResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
+    resolved_from, resolved_to = _resolve_quality_distribution_range(
+        from_date,
+        to_date,
+        org_timezone,
+    )
+    distribution_rows, total, average = await quality_service.get_rating_distribution(
+        session,
+        org_id=org_id,
+        from_date=resolved_from,
+        to_date=resolved_to,
+    )
+    counts = {stars: count for stars, count in distribution_rows}
+    distribution = [
+        quality_schemas.RatingDistributionEntry(stars=stars, count=counts.get(stars, 0))
+        for stars in range(5, 0, -1)
+    ]
+    return quality_schemas.RatingDistributionResponse(
+        from_date=resolved_from,
+        to_date=resolved_to,
+        total=total,
+        average_rating=average,
+        distribution=distribution,
     )
 
 

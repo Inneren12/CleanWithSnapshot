@@ -261,6 +261,42 @@ async def list_quality_reviews(
     )
 
 
+async def get_rating_distribution(
+    session: AsyncSession,
+    *,
+    org_id,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> tuple[list[tuple[int, int]], int, float | None]:
+    filters: list[sa.ColumnElement[bool]] = [ClientFeedback.org_id == org_id]
+    if from_date:
+        filters.append(ClientFeedback.created_at >= _date_start(from_date))
+    if to_date:
+        filters.append(ClientFeedback.created_at <= _date_end(to_date))
+
+    summary_stmt = (
+        sa.select(
+            sa.func.count(ClientFeedback.feedback_id),
+            sa.func.avg(ClientFeedback.rating),
+        )
+        .select_from(ClientFeedback)
+        .where(*filters)
+    )
+    total_count, avg_rating = (await session.execute(summary_stmt)).one()
+    total = int(total_count or 0)
+    average = float(avg_rating) if avg_rating is not None else None
+
+    distribution_stmt = (
+        sa.select(ClientFeedback.rating, sa.func.count(ClientFeedback.feedback_id))
+        .select_from(ClientFeedback)
+        .where(*filters)
+        .group_by(ClientFeedback.rating)
+    )
+    rows = (await session.execute(distribution_stmt)).all()
+    distribution = [(int(rating), int(count)) for rating, count in rows if rating is not None]
+    return distribution, total, average
+
+
 async def create_review_reply(
     session: AsyncSession,
     *,
