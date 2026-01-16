@@ -167,6 +167,7 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 |--------|------|------------|---------|
 | GET | `/v1/admin/ui/dashboard` | `core.view` | Dashboard KPIs |
 | GET | `/v1/admin/dashboard/ops` | `core.view` + `module.dashboard` | Ops dashboard aggregates (org TZ windows) |
+| GET | `/v1/admin/activity` | `core.view` + `module.dashboard` | Live activity feed (polling) |
 
 #### Ops Dashboard Response (critical alerts)
 
@@ -253,6 +254,37 @@ If org settings branding includes `weekly_revenue_goal_cents` (or `weekly_revenu
       "remaining_cents": 16000
     }
   }
+}
+```
+
+#### Activity Feed Response
+
+`GET /v1/admin/activity` returns the latest cross-module events for the dashboard activity feed.
+Query parameters:
+- `since` (optional ISO 8601 timestamp) filters events to those at/after the timestamp.
+- `limit` (optional, default 20, max 100) limits returned items.
+
+```json
+{
+  "as_of": "2026-01-20T15:04:05Z",
+  "items": [
+    {
+      "event_id": "booking_created:booking-123",
+      "kind": "booking_created",
+      "title": "New booking created",
+      "description": "Booking booking-123 · Status PENDING",
+      "timestamp": "2026-01-20T14:58:12Z",
+      "entity_ref": {
+        "kind": "booking",
+        "id": "booking-123",
+        "status": "PENDING"
+      },
+      "action": {
+        "label": "Open schedule",
+        "href": "/admin/schedule?date=2026-01-21"
+      }
+    }
+  ]
 }
 ```
 

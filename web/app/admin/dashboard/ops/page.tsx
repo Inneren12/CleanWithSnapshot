@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
 import { type AdminProfile, type FeatureConfigResponse, type UiPrefsResponse, isVisible } from "../../lib/featureVisibility";
@@ -96,6 +96,30 @@ type OpsDashboardResponse = {
   revenue_week: OpsDashboardRevenueWeek;
 };
 
+type ActivityFeedAction = {
+  label: string;
+  href: string;
+};
+
+type ActivityFeedItem = {
+  event_id: string;
+  kind: string;
+  title: string;
+  description?: string | null;
+  timestamp: string;
+  entity_ref?: Record<string, unknown> | null;
+  action?: ActivityFeedAction | null;
+};
+
+type ActivityFeedResponse = {
+  as_of: string;
+  items: ActivityFeedItem[];
+};
+
+const ACTIVITY_POLL_INTERVAL_MS = 45000;
+const ACTIVITY_DEFAULT_LIMIT = 6;
+const ACTIVITY_EXPANDED_LIMIT = 50;
+
 function formatDateTime(value: string, timeZone: string) {
   const dt = new Date(value);
   return new Intl.DateTimeFormat("en-CA", {
@@ -144,6 +168,11 @@ export default function OpsDashboardPage() {
   const [opsLoading, setOpsLoading] = useState(false);
   const [opsError, setOpsError] = useState<string | null>(null);
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
+  const [activityItems, setActivityItems] = useState<ActivityFeedItem[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [activityExpanded, setActivityExpanded] = useState(false);
+  const latestActivityTimestampRef = useRef<string | null>(null);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -275,6 +304,62 @@ export default function OpsDashboardPage() {
     }
   }, [authHeaders, password, profile, username]);
 
+  const mergeActivityItems = useCallback((existing: ActivityFeedItem[], incoming: ActivityFeedItem[]) => {
+    if (incoming.length === 0) return existing;
+    const merged = new Map<string, ActivityFeedItem>();
+    [...incoming, ...existing].forEach((item) => {
+      merged.set(item.event_id, item);
+    });
+    return Array.from(merged.values()).sort(
+      (left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
+    );
+  }, []);
+
+  const loadActivityFeed = useCallback(
+    async (mode: "initial" | "poll" = "initial") => {
+      if (!username || !password || !profile) return;
+      if (mode === "initial") {
+        setActivityLoading(true);
+      }
+      setActivityError(null);
+      try {
+        const params = new URLSearchParams();
+        if (mode === "poll" && latestActivityTimestampRef.current) {
+          params.set("since", latestActivityTimestampRef.current);
+        }
+        params.set(
+          "limit",
+          String(activityExpanded ? ACTIVITY_EXPANDED_LIMIT : Math.max(ACTIVITY_DEFAULT_LIMIT, 20))
+        );
+        const response = await fetch(`${API_BASE}/v1/admin/activity?${params.toString()}`, {
+          headers: authHeaders,
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          setActivityError("Failed to load activity feed");
+          return;
+        }
+        const data = (await response.json()) as ActivityFeedResponse;
+        if (mode === "poll") {
+          setActivityItems((previous) => mergeActivityItems(previous, data.items));
+        } else {
+          setActivityItems(data.items);
+        }
+        if (data.items.length > 0) {
+          latestActivityTimestampRef.current = data.items[0].timestamp;
+        }
+      } catch (error) {
+        console.error("Failed to load activity feed", error);
+        setActivityError("Failed to load activity feed");
+      } finally {
+        if (mode === "initial") {
+          setActivityLoading(false);
+        }
+      }
+    },
+    [activityExpanded, authHeaders, mergeActivityItems, password, profile, username]
+  );
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
@@ -293,6 +378,19 @@ export default function OpsDashboardPage() {
     if (!profile || (visibilityReady && !dashboardVisible)) return;
     void loadOpsDashboard();
   }, [dashboardVisible, loadOpsDashboard, profile, visibilityReady]);
+
+  useEffect(() => {
+    if (!profile || (visibilityReady && !dashboardVisible)) return;
+    void loadActivityFeed("initial");
+  }, [dashboardVisible, loadActivityFeed, profile, visibilityReady]);
+
+  useEffect(() => {
+    if (!profile || (visibilityReady && !dashboardVisible)) return;
+    const interval = window.setInterval(() => {
+      void loadActivityFeed("poll");
+    }, ACTIVITY_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [dashboardVisible, loadActivityFeed, profile, visibilityReady]);
 
   const handleSaveCredentials = () => {
     if (typeof window !== "undefined") {
@@ -317,6 +415,10 @@ export default function OpsDashboardPage() {
     setUiPrefs(null);
     setOpsData(null);
     setOpsError(null);
+    setActivityItems([]);
+    setActivityError(null);
+    setActivityLoading(false);
+    latestActivityTimestampRef.current = null;
     setStatusMessage("Cleared credentials");
   };
 
@@ -328,6 +430,9 @@ export default function OpsDashboardPage() {
   const asOfLabel = opsData
     ? `As of ${formatDateTime(opsData.as_of, opsData.org_timezone)} (${opsData.org_timezone})`
     : "Awaiting ops data.";
+  const activityVisibleItems = activityExpanded
+    ? activityItems
+    : activityItems.slice(0, ACTIVITY_DEFAULT_LIMIT);
   const visibleAlerts = useMemo(
     () => opsData?.critical_alerts.filter((alert) => !dismissedAlerts.has(alert.type)) ?? [],
     [dismissedAlerts, opsData?.critical_alerts]
@@ -512,7 +617,9 @@ export default function OpsDashboardPage() {
         </div>
       )}
 
-      <div className="admin-grid">
+      <div className="ops-dashboard-layout">
+        <div className="ops-dashboard-main">
+          <div className="admin-grid">
         <section className="admin-card admin-section">
           <div className="section-heading">
             <h2>Critical Alerts</h2>
@@ -668,6 +775,49 @@ export default function OpsDashboardPage() {
             })}
           </div>
         </section>
+          </div>
+        </div>
+        <aside className="ops-dashboard-activity">
+          <section className="admin-card admin-section activity-feed">
+            <div className="section-heading activity-feed-header">
+              <div>
+                <h2>Live activity</h2>
+                <p className="muted">Auto-refreshes every 45s.</p>
+              </div>
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={() => setActivityExpanded((prev) => !prev)}
+              >
+                {activityExpanded ? "Show less" : "Show all"}
+              </button>
+            </div>
+            {activityError ? <p className="alert alert-warning">{activityError}</p> : null}
+            {activityLoading ? <p className="muted">Loading activity…</p> : null}
+            {activityVisibleItems.length === 0 && !activityLoading ? (
+              <p className="muted">No recent activity yet.</p>
+            ) : (
+              <div className="activity-feed-list">
+                {activityVisibleItems.map((item) => (
+                  <div key={item.event_id} className="activity-feed-item">
+                    <div className="activity-feed-item-heading">
+                      <strong>{item.title}</strong>
+                      <span className="muted">{formatDateTime(item.timestamp, timezoneLabel)}</span>
+                    </div>
+                    {item.description ? <div className="muted">{item.description}</div> : null}
+                    {item.action ? (
+                      <div className="admin-actions">
+                        <a className="btn btn-ghost" href={item.action.href}>
+                          {item.action.label}
+                        </a>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </aside>
       </div>
     </div>
   );
