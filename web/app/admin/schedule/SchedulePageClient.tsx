@@ -495,6 +495,7 @@ export default function SchedulePage() {
     const candidates = [
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
+      { key: "recurring", label: "Recurring", href: "/admin/schedule/recurring", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "org-settings", label: "Org Settings", href: "/admin/settings/org", featureKey: "module.settings" },
       {

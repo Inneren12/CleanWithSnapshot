@@ -101,15 +101,18 @@ module.api                    # API access
 
 **Key Pages:**
 - `web/app/admin/schedule/page.tsx` - Schedule view
-- `web/app/admin/SchedulePageClient.tsx` - Client-side calendar
+- `web/app/admin/schedule/SchedulePageClient.tsx` - Client-side calendar
+- `web/app/admin/schedule/recurring/page.tsx` - Recurring series management
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - `/v1/admin/ui/schedule` (GET)
 - `backend/app/api/routes_bookings.py` - `/v1/bookings/*` (availability, slot search)
+- `backend/app/api/routes_admin.py` - `/v1/admin/recurring-series` (series CRUD + generate)
 
 **Key Services:**
 - `backend/app/domain/bookings/service.py` - Booking CRUD
-- `backend/app/domain/scheduling/availability/service.py` - Availability blocking
+- `backend/app/domain/availability/service.py` - Availability blocking
+- `backend/app/domain/recurring_series/service.py` - Recurring series scheduling and generation
 
 **Key Tables:**
 - `bookings` - Job records
