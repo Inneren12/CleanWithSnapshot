@@ -329,6 +329,39 @@ Query parameters:
 }
 ```
 
+### Quality
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/quality/issues` | `quality.view` | List quality issues with filters (`status`, `severity`, `from`, `to`, `worker_id`, `client_id`) |
+| GET | `/v1/admin/quality/issues/triage` | `quality.view` | Triage buckets (Critical/Medium/Low) + top items |
+
+**Triage response shape (example):**
+```json
+{
+  "as_of": "2026-01-20T15:04:05Z",
+  "buckets": [
+    {
+      "severity": "critical",
+      "total": 2,
+      "items": [
+        {
+          "id": "7b0a1e2e-4e59-4b2e-9b3d-8c2d9c19f1c1",
+          "summary": "Client reported missed area",
+          "status": "open",
+          "severity": "critical",
+          "rating": 1,
+          "created_at": "2026-01-20T14:58:12Z",
+          "booking_id": "booking-123",
+          "worker_id": 12,
+          "client_id": "client-456"
+        }
+      ]
+    }
+  ]
+}
+```
+
 ### Teams
 
 | Method | Path | Permission | Purpose |

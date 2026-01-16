@@ -71,6 +71,18 @@ PERMISSION_CATALOG: list[PermissionDefinition] = [
         group="contacts",
     ),
     PermissionDefinition(
+        key="quality.view",
+        label="View quality issues",
+        description="Read quality issue triage and issue details.",
+        group="quality",
+    ),
+    PermissionDefinition(
+        key="quality.manage",
+        label="Manage quality issues",
+        description="Resolve and manage quality issues.",
+        group="quality",
+    ),
+    PermissionDefinition(
         key="invoices.view",
         label="View invoices",
         description="Read invoice data and billing history.",
