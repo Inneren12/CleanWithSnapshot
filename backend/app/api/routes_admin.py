@@ -2367,6 +2367,29 @@ def _serialize_quality_client(
     )
 
 
+def _serialize_quality_review_item(
+    feedback: ClientFeedback,
+    booking: Booking,
+    client: ClientUser,
+    worker: Worker | None,
+    has_issue: bool,
+) -> quality_schemas.QualityReviewItem:
+    return quality_schemas.QualityReviewItem(
+        feedback_id=feedback.feedback_id,
+        booking_id=booking.booking_id,
+        booking_starts_at=booking.starts_at,
+        worker_id=worker.worker_id if worker else None,
+        worker_name=worker.name if worker else None,
+        client_id=client.client_id,
+        client_name=client.name,
+        client_email=client.email,
+        rating=feedback.rating,
+        comment=feedback.comment,
+        created_at=feedback.created_at,
+        has_issue=has_issue,
+    )
+
+
 @router.get("/v1/admin/quality/issues", response_model=quality_schemas.QualityIssueListResponse)
 async def list_quality_issues(
     request: Request,
@@ -2392,6 +2415,49 @@ async def list_quality_issues(
     )
     items = [_serialize_quality_issue(issue) for issue in issues]
     return quality_schemas.QualityIssueListResponse(items=items, total=len(items))
+
+
+@router.get("/v1/admin/quality/reviews", response_model=quality_schemas.QualityReviewListResponse)
+async def list_quality_reviews(
+    request: Request,
+    stars: int | None = Query(default=None, ge=1, le=5),
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    worker_id: int | None = None,
+    client_id: str | None = None,
+    has_issue: bool | None = None,
+    page: int = Query(1, ge=1),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.QualityReviewListResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    items, total = await quality_service.list_quality_reviews(
+        session,
+        org_id=org_id,
+        stars=stars,
+        from_date=from_date,
+        to_date=to_date,
+        worker_id=worker_id,
+        client_id=client_id,
+        has_issue=has_issue,
+        page=page,
+        page_size=25,
+    )
+    serialized = [
+        _serialize_quality_review_item(feedback, booking, client, worker, has_issue_flag)
+        for feedback, booking, client, worker, has_issue_flag in items
+    ]
+    templates = [
+        quality_schemas.QualityReviewTemplate(**template)
+        for template in quality_service.list_review_templates()
+    ]
+    return quality_schemas.QualityReviewListResponse(
+        items=serialized,
+        total=total,
+        page=page,
+        page_size=25,
+        templates=templates,
+    )
 
 
 @router.get(
@@ -2549,6 +2615,82 @@ async def respond_quality_issue(
     await session.commit()
     await session.refresh(response)
     return _serialize_quality_response(response)
+
+
+@router.post(
+    "/v1/admin/quality/reviews/{feedback_id}/reply",
+    response_model=quality_schemas.QualityReviewReplyResponse,
+)
+async def reply_quality_review(
+    request: Request,
+    feedback_id: int,
+    payload: quality_schemas.QualityReviewReplyRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_permission_keys("quality.manage")),
+) -> quality_schemas.QualityReviewReplyResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    feedback = await session.scalar(
+        sa.select(ClientFeedback).where(
+            ClientFeedback.org_id == org_id,
+            ClientFeedback.feedback_id == feedback_id,
+        )
+    )
+    if not feedback:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Review Not Found",
+            detail="Review does not exist or is not accessible.",
+        )
+    template_key = payload.template_key
+    message = (payload.message or "").strip()
+    if template_key:
+        templates = {template["key"]: template for template in quality_service.list_review_templates()}
+        template = templates.get(template_key)
+        if template is None:
+            return problem_details(
+                request=request,
+                status=400,
+                title="Invalid Template",
+                detail="Template key is not recognized.",
+            )
+        if not message:
+            message = template["body"]
+    if not message:
+        return problem_details(
+            request=request,
+            status=400,
+            title="Missing Reply Message",
+            detail="Reply message is required.",
+        )
+
+    reply = await quality_service.create_review_reply(
+        session,
+        org_id=org_id,
+        feedback_id=feedback.feedback_id,
+        template_key=template_key,
+        message=message,
+        created_by=identity.username,
+    )
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        org_id=org_id,
+        action="QUALITY_REVIEW_REPLY",
+        resource_type="client_feedback",
+        resource_id=str(feedback.feedback_id),
+        before=None,
+        after={"template_key": template_key, "message": message},
+    )
+    await session.commit()
+    return quality_schemas.QualityReviewReplyResponse(
+        reply_id=reply.reply_id,
+        feedback_id=reply.feedback_id,
+        template_key=reply.template_key,
+        message=reply.message,
+        created_by=reply.created_by,
+        created_at=reply.created_at,
+    )
 
 
 @router.get("/v1/admin/schedule", response_model=ScheduleResponse)

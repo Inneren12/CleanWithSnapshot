@@ -105,3 +105,31 @@ class QualityIssueResponse(Base):
     )
 
     issue = relationship("QualityIssue", back_populates="responses")
+
+
+class QualityReviewReply(Base):
+    __tablename__ = "quality_review_replies"
+    __table_args__ = (
+        Index("ix_quality_review_replies_org_id", "org_id"),
+        Index("ix_quality_review_replies_feedback_id", "feedback_id"),
+    )
+
+    reply_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE, primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    feedback_id: Mapped[int] = mapped_column(
+        ForeignKey("client_feedback.feedback_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_key: Mapped[str | None] = mapped_column(String(64))
+    message: Mapped[str] = mapped_column(Text(), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
