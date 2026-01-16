@@ -3,7 +3,9 @@ import datetime as dt
 
 import pytest
 
+from app.api import routes_admin
 from app.domain.bookings.db_models import Booking, BookingWorker
+from app.domain.bookings import service as booking_service
 from app.domain.bookings.service import ensure_default_team
 from app.domain.workers.db_models import Worker
 from app.settings import settings
@@ -124,3 +126,56 @@ async def test_admin_workers_list_filters(client, async_session_maker):
     ru_headers = {**headers, "accept-language": "ru"}
     translated_resp = client.get("/v1/admin/ui/workers", headers=ru_headers)
     assert "Детали" in translated_resp.text
+
+
+@pytest.mark.anyio
+async def test_worker_availability_respects_buffer(async_session_maker, monkeypatch):
+    buffer_minutes = booking_service.BUFFER_MINUTES
+    booking_end = dt.datetime(2024, 5, 6, 12, 0, tzinfo=dt.timezone.utc)
+    booking_start = booking_end - dt.timedelta(minutes=60)
+
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        worker = Worker(
+            name="Buffer Worker",
+            phone="+1 555-6000",
+            team_id=team.team_id,
+            is_active=True,
+        )
+        session.add(worker)
+        await session.flush()
+        booking = Booking(
+            team_id=team.team_id,
+            starts_at=booking_start,
+            duration_minutes=60,
+            status="CONFIRMED",
+            assigned_worker_id=worker.worker_id,
+        )
+        session.add(booking)
+        await session.commit()
+
+        class FixedDateTime(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                return booking_end + dt.timedelta(minutes=1)
+
+        monkeypatch.setattr(routes_admin, "datetime", FixedDateTime)
+        busy_map = await routes_admin._worker_busy_until_map(
+            session,
+            org_id=settings.default_org_id,
+            worker_ids=[worker.worker_id],
+        )
+        assert worker.worker_id in busy_map
+
+        class FixedDateTimeAfter(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                return booking_end + dt.timedelta(minutes=buffer_minutes + 1)
+
+        monkeypatch.setattr(routes_admin, "datetime", FixedDateTimeAfter)
+        free_map = await routes_admin._worker_busy_until_map(
+            session,
+            org_id=settings.default_org_id,
+            worker_ids=[worker.worker_id],
+        )
+        assert worker.worker_id not in free_map

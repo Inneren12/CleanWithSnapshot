@@ -120,8 +120,6 @@ from app.domain.pricing_settings.db_models import ServiceType
 from app.domain.notifications.db_models import EmailFailure
 from app.domain.org_settings import service as org_settings_service
 from app.domain.policy_overrides.db_models import PolicyOverrideAudit
-from app.domain.recurring_series import schemas as recurring_series_schemas
-from app.domain.recurring_series import service as recurring_series_service
 from app.domain.reason_logs import schemas as reason_schemas
 from app.domain.reason_logs import service as reason_service
 from app.domain.reason_logs.db_models import ReasonLog
@@ -2052,139 +2050,6 @@ async def delete_availability_block(
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get(
-    "/v1/admin/recurring-series",
-    response_model=recurring_series_schemas.RecurringSeriesListResponse,
-)
-async def list_recurring_series(
-    request: Request,
-    session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_permission_keys("bookings.view")),
-) -> recurring_series_schemas.RecurringSeriesListResponse:
-    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    org_timezone, series = await recurring_series_service.list_series(session, org_id)
-    items = await recurring_series_service.build_series_responses(session, series, org_timezone)
-    return recurring_series_schemas.RecurringSeriesListResponse(
-        org_timezone=org_timezone,
-        items=items,
-    )
-
-
-@router.post(
-    "/v1/admin/recurring-series",
-    response_model=recurring_series_schemas.RecurringSeriesResponse,
-)
-async def create_recurring_series(
-    request: Request,
-    payload: recurring_series_schemas.RecurringSeriesCreate,
-    session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_permission_keys("bookings.edit")),
-) -> recurring_series_schemas.RecurringSeriesResponse:
-    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    try:
-        series = await recurring_series_service.create_series(session, org_id, payload=payload)
-    except LookupError as exc:
-        return problem_details(
-            request=request,
-            status=status.HTTP_404_NOT_FOUND,
-            title="Recurring series lookup failed",
-            detail=str(exc),
-        )
-    except ValueError as exc:
-        return problem_details(
-            request=request,
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            title="Invalid recurring series payload",
-            detail=str(exc),
-        )
-    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
-    org_timezone = org_settings_service.resolve_timezone(org_settings)
-    responses = await recurring_series_service.build_series_responses(session, [series], org_timezone)
-    return responses[0]
-
-
-@router.patch(
-    "/v1/admin/recurring-series/{series_id}",
-    response_model=recurring_series_schemas.RecurringSeriesResponse,
-)
-async def update_recurring_series(
-    series_id: uuid.UUID,
-    request: Request,
-    payload: recurring_series_schemas.RecurringSeriesUpdate,
-    session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_permission_keys("bookings.edit")),
-) -> recurring_series_schemas.RecurringSeriesResponse:
-    fields_set = payload.model_fields_set
-    if not fields_set:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No updates provided")
-    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    try:
-        series = await recurring_series_service.update_series(
-            session, org_id, series_id, payload=payload, fields_set=fields_set
-        )
-    except LookupError as exc:
-        return problem_details(
-            request=request,
-            status=status.HTTP_404_NOT_FOUND,
-            title="Recurring series not found",
-            detail=str(exc),
-        )
-    except ValueError as exc:
-        return problem_details(
-            request=request,
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            title="Invalid recurring series update",
-            detail=str(exc),
-        )
-    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
-    org_timezone = org_settings_service.resolve_timezone(org_settings)
-    responses = await recurring_series_service.build_series_responses(session, [series], org_timezone)
-    return responses[0]
-
-
-@router.post(
-    "/v1/admin/recurring-series/{series_id}/generate",
-    response_model=recurring_series_schemas.RecurringSeriesGenerateResponse,
-)
-async def generate_recurring_series(
-    series_id: uuid.UUID,
-    request: Request,
-    payload: recurring_series_schemas.RecurringSeriesGenerateRequest,
-    session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_permission_keys("bookings.edit")),
-) -> recurring_series_schemas.RecurringSeriesGenerateResponse:
-    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    try:
-        _series, report = await recurring_series_service.generate_occurrences(
-            session, org_id, series_id, horizon_days=payload.horizon_days
-        )
-    except LookupError as exc:
-        return problem_details(
-            request=request,
-            status=status.HTTP_404_NOT_FOUND,
-            title="Recurring series not found",
-            detail=str(exc),
-        )
-    except ValueError as exc:
-        return problem_details(
-            request=request,
-            status=status.HTTP_409_CONFLICT,
-            title="Recurring series generation failed",
-            detail=str(exc),
-        )
-    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
-    org_timezone = org_settings_service.resolve_timezone(org_settings)
-    return recurring_series_schemas.RecurringSeriesGenerateResponse(
-        org_timezone=org_timezone,
-        horizon_end=report.horizon_end,
-        next_run_at=report.next_run_at,
-        created=report.created,
-        needs_assignment=report.needs_assignment,
-        skipped=report.skipped,
-        conflicted=report.conflicted,
-    )
 
 
 @router.get("/v1/admin/schedule/suggestions", response_model=ScheduleSuggestions)
@@ -8007,20 +7872,22 @@ async def _worker_busy_until_map(
     )
     rows = (await session.execute(stmt)).all()
     busy_until_map: dict[int, datetime] = {}
+    buffer_delta = timedelta(minutes=booking_service.BUFFER_MINUTES)
     for assigned_worker_id, starts_at, duration_minutes, crew_worker_id in rows:
         if starts_at is None or duration_minutes is None:
             continue
         if starts_at.tzinfo is None:
             starts_at = starts_at.replace(tzinfo=timezone.utc)
         ends_at = starts_at + timedelta(minutes=duration_minutes)
-        if now >= ends_at:
+        busy_until = ends_at + buffer_delta
+        if now >= busy_until:
             continue
         for worker_id in (assigned_worker_id, crew_worker_id):
             if worker_id is None:
                 continue
             current = busy_until_map.get(worker_id)
-            if current is None or ends_at > current:
-                busy_until_map[worker_id] = ends_at
+            if current is None or busy_until > current:
+                busy_until_map[worker_id] = busy_until
     return busy_until_map
 
 

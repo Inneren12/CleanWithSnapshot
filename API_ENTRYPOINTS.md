@@ -241,10 +241,6 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | GET | `/v1/admin/schedule` | `bookings.view` | Schedule view |
 | GET | `/v1/admin/schedule/team_calendar` | `bookings.view` | Team calendar aggregates (org TZ boundaries) |
 | GET | `/v1/admin/schedule/worker_timeline` | `bookings.view` | Worker timeline aggregates (org TZ boundaries) |
-| GET | `/v1/admin/recurring-series` | `bookings.view` | List recurring series |
-| POST | `/v1/admin/recurring-series` | `bookings.edit` | Create recurring series |
-| PATCH | `/v1/admin/recurring-series/{id}` | `bookings.edit` | Update/pause/cancel recurring series |
-| POST | `/v1/admin/recurring-series/{id}/generate` | `bookings.edit` | Generate upcoming bookings |
 | GET | `/v1/admin/ui/bookings` | `bookings.view` | List bookings |
 | GET | `/v1/admin/ui/bookings/{id}` | `bookings.view` | Booking detail |
 | POST | `/v1/admin/ui/bookings/create` | `bookings.edit` | Create booking |

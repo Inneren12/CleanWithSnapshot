@@ -31,7 +31,6 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.domain.workers.db_models import WorkerNote, WorkerReview
     from app.domain.invoices.db_models import Invoice
     from app.domain.clients.db_models import ClientFeedback
-    from app.domain.recurring_series.db_models import RecurringSeries
 
 
 class Team(Base):
@@ -91,12 +90,6 @@ class Booking(Base):
     assigned_worker_id: Mapped[int | None] = mapped_column(
         ForeignKey("workers.worker_id"), nullable=True, index=True
     )
-    recurring_series_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID_TYPE,
-        ForeignKey("recurring_series.series_id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     actual_duration_minutes: Mapped[int | None] = mapped_column(Integer)
@@ -153,9 +146,6 @@ class Booking(Base):
     assigned_worker: Mapped["Worker | None"] = relationship(
         "Worker", back_populates="bookings"
     )
-    recurring_series: Mapped["RecurringSeries | None"] = relationship(
-        "RecurringSeries", back_populates="bookings"
-    )
     worker_assignments: Mapped[list["BookingWorker"]] = relationship(
         "BookingWorker",
         back_populates="booking",
@@ -206,7 +196,6 @@ class Booking(Base):
         Index("ix_bookings_status", "status"),
         Index("ix_bookings_archived_at", "archived_at"),
         Index("ix_bookings_checkout_session", "stripe_checkout_session_id"),
-        UniqueConstraint("recurring_series_id", "starts_at", name="uq_bookings_recurring_start"),
         UniqueConstraint("subscription_id", "scheduled_date", name="uq_bookings_subscription_schedule"),
     )
 
