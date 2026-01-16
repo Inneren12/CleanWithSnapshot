@@ -140,6 +140,10 @@ from app.domain.ops.schemas import (
     OpsDashboardBookingStatusBand,
     OpsDashboardBookingStatusToday,
     OpsDashboardBookingStatusTotals,
+    OpsDashboardHeroMetrics,
+    OpsDashboardRevenueDay,
+    OpsDashboardRevenueGoal,
+    OpsDashboardRevenueWeek,
     OpsDashboardResponse,
     OpsDashboardUpcomingEvent,
     MoveBookingRequest,
@@ -622,7 +626,11 @@ async def get_admin_profile(
     )
 
 
-@router.get("/v1/admin/dashboard/ops", response_model=OpsDashboardResponse)
+@router.get(
+    "/v1/admin/dashboard/ops",
+    response_model=OpsDashboardResponse,
+    response_model_exclude_none=True,
+)
 async def get_ops_dashboard(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -636,6 +644,7 @@ async def get_ops_dashboard(
 
     org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
     org_timezone = org_settings_service.resolve_timezone(org_settings)
+    org_currency = org_settings_service.resolve_currency(org_settings)
     try:
         org_tz = ZoneInfo(org_timezone)
     except Exception:  # noqa: BLE001
@@ -643,6 +652,7 @@ async def get_ops_dashboard(
         org_tz = ZoneInfo(org_timezone)
 
     now_local = datetime.now(org_tz)
+    now_utc = now_local.astimezone(timezone.utc)
     today_start_local = datetime.combine(now_local.date(), time.min, tzinfo=org_tz)
     today_end_local = today_start_local + timedelta(days=1)
     today_start_utc = today_start_local.astimezone(timezone.utc)
@@ -706,15 +716,155 @@ async def get_ops_dashboard(
         next24_end_utc=next24_end_utc,
     )
 
+    revenue_today_stmt = (
+        select(func.coalesce(func.sum(Booking.base_charge_cents), 0))
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= today_start_utc,
+            Booking.starts_at < today_end_utc,
+            Booking.status != "CANCELLED",
+        )
+    )
+    revenue_today_cents = int((await session.execute(revenue_today_stmt)).scalar() or 0)
+
+    worker_total_stmt = (
+        select(func.count())
+        .select_from(Worker)
+        .where(
+            Worker.org_id == org_id,
+            Worker.archived_at.is_(None),
+            Worker.is_active.is_(True),
+        )
+    )
+    total_workers = int((await session.execute(worker_total_stmt)).scalar() or 0)
+
+    in_progress_stmt = (
+        select(
+            Booking.booking_id,
+            Booking.assigned_worker_id,
+            Booking.starts_at,
+            Booking.duration_minutes,
+        )
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at <= now_utc,
+            Booking.starts_at >= (now_utc - timedelta(days=1)),
+            Booking.status != "CANCELLED",
+        )
+    )
+    in_progress_rows = (await session.execute(in_progress_stmt)).all()
+    busy_booking_ids: list[str] = []
+    busy_worker_ids: set[int] = set()
+    for booking_id, assigned_worker_id, starts_at, duration_minutes in in_progress_rows:
+        if starts_at is None or duration_minutes is None:
+            continue
+        ends_at = starts_at + timedelta(minutes=duration_minutes)
+        if ends_at < now_utc:
+            continue
+        busy_booking_ids.append(booking_id)
+        if assigned_worker_id:
+            busy_worker_ids.add(assigned_worker_id)
+
+    if busy_booking_ids:
+        assigned_rows = await session.execute(
+            select(BookingWorker.worker_id).where(
+                BookingWorker.booking_id.in_(busy_booking_ids)
+            )
+        )
+        busy_worker_ids.update({row.worker_id for row in assigned_rows})
+
+    available_workers = max(total_workers - len(busy_worker_ids), 0)
+
+    rating_stmt = (
+        select(
+            func.coalesce(func.sum(Worker.rating_avg * Worker.rating_count), 0.0).label("rating_total"),
+            func.coalesce(func.sum(Worker.rating_count), 0).label("rating_count"),
+        )
+        .where(
+            Worker.org_id == org_id,
+            Worker.archived_at.is_(None),
+            Worker.is_active.is_(True),
+        )
+    )
+    rating_total, rating_count = (await session.execute(rating_stmt)).one()
+    worker_rating_avg = (
+        round(float(rating_total) / int(rating_count), 2) if rating_count else None
+    )
+
+    week_start_local = now_local.date() - timedelta(days=now_local.weekday())
+    week_days: list[OpsDashboardRevenueDay] = []
+    week_revenue_total = 0
+    for offset in range(7):
+        day = week_start_local + timedelta(days=offset)
+        day_start_local = datetime.combine(day, time.min, tzinfo=org_tz)
+        day_end_local = day_start_local + timedelta(days=1)
+        day_start_utc = day_start_local.astimezone(timezone.utc)
+        day_end_utc = day_end_local.astimezone(timezone.utc)
+        day_revenue_stmt = (
+            select(func.coalesce(func.sum(Booking.base_charge_cents), 0))
+            .where(
+                Booking.org_id == org_id,
+                Booking.archived_at.is_(None),
+                Booking.starts_at >= day_start_utc,
+                Booking.starts_at < day_end_utc,
+                Booking.status != "CANCELLED",
+            )
+        )
+        day_revenue_cents = int(
+            (await session.execute(day_revenue_stmt)).scalar() or 0
+        )
+        week_revenue_total += day_revenue_cents
+        week_days.append(
+            OpsDashboardRevenueDay(date=day, revenue_cents=day_revenue_cents)
+        )
+
+    week_end_local = week_start_local + timedelta(days=6)
+    branding = org_settings_service.resolve_branding(org_settings)
+    goal_cents: int | None = None
+    if isinstance(branding, dict):
+        raw_goal = branding.get("weekly_revenue_goal_cents") or branding.get("weekly_revenue_goal")
+        if raw_goal is not None:
+            try:
+                goal_cents = int(raw_goal)
+            except (TypeError, ValueError):
+                goal_cents = None
+
+    revenue_goal = (
+        OpsDashboardRevenueGoal(
+            goal_cents=goal_cents,
+            remaining_cents=max(goal_cents - week_revenue_total, 0),
+        )
+        if goal_cents and goal_cents > 0
+        else None
+    )
+
     return OpsDashboardResponse(
         as_of=datetime.now(timezone.utc),
         org_timezone=org_timezone,
+        org_currency=org_currency,
         critical_alerts=critical_alerts,
         upcoming_events=upcoming_events,
         worker_availability=[],
         booking_status_today=OpsDashboardBookingStatusToday(
             totals=totals,
             bands=bands,
+        ),
+        hero_metrics=OpsDashboardHeroMetrics(
+            bookings_today=totals.total,
+            revenue_today_cents=revenue_today_cents,
+            workers_available=available_workers,
+            workers_total=total_workers,
+            worker_rating_avg=worker_rating_avg,
+        ),
+        revenue_week=OpsDashboardRevenueWeek(
+            week_start=week_start_local,
+            week_end=week_end_local,
+            days=week_days,
+            total_revenue_cents=week_revenue_total,
+            currency=org_currency,
+            goal=revenue_goal,
         ),
     )
 

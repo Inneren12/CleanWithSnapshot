@@ -1235,6 +1235,53 @@ button:focus-visible {
   gap: 14px;
 }
 
+.hero-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.hero-metric-value {
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.revenue-chart {
+  gap: 16px;
+}
+
+.revenue-chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  height: 180px;
+}
+
+.revenue-chart-bar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.revenue-bar {
+  width: 100%;
+  border-radius: 8px 8px 4px 4px;
+  background: var(--primary);
+  min-height: 6px;
+}
+
+.revenue-bar-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.revenue-bar-value {
+  font-size: 0.75rem;
+}
+
 .admin-card {
   padding: 16px;
   border: 1px solid var(--border);
