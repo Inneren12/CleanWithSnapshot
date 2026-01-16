@@ -136,6 +136,7 @@ from app.domain.ops.schemas import (
     JobStatusResponse,
     OpsDashboardAlert,
     OpsDashboardAlertAction,
+    OpsDashboardBookingStatusBand,
     OpsDashboardBookingStatusToday,
     OpsDashboardBookingStatusTotals,
     OpsDashboardResponse,
@@ -463,6 +464,16 @@ async def get_ops_dashboard(
         done=status_counts.get("DONE", 0),
         cancelled=status_counts.get("CANCELLED", 0),
     )
+    band_counts = await ops_service.build_booking_status_bands(
+        session,
+        org_id,
+        today_local_date=now_local.date(),
+        org_timezone=org_tz,
+    )
+    bands = [
+        OpsDashboardBookingStatusBand(label=label, count=count)
+        for label, count in band_counts
+    ]
 
     upcoming_stmt = (
         select(Booking)
@@ -513,7 +524,7 @@ async def get_ops_dashboard(
         worker_availability=[],
         booking_status_today=OpsDashboardBookingStatusToday(
             totals=totals,
-            bands=[],
+            bands=bands,
         ),
     )
 

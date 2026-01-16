@@ -63,6 +63,10 @@ module.api                    # API access
 **Key Services:**
 - N/A (dashboard aggregates data from other modules)
 
+**Ops dashboard bands:**
+- Booking status band model: `backend/app/domain/ops/schemas.py::OpsDashboardBookingStatusBand`.
+- Band definitions: `backend/app/domain/ops/service.py::BOOKING_STATUS_BANDS` (edit here to change ranges).
+
 **Key Tables:**
 - `events` - Analytics events
 - `bookings` - Recent bookings

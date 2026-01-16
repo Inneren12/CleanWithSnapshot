@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 
 
 DANGEROUS_CSV_PREFIXES = ("=", "+", "-", "@", "\t")
+BOOKING_STATUS_BANDS = (
+    ("8–10", 8, 10),
+    ("10–12", 10, 12),
+    ("12–14", 12, 14),
+    ("14–18", 14, 18),
+)
 
 
 def safe_csv_value(value: object) -> str:
@@ -110,6 +116,34 @@ def _calculate_relevance(q: str, text_fields: list[str | None]) -> int:
             score += 10  # Contains
 
     return score
+
+
+async def build_booking_status_bands(
+    session: AsyncSession,
+    org_id,
+    *,
+    today_local_date: date,
+    org_timezone: ZoneInfo,
+) -> list[tuple[str, int]]:
+    bands: list[tuple[str, int]] = []
+    for label, start_hour, end_hour in BOOKING_STATUS_BANDS:
+        band_start_local = datetime.combine(
+            today_local_date, time(hour=start_hour, tzinfo=org_timezone)
+        )
+        band_end_local = datetime.combine(
+            today_local_date, time(hour=end_hour, tzinfo=org_timezone)
+        )
+        band_start_utc = band_start_local.astimezone(timezone.utc)
+        band_end_utc = band_end_local.astimezone(timezone.utc)
+        stmt = select(func.count()).where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.starts_at >= band_start_utc,
+            Booking.starts_at < band_end_utc,
+        )
+        count = (await session.execute(stmt)).scalar_one()
+        bands.append((label, count))
+    return bands
 
 
 async def global_search(session: AsyncSession, org_id, q: str, limit: int = 20) -> list[SearchHit]:
