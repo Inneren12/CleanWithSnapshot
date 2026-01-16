@@ -273,6 +273,7 @@ module.api                    # API access
 **Key Pages:**
 - `web/app/admin/teams/page.tsx` - Teams list (`/admin/teams`)
 - `web/app/admin/teams/[team_id]/page.tsx` - Team detail (`/admin/teams/{id}`)
+- `web/app/admin/teams/compare/page.tsx` - Team comparison (`/admin/teams/compare`)
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - `/v1/admin/teams`, `/v1/admin/teams/{id}/*`, `/v1/admin/ui/teams/*`
@@ -306,6 +307,7 @@ module.api                    # API access
 #### Team Reporting
 - API: `backend/app/api/routes_admin.py::/v1/admin/teams`
 - Detail: `backend/app/api/routes_admin.py::/v1/admin/teams/{id}`, `/members`, `/recent_bookings`, `/metrics`
+- Comparison: `backend/app/api/routes_admin.py::/v1/admin/teams/compare`
 - Frontend: `web/app/admin/teams/`
 
 ---
