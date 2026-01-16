@@ -135,6 +135,9 @@ from app.domain.ops.schemas import (
     ConflictCheckResponse,
     ConflictDetail,
     JobStatusResponse,
+    ActivityFeedAction,
+    ActivityFeedItem,
+    ActivityFeedResponse,
     OpsDashboardAlert,
     OpsDashboardAlertAction,
     OpsDashboardBookingStatusBand,
@@ -871,6 +874,209 @@ async def get_ops_dashboard(
     )
 
 
+@router.get(
+    "/v1/admin/activity",
+    response_model=ActivityFeedResponse,
+    response_model_exclude_none=True,
+)
+async def get_admin_activity(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+    since: str | None = None,
+    limit: int = 20,
+) -> ActivityFeedResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_dashboard_enabled(request, session, org_id)
+    if guard is not None:
+        return guard
+
+    resolved_limit = max(1, min(limit, 100))
+    since_ts = _parse_activity_since(since)
+
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
+    try:
+        org_tz = ZoneInfo(org_timezone)
+    except Exception:  # noqa: BLE001
+        org_tz = ZoneInfo(org_settings_service.DEFAULT_TIMEZONE)
+
+    booking_created_stmt = (
+        select(Booking.booking_id, Booking.created_at, Booking.status, Booking.starts_at)
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.created_at >= since_ts,
+        )
+        .order_by(sa.desc(Booking.created_at))
+        .limit(resolved_limit)
+    )
+    booking_status_stmt = (
+        select(
+            Booking.booking_id,
+            Booking.updated_at,
+            Booking.status,
+            Booking.starts_at,
+            Booking.created_at,
+        )
+        .where(
+            Booking.org_id == org_id,
+            Booking.archived_at.is_(None),
+            Booking.updated_at >= since_ts,
+            Booking.updated_at > Booking.created_at,
+        )
+        .order_by(sa.desc(Booking.updated_at))
+        .limit(resolved_limit)
+    )
+    payment_stmt = (
+        select(
+            Payment.payment_id,
+            Payment.received_at,
+            Payment.amount_cents,
+            Payment.currency,
+            Payment.status,
+            Payment.invoice_id,
+            Payment.booking_id,
+        )
+        .where(
+            Payment.org_id == org_id,
+            Payment.received_at.isnot(None),
+            Payment.received_at >= since_ts,
+        )
+        .order_by(sa.desc(Payment.received_at))
+        .limit(resolved_limit)
+    )
+    lead_stmt = (
+        select(Lead.lead_id, Lead.name, Lead.status, Lead.created_at)
+        .where(
+            Lead.org_id == org_id,
+            Lead.created_at >= since_ts,
+            Lead.deleted_at.is_(None),
+        )
+        .order_by(sa.desc(Lead.created_at))
+        .limit(resolved_limit)
+    )
+    review_stmt = (
+        select(
+            WorkerReview.review_id,
+            WorkerReview.rating,
+            WorkerReview.created_at,
+            WorkerReview.booking_id,
+            WorkerReview.worker_id,
+        )
+        .where(
+            WorkerReview.org_id == org_id,
+            WorkerReview.created_at >= since_ts,
+        )
+        .order_by(sa.desc(WorkerReview.created_at))
+        .limit(resolved_limit)
+    )
+
+    booking_created_rows = (await session.execute(booking_created_stmt)).all()
+    booking_status_rows = (await session.execute(booking_status_stmt)).all()
+    payment_rows = (await session.execute(payment_stmt)).all()
+    lead_rows = (await session.execute(lead_stmt)).all()
+    review_rows = (await session.execute(review_stmt)).all()
+
+    items: list[ActivityFeedItem] = []
+
+    for booking_id, created_at, status_value, starts_at in booking_created_rows:
+        schedule_date = starts_at.astimezone(org_tz).date().isoformat() if starts_at else None
+        href = f"/admin/schedule?date={schedule_date}" if schedule_date else "/admin/schedule"
+        items.append(
+            ActivityFeedItem(
+                event_id=f"booking_created:{booking_id}",
+                kind="booking_created",
+                title="New booking created",
+                description=f"Booking {booking_id} · Status {status_value}",
+                timestamp=created_at,
+                entity_ref={"kind": "booking", "id": booking_id, "status": status_value},
+                action=ActivityFeedAction(label="Open schedule", href=href),
+            )
+        )
+
+    for booking_id, updated_at, status_value, starts_at, created_at in booking_status_rows:
+        if updated_at <= created_at:
+            continue
+        schedule_date = starts_at.astimezone(org_tz).date().isoformat() if starts_at else None
+        href = f"/admin/schedule?date={schedule_date}" if schedule_date else "/admin/schedule"
+        items.append(
+            ActivityFeedItem(
+                event_id=f"booking_status:{booking_id}:{updated_at.isoformat()}",
+                kind="booking_status_updated",
+                title="Booking status updated",
+                description=f"Booking {booking_id} → {status_value}",
+                timestamp=updated_at,
+                entity_ref={"kind": "booking", "id": booking_id, "status": status_value},
+                action=ActivityFeedAction(label="Open schedule", href=href),
+            )
+        )
+
+    for payment_id, received_at, amount_cents, currency, payment_status, invoice_id, booking_id in payment_rows:
+        amount_value = f"{currency} {amount_cents / 100:,.2f}"
+        description = f"{amount_value} · {payment_status}"
+        action = None
+        if invoice_id:
+            action = ActivityFeedAction(label="View invoice", href=f"/admin/invoices/{invoice_id}")
+            description = f"{amount_value} · Invoice {invoice_id}"
+        elif booking_id:
+            action = ActivityFeedAction(label="Open schedule", href="/admin/schedule")
+            description = f"{amount_value} · Booking {booking_id}"
+        items.append(
+            ActivityFeedItem(
+                event_id=f"payment_received:{payment_id}",
+                kind="payment_received",
+                title="Payment received",
+                description=description,
+                timestamp=received_at,
+                entity_ref={
+                    "kind": "payment",
+                    "id": payment_id,
+                    "amount_cents": amount_cents,
+                    "currency": currency,
+                    "invoice_id": invoice_id,
+                    "booking_id": booking_id,
+                },
+                action=action,
+            )
+        )
+
+    for lead_id, name, status_value, created_at in lead_rows:
+        items.append(
+            ActivityFeedItem(
+                event_id=f"lead_created:{lead_id}",
+                kind="lead_created",
+                title="New lead created",
+                description=f"{name} · Status {status_value}",
+                timestamp=created_at,
+                entity_ref={"kind": "lead", "id": lead_id, "status": status_value},
+                action=ActivityFeedAction(label="Open leads", href="/admin"),
+            )
+        )
+
+    for review_id, rating, created_at, booking_id, worker_id in review_rows:
+        items.append(
+            ActivityFeedItem(
+                event_id=f"review_created:{review_id}",
+                kind="review_received",
+                title="New review received",
+                description=f"Rating {rating}/5 · Booking {booking_id}",
+                timestamp=created_at,
+                entity_ref={
+                    "kind": "review",
+                    "id": review_id,
+                    "booking_id": booking_id,
+                    "worker_id": worker_id,
+                    "rating": rating,
+                },
+                action=ActivityFeedAction(label="Open schedule", href="/admin/schedule"),
+            )
+        )
+
+    items.sort(key=lambda item: item.timestamp, reverse=True)
+    return ActivityFeedResponse(as_of=datetime.now(timezone.utc), items=items[:resolved_limit])
+
+
 class AdminUserCreateRequest(BaseModel):
     email: EmailStr
     target_type: Literal["client", "worker"]
@@ -962,6 +1168,19 @@ async def _resolve_admin_membership_id(
 def _parse_since_timestamp(since: str | None) -> datetime:
     if not since:
         return datetime.now(timezone.utc)
+    normalized = since.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid since timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_activity_since(since: str | None) -> datetime:
+    if not since:
+        return datetime.now(timezone.utc) - timedelta(days=7)
     normalized = since.replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(normalized)

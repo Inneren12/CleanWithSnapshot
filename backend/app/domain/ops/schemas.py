@@ -147,6 +147,26 @@ class OpsDashboardUpcomingEvent(BaseModel):
     actions: list[OpsDashboardAlertAction] = Field(default_factory=list)
 
 
+class ActivityFeedAction(BaseModel):
+    label: str
+    href: str
+
+
+class ActivityFeedItem(BaseModel):
+    event_id: str
+    kind: str
+    title: str
+    description: str | None = None
+    timestamp: datetime
+    entity_ref: dict[str, object] | None = None
+    action: ActivityFeedAction | None = None
+
+
+class ActivityFeedResponse(BaseModel):
+    as_of: datetime
+    items: list[ActivityFeedItem] = Field(default_factory=list)
+
+
 class OpsDashboardWorkerAvailability(BaseModel):
     worker_id: int
     name: str | None = None
