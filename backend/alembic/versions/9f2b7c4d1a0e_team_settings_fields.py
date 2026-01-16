@@ -17,23 +17,27 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "teams",
-        sa.Column("lead_worker_id", sa.Integer(), sa.ForeignKey("workers.worker_id"), nullable=True),
-    )
-    op.add_column(
-        "teams",
-        sa.Column("zones", sa.JSON(), server_default=sa.text("'[]'"), nullable=False),
-    )
-    op.add_column(
-        "teams",
-        sa.Column("specializations", sa.JSON(), server_default=sa.text("'[]'"), nullable=False),
-    )
-    op.add_column("teams", sa.Column("calendar_color", sa.String(length=32), nullable=True))
+    with op.batch_alter_table("teams") as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "lead_worker_id",
+                sa.Integer(),
+                sa.ForeignKey("workers.worker_id", name="fk_teams_lead_worker_id"),
+                nullable=True,
+            )
+        )
+        batch_op.add_column(
+            sa.Column("zones", sa.JSON(), server_default=sa.text("'[]'"), nullable=False)
+        )
+        batch_op.add_column(
+            sa.Column("specializations", sa.JSON(), server_default=sa.text("'[]'"), nullable=False)
+        )
+        batch_op.add_column(sa.Column("calendar_color", sa.String(length=32), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("teams", "calendar_color")
-    op.drop_column("teams", "specializations")
-    op.drop_column("teams", "zones")
-    op.drop_column("teams", "lead_worker_id")
+    with op.batch_alter_table("teams") as batch_op:
+        batch_op.drop_column("calendar_color")
+        batch_op.drop_column("specializations")
+        batch_op.drop_column("zones")
+        batch_op.drop_column("lead_worker_id")
