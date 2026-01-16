@@ -68,6 +68,39 @@ class ScheduleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WorkerTimelineTotals(BaseModel):
+    booked_minutes: int
+    booking_count: int
+    revenue_cents: int
+
+
+class WorkerTimelineDay(BaseModel):
+    date: date
+    booked_minutes: int
+    booking_count: int
+    revenue_cents: int
+    booking_ids: list[str] = Field(default_factory=list)
+
+
+class WorkerTimelineWorker(BaseModel):
+    worker_id: int
+    name: str
+    team_id: int | None = None
+    team_name: str | None = None
+    days: list[WorkerTimelineDay] = Field(default_factory=list)
+    totals: WorkerTimelineTotals
+
+
+class WorkerTimelineResponse(BaseModel):
+    from_date: date
+    to_date: date
+    org_timezone: str
+    days: list[date] = Field(default_factory=list)
+    workers: list[WorkerTimelineWorker] = Field(default_factory=list)
+    totals: WorkerTimelineTotals
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OpsDashboardAlertAction(BaseModel):
     label: str
     href: str

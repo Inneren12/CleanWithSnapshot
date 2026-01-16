@@ -46,6 +46,146 @@ def safe_csv_value(value: object) -> str:
     return text
 
 
+async def list_worker_timeline(
+    session: AsyncSession,
+    org_id,
+    start_date: date,
+    end_date: date,
+    *,
+    org_timezone: str | None = None,
+    worker_id: int | None = None,
+    team_id: int | None = None,
+    status: str | None = None,
+) -> dict[str, object]:
+    resolved_timezone = org_timezone or org_settings_service.DEFAULT_TIMEZONE
+    try:
+        org_tz = ZoneInfo(resolved_timezone)
+    except Exception:
+        org_tz = ZoneInfo(org_settings_service.DEFAULT_TIMEZONE)
+
+    start_local = datetime.combine(start_date, time.min).replace(tzinfo=org_tz)
+    end_local = datetime.combine(end_date + timedelta(days=1), time.min).replace(tzinfo=org_tz)
+    window_start = start_local.astimezone(timezone.utc)
+    window_end = end_local.astimezone(timezone.utc)
+
+    days = [
+        start_date + timedelta(days=offset)
+        for offset in range((end_date - start_date).days + 1)
+    ]
+
+    worker_conditions = [
+        Worker.org_id == org_id,
+        Worker.is_active.is_(True),
+        Worker.archived_at.is_(None),
+    ]
+    if team_id is not None:
+        worker_conditions.append(Worker.team_id == team_id)
+    if worker_id is not None:
+        worker_conditions.append(Worker.worker_id == worker_id)
+
+    workers_stmt = (
+        select(Worker, Team)
+        .join(Team, Worker.team_id == Team.team_id)
+        .where(*worker_conditions)
+        .order_by(Worker.name.asc())
+    )
+    worker_rows = (await session.execute(workers_stmt)).all()
+
+    timeline_by_worker: dict[int, dict[date, dict[str, object]]] = {}
+    workers_payload: list[dict[str, object]] = []
+    totals = {"booked_minutes": 0, "booking_count": 0, "revenue_cents": 0}
+
+    for worker, team in worker_rows:
+        day_entries = {
+            day: {
+                "date": day,
+                "booked_minutes": 0,
+                "booking_count": 0,
+                "revenue_cents": 0,
+                "booking_ids": [],
+            }
+            for day in days
+        }
+        timeline_by_worker[worker.worker_id] = day_entries
+        workers_payload.append(
+            {
+                "worker_id": worker.worker_id,
+                "name": worker.name,
+                "team_id": worker.team_id,
+                "team_name": team.name if team else None,
+                "days": day_entries,
+                "totals": {"booked_minutes": 0, "booking_count": 0, "revenue_cents": 0},
+            }
+        )
+
+    booking_conditions = [
+        Booking.org_id == org_id,
+        Booking.archived_at.is_(None),
+        Booking.assigned_worker_id.is_not(None),
+        Booking.starts_at >= window_start,
+        Booking.starts_at < window_end,
+    ]
+    if team_id is not None:
+        booking_conditions.append(Booking.team_id == team_id)
+    if worker_id is not None:
+        booking_conditions.append(Booking.assigned_worker_id == worker_id)
+    if status:
+        booking_conditions.append(Booking.status == status)
+
+    booking_stmt = select(
+        Booking.booking_id,
+        Booking.assigned_worker_id,
+        Booking.starts_at,
+        Booking.duration_minutes,
+        Booking.base_charge_cents,
+    ).where(*booking_conditions)
+
+    booking_rows = (await session.execute(booking_stmt)).all()
+
+    totals_by_worker_id = {
+        worker_data["worker_id"]: worker_data["totals"] for worker_data in workers_payload
+    }
+
+    for booking_id, assigned_worker_id, starts_at, duration_minutes, base_charge_cents in booking_rows:
+        if assigned_worker_id is None:
+            continue
+        day = starts_at.astimezone(org_tz).date()
+        day_entries = timeline_by_worker.get(assigned_worker_id)
+        if not day_entries:
+            continue
+        day_payload = day_entries.get(day)
+        if not day_payload:
+            continue
+        day_payload["booked_minutes"] += duration_minutes
+        day_payload["booking_count"] += 1
+        day_payload["revenue_cents"] += base_charge_cents or 0
+        day_payload["booking_ids"].append(booking_id)
+
+        worker_totals = totals_by_worker_id[assigned_worker_id]
+        worker_totals["booked_minutes"] += duration_minutes
+        worker_totals["booking_count"] += 1
+        worker_totals["revenue_cents"] += base_charge_cents or 0
+
+        totals["booked_minutes"] += duration_minutes
+        totals["booking_count"] += 1
+        totals["revenue_cents"] += base_charge_cents or 0
+
+    formatted_workers = []
+    for worker_data in workers_payload:
+        day_entries = worker_data["days"]
+        worker_data["days"] = [day_entries[day] for day in days]
+        formatted_workers.append(worker_data)
+
+    return {
+        "from_date": start_date,
+        "to_date": end_date,
+        "org_timezone": resolved_timezone,
+        "days": days,
+        "workers": formatted_workers,
+        "totals": totals,
+    }
+
+
 @dataclass(slots=True)
 class QuickAction:
     label: str

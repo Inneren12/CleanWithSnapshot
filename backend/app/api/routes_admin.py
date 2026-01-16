@@ -152,6 +152,7 @@ from app.domain.ops.schemas import (
     ScheduleResponse,
     TemplatePreviewRequest,
     TemplatePreviewResponse,
+    WorkerTimelineResponse,
 )
 from app.domain.errors import DomainError
 from app.domain.retention import cleanup_retention
@@ -1891,6 +1892,35 @@ async def list_schedule(
         query=query,
     )
     return ScheduleResponse(**payload)
+
+
+@router.get("/v1/admin/schedule/worker_timeline", response_model=WorkerTimelineResponse)
+async def get_worker_timeline(
+    request: Request,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    worker_id: int | None = None,
+    team_id: int | None = None,
+    status: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("bookings.view")),
+) -> WorkerTimelineResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    resolved_from = from_date or date.today()
+    resolved_to = to_date or resolved_from
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
+    payload = await ops_service.list_worker_timeline(
+        session,
+        org_id,
+        resolved_from,
+        resolved_to,
+        org_timezone=org_timezone,
+        worker_id=worker_id,
+        team_id=team_id,
+        status=status,
+    )
+    return WorkerTimelineResponse(**payload)
 
 
 @router.get(

@@ -239,6 +239,7 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
 | GET | `/v1/admin/schedule` | `bookings.view` | Schedule view |
+| GET | `/v1/admin/schedule/worker_timeline` | `bookings.view` | Worker timeline aggregates (org TZ boundaries) |
 | GET | `/v1/admin/ui/bookings` | `bookings.view` | List bookings |
 | GET | `/v1/admin/ui/bookings/{id}` | `bookings.view` | Booking detail |
 | POST | `/v1/admin/ui/bookings/create` | `bookings.edit` | Create booking |
