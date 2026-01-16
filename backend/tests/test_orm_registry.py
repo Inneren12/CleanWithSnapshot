@@ -2,7 +2,8 @@ import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import configure_mappers
 
-from app.domain.bookings.db_models import Booking, EmailEvent
+from app.domain.bookings.db_models import Booking, EmailEvent, Team
+from app.domain.workers.db_models import Worker
 from app.infra.db import Base
 
 
@@ -44,5 +45,25 @@ async def test_booking_resolves_order_addons_relationship():
     assert any(
         rel.mapper.class_.__name__ == "OrderAddon" for rel in Booking.__mapper__.relationships
     )
+
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_team_worker_relationships_are_explicit():
+    configure_mappers()
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    team_workers_fk = Team.__mapper__.relationships["workers"]._calculated_foreign_keys
+    assert Worker.__table__.c.team_id in team_workers_fk
+
+    worker_team_fk = Worker.__mapper__.relationships["team"]._calculated_foreign_keys
+    assert Worker.__table__.c.team_id in worker_team_fk
+
+    team_lead_fk = Team.__mapper__.relationships["lead_worker"]._calculated_foreign_keys
+    assert Team.__table__.c.lead_worker_id in team_lead_fk
 
     await engine.dispose()

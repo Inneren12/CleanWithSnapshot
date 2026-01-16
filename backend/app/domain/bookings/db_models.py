@@ -67,6 +67,15 @@ class Team(Base):
     calendar_color: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     bookings: Mapped[list["Booking"]] = relationship("Booking", back_populates="team")
+    workers: Mapped[list["Worker"]] = relationship(
+        "Worker",
+        back_populates="team",
+        foreign_keys="Worker.team_id",
+    )
+    lead_worker: Mapped["Worker | None"] = relationship(
+        "Worker",
+        foreign_keys=[lead_worker_id],
+    )
 
     __table_args__ = (
         Index("ix_teams_org_id", "org_id"),

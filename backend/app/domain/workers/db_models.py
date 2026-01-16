@@ -48,7 +48,11 @@ class Worker(Base):
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    team: Mapped["Team"] = relationship("Team")
+    team: Mapped["Team"] = relationship(
+        "Team",
+        back_populates="workers",
+        foreign_keys=[team_id],
+    )
     bookings: Mapped[list["Booking"]] = relationship(
         "Booking", back_populates="assigned_worker"
     )
