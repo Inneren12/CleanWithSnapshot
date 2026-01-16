@@ -760,6 +760,8 @@ async def get_ops_dashboard(
     for booking_id, assigned_worker_id, starts_at, duration_minutes in in_progress_rows:
         if starts_at is None or duration_minutes is None:
             continue
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=timezone.utc)
         ends_at = starts_at + timedelta(minutes=duration_minutes)
         if ends_at < now_utc:
             continue
