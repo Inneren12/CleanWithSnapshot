@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
 import { type AdminProfile, type FeatureConfigResponse, type UiPrefsResponse, isVisible } from "../../lib/featureVisibility";
@@ -37,9 +37,8 @@ type OpsDashboardUpcomingEvent = {
 type OpsDashboardWorkerAvailability = {
   worker_id: number;
   name?: string | null;
-  status: string;
-  zone?: string | null;
-  next_booking_at?: string | null;
+  available: boolean;
+  next_available_at?: string | null;
 };
 
 type OpsDashboardBookingStatusTotals = {
@@ -258,16 +257,7 @@ export default function OpsDashboardPage() {
     setStatusMessage("Cleared credentials");
   };
 
-  const availabilityCounts = useMemo(() => {
-    const summary = { available: 0, busy: 0, blocked: 0 };
-    if (!opsData) return summary;
-    opsData.worker_availability.forEach((worker) => {
-      if (worker.status === "busy") summary.busy += 1;
-      else if (worker.status === "blocked") summary.blocked += 1;
-      else summary.available += 1;
-    });
-    return summary;
-  }, [opsData]);
+  const availableWorkers = opsData?.worker_availability.filter((worker) => worker.available).length ?? 0;
   const totalWorkers = opsData?.worker_availability.length ?? 0;
   const bookingTotals = opsData?.booking_status_today.totals;
   const timezoneLabel = opsData?.org_timezone ?? "UTC";
@@ -446,69 +436,9 @@ export default function OpsDashboardPage() {
             <p className="muted">Staffing status for today.</p>
           </div>
           {opsData ? (
-            <>
-              <div className="pill-row" style={{ marginTop: 0 }}>
-                <span className="pill pill-success">Available: {availabilityCounts.available}</span>
-                <span className="pill pill-warning">Busy: {availabilityCounts.busy}</span>
-                <span
-                  className="pill"
-                  style={{
-                    background: "var(--error-soft)",
-                    color: "var(--error)",
-                    borderColor: "rgba(239, 68, 68, 0.2)",
-                  }}
-                >
-                  Blocked: {availabilityCounts.blocked}
-                </span>
-                <span className="pill">Total: {totalWorkers}</span>
-              </div>
-              <div className="table-responsive">
-                <table className="admin-table">
-                  <thead>
-                    <tr>
-                      <th>Worker</th>
-                      <th>Zone</th>
-                      <th>Status</th>
-                      <th>Next booking</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {opsData.worker_availability.map((worker) => {
-                      const statusLabel = worker.status.toUpperCase();
-                      let statusClass = "pill";
-                      let statusStyle: CSSProperties = {};
-                      if (worker.status === "available") {
-                        statusClass = "pill pill-success";
-                      } else if (worker.status === "busy") {
-                        statusClass = "pill pill-warning";
-                      } else if (worker.status === "blocked") {
-                        statusStyle = {
-                          background: "var(--error-soft)",
-                          color: "var(--error)",
-                          borderColor: "rgba(239, 68, 68, 0.2)",
-                        };
-                      }
-                      return (
-                        <tr key={worker.worker_id}>
-                          <td>{worker.name ?? `Worker #${worker.worker_id}`}</td>
-                          <td>{worker.zone ?? "—"}</td>
-                          <td>
-                            <span className={statusClass} style={statusStyle}>
-                              {statusLabel}
-                            </span>
-                          </td>
-                          <td>
-                            {worker.next_booking_at
-                              ? formatDateTime(worker.next_booking_at, timezoneLabel)
-                              : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </>
+            <p className="muted">
+              {availableWorkers} of {totalWorkers} workers available. Matrix placeholder.
+            </p>
           ) : (
             <p className="muted">Availability matrix will load after ops data.</p>
           )}
@@ -520,68 +450,10 @@ export default function OpsDashboardPage() {
             <p className="muted">Today&apos;s totals by status.</p>
           </div>
           {bookingTotals ? (
-            <>
-              <div className="pill-row" style={{ marginTop: 0 }}>
-                <span className="pill">Total: {bookingTotals.total}</span>
-                <span className="pill pill-warning">Pending: {bookingTotals.pending}</span>
-                <span className="pill pill-success">Confirmed: {bookingTotals.confirmed}</span>
-                <span className="pill pill-success">Done: {bookingTotals.done}</span>
-                <span
-                  className="pill"
-                  style={{
-                    background: "var(--error-soft)",
-                    color: "var(--error)",
-                    borderColor: "rgba(239, 68, 68, 0.2)",
-                  }}
-                >
-                  Cancelled: {bookingTotals.cancelled}
-                </span>
-              </div>
-              <div style={{ display: "grid", gap: "10px" }}>
-                {[
-                  { key: "Pending", count: bookingTotals.pending, color: "var(--warning)" },
-                  { key: "Confirmed", count: bookingTotals.confirmed, color: "var(--success)" },
-                  { key: "Done", count: bookingTotals.done, color: "var(--success)" },
-                  { key: "Cancelled", count: bookingTotals.cancelled, color: "var(--error)" },
-                ].map((entry) => {
-                  const percent = bookingTotals.total ? (entry.count / bookingTotals.total) * 100 : 0;
-                  return (
-                    <div key={entry.key} style={{ display: "grid", gap: "6px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between" }}>
-                        <span>{entry.key}</span>
-                        <span className="muted">{entry.count}</span>
-                      </div>
-                      <div
-                        style={{
-                          height: "8px",
-                          borderRadius: "999px",
-                          background: "var(--surface-muted)",
-                          overflow: "hidden",
-                        }}
-                      >
-                        <div
-                          style={{
-                            height: "100%",
-                            width: `${percent}%`,
-                            background: entry.color,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ marginTop: "12px" }}>
-                <h3 style={{ marginBottom: "6px" }}>Time bands ({timezoneLabel})</h3>
-                <ul className="muted" style={{ margin: 0, paddingLeft: "18px" }}>
-                  {opsData?.booking_status_today.bands.map((band) => (
-                    <li key={band.label}>
-                      {band.label}: {band.count}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </>
+            <div className="muted">
+              Total: {bookingTotals.total} · Pending: {bookingTotals.pending} · Confirmed: {bookingTotals.confirmed} ·
+              Done: {bookingTotals.done} · Cancelled: {bookingTotals.cancelled}
+            </div>
           ) : (
             <p className="muted">Status summary will populate here.</p>
           )}

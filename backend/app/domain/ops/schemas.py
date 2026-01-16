@@ -92,9 +92,8 @@ class OpsDashboardUpcomingEvent(BaseModel):
 class OpsDashboardWorkerAvailability(BaseModel):
     worker_id: int
     name: str | None = None
-    status: str
-    zone: str | None = None
-    next_booking_at: datetime | None = None
+    available: bool
+    next_available_at: datetime | None = None
 
 
 class OpsDashboardBookingStatusTotals(BaseModel):
