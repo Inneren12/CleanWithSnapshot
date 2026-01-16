@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict
@@ -169,3 +169,16 @@ class QualityReviewReplyResponse(BaseModel):
     message: str
     created_by: str | None = None
     created_at: datetime
+
+
+class RatingDistributionEntry(BaseModel):
+    stars: int
+    count: int
+
+
+class RatingDistributionResponse(BaseModel):
+    from_date: date
+    to_date: date
+    total: int
+    average_rating: float | None = None
+    distribution: list[RatingDistributionEntry]
