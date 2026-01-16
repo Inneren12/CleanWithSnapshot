@@ -61,6 +61,10 @@ class ScheduleResponse(BaseModel):
     from_date: date
     to_date: date
     bookings: list[ScheduleBooking]
+    total: int | None = None
+    limit: int | None = None
+    offset: int | None = None
+    query: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

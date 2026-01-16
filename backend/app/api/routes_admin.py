@@ -1866,6 +1866,9 @@ async def list_schedule(
     worker_id: int | None = None,
     team_id: int | None = None,
     status: str | None = None,
+    query: str | None = Query(default=None, alias="q"),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int | None = Query(default=None, ge=0),
     session: AsyncSession = Depends(get_db_session),
     _identity: AdminIdentity = Depends(require_permission_keys("bookings.view")),
 ) -> ScheduleResponse:
@@ -1883,6 +1886,9 @@ async def list_schedule(
         worker_id=worker_id,
         team_id=team_id,
         status=status,
+        limit=limit,
+        offset=offset,
+        query=query,
     )
     return ScheduleResponse(**payload)
 
