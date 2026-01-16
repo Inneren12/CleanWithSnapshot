@@ -6,6 +6,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
+import sqlalchemy as sa
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +45,204 @@ def safe_csv_value(value: object) -> str:
     if text.startswith(DANGEROUS_CSV_PREFIXES):
         return f"'{text}"
     return text
+
+
+def _resolve_service_label(policy_snapshot: dict | None, lead_inputs: dict | None) -> str:
+    label = None
+    if isinstance(policy_snapshot, dict):
+        label = (
+            policy_snapshot.get("service_type")
+            or policy_snapshot.get("cleaning_type")
+            or policy_snapshot.get("service")
+        )
+    if not label and isinstance(lead_inputs, dict):
+        label = (
+            lead_inputs.get("cleaning_type")
+            or lead_inputs.get("service_type")
+            or lead_inputs.get("service")
+        )
+    if label is None:
+        return "Unspecified"
+    normalized = str(label).strip()
+    return normalized or "Unspecified"
+
+
+async def build_top_performers_month(
+    session: AsyncSession,
+    org_id,
+    *,
+    window_start_utc: datetime,
+    window_end_utc: datetime,
+    month_start: date,
+    month_end: date,
+    limit: int = 5,
+) -> dict[str, object]:
+    booking_filters = [
+        Booking.org_id == org_id,
+        Booking.archived_at.is_(None),
+        Booking.starts_at >= window_start_utc,
+        Booking.starts_at < window_end_utc,
+        Booking.status != "CANCELLED",
+    ]
+
+    revenue_total_stmt = select(func.coalesce(func.sum(Booking.base_charge_cents), 0)).where(
+        *booking_filters
+    )
+    total_revenue_cents = int((await session.execute(revenue_total_stmt)).scalar() or 0)
+
+    teams_stmt = (
+        select(
+            Team.team_id,
+            Team.name,
+            func.count(Booking.booking_id),
+            func.coalesce(func.sum(Booking.base_charge_cents), 0),
+        )
+        .join(Team, Booking.team_id == Team.team_id)
+        .where(*booking_filters)
+        .group_by(Team.team_id, Team.name)
+        .order_by(
+            sa.desc(func.coalesce(func.sum(Booking.base_charge_cents), 0)),
+            sa.desc(func.count(Booking.booking_id)),
+        )
+        .limit(limit)
+    )
+    team_rows = (await session.execute(teams_stmt)).all()
+    top_teams = [
+        {
+            "team_id": team_id,
+            "name": name,
+            "bookings_count": int(bookings_count or 0),
+            "revenue_cents": int(revenue_cents or 0),
+        }
+        for team_id, name, bookings_count, revenue_cents in team_rows
+    ]
+
+    clients_stmt = (
+        select(
+            ClientUser.client_id,
+            ClientUser.name,
+            ClientUser.email,
+            func.count(Booking.booking_id),
+            func.coalesce(func.sum(Booking.base_charge_cents), 0),
+        )
+        .join(ClientUser, Booking.client_id == ClientUser.client_id)
+        .where(
+            *booking_filters,
+            Booking.client_id.is_not(None),
+        )
+        .group_by(ClientUser.client_id, ClientUser.name, ClientUser.email)
+        .order_by(
+            sa.desc(func.coalesce(func.sum(Booking.base_charge_cents), 0)),
+            sa.desc(func.count(Booking.booking_id)),
+        )
+        .limit(limit)
+    )
+    client_rows = (await session.execute(clients_stmt)).all()
+    top_clients = [
+        {
+            "client_id": client_id,
+            "name": name,
+            "email": email,
+            "bookings_count": int(bookings_count or 0),
+            "revenue_cents": int(revenue_cents or 0),
+        }
+        for client_id, name, email, bookings_count, revenue_cents in client_rows
+    ]
+
+    assignments_union = sa.union_all(
+        select(
+            BookingWorker.booking_id.label("booking_id"),
+            BookingWorker.worker_id.label("worker_id"),
+        ),
+        select(
+            Booking.booking_id.label("booking_id"),
+            Booking.assigned_worker_id.label("worker_id"),
+        ),
+    ).subquery()
+    assignments_distinct = (
+        select(assignments_union.c.booking_id, assignments_union.c.worker_id)
+        .where(assignments_union.c.worker_id.is_not(None))
+        .distinct()
+        .subquery()
+    )
+
+    workers_stmt = (
+        select(
+            Worker.worker_id,
+            Worker.name,
+            Worker.team_id,
+            Team.name,
+            func.count(Booking.booking_id),
+            func.coalesce(func.sum(Booking.base_charge_cents), 0),
+        )
+        .join(assignments_distinct, Worker.worker_id == assignments_distinct.c.worker_id)
+        .join(Booking, Booking.booking_id == assignments_distinct.c.booking_id)
+        .join(Team, Worker.team_id == Team.team_id)
+        .where(*booking_filters)
+        .group_by(Worker.worker_id, Worker.name, Worker.team_id, Team.name)
+        .order_by(
+            sa.desc(func.coalesce(func.sum(Booking.base_charge_cents), 0)),
+            sa.desc(func.count(Booking.booking_id)),
+        )
+        .limit(limit)
+    )
+    worker_rows = (await session.execute(workers_stmt)).all()
+    top_workers = [
+        {
+            "worker_id": worker_id,
+            "name": name,
+            "team_id": team_id,
+            "team_name": team_name,
+            "bookings_count": int(bookings_count or 0),
+            "revenue_cents": int(revenue_cents or 0),
+        }
+        for worker_id, name, team_id, team_name, bookings_count, revenue_cents in worker_rows
+    ]
+
+    service_stmt = (
+        select(
+            Booking.booking_id,
+            Booking.base_charge_cents,
+            Booking.policy_snapshot,
+            Lead.structured_inputs,
+        )
+        .outerjoin(Lead, Booking.lead_id == Lead.lead_id)
+        .where(*booking_filters)
+    )
+    service_rows = (await session.execute(service_stmt)).all()
+    service_totals: dict[str, dict[str, int]] = {}
+    for _booking_id, base_charge_cents, policy_snapshot, structured_inputs in service_rows:
+        label = _resolve_service_label(policy_snapshot, structured_inputs)
+        entry = service_totals.setdefault(label, {"bookings_count": 0, "revenue_cents": 0})
+        entry["bookings_count"] += 1
+        entry["revenue_cents"] += int(base_charge_cents or 0)
+
+    top_services = []
+    for label, metrics in sorted(
+        service_totals.items(),
+        key=lambda item: (item[1]["revenue_cents"], item[1]["bookings_count"]),
+        reverse=True,
+    )[:limit]:
+        revenue_cents = metrics["revenue_cents"]
+        share = revenue_cents / total_revenue_cents if total_revenue_cents else 0.0
+        top_services.append(
+            {
+                "label": label,
+                "bookings_count": metrics["bookings_count"],
+                "revenue_cents": revenue_cents,
+                "share_of_revenue": round(share, 4),
+            }
+        )
+
+    return {
+        "month_start": month_start,
+        "month_end": month_end,
+        "total_revenue_cents": total_revenue_cents,
+        "workers": top_workers,
+        "clients": top_clients,
+        "teams": top_teams,
+        "services": top_services,
+    }
 
 
 async def list_worker_timeline(

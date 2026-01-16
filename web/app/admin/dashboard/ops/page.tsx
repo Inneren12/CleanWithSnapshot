@@ -84,6 +84,47 @@ type OpsDashboardRevenueWeek = {
   goal?: OpsDashboardRevenueGoal;
 };
 
+type OpsDashboardTopWorker = {
+  worker_id: number;
+  name?: string | null;
+  team_id?: number | null;
+  team_name?: string | null;
+  bookings_count: number;
+  revenue_cents: number;
+};
+
+type OpsDashboardTopClient = {
+  client_id: string;
+  name?: string | null;
+  email?: string | null;
+  bookings_count: number;
+  revenue_cents: number;
+};
+
+type OpsDashboardTopTeam = {
+  team_id: number;
+  name: string;
+  bookings_count: number;
+  revenue_cents: number;
+};
+
+type OpsDashboardTopService = {
+  label: string;
+  bookings_count: number;
+  revenue_cents: number;
+  share_of_revenue: number;
+};
+
+type OpsDashboardTopPerformers = {
+  month_start: string;
+  month_end: string;
+  total_revenue_cents: number;
+  workers: OpsDashboardTopWorker[];
+  clients: OpsDashboardTopClient[];
+  teams: OpsDashboardTopTeam[];
+  services: OpsDashboardTopService[];
+};
+
 type OpsDashboardResponse = {
   as_of: string;
   org_timezone: string;
@@ -94,6 +135,7 @@ type OpsDashboardResponse = {
   booking_status_today: OpsDashboardBookingStatusToday;
   hero_metrics: OpsDashboardHeroMetrics;
   revenue_week: OpsDashboardRevenueWeek;
+  top_performers: OpsDashboardTopPerformers;
 };
 
 type ActivityFeedAction = {
@@ -154,6 +196,22 @@ function formatWeekday(value: string, timeZone: string) {
     weekday: "short",
     timeZone,
   }).format(dt);
+}
+
+function formatMonthLabel(value: string, timeZone: string) {
+  const dt = new Date(`${value}T00:00:00`);
+  return new Intl.DateTimeFormat("en-CA", {
+    month: "long",
+    year: "numeric",
+    timeZone,
+  }).format(dt);
+}
+
+function formatPercent(value: number) {
+  return new Intl.NumberFormat("en-CA", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(value);
 }
 
 export default function OpsDashboardPage() {
@@ -427,6 +485,8 @@ export default function OpsDashboardPage() {
   const bookingTotals = opsData?.booking_status_today.totals;
   const timezoneLabel = opsData?.org_timezone ?? "UTC";
   const currencyLabel = opsData?.org_currency ?? "CAD";
+  const topPerformers = opsData?.top_performers ?? null;
+  const monthLabel = topPerformers ? formatMonthLabel(topPerformers.month_start, timezoneLabel) : "";
   const asOfLabel = opsData
     ? `As of ${formatDateTime(opsData.as_of, opsData.org_timezone)} (${opsData.org_timezone})`
     : "Awaiting ops data.";
@@ -733,6 +793,99 @@ export default function OpsDashboardPage() {
           ) : (
             <p className="muted">Status summary will populate here.</p>
           )}
+        </section>
+
+        <section className="admin-card admin-section">
+          <div className="section-heading">
+            <h2>Top performers (month)</h2>
+            {topPerformers ? (
+              <p className="muted">
+                {monthLabel} · Total {formatCurrency(topPerformers.total_revenue_cents, currencyLabel)}
+              </p>
+            ) : (
+              <p className="muted">Top performers will appear after ops data.</p>
+            )}
+          </div>
+          {topPerformers ? (
+            <div
+              className="admin-grid"
+              style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}
+            >
+              <div>
+                <strong>Workers</strong>
+                {topPerformers.workers.length ? (
+                  <ol>
+                    {topPerformers.workers.map((worker) => (
+                      <li key={worker.worker_id} style={{ marginTop: "8px" }}>
+                        <div>{worker.name ?? `Worker ${worker.worker_id}`}</div>
+                        <div className="muted">
+                          {worker.team_name ? `${worker.team_name} · ` : ""}
+                          {worker.bookings_count} bookings ·{" "}
+                          {formatCurrency(worker.revenue_cents, currencyLabel)}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="muted">No worker bookings this month.</p>
+                )}
+              </div>
+              <div>
+                <strong>Clients</strong>
+                {topPerformers.clients.length ? (
+                  <ol>
+                    {topPerformers.clients.map((client) => (
+                      <li key={client.client_id} style={{ marginTop: "8px" }}>
+                        <div>{client.name || client.email || client.client_id}</div>
+                        <div className="muted">
+                          {client.bookings_count} bookings ·{" "}
+                          {formatCurrency(client.revenue_cents, currencyLabel)}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="muted">No client spend this month.</p>
+                )}
+              </div>
+              <div>
+                <strong>Teams</strong>
+                {topPerformers.teams.length ? (
+                  <ol>
+                    {topPerformers.teams.map((team) => (
+                      <li key={team.team_id} style={{ marginTop: "8px" }}>
+                        <div>{team.name}</div>
+                        <div className="muted">
+                          {team.bookings_count} bookings · {formatCurrency(team.revenue_cents, currencyLabel)}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="muted">No team revenue this month.</p>
+                )}
+              </div>
+              <div>
+                <strong>Services</strong>
+                {topPerformers.services.length ? (
+                  <ol>
+                    {topPerformers.services.map((service) => (
+                      <li key={service.label} style={{ marginTop: "8px" }}>
+                        <div>{service.label}</div>
+                        <div className="muted">
+                          {service.bookings_count} bookings ·{" "}
+                          {formatCurrency(service.revenue_cents, currencyLabel)} ·{" "}
+                          {formatPercent(service.share_of_revenue)} share
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="muted">No service revenue this month.</p>
+                )}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="admin-card admin-section">
