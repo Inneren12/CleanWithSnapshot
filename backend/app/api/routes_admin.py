@@ -237,8 +237,12 @@ async def _overdue_invoice_summary_totals(
             Invoice.org_id == org_id,
             Invoice.due_date.is_not(None),
             Invoice.due_date <= overdue_cutoff,
-            Invoice.status.notin_(
-                [invoice_statuses.INVOICE_STATUS_PAID, invoice_statuses.INVOICE_STATUS_VOID]
+            Invoice.status.in_(
+                [
+                    invoice_statuses.INVOICE_STATUS_SENT,
+                    invoice_statuses.INVOICE_STATUS_PARTIAL,
+                    invoice_statuses.INVOICE_STATUS_OVERDUE,
+                ]
             ),
             balance_expr > 0,
         )

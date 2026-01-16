@@ -135,3 +135,56 @@ async def test_ops_dashboard_overdue_alert_respects_permissions(async_session_ma
     assert viewer_response.status_code == 200
     viewer_alerts = viewer_response.json()["critical_alerts"]
     assert not any(alert["type"] == "overdue_invoices" for alert in viewer_alerts)
+
+
+@pytest.mark.anyio
+async def test_ops_dashboard_overdue_alert_ignores_draft_invoices(async_session_maker, client):
+    as_of = date.today()
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Ops Draft Org")
+        owner = await saas_service.create_user(session, "ops-draft@org.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+
+        team = Team(name="Draft Team", org_id=org.org_id)
+        session.add(team)
+        await session.flush()
+
+        lead = Lead(org_id=org.org_id, **_lead_payload())
+        session.add(lead)
+        await session.flush()
+
+        booking = Booking(
+            booking_id=str(uuid.uuid4()),
+            org_id=org.org_id,
+            team_id=team.team_id,
+            lead_id=lead.lead_id,
+            starts_at=datetime.now(tz=timezone.utc),
+            duration_minutes=60,
+            status="PENDING",
+            deposit_cents=0,
+            base_charge_cents=0,
+            refund_total_cents=0,
+            credit_note_total_cents=0,
+        )
+        session.add(booking)
+        await session.flush()
+
+        invoice = await invoice_service.create_invoice_from_order(
+            session=session,
+            order=booking,
+            items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000)],
+            issue_date=as_of - timedelta(days=20),
+            due_date=as_of - timedelta(days=8),
+            currency="CAD",
+        )
+        invoice.status = invoice_statuses.INVOICE_STATUS_DRAFT
+        await session.commit()
+
+    token = saas_service.build_access_token(owner, membership)
+    response = client.get(
+        "/v1/admin/dashboard/ops",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    alerts = response.json()["critical_alerts"]
+    assert not any(alert["type"] == "overdue_invoices" for alert in alerts)
