@@ -26,12 +26,10 @@ type OpsDashboardAlertAction = {
 };
 
 type OpsDashboardUpcomingEvent = {
-  booking_id: string;
   starts_at: string;
-  ends_at: string;
-  status: string;
-  team_id?: number | null;
-  worker_id?: number | null;
+  title: string;
+  entity_ref?: Record<string, unknown> | null;
+  actions: OpsDashboardAlertAction[];
 };
 
 type OpsDashboardWorkerAvailability = {
@@ -75,6 +73,17 @@ function formatDateTime(value: string, timeZone: string) {
     timeStyle: "short",
     timeZone,
   }).format(dt);
+}
+
+function formatDateForQuery(value: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  }).formatToParts(value);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${lookup.year}-${lookup.month}-${lookup.day}`;
 }
 
 export default function OpsDashboardPage() {
@@ -269,36 +278,43 @@ export default function OpsDashboardPage() {
     [dismissedAlerts, opsData?.critical_alerts]
   );
 
+  const scheduleDate = formatDateForQuery(new Date(), timezoneLabel);
   const quickActions = [
     {
       key: "create-booking",
       label: "Create booking",
-      description: "Schedule a new visit.",
+      description: "Open schedule with today selected.",
       permission: "bookings.edit",
+      featureKey: "module.schedule",
+      href: `/admin/schedule?date=${scheduleDate}`,
+      disabled: false,
     },
     {
-      key: "assign-worker",
-      label: "Assign worker",
-      description: "Place a worker on a booking.",
-      permission: "bookings.assign",
+      key: "new-invoice",
+      label: "New invoice",
+      description: "Go to invoices to start a draft.",
+      permission: "invoices.edit",
+      featureKey: "module.invoices",
+      href: "/admin/invoices",
+      disabled: false,
     },
     {
-      key: "follow-up-lead",
-      label: "Follow up lead",
-      description: "Open client contact record.",
-      permission: "contacts.edit",
+      key: "call-client",
+      label: "Call client",
+      description: "Open schedule to find client details.",
+      permission: "bookings.view",
+      featureKey: "module.schedule",
+      href: `/admin/schedule?date=${scheduleDate}`,
+      disabled: false,
     },
     {
-      key: "send-invoice",
-      label: "Send invoice reminder",
-      description: "Notify outstanding invoices.",
-      permission: "invoices.send",
-    },
-    {
-      key: "run-export",
-      label: "Run export",
-      description: "Generate daily ops export.",
-      permission: "exports.run",
+      key: "sms-workers",
+      label: "SMS workers",
+      description: "Messaging center not enabled yet.",
+      permission: "core.view",
+      featureKey: "module.notifications_center",
+      href: "/admin/notifications",
+      disabled: true,
     },
   ];
 
@@ -422,9 +438,34 @@ export default function OpsDashboardPage() {
             <p className="muted">Next 24 hours in {timezoneLabel}.</p>
           </div>
           {opsData ? (
-            <p className="muted">
-              {opsData.upcoming_events.length} upcoming booking(s). Timeline view placeholder.
-            </p>
+            opsData.upcoming_events.length > 0 ? (
+              <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch", gap: "12px" }}>
+                {opsData.upcoming_events.map((event, index) => (
+                  <div key={`${event.title}-${event.starts_at}-${index}`} className="alert alert-info">
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+                      <div>
+                        <strong>{event.title}</strong>
+                        <div className="muted">
+                          {formatDateTime(event.starts_at, opsData.org_timezone)}
+                        </div>
+                      </div>
+                      {event.entity_ref ? <span className="muted">{String(event.entity_ref.kind ?? "")}</span> : null}
+                    </div>
+                    {event.actions.length > 0 ? (
+                      <div className="admin-actions" style={{ marginTop: "8px", flexWrap: "wrap" }}>
+                        {event.actions.map((action) => (
+                          <a key={action.href} className="btn btn-secondary" href={action.href}>
+                            {action.label}
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">No critical events in the next 24 hours.</p>
+            )
           ) : (
             <p className="muted">Upcoming events will appear here.</p>
           )}
@@ -466,14 +507,32 @@ export default function OpsDashboardPage() {
           </div>
           <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch" }}>
             {quickActions.map((action) => {
-              const allowed = permissionKeys.includes(action.permission);
-              return (
+              const featureAllowed = visibilityReady
+                ? isVisible(action.featureKey, permissionKeys, featureOverrides, hiddenKeys)
+                : true;
+              const permissionAllowed = permissionKeys.includes(action.permission);
+              const allowed = featureAllowed && permissionAllowed && !action.disabled;
+              const disabledReason = action.disabled
+                ? "Not implemented"
+                : !featureAllowed
+                  ? "Feature disabled"
+                  : "Permission required";
+              return allowed ? (
+                <a
+                  key={action.key}
+                  className="btn btn-secondary"
+                  href={action.href}
+                  title="Open"
+                >
+                  {action.label} · <span className="muted">{action.description}</span>
+                </a>
+              ) : (
                 <button
                   key={action.key}
                   className="btn btn-secondary"
                   type="button"
-                  disabled={!allowed}
-                  title={allowed ? "Ready" : "Permission required"}
+                  disabled
+                  title={disabledReason}
                 >
                   {action.label} · <span className="muted">{action.description}</span>
                 </button>

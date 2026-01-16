@@ -60,6 +60,7 @@ from app.dependencies import get_db_session
 from app.infra.db import get_session_factory
 from app.infra.org_context import org_id_context
 from app.domain.bookings.db_models import (
+    AvailabilityBlock,
     Booking,
     BookingWorker,
     EmailEvent,
@@ -274,6 +275,211 @@ async def _unassigned_bookings_count(
     return int(count or 0)
 
 
+async def _invoices_due_today_summary(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    due_date: date,
+) -> tuple[int, int]:
+    paid_subq = (
+        select(
+            Payment.invoice_id.label("invoice_id"),
+            func.coalesce(func.sum(Payment.amount_cents), 0).label("paid_cents"),
+        )
+        .where(Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED)
+        .group_by(Payment.invoice_id)
+        .subquery()
+    )
+    balance_expr = Invoice.total_cents - func.coalesce(paid_subq.c.paid_cents, 0)
+    stmt = (
+        select(
+            func.count(Invoice.invoice_id),
+            func.coalesce(func.sum(balance_expr), 0),
+        )
+        .outerjoin(paid_subq, paid_subq.c.invoice_id == Invoice.invoice_id)
+        .where(
+            Invoice.org_id == org_id,
+            Invoice.due_date == due_date,
+            Invoice.status.in_(
+                [
+                    invoice_statuses.INVOICE_STATUS_SENT,
+                    invoice_statuses.INVOICE_STATUS_PARTIAL,
+                    invoice_statuses.INVOICE_STATUS_OVERDUE,
+                ]
+            ),
+            balance_expr > 0,
+        )
+    )
+    row = (await session.execute(stmt)).one()
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+async def _build_ops_upcoming_events(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    permission_keys: set[str],
+    org_timezone: ZoneInfo,
+    now_local: datetime,
+    next24_start_utc: datetime,
+    next24_end_utc: datetime,
+) -> list[OpsDashboardUpcomingEvent]:
+    events: list[OpsDashboardUpcomingEvent] = []
+    now_utc = now_local.astimezone(timezone.utc)
+
+    if "bookings.view" in permission_keys:
+        soon_end_local = now_local + timedelta(hours=4)
+        soon_end_utc = soon_end_local.astimezone(timezone.utc)
+        unassigned_stmt = (
+            select(Booking)
+            .where(
+                Booking.org_id == org_id,
+                Booking.archived_at.is_(None),
+                Booking.starts_at >= now_utc,
+                Booking.starts_at < soon_end_utc,
+                Booking.assigned_worker_id.is_(None),
+                Booking.status != "CANCELLED",
+            )
+            .order_by(Booking.starts_at.asc())
+            .limit(5)
+        )
+        unassigned_rows = (await session.execute(unassigned_stmt)).scalars().all()
+        for booking in unassigned_rows:
+            starts_at = booking.starts_at
+            if starts_at.tzinfo is None:
+                starts_at = starts_at.replace(tzinfo=timezone.utc)
+            start_local = starts_at.astimezone(org_timezone)
+            events.append(
+                OpsDashboardUpcomingEvent(
+                    starts_at=starts_at,
+                    title="Unassigned booking starting soon",
+                    entity_ref={
+                        "kind": "booking",
+                        "booking_id": booking.booking_id,
+                        "team_id": booking.team_id,
+                        "status": booking.status,
+                    },
+                    actions=[
+                        OpsDashboardAlertAction(
+                            label="Open schedule",
+                            href=f"/admin/schedule?date={start_local.date().isoformat()}",
+                        )
+                    ],
+                )
+            )
+
+        tomorrow_start_local = datetime.combine(
+            now_local.date() + timedelta(days=1),
+            time.min,
+            tzinfo=org_timezone,
+        )
+        tomorrow_end_local = tomorrow_start_local + timedelta(days=1)
+        tomorrow_start_utc = tomorrow_start_local.astimezone(timezone.utc)
+        tomorrow_end_utc = tomorrow_end_local.astimezone(timezone.utc)
+        tomorrow_stmt = (
+            select(Booking)
+            .where(
+                Booking.org_id == org_id,
+                Booking.archived_at.is_(None),
+                Booking.starts_at >= tomorrow_start_utc,
+                Booking.starts_at < tomorrow_end_utc,
+            )
+            .order_by(Booking.starts_at.asc())
+            .limit(1)
+        )
+        first_tomorrow = (await session.execute(tomorrow_stmt)).scalars().first()
+        if first_tomorrow:
+            starts_at = first_tomorrow.starts_at
+            if starts_at.tzinfo is None:
+                starts_at = starts_at.replace(tzinfo=timezone.utc)
+            if next24_start_utc <= starts_at < next24_end_utc:
+                events.append(
+                    OpsDashboardUpcomingEvent(
+                        starts_at=starts_at,
+                        title="First booking tomorrow",
+                        entity_ref={
+                            "kind": "booking",
+                            "booking_id": first_tomorrow.booking_id,
+                            "team_id": first_tomorrow.team_id,
+                            "status": first_tomorrow.status,
+                        },
+                        actions=[
+                            OpsDashboardAlertAction(
+                                label="Open schedule",
+                                href=f"/admin/schedule?date={tomorrow_start_local.date().isoformat()}",
+                            )
+                        ],
+                    )
+                )
+
+    if "invoices.view" in permission_keys:
+        due_count, due_total = await _invoices_due_today_summary(
+            session,
+            org_id,
+            due_date=now_local.date(),
+        )
+        if due_count > 0:
+            events.append(
+                OpsDashboardUpcomingEvent(
+                    starts_at=now_local.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(
+                        timezone.utc
+                    ),
+                    title="Invoices due today",
+                    entity_ref={
+                        "kind": "invoice",
+                        "count": due_count,
+                        "total_cents": due_total,
+                        "due_date": now_local.date().isoformat(),
+                    },
+                    actions=[
+                        OpsDashboardAlertAction(
+                            label="Review invoices",
+                            href="/admin/invoices?status=SENT",
+                        )
+                    ],
+                )
+            )
+
+    if "schedule.blocking.manage" in permission_keys:
+        training_stmt = (
+            select(AvailabilityBlock)
+            .where(
+                AvailabilityBlock.org_id == org_id,
+                AvailabilityBlock.block_type == "training",
+                AvailabilityBlock.starts_at < next24_end_utc,
+                AvailabilityBlock.ends_at > next24_start_utc,
+            )
+            .order_by(AvailabilityBlock.starts_at.asc())
+            .limit(5)
+        )
+        training_rows = (await session.execute(training_stmt)).scalars().all()
+        for block in training_rows:
+            starts_at = block.starts_at
+            if starts_at.tzinfo is None:
+                starts_at = starts_at.replace(tzinfo=timezone.utc)
+            events.append(
+                OpsDashboardUpcomingEvent(
+                    starts_at=starts_at,
+                    title="Training block scheduled",
+                    entity_ref={
+                        "kind": "training_block",
+                        "block_id": block.id,
+                        "scope_type": block.scope_type,
+                        "scope_id": block.scope_id,
+                        "reason": block.reason,
+                    },
+                    actions=[
+                        OpsDashboardAlertAction(
+                            label="Manage availability blocks",
+                            href="/admin/settings/availability-blocks",
+                        )
+                    ],
+                )
+            )
+
+    return sorted(events, key=lambda event: event.starts_at)[:10]
+
+
 async def _build_ops_critical_alerts(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -475,34 +681,15 @@ async def get_ops_dashboard(
         for label, count in band_counts
     ]
 
-    upcoming_stmt = (
-        select(Booking)
-        .where(
-            Booking.org_id == org_id,
-            Booking.archived_at.is_(None),
-            Booking.starts_at >= next24_start_utc,
-            Booking.starts_at < next24_end_utc,
-        )
-        .order_by(Booking.starts_at.asc())
-        .limit(50)
+    upcoming_events = await _build_ops_upcoming_events(
+        session,
+        org_id,
+        permission_keys=permission_keys,
+        org_timezone=org_tz,
+        now_local=now_local,
+        next24_start_utc=next24_start_utc,
+        next24_end_utc=next24_end_utc,
     )
-    upcoming_rows = (await session.execute(upcoming_stmt)).scalars().all()
-    upcoming_events = []
-    for booking in upcoming_rows:
-        starts_at = booking.starts_at
-        if starts_at.tzinfo is None:
-            starts_at = starts_at.replace(tzinfo=timezone.utc)
-        duration_minutes = booking.duration_minutes or booking_service.DEFAULT_SLOT_DURATION_MINUTES
-        upcoming_events.append(
-            OpsDashboardUpcomingEvent(
-                booking_id=booking.booking_id,
-                starts_at=starts_at,
-                ends_at=starts_at + timedelta(minutes=duration_minutes),
-                status=booking.status,
-                team_id=booking.team_id,
-                worker_id=booking.assigned_worker_id,
-            )
-        )
 
     critical_alerts = await _build_ops_critical_alerts(
         session,

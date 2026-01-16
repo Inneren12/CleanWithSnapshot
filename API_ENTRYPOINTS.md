@@ -199,7 +199,25 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
       "created_at": "2026-01-20T15:04:05Z"
     }
   ],
-  "upcoming_events": [],
+  "upcoming_events": [
+    {
+      "starts_at": "2026-01-21T08:00:00Z",
+      "title": "Unassigned booking starting soon",
+      "entity_ref": {
+        "kind": "booking",
+        "booking_id": "booking-123",
+        "team_id": 4,
+        "status": "PENDING"
+      },
+      "actions": [
+        {
+          "label": "Open schedule",
+          "href": "/admin/schedule?date=2026-01-21",
+          "method": "GET"
+        }
+      ]
+    }
+  ],
   "worker_availability": [],
   "booking_status_today": {
     "totals": {

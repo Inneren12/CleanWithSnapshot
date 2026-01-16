@@ -81,12 +81,10 @@ class OpsDashboardAlert(BaseModel):
 
 
 class OpsDashboardUpcomingEvent(BaseModel):
-    booking_id: str
     starts_at: datetime
-    ends_at: datetime
-    status: str
-    team_id: int | None = None
-    worker_id: int | None = None
+    title: str
+    entity_ref: dict[str, object] | None = None
+    actions: list[OpsDashboardAlertAction] = Field(default_factory=list)
 
 
 class OpsDashboardWorkerAvailability(BaseModel):
