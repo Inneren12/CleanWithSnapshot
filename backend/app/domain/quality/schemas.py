@@ -20,6 +20,11 @@ class QualityIssueSeverity(str, Enum):
     LOW = "low"
 
 
+class QualityIssueResponseType(str, Enum):
+    RESPONSE = "response"
+    NOTE = "note"
+
+
 class QualityIssueResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -39,6 +44,59 @@ class QualityIssueResponse(BaseModel):
     resolution_type: str | None = None
     resolution_value: str | None = None
     assignee_user_id: uuid.UUID | None = None
+
+
+class QualityIssueRelatedBooking(BaseModel):
+    booking_id: str
+    status: str
+    starts_at: datetime | None = None
+    team_id: int | None = None
+    assigned_worker_id: int | None = None
+
+
+class QualityIssueRelatedWorker(BaseModel):
+    worker_id: int
+    name: str
+    phone: str | None = None
+    email: str | None = None
+    team_id: int | None = None
+
+
+class QualityIssueRelatedClient(BaseModel):
+    client_id: str
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    is_blocked: bool | None = None
+
+
+class QualityIssueResponseLog(BaseModel):
+    response_id: uuid.UUID
+    response_type: QualityIssueResponseType
+    message: str
+    created_by: str | None = None
+    created_at: datetime
+
+
+class QualityIssueDetailResponse(BaseModel):
+    issue: QualityIssueResponse
+    booking: QualityIssueRelatedBooking | None = None
+    worker: QualityIssueRelatedWorker | None = None
+    client: QualityIssueRelatedClient | None = None
+    responses: list[QualityIssueResponseLog]
+
+
+class QualityIssueUpdateRequest(BaseModel):
+    status: QualityIssueStatus | None = None
+    resolution_type: str | None = None
+    resolution_value: str | None = None
+    assignee_user_id: uuid.UUID | None = None
+
+
+class QualityIssueRespondRequest(BaseModel):
+    response_type: QualityIssueResponseType = QualityIssueResponseType.RESPONSE
+    message: str
 
 
 class QualityIssueListResponse(BaseModel):

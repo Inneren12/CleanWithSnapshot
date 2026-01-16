@@ -125,3 +125,90 @@ async def test_quality_rbac_blocks_viewer(async_session_maker, client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_quality_first_response_at_set_once(async_session_maker, client):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Quality SLA Org")
+        owner = await saas_service.create_user(session, "quality-sla@org.com", "secret")
+        membership = await saas_service.create_membership(
+            session, org, owner, MembershipRole.OWNER
+        )
+        issue = QualityIssue(
+            id=uuid.uuid4(),
+            org_id=org.org_id,
+            status="open",
+            summary="Late arrival",
+        )
+        session.add(issue)
+        await session.commit()
+
+    token = saas_service.build_access_token(owner, membership)
+    response = client.post(
+        f"/v1/admin/quality/issues/{issue.id}/respond",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"response_type": "response", "message": "We are reviewing this issue."},
+    )
+    assert response.status_code == 200
+
+    async with async_session_maker() as session:
+        refreshed = await session.get(QualityIssue, issue.id)
+        assert refreshed is not None
+        first_response_at = refreshed.first_response_at
+        assert first_response_at is not None
+
+    response = client.post(
+        f"/v1/admin/quality/issues/{issue.id}/respond",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"response_type": "response", "message": "Follow-up response."},
+    )
+    assert response.status_code == 200
+
+    async with async_session_maker() as session:
+        refreshed = await session.get(QualityIssue, issue.id)
+        assert refreshed is not None
+        assert refreshed.first_response_at == first_response_at
+
+
+@pytest.mark.anyio
+async def test_quality_resolved_at_updates_with_status(async_session_maker, client):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Quality Resolve Org")
+        owner = await saas_service.create_user(session, "quality-resolve@org.com", "secret")
+        membership = await saas_service.create_membership(
+            session, org, owner, MembershipRole.OWNER
+        )
+        issue = QualityIssue(
+            id=uuid.uuid4(),
+            org_id=org.org_id,
+            status="open",
+            summary="Surface issue",
+        )
+        session.add(issue)
+        await session.commit()
+
+    token = saas_service.build_access_token(owner, membership)
+    response = client.patch(
+        f"/v1/admin/quality/issues/{issue.id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"status": "closed"},
+    )
+    assert response.status_code == 200
+
+    async with async_session_maker() as session:
+        refreshed = await session.get(QualityIssue, issue.id)
+        assert refreshed is not None
+        assert refreshed.resolved_at is not None
+
+    response = client.patch(
+        f"/v1/admin/quality/issues/{issue.id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"status": "in_progress"},
+    )
+    assert response.status_code == 200
+
+    async with async_session_maker() as session:
+        refreshed = await session.get(QualityIssue, issue.id)
+        assert refreshed is not None
+        assert refreshed.resolved_at is None
