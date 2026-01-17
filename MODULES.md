@@ -678,7 +678,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Trigger points:
   - `payment_failed` — Stripe webhook payment failure handling (`backend/app/api/routes_payments.py::_handle_invoice_event`)
   - `negative_review` — Admin-created feedback with rating <= 2 (`backend/app/api/routes_admin.py::admin_clients_add_feedback`)
-  - `low_stock`, `high_value_lead`, `no_show` — placeholders until inventory/leads/check-in hooks exist
+  - `low_stock` — Inventory item updates emit `type=low_stock` when crossing from ok -> low; repeats only after recovery (low -> ok -> low). (`backend/app/domain/inventory/service.py::update_item`)
+  - `high_value_lead`, `no_show` — placeholders until leads/check-in hooks exist
 - API endpoints and RBAC: `backend/app/api/routes_admin.py`
 - Event/read schema: `backend/app/domain/notifications_center/db_models.py` + Alembic migration
 - Admin UI, CTA link mapping, and filters: `web/app/admin/notifications/page.tsx`
