@@ -49,6 +49,8 @@ from app.domain.analytics.db_models import EventLog
 from app.domain.analytics.service import (
     EventType,
     average_revenue_cents,
+    client_clv_summary,
+    client_retention_cohorts,
     cohort_repeat_rates,
     conversion_counts,
     duration_accuracy,
@@ -6074,6 +6076,54 @@ async def get_geo_analytics(
     return analytics_schemas.GeoAnalyticsResponse(
         by_area=[analytics_schemas.GeoAreaSummary(**row) for row in by_area],
         points=[analytics_schemas.GeoPointSummary(**row) for row in points] if points else None,
+    )
+
+
+@router.get(
+    "/v1/admin/analytics/clients/clv",
+    response_model=analytics_schemas.ClientClvResponse,
+)
+async def get_client_clv_analytics(
+    request: Request,
+    from_ts: datetime | None = Query(default=None, alias="from"),
+    to_ts: datetime | None = Query(default=None, alias="to"),
+    top: int = Query(default=10, ge=1, le=100),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_finance),
+) -> analytics_schemas.ClientClvResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    start, end = _normalize_range(from_ts, to_ts)
+    avg_clv, median_clv, top_clients = await client_clv_summary(
+        session, start, end, org_id=org_id, top=top
+    )
+    return analytics_schemas.ClientClvResponse(
+        range_start=start,
+        range_end=end,
+        average_clv_cents=avg_clv,
+        median_clv_cents=median_clv,
+        top_clients=[analytics_schemas.ClientClvEntry(**entry) for entry in top_clients],
+    )
+
+
+@router.get(
+    "/v1/admin/analytics/clients/retention",
+    response_model=analytics_schemas.ClientRetentionResponse,
+)
+async def get_client_retention_analytics(
+    request: Request,
+    cohort: str = Query(default="monthly", pattern="^(monthly)$"),
+    months: int = Query(default=12, ge=1, le=36),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_finance),
+) -> analytics_schemas.ClientRetentionResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    cohorts = await client_retention_cohorts(
+        session, org_id=org_id, months=months, cohort=cohort
+    )
+    return analytics_schemas.ClientRetentionResponse(
+        cohort=cohort,
+        months=months,
+        cohorts=[analytics_schemas.ClientRetentionCohort(**entry) for entry in cohorts],
     )
 
 

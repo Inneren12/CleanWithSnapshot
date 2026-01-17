@@ -1,6 +1,6 @@
 import math
 import uuid
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from enum import StrEnum
 
@@ -11,10 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.leads.db_models import Lead
-from app.domain.clients.db_models import ClientAddress
+from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.nps.db_models import NpsResponse
 from app.domain.invoices import statuses as invoice_statuses
-from app.domain.invoices.db_models import Payment
+from app.domain.invoices.db_models import Invoice, Payment
 
 
 class EventType(StrEnum):
@@ -36,6 +36,21 @@ def _normalize_dt(value: datetime | None, default: datetime | None = None) -> da
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _month_start(value: datetime) -> datetime:
+    normalized = _normalize_dt(value, default=datetime.now(tz=timezone.utc))
+    return datetime(normalized.year, normalized.month, 1, tzinfo=timezone.utc)
+
+
+def _month_index(value: datetime) -> int:
+    return value.year * 12 + (value.month - 1)
+
+
+def _shift_month(value: datetime, offset: int) -> datetime:
+    index = _month_index(value) + offset
+    year, month_offset = divmod(index, 12)
+    return datetime(year, month_offset + 1, 1, tzinfo=timezone.utc)
 
 
 async def log_event(
@@ -165,6 +180,10 @@ def _safe_rate(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4)
 
 
+def _payment_timestamp_column() -> sa.ColumnElement:
+    return func.coalesce(Payment.received_at, Payment.created_at)
+
+
 def _bucket_start(column: sa.ColumnElement, period: str, bind) -> sa.ColumnElement:
     if bind and bind.dialect.name == "sqlite":
         if period == "week":
@@ -277,6 +296,176 @@ async def geo_area_analytics(
         ]
 
     return by_area, points
+
+
+async def client_clv_summary(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    *,
+    org_id: uuid.UUID,
+    top: int,
+) -> tuple[float | None, float | None, list[dict[str, object]]]:
+    payment_time = _payment_timestamp_column()
+    stmt = (
+        select(
+            ClientUser.client_id,
+            ClientUser.name,
+            ClientUser.email,
+            func.coalesce(func.sum(Payment.amount_cents), 0).label("total_paid_cents"),
+            func.count(Payment.payment_id).label("payments_count"),
+            func.min(payment_time).label("first_payment_at"),
+            func.max(payment_time).label("last_payment_at"),
+        )
+        .select_from(Payment)
+        .join(Invoice, Payment.invoice_id == Invoice.invoice_id, isouter=True)
+        .join(
+            Booking,
+            sa.or_(
+                Payment.booking_id == Booking.booking_id,
+                Invoice.order_id == Booking.booking_id,
+            ),
+        )
+        .join(ClientUser, ClientUser.client_id == Booking.client_id)
+        .where(
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            Payment.org_id == org_id,
+            Booking.org_id == org_id,
+            ClientUser.org_id == org_id,
+            payment_time >= start,
+            payment_time <= end,
+        )
+        .group_by(ClientUser.client_id, ClientUser.name, ClientUser.email)
+    )
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        return None, None, []
+
+    entries: list[dict[str, object]] = []
+    totals: list[int] = []
+    for row in rows:
+        total_paid = int(row.total_paid_cents or 0)
+        totals.append(total_paid)
+        entries.append(
+            {
+                "client_id": row.client_id,
+                "name": row.name,
+                "email": row.email,
+                "total_paid_cents": total_paid,
+                "payments_count": int(row.payments_count or 0),
+                "first_payment_at": row.first_payment_at,
+                "last_payment_at": row.last_payment_at,
+            }
+        )
+
+    totals_sorted = sorted(totals)
+    count = len(totals_sorted)
+    avg_value = round(sum(totals_sorted) / count, 2) if count else None
+    if count == 0:
+        median_value = None
+    elif count % 2 == 1:
+        median_value = float(totals_sorted[count // 2])
+    else:
+        median_value = round(
+            (totals_sorted[count // 2 - 1] + totals_sorted[count // 2]) / 2, 2
+        )
+
+    top_entries = sorted(
+        entries, key=lambda entry: (-int(entry["total_paid_cents"]), str(entry["client_id"]))
+    )[: max(top, 0)]
+    return avg_value, median_value, top_entries
+
+
+async def client_retention_cohorts(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    months: int,
+    cohort: str,
+) -> list[dict[str, object]]:
+    if cohort != "monthly":
+        raise ValueError("Unsupported cohort type")
+    if months <= 0:
+        return []
+
+    payment_time = _payment_timestamp_column()
+    stmt = (
+        select(
+            Booking.client_id,
+            payment_time.label("paid_at"),
+        )
+        .select_from(Payment)
+        .join(Invoice, Payment.invoice_id == Invoice.invoice_id, isouter=True)
+        .join(
+            Booking,
+            sa.or_(
+                Payment.booking_id == Booking.booking_id,
+                Invoice.order_id == Booking.booking_id,
+            ),
+        )
+        .where(
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            Payment.org_id == org_id,
+            Booking.org_id == org_id,
+            Booking.client_id.isnot(None),
+        )
+    )
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        return []
+
+    client_months: dict[str, set[datetime]] = defaultdict(set)
+    for client_id, paid_at in rows:
+        if client_id is None or paid_at is None:
+            continue
+        month_bucket = _month_start(paid_at)
+        client_months[str(client_id)].add(month_bucket)
+
+    if not client_months:
+        return []
+
+    first_month_by_client = {
+        client_id: min(months_set) for client_id, months_set in client_months.items()
+    }
+    latest_month = max(
+        month for months_set in client_months.values() for month in months_set
+    )
+    cohort_months = [
+        _shift_month(latest_month, offset)
+        for offset in range(-(months - 1), 1)
+    ]
+
+    cohorts: list[dict[str, object]] = []
+    for cohort_month in cohort_months:
+        cohort_clients = [
+            client_id
+            for client_id, first_month in first_month_by_client.items()
+            if first_month == cohort_month
+        ]
+        cohort_size = len(cohort_clients)
+        if cohort_size == 0:
+            continue
+        retention: list[float | None] = []
+        for offset in range(months):
+            target_month = _shift_month(cohort_month, offset)
+            if target_month > latest_month:
+                retention.append(None)
+                continue
+            retained = sum(
+                1
+                for client_id in cohort_clients
+                if target_month in client_months.get(client_id, set())
+            )
+            retention.append(_safe_rate(retained, cohort_size))
+        cohorts.append(
+            {
+                "cohort_month": cohort_month,
+                "customers": cohort_size,
+                "retention": retention,
+            }
+        )
+
+    return cohorts
 
 
 async def funnel_summary(
