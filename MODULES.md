@@ -127,6 +127,7 @@ integrations.google_calendar  # Google Calendar OAuth + sync (feature gated)
 - `team_working_hours` - Regular working hours
 - `team_blackout` - Availability blocks (vacation, maintenance, etc.)
 - `booking_workers` - Worker assignments
+- `schedule_external_blocks` - External calendar blocks that reserve time
 
 **Permissions Required:**
 - `bookings.view` - View schedule
@@ -169,6 +170,7 @@ the series link is cleared while historical bookings remain.
 - Service: `backend/app/domain/bookings/service.py::check_conflicts()`
 - Logic: Checks for overlapping bookings by team/worker
 - Availability/busy status respects booking buffer minutes (`BUFFER_MINUTES`).
+- External calendar blocks (`schedule_external_blocks`) are treated as hard conflicts for scheduling.
 
 #### Availability Blocking
 - Frontend: `web/app/admin/settings/availability-blocks/page.tsx`
@@ -827,6 +829,11 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `integrations_gcal_sync_state` - Sync cursor + last sync metadata
 - `schedule_external_blocks` - External calendar blocks
 - `integrations_gcal_event_map` - Booking-to-event mapping for exports
+
+**External Block Semantics (Google Calendar import):**
+- Imported events create/update `schedule_external_blocks` (idempotent by `external_event_id` per org).
+- External blocks are schedule-only; they do **not** create bookings.
+- Scheduling conflict checks treat external blocks as blocking intervals.
 
 **Export Idempotency Rules (Google Calendar):**
 - `integrations_gcal_event_map` stores `booking_id` → `external_event_id` plus `last_pushed_hash`.

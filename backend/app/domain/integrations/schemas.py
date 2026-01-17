@@ -73,3 +73,24 @@ class GcalExportSyncResponse(BaseModel):
     updated: int
     skipped: int
     total: int
+
+
+class GcalImportSyncResponse(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    calendar_id: str
+    from_utc: datetime = Field(alias="from")
+    to_utc: datetime = Field(alias="to")
+    created: int
+    updated: int
+    skipped: int
+    total: int
+
+
+class ExternalBlockResponse(BaseModel):
+    block_id: str
+    source: str
+    external_event_id: str
+    starts_at: datetime
+    ends_at: datetime
+    summary: str | None = None

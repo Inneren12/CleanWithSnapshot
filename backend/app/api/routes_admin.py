@@ -78,6 +78,8 @@ from app.domain.bookings.db_models import (
     TeamBlackout,
     TeamWorkingHours,
 )
+from app.domain.integrations import schemas as integrations_schemas
+from app.domain.integrations.db_models import ScheduleExternalBlock
 from app.domain.availability import schemas as availability_schemas
 from app.domain.availability import service as availability_service
 from app.domain.bookings import schemas as booking_schemas
@@ -4501,6 +4503,48 @@ async def get_worker_timeline(
         status=status,
     )
     return WorkerTimelineResponse(**payload)
+
+
+@router.get(
+    "/v1/admin/schedule/external_blocks",
+    response_model=list[integrations_schemas.ExternalBlockResponse],
+)
+async def list_schedule_external_blocks(
+    request: Request,
+    from_at: datetime = Query(..., alias="from"),
+    to_at: datetime = Query(..., alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> list[integrations_schemas.ExternalBlockResponse]:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    if from_at.tzinfo is None:
+        from_at = from_at.replace(tzinfo=timezone.utc)
+    if to_at.tzinfo is None:
+        to_at = to_at.replace(tzinfo=timezone.utc)
+    if to_at <= from_at:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_window")
+
+    stmt = (
+        select(ScheduleExternalBlock)
+        .where(
+            ScheduleExternalBlock.org_id == org_id,
+            ScheduleExternalBlock.starts_at < to_at,
+            ScheduleExternalBlock.ends_at > from_at,
+        )
+        .order_by(ScheduleExternalBlock.starts_at.asc())
+    )
+    blocks = (await session.execute(stmt)).scalars().all()
+    return [
+        integrations_schemas.ExternalBlockResponse(
+            block_id=str(block.block_id),
+            source=block.source,
+            external_event_id=block.external_event_id,
+            starts_at=block.starts_at,
+            ends_at=block.ends_at,
+            summary=block.summary,
+        )
+        for block in blocks
+    ]
 
 
 @router.get(
