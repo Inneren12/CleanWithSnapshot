@@ -34,7 +34,7 @@ const MODULE_PERMISSIONS: Record<string, string> = {
   pricing: "settings.manage",
   marketing: "settings.manage",
   leads: "contacts.view",
-  inventory: "core.view",
+  inventory: "inventory.view",
   training: "core.view",
   notifications_center: "core.view",
   settings: "settings.manage",

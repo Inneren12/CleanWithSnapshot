@@ -408,7 +408,7 @@ web/app/
 | `backend/alembic/versions/0085_*.py` | **RBAC** - Roles & permissions tables |
 | `backend/alembic/versions/6a2b_*.py` | **Availability blocks** - Team blackout |
 
-### Frontend (15 files)
+### Frontend (16 files)
 
 | File | Why Important |
 |------|---------------|
@@ -419,6 +419,7 @@ web/app/
 | `web/app/admin/leads/page.tsx` | **Lead pipeline list** |
 | `web/app/admin/invoices/page.tsx` | **Invoice list + overdue alerts** |
 | `web/app/admin/invoices/[id]/page.tsx` | **Invoice detail** |
+| `web/app/admin/inventory/page.tsx` | **Inventory items list** |
 | `web/app/admin/iam/roles/page.tsx` | **Role management** |
 | `web/app/admin/settings/modules/page.tsx` | **Feature toggles** |
 | `web/app/admin/settings/availability-blocks/page.tsx` | **Availability blocking** |

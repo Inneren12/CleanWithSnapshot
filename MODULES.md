@@ -594,7 +594,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Pagination: page + page_size with total count from subquery
 
 **Key Pages:**
-- TBD (UI not yet implemented; API complete)
+- `web/app/admin/inventory/page.tsx` - Inventory items list UI (`/admin/inventory`)
 
 **Status:** API complete with CRUD, org-scoping, RBAC, search, and pagination
 
