@@ -245,7 +245,7 @@ export default function FinancePnlPage() {
   if (!pageVisible) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100">
-        <AdminNav title="Finance" />
+        <AdminNav links={navLinks} activeKey="finance-pnl" />
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-16">
           <div className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center">
             <h1 className="text-2xl font-semibold">Finance module hidden</h1>
@@ -260,7 +260,7 @@ export default function FinancePnlPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
-      <AdminNav title="Finance" links={navLinks} />
+      <AdminNav links={navLinks} activeKey="finance-pnl" />
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
         <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
           <h1 className="text-2xl font-semibold">Profit &amp; Loss</h1>
