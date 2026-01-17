@@ -26,7 +26,7 @@ Complete reference for CleanWithSnapshot API endpoints, authentication, and usag
 **Response Format:** JSON
 **Error Format:** RFC 7807 Problem Details
 
-### Router Registration (30 routers)
+### Router Registration (31 routers)
 
 | Priority | Router | Path Prefix | Auth | File |
 |----------|--------|-------------|------|------|
@@ -52,14 +52,15 @@ Complete reference for CleanWithSnapshot API endpoints, authentication, and usag
 | 20 | break_glass | `/v1/break-glass` | Emergency | `break_glass.py` |
 | 21 | **admin** | `/v1/admin` | **Admin** | **`routes_admin.py` (largest)** |
 | 22 | admin_settings | `/v1/admin/settings` | Admin | `routes_admin_settings.py` |
-| 23 | admin_iam | `/v1/admin/iam` | Admin | `routes_admin_iam.py` |
-| 24 | admin_pricing | `/v1/admin/pricing` | Admin | `routes_admin_pricing.py` |
-| 25 | admin_finance | `/v1/admin/finance` | Admin | `routes_admin_finance.py` |
-| 26 | queues | `/v1/admin/queue` | Admin | `routes_queues.py` |
-| 27 | timeline | `/v1/timeline` | Admin | `routes_timeline.py` |
-| 28 | health_backup | `/health` | None | `health_backup.py` |
-| 29 | metrics | `/metrics` | Token | `routes_metrics.py` |
-| 30 | style_guide | `/style-guide` | Dev Only | `routes_style_guide.py` |
+| 23 | admin_integrations | `/v1/admin/integrations` | Admin | `routes_admin_integrations.py` |
+| 24 | admin_iam | `/v1/admin/iam` | Admin | `routes_admin_iam.py` |
+| 25 | admin_pricing | `/v1/admin/pricing` | Admin | `routes_admin_pricing.py` |
+| 26 | admin_finance | `/v1/admin/finance` | Admin | `routes_admin_finance.py` |
+| 27 | queues | `/v1/admin/queue` | Admin | `routes_queues.py` |
+| 28 | timeline | `/v1/timeline` | Admin | `routes_timeline.py` |
+| 29 | health_backup | `/health` | None | `health_backup.py` |
+| 30 | metrics | `/metrics` | Token | `routes_metrics.py` |
+| 31 | style_guide | `/style-guide` | Dev Only | `routes_style_guide.py` |
 
 **Entrypoint:** `backend/app/main.py::create_app()` → `app = create_app(settings)`
 
@@ -1271,6 +1272,20 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
   - `deposit_paid` (deposit payment captured)
   - `booking_confirmed` (booking confirmed)
   - `booking_or_payment` (either event)
+
+---
+
+### Integrations (Google Calendar)
+
+**Path:** `/v1/admin/integrations/google/*`
+**File:** `backend/app/api/routes_admin_integrations.py`
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/integrations/google/status` | `settings.manage` (viewer) | Connection status |
+| POST | `/v1/admin/integrations/google/connect/start` | `settings.manage` (owner) | Start OAuth connect (returns auth URL) |
+| POST | `/v1/admin/integrations/google/connect/callback` | `settings.manage` (owner) | Exchange auth code for refresh token |
+| POST | `/v1/admin/integrations/google/disconnect` | `settings.manage` (owner) | Disconnect account |
 
 ---
 

@@ -41,3 +41,23 @@ class IntegrationsStatusResponse(BaseModel):
     stripe: StripeIntegrationStatus
     twilio: TwilioIntegrationStatus
     email: EmailIntegrationStatus
+
+
+class GcalIntegrationStatus(BaseModel):
+    connected: bool
+    calendar_id: str | None = None
+    oauth_configured: bool
+
+
+class GcalConnectStartResponse(BaseModel):
+    authorization_url: str
+
+
+class GcalConnectCallbackRequest(BaseModel):
+    code: str
+    state: str | None = None
+
+
+class GcalConnectCallbackResponse(BaseModel):
+    connected: bool
+    calendar_id: str | None = None

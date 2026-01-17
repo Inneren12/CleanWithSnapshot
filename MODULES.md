@@ -39,6 +39,12 @@ module.integrations           # Integrations
 module.api                    # API access
 ```
 
+**Integrations subfeatures:**
+
+```
+integrations.google_calendar  # Google Calendar OAuth + sync (feature gated)
+```
+
 **Configuration:**
 - Backend: `backend/app/domain/feature_modules/service.py`
 - Frontend: `web/app/admin/lib/featureVisibility.ts`
