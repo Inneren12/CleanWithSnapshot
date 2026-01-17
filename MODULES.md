@@ -684,6 +684,12 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Admin training form uses **local time** inputs and converts them to UTC ISO for storage.
 - If `expires_at` is missing but `renewal_months` is set, status is derived from the computed next-due date.
 
+**Training Roadmap (Scope Anchors):**
+- **Implemented now:** Worker training status, training courses + assignments, and training calendar sessions/blocks.
+- **Later (feature-gated placeholders, OFF by default):** LMS-style training library, quizzes, and certificate templates
+  (`training.library`, `training.quizzes`, `training.certs`) with placeholder admin routes:
+  `/admin/training/library`, `/admin/training/quizzes`, `/admin/training/cert-templates`.
+
 **Feature Key:** `module.training`
 
 ---
