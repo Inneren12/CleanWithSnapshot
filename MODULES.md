@@ -815,6 +815,13 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/infra/communication.py` - Twilio adapter
 - `backend/app/infra/email.py` - SendGrid/SMTP adapter
 
+**Key Tables:**
+- `integrations_google_accounts` - OAuth account storage (encrypted refresh tokens)
+- `integrations_gcal_calendars` - Calendar connection + sync mode
+- `integrations_gcal_sync_state` - Sync cursor + last sync metadata
+- `schedule_external_blocks` - External calendar blocks
+- `integrations_gcal_event_map` - Booking-to-event mapping for exports
+
 **Permissions Required:**
 - `settings.manage` - Configure integrations
 

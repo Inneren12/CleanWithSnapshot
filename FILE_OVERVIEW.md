@@ -166,7 +166,7 @@ CleanWithSnapshot/
 | `org_settings/` | 1 file | Organization settings storage |
 | `config/` | 1 file | Configuration management |
 | `bot/` | 1 file | AI bot logic |
-| `integrations/` | 1 file | Third-party integrations |
+| `integrations/` | 3 files | Third-party integrations |
 
 **Common file structure per module:**
 ```

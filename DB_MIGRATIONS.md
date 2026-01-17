@@ -39,7 +39,9 @@ This guide covers database schema management using Alembic in the CleanWithSnaps
 and `b2f3c4d5e6f7_add_purchase_orders.py` adds `purchase_orders` + `purchase_order_items` for the purchasing lifecycle,
 and `c6f2b8d1a4e7_add_training_sessions.py` adds `training_sessions` and `training_session_attendees` for calendar sessions,
 and `f2a4b7c8d9e0_add_finance_expenses_budgets.py` adds `finance_expense_categories`, `finance_expenses`, and `finance_budgets`,
-and `f9c1d2e3a4b5_add_finance_cash_snapshots.py` adds `finance_cash_snapshots` for optional cash balance snapshots.
+and `f9c1d2e3a4b5_add_finance_cash_snapshots.py` adds `finance_cash_snapshots` for optional cash balance snapshots, and
+`a7c3b9d2e1f0_add_gcal_sync_foundation.py` adds Google Calendar integration tables for accounts, calendars, sync state,
+external schedule blocks, and event mappings.
 
 **Analytics booking funnel:** No schema changes required (uses existing `leads`, `lead_quotes`, `bookings`,
 and `nps_responses` tables for inquiries, quotes, bookings, and reviews).
