@@ -390,18 +390,20 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Purpose:** Reports, KPIs, operational dashboards
 
 **Key Pages:**
-- `web/app/admin/analytics/` (if exists)
+- `web/app/admin/analytics/geo/page.tsx` - Geo heatmap by area (`/admin/analytics/geo`)
 
 **Backend Routers:**
-- `backend/app/api/routes_admin.py` - Analytics endpoints
+- `backend/app/api/routes_admin.py` - Analytics endpoints (`/v1/admin/analytics/*`)
 
 **Key Services:**
-- `backend/app/domain/analytics/service.py` - Event aggregation, KPI calculation
+- `backend/app/domain/analytics/service.py` - Event aggregation, KPI calculation, geo heatmap aggregates
 
 **Key Tables:**
 - `events` - Analytics events
 - `bookings` - Job data
 - `invoices` - Financial data
+- `client_addresses` - Area labels + coordinates
+- `teams` - Zone metadata
 
 **Permissions Required:**
 - `reports.view` - View reports

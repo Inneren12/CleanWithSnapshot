@@ -1,6 +1,6 @@
 import math
 import uuid
-from collections import defaultdict
+from collections import defaultdict, Counter
 from datetime import datetime, timezone
 from enum import StrEnum
 
@@ -9,8 +9,9 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.analytics.db_models import EventLog
-from app.domain.bookings.db_models import Booking
+from app.domain.bookings.db_models import Booking, Team
 from app.domain.leads.db_models import Lead
+from app.domain.clients.db_models import ClientAddress
 from app.domain.nps.db_models import NpsResponse
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Payment
@@ -170,6 +171,112 @@ def _bucket_start(column: sa.ColumnElement, period: str, bind) -> sa.ColumnEleme
             return func.strftime("%Y-%W", column)
         return func.strftime("%Y-%m-01", column)
     return func.date_trunc(period, column)
+
+
+def _normalize_area_label(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return " ".join(normalized.split())
+
+
+def _booking_area_label(
+    *, lead_area: str | None, address_label: str | None, team_zones: list[str] | None
+) -> str | None:
+    if lead_area:
+        return lead_area
+    if address_label:
+        return address_label
+    if team_zones:
+        return team_zones[0] if team_zones else None
+    return None
+
+
+async def geo_area_analytics(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    *,
+    org_id: uuid.UUID,
+) -> tuple[list[dict[str, object]], list[dict[str, object]] | None]:
+    revenue_expr = Booking.base_charge_cents - Booking.refund_total_cents - Booking.credit_note_total_cents
+    stmt = (
+        select(
+            Booking.booking_id,
+            revenue_expr.label("revenue_cents"),
+            Booking.team_id,
+            ClientAddress.label.label("address_label"),
+            ClientAddress.lat,
+            ClientAddress.lng,
+        )
+        .select_from(Booking)
+        .join(ClientAddress, Booking.address_id == ClientAddress.address_id, isouter=True)
+        .where(
+            Booking.starts_at >= start,
+            Booking.starts_at <= end,
+            Booking.org_id == org_id,
+            sa.or_(ClientAddress.org_id == org_id, ClientAddress.address_id.is_(None)),
+        )
+    )
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        return [], None
+
+    team_ids = {row.team_id for row in rows if row.team_id is not None}
+    zones_by_team: dict[int, list[str]] = {}
+    if team_ids:
+        team_rows = await session.execute(
+            select(Team.team_id, Team.zones).where(Team.team_id.in_(team_ids), Team.org_id == org_id)
+        )
+        for team_id, zones in team_rows.all():
+            if team_id is None:
+                continue
+            zones_by_team[int(team_id)] = list(zones or [])
+
+    bucket_counts: Counter[str] = Counter()
+    revenue_totals: defaultdict[str, int] = defaultdict(int)
+    points_counter: Counter[tuple[float, float]] = Counter()
+    for row in rows:
+        address_label = _normalize_area_label(row.address_label)
+        area = _normalize_area_label(
+            _booking_area_label(
+                lead_area=None,
+                address_label=address_label,
+                team_zones=zones_by_team.get(row.team_id),
+            )
+        )
+        if not area:
+            continue
+        bucket_counts[area] += 1
+        revenue_totals[area] += int(row.revenue_cents or 0)
+        if row.lat is not None and row.lng is not None:
+            points_counter[(float(row.lat), float(row.lng))] += 1
+
+    by_area = []
+    for area, count in sorted(bucket_counts.items(), key=lambda item: (-item[1], item[0])):
+        revenue_total = revenue_totals.get(area, 0)
+        avg_ticket = int(round(revenue_total / count)) if count > 0 else None
+        by_area.append(
+            {
+                "area": area,
+                "bookings": count,
+                "revenue_cents": revenue_total,
+                "avg_ticket_cents": avg_ticket,
+            }
+        )
+
+    points = None
+    if points_counter:
+        points = [
+            {"lat": lat, "lng": lng, "count": count}
+            for (lat, lng), count in sorted(
+                points_counter.items(), key=lambda item: (-item[1], item[0][0], item[0][1])
+            )
+        ]
+
+    return by_area, points
 
 
 async def funnel_summary(
