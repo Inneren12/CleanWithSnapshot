@@ -1,9 +1,16 @@
+import datetime as dt
 import httpx
 import pytest
+from sqlalchemy import select
 
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import gcal_service
-from app.domain.integrations.db_models import IntegrationsGoogleAccount
+from app.domain.integrations.db_models import (
+    GcalSyncMode,
+    IntegrationsGcalCalendar,
+    IntegrationsGoogleAccount,
+    ScheduleExternalBlock,
+)
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import MembershipRole
 from app.settings import settings
@@ -15,6 +22,17 @@ async def _enable_gcal(session, org_id):
         org_id,
         {"module.integrations": True, "integrations.google_calendar": True},
     )
+
+
+def _transport_for_events(events: list[dict]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "token-123", "expires_in": 3600})
+        if request.url.host == "www.googleapis.com" and "calendar/v3/calendars" in str(request.url):
+            return httpx.Response(200, json={"items": events})
+        return httpx.Response(404, json={"error": "unknown"})
+
+    return httpx.MockTransport(handler)
 
 
 @pytest.mark.anyio
@@ -172,3 +190,143 @@ async def test_google_calendar_oauth_tokens_not_logged(async_session_maker, clie
     assert response.status_code == 200
     combined = " ".join(record.getMessage() for record in caplog.records)
     assert "refresh-logged" not in combined
+
+
+@pytest.mark.anyio
+async def test_import_sync_creates_external_blocks(async_session_maker, client, monkeypatch):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Gcal Import Org")
+        owner = await saas_service.create_user(session, "owner@gcal-import.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await _enable_gcal(session, org.org_id)
+        session.add(
+            IntegrationsGoogleAccount(
+                org_id=org.org_id,
+                encrypted_refresh_token="refresh-token",
+                token_scopes=["scope1"],
+            )
+        )
+        session.add(
+            IntegrationsGcalCalendar(
+                org_id=org.org_id,
+                calendar_id="primary",
+                mode=GcalSyncMode.IMPORT,
+            )
+        )
+        await session.commit()
+
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+
+    events = [
+        {
+            "id": "evt-1",
+            "summary": "Blocked",
+            "start": {"dateTime": "2025-02-01T10:00:00Z"},
+            "end": {"dateTime": "2025-02-01T11:00:00Z"},
+        },
+        {
+            "id": "evt-2",
+            "summary": "Out of office",
+            "start": {"dateTime": "2025-02-02T09:00:00Z"},
+            "end": {"dateTime": "2025-02-02T10:30:00Z"},
+        },
+    ]
+    monkeypatch.setattr(gcal_service, "TOKEN_EXCHANGE_TRANSPORT", _transport_for_events(events))
+
+    owner_token = saas_service.build_access_token(owner, membership)
+    response = client.post(
+        "/v1/admin/integrations/google/gcal/import_sync",
+        params={"from": "2025-02-01T00:00:00Z", "to": "2025-02-03T00:00:00Z"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["imported"] == 2
+
+    async with async_session_maker() as session:
+        blocks = (
+            await session.execute(
+                select(ScheduleExternalBlock).where(ScheduleExternalBlock.org_id == org.org_id)
+            )
+        ).scalars().all()
+        assert {block.external_event_id for block in blocks} == {"evt-1", "evt-2"}
+
+
+@pytest.mark.anyio
+async def test_import_sync_updates_existing_blocks(async_session_maker, client, monkeypatch):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Gcal Import Update Org")
+        owner = await saas_service.create_user(session, "owner@gcal-import-update.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await _enable_gcal(session, org.org_id)
+        session.add(
+            IntegrationsGoogleAccount(
+                org_id=org.org_id,
+                encrypted_refresh_token="refresh-token",
+                token_scopes=["scope1"],
+            )
+        )
+        session.add(
+            IntegrationsGcalCalendar(
+                org_id=org.org_id,
+                calendar_id="primary",
+                mode=GcalSyncMode.IMPORT,
+            )
+        )
+        await session.commit()
+
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+
+    original_events = [
+        {
+            "id": "evt-1",
+            "summary": "Blocked",
+            "start": {"dateTime": "2025-03-01T10:00:00Z"},
+            "end": {"dateTime": "2025-03-01T11:00:00Z"},
+        }
+    ]
+    monkeypatch.setattr(gcal_service, "TOKEN_EXCHANGE_TRANSPORT", _transport_for_events(original_events))
+    owner_token = saas_service.build_access_token(owner, membership)
+    response = client.post(
+        "/v1/admin/integrations/google/gcal/import_sync",
+        params={"from": "2025-03-01T00:00:00Z", "to": "2025-03-02T00:00:00Z"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200
+
+    updated_events = [
+        {
+            "id": "evt-1",
+            "summary": "Blocked Updated",
+            "start": {"dateTime": "2025-03-01T12:00:00Z"},
+            "end": {"dateTime": "2025-03-01T13:30:00Z"},
+        }
+    ]
+    monkeypatch.setattr(gcal_service, "TOKEN_EXCHANGE_TRANSPORT", _transport_for_events(updated_events))
+    response = client.post(
+        "/v1/admin/integrations/google/gcal/import_sync",
+        params={"from": "2025-03-01T00:00:00Z", "to": "2025-03-02T00:00:00Z"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200
+
+    async with async_session_maker() as session:
+        block = await session.scalar(
+            select(ScheduleExternalBlock).where(
+                ScheduleExternalBlock.org_id == org.org_id,
+                ScheduleExternalBlock.external_event_id == "evt-1",
+            )
+        )
+        assert block is not None
+        assert block.summary == "Blocked Updated"
+        starts_at = block.starts_at
+        ends_at = block.ends_at
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=dt.timezone.utc)
+        if ends_at.tzinfo is None:
+            ends_at = ends_at.replace(tzinfo=dt.timezone.utc)
+        assert starts_at == dt.datetime(2025, 3, 1, 12, 0, tzinfo=dt.timezone.utc)
+        assert ends_at == dt.datetime(2025, 3, 1, 13, 30, tzinfo=dt.timezone.utc)

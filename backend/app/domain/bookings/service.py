@@ -29,6 +29,7 @@ from app.domain.policy_overrides import service as override_service
 from app.domain.notifications import email_service
 from app.domain.pricing.models import CleaningType
 from app.domain.availability import service as availability_service
+from app.domain.integrations.db_models import ScheduleExternalBlock
 from app.domain.leads.db_models import Lead
 from app.domain.leads.service import apply_referral_conversion
 from app.domain.invoices import statuses as invoice_statuses
@@ -479,6 +480,21 @@ async def _blackouts_for_window(
     return list(result.scalars().all())
 
 
+async def _external_blocks_for_window(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[ScheduleExternalBlock]:
+    stmt = select(ScheduleExternalBlock).where(
+        ScheduleExternalBlock.org_id == org_id,
+        ScheduleExternalBlock.starts_at < window_end,
+        ScheduleExternalBlock.ends_at > window_start,
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def _has_existing_history(session: AsyncSession, lead_id: str) -> bool:
     stmt = select(Booking.booking_id).where(
         Booking.lead_id == lead_id, Booking.status.in_({"CONFIRMED", "DONE"})
@@ -712,6 +728,15 @@ async def generate_slots(
             ends_at=day_end,
         )
         for block in blocks:
+            blocked_windows.append(
+                (
+                    _normalize_datetime(block.starts_at),
+                    _normalize_datetime(block.ends_at),
+                )
+            )
+
+        external_blocks = await _external_blocks_for_window(session, team_obj.org_id, day_start, day_end)
+        for block in external_blocks:
             blocked_windows.append(
                 (
                     _normalize_datetime(block.starts_at),

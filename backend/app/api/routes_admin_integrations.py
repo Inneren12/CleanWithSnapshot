@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, require_permissions, require_viewer
@@ -139,3 +140,47 @@ async def disconnect_google_calendar(
     await gcal_service.disconnect_google_calendar(session, org_id)
     await session.commit()
     return integrations_schemas.GcalConnectCallbackResponse(connected=False, calendar_id=None)
+
+
+@router.post(
+    "/v1/admin/integrations/google/gcal/import_sync",
+    response_model=integrations_schemas.GcalImportSyncResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def import_google_calendar_events(
+    request: Request,
+    from_: datetime = Query(alias="from"),
+    to: datetime = Query(alias="to"),
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.GcalImportSyncResponse:
+    await _require_google_calendar_enabled(session, org_id)
+    if not gcal_service.oauth_configured():
+        return problem_details(
+            request=request,
+            status=400,
+            title="Google OAuth Not Configured",
+            detail="Missing Google OAuth configuration.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    if to <= from_:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_window")
+
+    try:
+        imported = await gcal_service.import_external_blocks(
+            session,
+            org_id,
+            starts_at=from_,
+            ends_at=to,
+        )
+    except ValueError as exc:
+        return problem_details(
+            request=request,
+            status=400,
+            title="Google Calendar Import Failed",
+            detail=str(exc),
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    await session.commit()
+    return integrations_schemas.GcalImportSyncResponse(imported=imported)

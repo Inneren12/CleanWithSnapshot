@@ -713,7 +713,7 @@ async def fetch_dispatcher_assignment_suggestions(
             worker_id=worker.worker_id,
         )
         blocking_conflict = any(
-            conflict.get("kind") in {"worker_booking", "blackout"} for conflict in conflicts
+            conflict.get("kind") in {"worker_booking", "blackout", "external_block"} for conflict in conflicts
         )
         if blocking_conflict:
             continue

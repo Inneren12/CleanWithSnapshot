@@ -362,6 +362,22 @@ class ConflictCheckResponse(BaseModel):
     conflicts: list[ConflictDetail]
 
 
+class ExternalBlockDetail(BaseModel):
+    external_event_id: str
+    starts_at: datetime
+    ends_at: datetime
+    source: str
+    summary: str | None = None
+
+
+class ExternalBlocksResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_time: datetime = Field(alias="from")
+    to_time: datetime = Field(alias="to")
+    blocks: list[ExternalBlockDetail]
+
+
 class BulkBookingsRequest(BaseModel):
     booking_ids: list[str]
     team_id: int | None = None
