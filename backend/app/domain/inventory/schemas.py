@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -186,6 +187,91 @@ class InventorySupplierListResponse(BaseModel):
     """Paginated list response for inventory suppliers."""
 
     items: list[InventorySupplierResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+# ===== Purchase Order Schemas =====
+
+
+class PurchaseOrderStatus(str, Enum):
+    draft = "draft"
+    ordered = "ordered"
+    received = "received"
+
+
+class PurchaseOrderItemCreate(BaseModel):
+    """Request model for creating a purchase order item."""
+
+    item_id: UUID
+    qty: Decimal = Field(..., gt=0)
+    unit_cost_cents: int = Field(..., ge=0)
+
+
+class PurchaseOrderItemResponse(BaseModel):
+    """Response model for purchase order item."""
+
+    po_item_id: UUID
+    po_id: UUID
+    item_id: UUID
+    qty: Decimal
+    unit_cost_cents: int
+    line_total_cents: int
+
+    class Config:
+        from_attributes = True
+
+
+class PurchaseOrderCreate(BaseModel):
+    """Request model for creating a purchase order."""
+
+    supplier_id: UUID
+    notes: str | None = None
+    tax_cents: int = Field(default=0, ge=0)
+    shipping_cents: int = Field(default=0, ge=0)
+    items: list[PurchaseOrderItemCreate] = Field(..., min_length=1)
+
+
+class PurchaseOrderUpdate(BaseModel):
+    """Request model for updating a purchase order."""
+
+    supplier_id: UUID | None = None
+    notes: str | None = None
+    tax_cents: int | None = Field(None, ge=0)
+    shipping_cents: int | None = Field(None, ge=0)
+    items: list[PurchaseOrderItemCreate] | None = None
+
+
+class PurchaseOrderSummaryResponse(BaseModel):
+    """Summary response model for purchase orders."""
+
+    po_id: UUID
+    org_id: UUID
+    supplier_id: UUID
+    status: PurchaseOrderStatus
+    ordered_at: datetime | None
+    received_at: datetime | None
+    notes: str | None
+    subtotal_cents: int
+    tax_cents: int
+    shipping_cents: int
+    total_cents: int
+
+    class Config:
+        from_attributes = True
+
+
+class PurchaseOrderDetailResponse(PurchaseOrderSummaryResponse):
+    """Detailed response model for a purchase order."""
+
+    items: list[PurchaseOrderItemResponse]
+
+
+class PurchaseOrderListResponse(BaseModel):
+    """Paginated list response for purchase orders."""
+
+    items: list[PurchaseOrderSummaryResponse]
     total: int
     page: int
     page_size: int
