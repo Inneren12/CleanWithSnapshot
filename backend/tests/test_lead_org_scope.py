@@ -74,25 +74,25 @@ async def test_leads_are_org_scoped(client, async_session_maker):
 
     list_a = client.get("/v1/admin/leads", headers=admin_headers_a)
     assert list_a.status_code == 200
-    lead_ids_a = {item["lead_id"] for item in list_a.json()}
+    lead_ids_a = {item["lead_id"] for item in list_a.json()["items"]}
     assert lead_a in lead_ids_a
     assert lead_b not in lead_ids_a
 
     list_b = client.get("/v1/admin/leads", headers=admin_headers_b)
     assert list_b.status_code == 200
-    lead_ids_b = {item["lead_id"] for item in list_b.json()}
+    lead_ids_b = {item["lead_id"] for item in list_b.json()["items"]}
     assert lead_b in lead_ids_b
     assert lead_a not in lead_ids_b
 
-    update_other_org = client.post(
-        f"/v1/admin/leads/{lead_b}/status",
+    update_other_org = client.patch(
+        f"/v1/admin/leads/{lead_b}",
         headers=admin_headers_a,
         json={"status": "CONTACTED"},
     )
     assert update_other_org.status_code == 404
 
-    update_same_org = client.post(
-        f"/v1/admin/leads/{lead_a}/status",
+    update_same_org = client.patch(
+        f"/v1/admin/leads/{lead_a}",
         headers=admin_headers_a,
         json={"status": "CONTACTED"},
     )

@@ -29,7 +29,9 @@ def test_admin_leads_requires_auth(client_no_raise):
         auth_headers = _basic_auth_header("admin", "secret")
         authorized = client_no_raise.get("/v1/admin/leads", headers=auth_headers)
         assert authorized.status_code == 200
-        assert isinstance(authorized.json(), list)
+        payload = authorized.json()
+        assert isinstance(payload, dict)
+        assert "items" in payload
     finally:
         settings.admin_basic_username = original_username
         settings.admin_basic_password = original_password
@@ -145,8 +147,8 @@ def test_admin_updates_lead_status_with_valid_transition(client, async_session_m
     lead_id = _create_lead(client)
     headers = _basic_auth_header("admin", "secret")
 
-    transition = client.post(
-        f"/v1/admin/leads/{lead_id}/status",
+    transition = client.patch(
+        f"/v1/admin/leads/{lead_id}",
         headers=headers,
         json={"status": "CONTACTED"},
     )
@@ -155,7 +157,7 @@ def test_admin_updates_lead_status_with_valid_transition(client, async_session_m
 
     filtered = client.get("/v1/admin/leads", headers=headers, params={"status": "CONTACTED"})
     assert filtered.status_code == 200
-    assert any(lead["lead_id"] == lead_id for lead in filtered.json())
+    assert any(lead["lead_id"] == lead_id for lead in filtered.json()["items"])
 
     async def _fetch_status() -> str:
         async with async_session_maker() as session:
@@ -165,12 +167,42 @@ def test_admin_updates_lead_status_with_valid_transition(client, async_session_m
 
     assert asyncio.run(_fetch_status()) == "CONTACTED"
 
-    invalid = client.post(
-        f"/v1/admin/leads/{lead_id}/status",
+    invalid = client.patch(
+        f"/v1/admin/leads/{lead_id}",
         headers=headers,
-        json={"status": "DONE"},
+        json={"status": "NEW"},
     )
     assert invalid.status_code == 400
+
+
+def test_viewer_cannot_update_leads(client):
+    original_admin_username = settings.admin_basic_username
+    original_admin_password = settings.admin_basic_password
+    original_viewer_username = settings.viewer_basic_username
+    original_viewer_password = settings.viewer_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    settings.viewer_basic_username = "viewer"
+    settings.viewer_basic_password = "view-secret"
+
+    try:
+        lead_id = _create_lead(client)
+        viewer_headers = _basic_auth_header("viewer", "view-secret")
+
+        list_response = client.get("/v1/admin/leads", headers=viewer_headers)
+        assert list_response.status_code == 200
+
+        update = client.patch(
+            f"/v1/admin/leads/{lead_id}",
+            headers=viewer_headers,
+            json={"status": "CONTACTED"},
+        )
+        assert update.status_code == 403
+    finally:
+        settings.admin_basic_username = original_admin_username
+        settings.admin_basic_password = original_admin_password
+        settings.viewer_basic_username = original_viewer_username
+        settings.viewer_basic_password = original_viewer_password
 
 
 def test_dispatcher_can_manage_bookings_but_not_pricing(client, async_session_maker):
@@ -191,8 +223,8 @@ def test_dispatcher_can_manage_bookings_but_not_pricing(client, async_session_ma
         leads_response = client.get("/v1/admin/leads", headers=dispatcher_headers)
         assert leads_response.status_code == 200
 
-        update = client.post(
-            f"/v1/admin/leads/{lead_id}/status",
+        update = client.patch(
+            f"/v1/admin/leads/{lead_id}",
             headers=dispatcher_headers,
             json={"status": "CONTACTED"},
         )

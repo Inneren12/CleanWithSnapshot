@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.data_rights.service import process_pending_deletions
 from app.domain.leads.db_models import ChatSession, Lead
-from app.domain.leads.statuses import LEAD_STATUS_BOOKED, LEAD_STATUS_DONE
+from app.domain.leads.statuses import LEAD_STATUS_WON
 from app.settings import settings
 
 
@@ -29,7 +29,7 @@ async def cleanup_retention(
         leads_result = await session.execute(
             delete(Lead).where(
                 Lead.created_at < leads_cutoff,
-                ~Lead.status.in_([LEAD_STATUS_BOOKED, LEAD_STATUS_DONE]),
+                ~Lead.status.in_([LEAD_STATUS_WON]),
             )
         )
         leads_deleted = leads_result.rowcount or 0

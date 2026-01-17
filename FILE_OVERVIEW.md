@@ -413,6 +413,7 @@ web/app/
 | `web/app/admin/page.tsx` | **Admin dashboard** |
 | `web/app/admin/dashboard/ops/page.tsx` | **Ops dashboard** |
 | `web/app/admin/schedule/page.tsx` | **Schedule view** |
+| `web/app/admin/leads/page.tsx` | **Lead pipeline list** |
 | `web/app/admin/invoices/page.tsx` | **Invoice list + overdue alerts** |
 | `web/app/admin/invoices/[id]/page.tsx` | **Invoice detail** |
 | `web/app/admin/iam/roles/page.tsx` | **Role management** |

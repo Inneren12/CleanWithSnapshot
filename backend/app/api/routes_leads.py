@@ -132,6 +132,10 @@ async def create_lead(
     utm_campaign = request.utm_campaign or (utm.utm_campaign if utm else None)
     utm_term = request.utm_term or (utm.utm_term if utm else None)
     utm_content = request.utm_content or (utm.utm_content if utm else None)
+    source = request.source or utm_source
+    campaign = request.campaign or utm_campaign
+    keyword = request.keyword or utm_term
+    landing_page = request.landing_page or utm_content
     lead: Lead
     async with session.begin():
         referrer: Lead | None = None
@@ -167,6 +171,10 @@ async def create_lead(
             utm_campaign=utm_campaign,
             utm_term=utm_term,
             utm_content=utm_content,
+            source=source,
+            campaign=campaign,
+            keyword=keyword,
+            landing_page=landing_page,
             referrer=request.referrer,
             referred_by_code=request.referral_code if referrer else None,
             org_id=uuid.UUID(str(org_id)),

@@ -107,7 +107,13 @@ from app.domain.leads import statuses as lead_statuses
 from app.domain.leads.db_models import Lead, ReferralCredit
 from app.domain.nps.db_models import NpsResponse, SupportTicket
 from app.domain.leads.service import grant_referral_credit, export_payload_from_lead
-from app.domain.leads.schemas import AdminLeadResponse, AdminLeadStatusUpdateRequest, admin_lead_from_model
+from app.domain.leads.schemas import (
+    AdminLeadListResponse,
+    AdminLeadResponse,
+    AdminLeadStatusUpdateRequest,
+    AdminLeadUpdateRequest,
+    admin_lead_from_model,
+)
 from app.domain.leads.statuses import assert_valid_transition, is_valid_status
 from app.domain.config import schemas as config_schemas
 from app.domain.notifications import email_service
@@ -2351,25 +2357,19 @@ def _wrap_page(
     """
 
 
-@router.get("/v1/admin/leads", response_model=List[AdminLeadResponse])
+@router.get("/v1/admin/leads", response_model=AdminLeadListResponse)
 async def list_leads(
     request: Request,
     status_filter: Optional[str] = Query(default=None, alias="status"),
-    limit: int = Query(default=50, ge=1, le=200),
+    query: Optional[str] = Query(default=None, alias="query"),
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    page: int = Query(default=1, ge=1),
     session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_viewer),
-) -> List[AdminLeadResponse]:
+    _identity: AdminIdentity = Depends(require_any_permission_keys("contacts.view", "leads.view")),
+) -> AdminLeadListResponse:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    stmt = (
-        select(Lead)
-        .options(
-            selectinload(Lead.referral_credits),
-            selectinload(Lead.referred_credit),
-        )
-        .where(Lead.org_id == org_id)
-        .order_by(Lead.created_at.desc())
-        .limit(limit)
-    )
+    filters = [Lead.org_id == org_id]
     if status_filter and hasattr(Lead, "status"):
         normalized = status_filter.upper()
         if not is_valid_status(normalized):
@@ -2377,10 +2377,100 @@ async def list_leads(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid lead status filter: {status_filter}",
             )
-        stmt = stmt.where(Lead.status == normalized)
+        filters.append(Lead.status == normalized)
+    if query:
+        normalized_query = query.strip().lower()
+        if normalized_query:
+            like = f"%{normalized_query}%"
+            filters.append(
+                or_(
+                    func.lower(Lead.name).like(like),
+                    func.lower(Lead.email).like(like),
+                    func.lower(Lead.phone).like(like),
+                    func.lower(Lead.lead_id).like(like),
+                )
+            )
+    if from_date:
+        start_dt = datetime.combine(from_date, time.min, tzinfo=timezone.utc)
+        filters.append(Lead.created_at >= start_dt)
+    if to_date:
+        end_dt = datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        filters.append(Lead.created_at < end_dt)
+
+    page_size = 25
+    offset = (page - 1) * page_size
+    total = await session.scalar(select(func.count()).select_from(Lead).where(*filters))
+    stmt = (
+        select(Lead)
+        .options(
+            selectinload(Lead.referral_credits),
+            selectinload(Lead.referred_credit),
+        )
+        .where(*filters)
+        .order_by(Lead.created_at.desc())
+        .limit(page_size)
+        .offset(offset)
+    )
     result = await session.execute(stmt)
     leads = result.scalars().all()
-    return [admin_lead_from_model(lead) for lead in leads]
+    return AdminLeadListResponse(
+        items=[admin_lead_from_model(lead) for lead in leads],
+        total=int(total or 0),
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.patch("/v1/admin/leads/{lead_id}", response_model=AdminLeadResponse)
+async def update_lead(
+    http_request: Request,
+    lead_id: str,
+    payload: AdminLeadUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_any_permission_keys("contacts.edit", "leads.edit")),
+) -> AdminLeadResponse:
+    if not payload.model_fields_set:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No updates provided")
+    org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
+    lead_result = await session.execute(
+        select(Lead).where(Lead.lead_id == lead_id, Lead.org_id == org_id)
+    )
+    lead = lead_result.scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    before = admin_lead_from_model(lead).model_dump(mode="json")
+
+    if "status" in payload.model_fields_set and payload.status is not None:
+        try:
+            assert_valid_transition(lead.status, payload.status)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        lead.status = payload.status
+
+    if "notes" in payload.model_fields_set:
+        lead.notes = payload.notes
+
+    await session.flush()
+    await session.refresh(lead)
+
+    credit_count = await session.scalar(
+        select(func.count()).select_from(ReferralCredit).where(ReferralCredit.referrer_lead_id == lead.lead_id)
+    )
+    response_body = admin_lead_from_model(lead, referral_credit_count=int(credit_count or 0))
+
+    http_request.state.explicit_admin_audit = True
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="lead_update",
+        resource_type="lead",
+        resource_id=lead.lead_id,
+        before=before,
+        after=response_body.model_dump(mode="json"),
+    )
+    await session.commit()
+    return response_body
 
 
 @router.post("/v1/admin/leads/{lead_id}/status", response_model=AdminLeadResponse)
@@ -2389,7 +2479,7 @@ async def update_lead_status(
     lead_id: str,
     payload: AdminLeadStatusUpdateRequest,
     session: AsyncSession = Depends(get_db_session),
-    identity: AdminIdentity = Depends(require_dispatch),
+    identity: AdminIdentity = Depends(require_any_permission_keys("contacts.edit", "leads.edit")),
 ) -> AdminLeadResponse:
     org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
     lead_result = await session.execute(
@@ -2407,6 +2497,8 @@ async def update_lead_status(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     lead.status = payload.status
+    await session.flush()
+    await session.refresh(lead)
     credit_count = await session.scalar(
         select(func.count()).select_from(ReferralCredit).where(ReferralCredit.referrer_lead_id == lead.lead_id)
     )

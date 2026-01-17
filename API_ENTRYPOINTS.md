@@ -169,6 +169,47 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | GET | `/v1/admin/dashboard/ops` | `core.view` + `module.dashboard` | Ops dashboard aggregates (org TZ windows) |
 | GET | `/v1/admin/activity` | `core.view` + `module.dashboard` | Live activity feed (polling) |
 
+### Leads
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/leads` | `contacts.view` (or `leads.view`) | Lead pipeline list (status/query/date filters + pagination) |
+| PATCH | `/v1/admin/leads/{lead_id}` | `contacts.edit` (or `leads.edit`) | Update lead status or notes |
+
+**Query params:** `status`, `query`, `from`, `to`, `page`
+
+**Status values:** `NEW`, `CONTACTED`, `QUOTED`, `WON`, `LOST`
+
+```json
+{
+  "items": [
+    {
+      "lead_id": "c6e4c9c8-9f51-4ce9-a5e8-9b3b6d8b87c1",
+      "name": "Avery Chen",
+      "email": "avery@example.com",
+      "phone": "780-555-0101",
+      "status": "CONTACTED",
+      "notes": "Requested follow-up tomorrow.",
+      "source": "google",
+      "campaign": "spring-clean",
+      "keyword": "move out clean",
+      "landing_page": "/quote",
+      "created_at": "2026-02-01T12:00:00Z",
+      "updated_at": "2026-02-02T09:30:00Z",
+      "referrer": null,
+      "referral_code": "ABCD1234",
+      "referred_by_code": null,
+      "referral_credits": 0,
+      "postal_code": "T5J 0N3",
+      "preferred_dates": []
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 25
+}
+```
+
 #### Ops Dashboard Response (critical alerts)
 
 `GET /v1/admin/dashboard/ops` includes `critical_alerts` for the Critical Alerts widget.
