@@ -6,6 +6,7 @@ from app.domain.bookings.db_models import Booking, EmailEvent, Team
 from app.domain.workers.db_models import Worker
 from app.domain.inventory.db_models import (
     InventoryCategory,
+    InventoryConsumption,
     InventoryItem,
     InventorySupplier,
     PurchaseOrder,
@@ -88,6 +89,7 @@ async def test_inventory_tables_exist_in_metadata():
     # Verify tables exist in metadata
     assert "inventory_categories" in Base.metadata.tables
     assert "inventory_items" in Base.metadata.tables
+    assert "inventory_consumption" in Base.metadata.tables
     assert "inventory_suppliers" in Base.metadata.tables
     assert "purchase_orders" in Base.metadata.tables
     assert "purchase_order_items" in Base.metadata.tables

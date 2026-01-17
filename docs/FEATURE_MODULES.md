@@ -23,6 +23,7 @@ This project supports organization-level module toggles and user-level UI visibi
   - `schedule.optimization_ai`
   - `finance.reports`
   - `finance.cash_flow`
+  - `inventory.usage_analytics`
   - `api.settings`
 
 ## Precedence rules

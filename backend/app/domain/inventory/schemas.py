@@ -275,3 +275,55 @@ class PurchaseOrderListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+# ===== Consumption & Usage Analytics Schemas =====
+
+
+class InventoryConsumptionCreate(BaseModel):
+    """Request model for recording inventory consumption."""
+
+    booking_id: str = Field(..., min_length=1, max_length=36)
+    service_type_id: int = Field(..., ge=1)
+    item_id: UUID
+    qty: Decimal = Field(..., gt=0)
+    unit_cost_cents: int = Field(..., ge=0)
+    consumed_at: datetime | None = None
+
+
+class InventoryConsumptionResponse(BaseModel):
+    """Response model for inventory consumption entries."""
+
+    consumption_id: UUID
+    org_id: UUID
+    booking_id: str
+    service_type_id: int
+    item_id: UUID
+    qty: Decimal
+    unit_cost_cents: int
+    total_cost_cents: int
+    consumed_at: datetime
+    recorded_by: str
+
+    class Config:
+        from_attributes = True
+
+
+class InventoryUsageServiceTypeMetric(BaseModel):
+    service_type_id: int
+    bookings: int
+    consumption_cents: int
+    cost_per_booking_cents: int
+
+
+class InventoryUsageTopItemMetric(BaseModel):
+    item_id: UUID
+    consumption_cents: int
+    qty: Decimal
+
+
+class InventoryUsageAnalyticsResponse(BaseModel):
+    total_consumption_cents: int
+    cost_per_booking_avg_cents: int
+    by_service_type: list[InventoryUsageServiceTypeMetric]
+    top_items: list[InventoryUsageTopItemMetric]

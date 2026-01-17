@@ -38,6 +38,7 @@ SUBFEATURE_KEYS = [
     "marketing.analytics",
     "marketing.email_campaigns",
     "marketing.email_segments",
+    "inventory.usage_analytics",
     "api.settings",
 ]
 

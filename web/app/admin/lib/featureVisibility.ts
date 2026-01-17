@@ -87,7 +87,11 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
     ],
   },
   { key: "module.leads", label: "Leads" },
-  { key: "module.inventory", label: "Inventory" },
+  {
+    key: "module.inventory",
+    label: "Inventory",
+    children: [{ key: "inventory.usage_analytics", label: "Usage analytics" }],
+  },
   { key: "module.training", label: "Training" },
   { key: "module.notifications_center", label: "Notifications center" },
   {
