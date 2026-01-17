@@ -945,6 +945,7 @@ Schedules: `daily`, `weekly`, `monthly`.
 | GET | `/v1/admin/schedule` | `bookings.view` | Schedule view |
 | GET | `/v1/admin/schedule/team_calendar` | `bookings.view` | Team calendar aggregates (org TZ boundaries) |
 | GET | `/v1/admin/schedule/worker_timeline` | `bookings.view` | Worker timeline aggregates (org TZ boundaries) |
+| GET | `/v1/admin/schedule/external_blocks?from=&to=` | `dispatch` (dispatcher/admin/owner) | External calendar blocks for conflict awareness |
 | GET | `/v1/admin/ui/bookings` | `bookings.view` | List bookings |
 | GET | `/v1/admin/ui/bookings/{id}` | `bookings.view` | Booking detail |
 | POST | `/v1/admin/ui/bookings/create` | `bookings.edit` | Create booking |
@@ -1287,12 +1288,32 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 | POST | `/v1/admin/integrations/google/connect/callback` | `settings.manage` (owner) | Exchange auth code for refresh token |
 | POST | `/v1/admin/integrations/google/disconnect` | `settings.manage` (owner) | Disconnect account |
 | POST | `/v1/admin/integrations/google/gcal/export_sync?from=&to=` | `dispatch` (dispatcher/admin/owner) | Manual export of bookings to Google Calendar |
+| POST | `/v1/admin/integrations/google/gcal/import_sync?from=&to=` | `dispatch` (dispatcher/admin/owner) | Import Google Calendar events into external blocks |
 
 **Export Sync**
 - **Endpoint:** `POST /v1/admin/integrations/google/gcal/export_sync`
 - **Query Params:** `from` and `to` (ISO-8601 datetimes, inclusive range)
 - **Behavior:** Pushes bookings in range to Google Calendar, updating existing mapped events when bookings change.
 - **Idempotency:** Uses `integrations_gcal_event_map.last_pushed_hash` to avoid duplicates.
+- **Response payload:**
+
+```json
+{
+  "calendar_id": "primary",
+  "from": "2024-08-01T00:00:00+00:00",
+  "to": "2024-08-08T00:00:00+00:00",
+  "created": 3,
+  "updated": 1,
+  "skipped": 5,
+  "total": 9
+}
+```
+
+**Import Sync**
+- **Endpoint:** `POST /v1/admin/integrations/google/gcal/import_sync`
+- **Query Params:** `from` and `to` (ISO-8601 datetimes, inclusive range)
+- **Behavior:** Pulls Google Calendar events into `schedule_external_blocks` for conflict detection.
+- **Idempotency:** Upserts by `external_event_id` per org; updated events adjust block times.
 - **Response payload:**
 
 ```json

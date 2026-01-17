@@ -4,7 +4,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterable
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
@@ -48,6 +48,20 @@ class GcalExportSyncResult:
         return self.created + self.updated + self.skipped
 
 
+@dataclass(frozen=True)
+class GcalImportSyncResult:
+    calendar_id: str
+    from_utc: datetime
+    to_utc: datetime
+    created: int
+    updated: int
+    skipped: int
+
+    @property
+    def total(self) -> int:
+        return self.created + self.updated + self.skipped
+
+
 class GcalClient:
     def __init__(self, access_token: str, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._client = httpx.AsyncClient(
@@ -71,6 +85,34 @@ class GcalClient:
         if response.status_code >= 400:
             raise ValueError("gcal_event_update_failed")
         return response.json()
+
+    async def list_events(
+        self,
+        calendar_id: str,
+        *,
+        time_min: datetime,
+        time_max: datetime,
+    ) -> list[dict]:
+        events: list[dict] = []
+        page_token: str | None = None
+        while True:
+            params = {
+                "timeMin": time_min.isoformat(),
+                "timeMax": time_max.isoformat(),
+                "singleEvents": "true",
+                "orderBy": "startTime",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            response = await self._client.get(f"/calendars/{calendar_id}/events", params=params)
+            if response.status_code >= 400:
+                raise ValueError("gcal_event_list_failed")
+            payload = response.json()
+            events.extend(payload.get("items", []))
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+        return events
 
 
 GCAL_CLIENT_FACTORY: Callable[[str], GcalClient] = (
@@ -187,6 +229,15 @@ async def get_export_calendar(session: AsyncSession, org_id: uuid.UUID) -> Integ
     )
 
 
+async def get_import_calendar(session: AsyncSession, org_id: uuid.UUID) -> IntegrationsGcalCalendar | None:
+    return await session.scalar(
+        sa.select(IntegrationsGcalCalendar).where(
+            IntegrationsGcalCalendar.org_id == org_id,
+            IntegrationsGcalCalendar.mode.in_([GcalSyncMode.IMPORT, GcalSyncMode.TWO_WAY]),
+        )
+    )
+
+
 async def disconnect_google_calendar(session: AsyncSession, org_id: uuid.UUID) -> None:
     await session.execute(
         sa.delete(IntegrationsGoogleAccount).where(IntegrationsGoogleAccount.org_id == org_id)
@@ -216,6 +267,41 @@ def _ensure_aware(value: datetime) -> datetime:
 
 def _booking_end(booking: Booking) -> datetime:
     return _ensure_aware(booking.starts_at) + timedelta(minutes=booking.duration_minutes)
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    normalized = value.replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)
+
+
+def _parse_event_datetime(payload: dict, *, default_tz: ZoneInfo) -> datetime | None:
+    date_time = payload.get("dateTime")
+    if isinstance(date_time, str):
+        parsed = _parse_iso_datetime(date_time)
+        if parsed.tzinfo is None:
+            tz_name = payload.get("timeZone")
+            tzinfo = ZoneInfo(tz_name) if tz_name else default_tz
+            parsed = parsed.replace(tzinfo=tzinfo)
+        return parsed
+    date_value = payload.get("date")
+    if isinstance(date_value, str):
+        parsed_date = date.fromisoformat(date_value)
+        tz_name = payload.get("timeZone")
+        tzinfo = ZoneInfo(tz_name) if tz_name else default_tz
+        return datetime.combine(parsed_date, datetime.min.time(), tzinfo=tzinfo)
+    return None
+
+
+def _event_time_range(event: dict, *, default_tz: ZoneInfo) -> tuple[datetime, datetime] | None:
+    start = _parse_event_datetime(event.get("start", {}), default_tz=default_tz)
+    end = _parse_event_datetime(event.get("end", {}), default_tz=default_tz)
+    if not start or not end:
+        return None
+    normalized_start = _ensure_aware(start).astimezone(timezone.utc)
+    normalized_end = _ensure_aware(end).astimezone(timezone.utc)
+    if normalized_end <= normalized_start:
+        return None
+    return normalized_start, normalized_end
 
 
 def _build_event_payload(booking: Booking, *, org_tz: str) -> dict:
@@ -337,6 +423,102 @@ async def export_bookings_to_gcal(
             if hasattr(result, "__await__"):
                 await result
     return GcalExportSyncResult(
+        calendar_id=calendar.calendar_id,
+        from_utc=from_utc,
+        to_utc=to_utc,
+        created=created,
+        updated=updated,
+        skipped=skipped,
+    )
+
+
+async def import_gcal_events_to_blocks(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: datetime,
+    to_date: datetime,
+) -> GcalImportSyncResult:
+    account = await get_google_account(session, org_id)
+    if not account:
+        raise ValueError("missing_google_account")
+    calendar = await get_import_calendar(session, org_id)
+    if not calendar:
+        raise ValueError("missing_google_calendar")
+    settings_record = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_tz = org_settings_service.resolve_timezone(settings_record)
+    tzinfo = ZoneInfo(org_tz)
+    from_utc = _ensure_aware(from_date).astimezone(timezone.utc)
+    to_utc = _ensure_aware(to_date).astimezone(timezone.utc)
+    if from_utc > to_utc:
+        raise ValueError("invalid_date_range")
+
+    access_token = await exchange_refresh_token_for_access_token(account.encrypted_refresh_token)
+    client = GCAL_CLIENT_FACTORY(access_token)
+    created = 0
+    updated = 0
+    skipped = 0
+    try:
+        events = await client.list_events(calendar.calendar_id, time_min=from_utc, time_max=to_utc)
+        event_ids = [event.get("id") for event in events if event.get("id")]
+        existing_blocks: dict[str, ScheduleExternalBlock] = {}
+        if event_ids:
+            rows = (
+                await session.scalars(
+                    sa.select(ScheduleExternalBlock).where(
+                        ScheduleExternalBlock.org_id == org_id,
+                        ScheduleExternalBlock.external_event_id.in_(event_ids),
+                    )
+                )
+            ).all()
+            existing_blocks = {row.external_event_id: row for row in rows}
+
+        for event in events:
+            if event.get("status") == "cancelled":
+                skipped += 1
+                continue
+            external_event_id = event.get("id")
+            if not external_event_id:
+                skipped += 1
+                continue
+            time_range = _event_time_range(event, default_tz=tzinfo)
+            if not time_range:
+                skipped += 1
+                continue
+            starts_at, ends_at = time_range
+            summary = event.get("summary")
+            existing = existing_blocks.get(external_event_id)
+            if existing:
+                if (
+                    existing.starts_at == starts_at
+                    and existing.ends_at == ends_at
+                    and existing.summary == summary
+                ):
+                    skipped += 1
+                    continue
+                existing.starts_at = starts_at
+                existing.ends_at = ends_at
+                existing.summary = summary
+                updated += 1
+            else:
+                session.add(
+                    ScheduleExternalBlock(
+                        org_id=org_id,
+                        source="gcal",
+                        external_event_id=external_event_id,
+                        starts_at=starts_at,
+                        ends_at=ends_at,
+                        summary=summary,
+                    )
+                )
+                created += 1
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+    return GcalImportSyncResult(
         calendar_id=calendar.calendar_id,
         from_utc=from_utc,
         to_utc=to_utc,

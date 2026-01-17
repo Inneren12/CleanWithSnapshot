@@ -193,3 +193,56 @@ async def export_google_calendar_sync(
         skipped=result.skipped,
         total=result.total,
     )
+
+
+@router.post(
+    "/v1/admin/integrations/google/gcal/import_sync",
+    response_model=integrations_schemas.GcalImportSyncResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def import_google_calendar_sync(
+    request: Request,
+    from_date: datetime = Query(..., alias="from"),
+    to_date: datetime = Query(..., alias="to"),
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.DISPATCH)),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.GcalImportSyncResponse:
+    await _require_google_calendar_enabled(session, org_id)
+    if not gcal_service.oauth_configured():
+        return problem_details(
+            request=request,
+            status=400,
+            title="Google OAuth Not Configured",
+            detail="Missing Google OAuth configuration.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    if from_date.tzinfo is None:
+        from_date = from_date.replace(tzinfo=timezone.utc)
+    if to_date.tzinfo is None:
+        to_date = to_date.replace(tzinfo=timezone.utc)
+    try:
+        result = await gcal_service.import_gcal_events_to_blocks(
+            session,
+            org_id,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except ValueError as exc:
+        return problem_details(
+            request=request,
+            status=400,
+            title="Google Calendar Import Failed",
+            detail=str(exc),
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    await session.commit()
+    return integrations_schemas.GcalImportSyncResponse(
+        calendar_id=result.calendar_id,
+        from_utc=result.from_utc,
+        to_utc=result.to_utc,
+        created=result.created,
+        updated=result.updated,
+        skipped=result.skipped,
+        total=result.total,
+    )

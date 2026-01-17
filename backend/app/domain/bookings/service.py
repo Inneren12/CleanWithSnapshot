@@ -33,6 +33,7 @@ from app.domain.leads.db_models import Lead
 from app.domain.leads.service import apply_referral_conversion
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Payment
+from app.domain.integrations.db_models import ScheduleExternalBlock
 from app.infra.metrics import metrics
 from app.settings import settings
 
@@ -718,6 +719,18 @@ async def generate_slots(
                     _normalize_datetime(block.ends_at),
                 )
             )
+        external_blocks_stmt = select(ScheduleExternalBlock).where(
+            ScheduleExternalBlock.org_id == team_obj.org_id,
+            ScheduleExternalBlock.starts_at < day_end,
+            ScheduleExternalBlock.ends_at > day_start,
+        )
+        for external_block in (await session.execute(external_blocks_stmt)).scalars().all():
+            blocked_windows.append(
+                (
+                    _normalize_datetime(external_block.starts_at),
+                    _normalize_datetime(external_block.ends_at),
+                )
+            )
 
     candidate = day_start
     slots: list[datetime] = []
@@ -1042,6 +1055,13 @@ async def reschedule_booking(
         )
         if worker_blocks:
             raise ValueError("conflict_with_availability_block")
+    external_stmt = select(ScheduleExternalBlock).where(
+        ScheduleExternalBlock.org_id == booking.org_id,
+        ScheduleExternalBlock.starts_at < window_end,
+        ScheduleExternalBlock.ends_at > normalized,
+    )
+    if (await session.execute(external_stmt)).scalar_one_or_none():
+        raise ValueError("conflict_with_external_block")
     if not allow_conflicts:
         if not await is_slot_available(
             normalized,

@@ -21,6 +21,7 @@ from app.domain.bookings.service import (
 from app.domain.availability import service as availability_service
 from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.invoices.db_models import Invoice, Payment
+from app.domain.integrations.db_models import ScheduleExternalBlock
 from app.domain.leads.db_models import Lead
 from app.domain.org_settings import service as org_settings_service
 from app.domain.workers.db_models import Worker
@@ -749,6 +750,22 @@ async def _team_conflicts(
             }
         )
 
+    external_stmt = select(ScheduleExternalBlock).where(
+        ScheduleExternalBlock.org_id == team.org_id,
+        ScheduleExternalBlock.starts_at < window_end,
+        ScheduleExternalBlock.ends_at > window_start,
+    )
+    for block in (await session.execute(external_stmt)).scalars().all():
+        conflicts.append(
+            {
+                "kind": "external_block",
+                "reference": str(block.block_id),
+                "starts_at": _normalize(block.starts_at),
+                "ends_at": _normalize(block.ends_at),
+                "note": block.summary or "external calendar block",
+            }
+        )
+
     return conflicts
 
 
@@ -1270,6 +1287,14 @@ async def move_booking(
     )
     if blocks:
         raise ValueError("conflict_with_availability_block")
+
+    external_stmt = select(ScheduleExternalBlock).where(
+        ScheduleExternalBlock.org_id == target_team.org_id,
+        ScheduleExternalBlock.starts_at < normalized_end,
+        ScheduleExternalBlock.ends_at > normalized_start,
+    )
+    if (await session.execute(external_stmt)).scalar_one_or_none():
+        raise ValueError("conflict_with_external_block")
 
     booking.starts_at = normalized_start
     booking.duration_minutes = duration

@@ -12,6 +12,7 @@ from app.domain.integrations.db_models import (
     IntegrationsGcalCalendar,
     IntegrationsGcalEventMap,
     IntegrationsGoogleAccount,
+    ScheduleExternalBlock,
 )
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.saas import service as saas_service
@@ -52,6 +53,16 @@ def _export_url(start: datetime, end: datetime) -> str:
     return f"/v1/admin/integrations/google/gcal/export_sync?{query}"
 
 
+def _import_url(start: datetime, end: datetime) -> str:
+    query = urlencode({"from": start.isoformat(), "to": end.isoformat()})
+    return f"/v1/admin/integrations/google/gcal/import_sync?{query}"
+
+
+def _external_blocks_url(start: datetime, end: datetime) -> str:
+    query = urlencode({"from": start.isoformat(), "to": end.isoformat()})
+    return f"/v1/admin/schedule/external_blocks?{query}"
+
+
 def _mock_gcal_client(monkeypatch, created, updated, event_id: str = "event-1") -> None:
     class FakeGcalClient:
         def __init__(self):
@@ -79,6 +90,20 @@ def _mock_access_token(monkeypatch) -> None:
         return "access-token"
 
     monkeypatch.setattr(gcal_service, "exchange_refresh_token_for_access_token", _exchange_refresh_token)
+
+
+def _mock_gcal_import_client(monkeypatch, events: list[dict]) -> None:
+    class FakeGcalClient:
+        async def list_events(self, calendar_id: str, *, time_min: datetime, time_max: datetime) -> list[dict]:
+            return list(events)
+
+        async def close(self) -> None:
+            return None
+
+    def factory(_access_token: str) -> FakeGcalClient:
+        return FakeGcalClient()
+
+    monkeypatch.setattr(gcal_service, "GCAL_CLIENT_FACTORY", factory)
 
 
 @pytest.mark.anyio
@@ -461,3 +486,194 @@ async def test_gcal_export_dispatcher_allowed(async_session_maker, client, monke
     viewer_token = saas_service.build_access_token(viewer, viewer_membership)
     viewer_resp = client.post(url, headers={"Authorization": f"Bearer {viewer_token}"})
     assert viewer_resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_gcal_import_creates_external_blocks(async_session_maker, client, monkeypatch):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Gcal Import Org")
+        owner = await saas_service.create_user(session, "owner@gcal-import.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await _enable_gcal(session, org.org_id)
+        session.add(
+            IntegrationsGoogleAccount(
+                org_id=org.org_id,
+                encrypted_refresh_token="refresh-import",
+                token_scopes=["scope1"],
+            )
+        )
+        session.add(
+            IntegrationsGcalCalendar(
+                org_id=org.org_id,
+                calendar_id="primary",
+                mode=GcalSyncMode.IMPORT,
+            )
+        )
+        await session.commit()
+
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+    _mock_access_token(monkeypatch)
+    events = [
+        {
+            "id": "evt-1",
+            "summary": "External block",
+            "start": {"dateTime": "2024-08-05T10:00:00Z"},
+            "end": {"dateTime": "2024-08-05T12:00:00Z"},
+        }
+    ]
+    _mock_gcal_import_client(monkeypatch, events)
+
+    owner_token = saas_service.build_access_token(owner, membership)
+    response = client.post(
+        _import_url(datetime(2024, 8, 5, 0, 0, tzinfo=timezone.utc), datetime(2024, 8, 6, 0, 0, tzinfo=timezone.utc)),
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["created"] == 1
+
+    async with async_session_maker() as session:
+        block = await session.scalar(
+            sa.select(ScheduleExternalBlock).where(
+                ScheduleExternalBlock.org_id == org.org_id,
+                ScheduleExternalBlock.external_event_id == "evt-1",
+            )
+        )
+        assert block is not None
+        assert block.summary == "External block"
+
+
+@pytest.mark.anyio
+async def test_gcal_import_updates_external_blocks_on_reimport(async_session_maker, client, monkeypatch):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Gcal Import Update Org")
+        owner = await saas_service.create_user(session, "owner@gcal-import-update.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await _enable_gcal(session, org.org_id)
+        session.add(
+            IntegrationsGoogleAccount(
+                org_id=org.org_id,
+                encrypted_refresh_token="refresh-import-update",
+                token_scopes=["scope1"],
+            )
+        )
+        session.add(
+            IntegrationsGcalCalendar(
+                org_id=org.org_id,
+                calendar_id="primary",
+                mode=GcalSyncMode.IMPORT,
+            )
+        )
+        await session.commit()
+
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+    _mock_access_token(monkeypatch)
+    events = [
+        {
+            "id": "evt-2",
+            "summary": "External block",
+            "start": {"dateTime": "2024-08-06T10:00:00Z"},
+            "end": {"dateTime": "2024-08-06T12:00:00Z"},
+        }
+    ]
+    _mock_gcal_import_client(monkeypatch, events)
+
+    owner_token = saas_service.build_access_token(owner, membership)
+    url = _import_url(datetime(2024, 8, 6, 0, 0, tzinfo=timezone.utc), datetime(2024, 8, 7, 0, 0, tzinfo=timezone.utc))
+    first = client.post(url, headers={"Authorization": f"Bearer {owner_token}"})
+    assert first.status_code == 200
+    assert first.json()["created"] == 1
+
+    events[0] = {
+        "id": "evt-2",
+        "summary": "External block updated",
+        "start": {"dateTime": "2024-08-06T11:00:00Z"},
+        "end": {"dateTime": "2024-08-06T13:00:00Z"},
+    }
+    second = client.post(url, headers={"Authorization": f"Bearer {owner_token}"})
+    assert second.status_code == 200
+    assert second.json()["updated"] == 1
+
+    async with async_session_maker() as session:
+        block = await session.scalar(
+            sa.select(ScheduleExternalBlock).where(
+                ScheduleExternalBlock.org_id == org.org_id,
+                ScheduleExternalBlock.external_event_id == "evt-2",
+            )
+        )
+        assert block is not None
+        assert block.summary == "External block updated"
+        starts_at = block.starts_at
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=timezone.utc)
+        assert starts_at == datetime(2024, 8, 6, 11, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.anyio
+async def test_external_blocks_conflict_with_schedule(async_session_maker, client):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Gcal External Block Conflict Org")
+        dispatcher = await saas_service.create_user(session, "dispatcher@gcal-external-block.com", "secret")
+        membership = await saas_service.create_membership(session, org, dispatcher, MembershipRole.DISPATCHER)
+        session.add(
+            ScheduleExternalBlock(
+                org_id=org.org_id,
+                source="gcal",
+                external_event_id="evt-conflict",
+                starts_at=datetime(2024, 8, 7, 9, 0, tzinfo=timezone.utc),
+                ends_at=datetime(2024, 8, 7, 10, 0, tzinfo=timezone.utc),
+                summary="Morning busy",
+            )
+        )
+        await session.commit()
+
+    token = saas_service.build_access_token(dispatcher, membership)
+    response = client.get(
+        "/v1/admin/schedule/conflicts",
+        params={
+            "starts_at": datetime(2024, 8, 7, 9, 30, tzinfo=timezone.utc).isoformat(),
+            "ends_at": datetime(2024, 8, 7, 10, 30, tzinfo=timezone.utc).isoformat(),
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["has_conflict"] is True
+    assert any(conflict["kind"] == "external_block" for conflict in payload["conflicts"])
+
+
+@pytest.mark.anyio
+async def test_external_blocks_are_scoped_to_org(async_session_maker, client):
+    async with async_session_maker() as session:
+        org_a = await saas_service.create_organization(session, "Org A")
+        org_b = await saas_service.create_organization(session, "Org B")
+        dispatcher = await saas_service.create_user(session, "dispatcher@gcal-org-scope.com", "secret")
+        membership_b = await saas_service.create_membership(
+            session, org_b, dispatcher, MembershipRole.DISPATCHER
+        )
+        session.add(
+            ScheduleExternalBlock(
+                org_id=org_a.org_id,
+                source="gcal",
+                external_event_id="evt-org-scope",
+                starts_at=datetime(2024, 8, 8, 9, 0, tzinfo=timezone.utc),
+                ends_at=datetime(2024, 8, 8, 10, 0, tzinfo=timezone.utc),
+                summary="Org A busy",
+            )
+        )
+        await session.commit()
+
+    token = saas_service.build_access_token(dispatcher, membership_b)
+    response = client.get(
+        _external_blocks_url(
+            datetime(2024, 8, 8, 0, 0, tzinfo=timezone.utc),
+            datetime(2024, 8, 9, 0, 0, tzinfo=timezone.utc),
+        ),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json() == []
