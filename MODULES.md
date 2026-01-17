@@ -465,23 +465,34 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 ### 10. Marketing
 
-**Purpose:** Marketing campaigns, promotional codes, and discount governance
+**Purpose:** Marketing analytics, manual email campaigns, promotional codes, and discount governance
 
 **Key Pages:**
 - `web/app/admin/marketing/promo-codes/page.tsx` - Promo code management
-- Referral leaderboard view is exposed via the marketing admin endpoints (no dedicated UI page yet).
+- `web/app/admin/marketing/analytics/page.tsx` - Lead source analytics + manual spend entry
+- `web/app/admin/marketing/email-campaigns/page.tsx` - Manual email campaigns list + segment management
+- `web/app/admin/marketing/email-campaigns/[campaignId]/page.tsx` - Campaign detail + scheduling
 
 **Backend Routers:**
 - `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/promo-codes`
+- `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/analytics/lead-sources`
+- `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/spend`
+- `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/email-segments`
+- `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/email-campaigns`
 - `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/referrals/leaderboard`
 
 **Key Services:**
 - `backend/app/domain/marketing/service.py` - Promo code CRUD + validation
+- `backend/app/domain/marketing/service.py` - Lead source analytics + spend tracking
+- `backend/app/domain/marketing/service.py` - Email segment + campaign CRUD
 - `backend/app/domain/marketing/service.py` - Referral leaderboard aggregation (`list_referral_leaderboard`)
 
 **Key Tables:**
 - `promo_codes` - Promo definitions and restrictions
 - `promo_code_redemptions` - Redemption log for limits and per-customer rules
+- `marketing_spend` - Manual monthly spend by lead source
+- `email_segments` - Manual email recipient definitions
+- `email_campaigns` - Manual email campaigns with schedule metadata
 - `referral_credits` - Referral credit ledger (triggered by org settings `referral_credit_trigger`)
 
 **Permissions Required:**

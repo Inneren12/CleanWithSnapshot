@@ -4,9 +4,10 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 PromoDiscountType = Literal["percent", "amount", "free_addon"]
+MarketingCampaignStatus = Literal["DRAFT", "SCHEDULED", "SENT", "CANCELLED"]
 
 
 class PromoCodeBase(BaseModel):
@@ -121,3 +122,114 @@ class ReferralLeaderboardEntry(BaseModel):
 
 class ReferralLeaderboardResponse(BaseModel):
     entries: list[ReferralLeaderboardEntry]
+
+
+class MarketingSpendBase(BaseModel):
+    source: str = Field(min_length=1, max_length=120)
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    amount_cents: int = Field(ge=0)
+
+
+class MarketingSpendCreate(MarketingSpendBase):
+    pass
+
+
+class MarketingSpendResponse(BaseModel):
+    spend_id: uuid.UUID
+    org_id: uuid.UUID
+    source: str
+    period: str
+    amount_cents: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class LeadSourceAnalyticsEntry(BaseModel):
+    source: str
+    leads_count: int
+    bookings_count: int
+    revenue_cents: int
+    spend_cents: int
+
+
+class LeadSourceAnalyticsResponse(BaseModel):
+    period: str
+    sources: list[LeadSourceAnalyticsEntry]
+
+
+class EmailSegmentDefinition(BaseModel):
+    recipients: list[EmailStr] = Field(default_factory=list)
+
+
+class EmailSegmentBase(BaseModel):
+    name: str = Field(min_length=1, max_length=140)
+    description: str | None = Field(default=None, max_length=1000)
+    definition: EmailSegmentDefinition
+
+
+class EmailSegmentCreate(EmailSegmentBase):
+    pass
+
+
+class EmailSegmentUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=140)
+    description: str | None = Field(default=None, max_length=1000)
+    definition: EmailSegmentDefinition | None = None
+
+
+class EmailSegmentResponse(BaseModel):
+    segment_id: uuid.UUID
+    org_id: uuid.UUID
+    name: str
+    description: str | None
+    definition: EmailSegmentDefinition
+    created_at: datetime
+    updated_at: datetime
+
+
+class EmailCampaignBase(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    subject: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1)
+    status: MarketingCampaignStatus = "DRAFT"
+    scheduled_for: datetime | None = None
+    segment_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "EmailCampaignBase":
+        if self.status == "SCHEDULED" and self.scheduled_for is None:
+            raise ValueError("scheduled_for is required when status is SCHEDULED")
+        return self
+
+
+class EmailCampaignCreate(EmailCampaignBase):
+    pass
+
+
+class EmailCampaignUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    subject: str | None = Field(default=None, min_length=1, max_length=200)
+    content: str | None = Field(default=None, min_length=1)
+    status: MarketingCampaignStatus | None = None
+    scheduled_for: datetime | None = None
+    segment_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "EmailCampaignUpdate":
+        if self.status == "SCHEDULED" and self.scheduled_for is None:
+            raise ValueError("scheduled_for is required when status is SCHEDULED")
+        return self
+
+
+class EmailCampaignResponse(BaseModel):
+    campaign_id: uuid.UUID
+    org_id: uuid.UUID
+    segment_id: uuid.UUID | None
+    name: str
+    subject: str
+    content: str
+    status: MarketingCampaignStatus
+    scheduled_for: datetime | None
+    sent_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
