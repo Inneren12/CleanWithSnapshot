@@ -234,6 +234,11 @@ def enable_test_mode():
     settings.deposits_enabled = False
     settings.app_env = "dev"
     settings.email_mode = "sendgrid"
+    settings.legacy_basic_auth_enabled = True
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "admin123"
+    settings.viewer_basic_username = "viewer"
+    settings.viewer_basic_password = "viewer123"
     from app.infra.email import resolve_email_adapter
 
     app.state.email_adapter = resolve_email_adapter(settings)

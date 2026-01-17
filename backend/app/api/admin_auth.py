@@ -129,21 +129,6 @@ def _configured_users() -> list[_ConfiguredUser]:
                 role=AdminRole.VIEWER,
             )
         )
-    if not configured and settings.testing:
-        configured.extend(
-            [
-                _ConfiguredUser(
-                    username="admin",
-                    password="admin123",
-                    role=AdminRole.ADMIN,
-                ),
-                _ConfiguredUser(
-                    username="viewer",
-                    password="viewer123",
-                    role=AdminRole.VIEWER,
-                ),
-            ]
-        )
     return configured
 
 
