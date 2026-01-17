@@ -651,6 +651,78 @@ async def get_finance_cashflow(
 
 
 @router.get(
+    "/v1/admin/finance/balance_sheet",
+    response_model=schemas.FinanceBalanceSheetResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_finance_balance_sheet(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    as_of: date = Query(...),
+) -> schemas.FinanceBalanceSheetResponse:
+    _require_finance_view(request, identity)
+
+    cash_snapshot = await service.get_cash_snapshot_on_or_before(session, org_id, as_of)
+    accounts_receivable_cents = await service.summarize_accounts_receivable(
+        session,
+        org_id,
+        as_of_date=as_of,
+    )
+
+    cash_cents = cash_snapshot.cash_cents if cash_snapshot else None
+    assets_total_cents = (
+        cash_cents + accounts_receivable_cents if cash_cents is not None else None
+    )
+
+    liabilities_total_cents = 0
+    equity_cents = (
+        assets_total_cents - liabilities_total_cents if assets_total_cents is not None else None
+    )
+
+    data_coverage_notes = [
+        "Accounts payable is not tracked; liabilities exclude unpaid expenses.",
+        "GST payable is not tracked; liabilities exclude GST payable.",
+    ]
+    if cash_snapshot is None:
+        data_coverage_notes.append(
+            "Cash is reported as unknown because no cash snapshot exists on or before the as_of date."
+        )
+
+    return schemas.FinanceBalanceSheetResponse(
+        as_of=as_of,
+        assets=schemas.FinanceBalanceSheetAssets(
+            cash=schemas.FinanceBalanceSheetCash(
+                cash_cents=cash_cents,
+                as_of_date=cash_snapshot.as_of_date if cash_snapshot else None,
+                note=cash_snapshot.note if cash_snapshot else None,
+            ),
+            accounts_receivable_cents=accounts_receivable_cents,
+            total_assets_cents=assets_total_cents,
+        ),
+        liabilities=schemas.FinanceBalanceSheetLiabilities(
+            accounts_payable_cents=None,
+            gst_payable_cents=None,
+            total_liabilities_cents=liabilities_total_cents,
+        ),
+        equity=schemas.FinanceBalanceSheetEquity(
+            simplified_equity_cents=equity_cents,
+            formula="assets - liabilities (simplified)",
+        ),
+        data_sources=schemas.FinanceBalanceSheetDataSources(
+            cash="finance_cash_snapshots (latest on or before as_of)",
+            accounts_receivable=(
+                "invoices (status SENT/PARTIAL/OVERDUE, issue_date <= as_of) "
+                "minus payments received on or before as_of"
+            ),
+            liabilities="Not tracked (accounts payable, GST payable).",
+        ),
+        data_coverage_notes=data_coverage_notes,
+    )
+
+
+@router.get(
     "/v1/admin/finance/cash_snapshots",
     response_model=schemas.FinanceCashSnapshotListResponse,
     status_code=status.HTTP_200_OK,

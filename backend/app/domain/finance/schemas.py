@@ -253,3 +253,41 @@ class FinanceCashflowResponse(BaseModel):
     data_sources: FinanceCashflowDataSources
     start_cash_snapshot: FinanceCashSnapshotResponse | None = None
     end_cash_snapshot: FinanceCashSnapshotResponse | None = None
+
+
+class FinanceBalanceSheetCash(BaseModel):
+    cash_cents: int | None
+    as_of_date: date | None
+    note: str | None
+
+
+class FinanceBalanceSheetAssets(BaseModel):
+    cash: FinanceBalanceSheetCash
+    accounts_receivable_cents: int
+    total_assets_cents: int | None
+
+
+class FinanceBalanceSheetLiabilities(BaseModel):
+    accounts_payable_cents: int | None
+    gst_payable_cents: int | None
+    total_liabilities_cents: int
+
+
+class FinanceBalanceSheetEquity(BaseModel):
+    simplified_equity_cents: int | None
+    formula: str
+
+
+class FinanceBalanceSheetDataSources(BaseModel):
+    cash: str
+    accounts_receivable: str
+    liabilities: str
+
+
+class FinanceBalanceSheetResponse(BaseModel):
+    as_of: date
+    assets: FinanceBalanceSheetAssets
+    liabilities: FinanceBalanceSheetLiabilities
+    equity: FinanceBalanceSheetEquity
+    data_sources: FinanceBalanceSheetDataSources
+    data_coverage_notes: list[str]

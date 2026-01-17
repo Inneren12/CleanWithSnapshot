@@ -14,32 +14,42 @@ const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-type FinancePnlBreakdownItem = {
-  label: string;
-  total_cents: number;
+type FinanceBalanceSheetCash = {
+  cash_cents: number | null;
+  as_of_date: string | null;
+  note: string | null;
 };
 
-type FinancePnlExpenseCategoryBreakdown = {
-  category_id: string;
-  category_name: string;
-  total_cents: number;
-  tax_cents: number;
+type FinanceBalanceSheetAssets = {
+  cash: FinanceBalanceSheetCash;
+  accounts_receivable_cents: number;
+  total_assets_cents: number | null;
 };
 
-type FinancePnlDataSources = {
-  revenue: string;
-  expenses: string;
+type FinanceBalanceSheetLiabilities = {
+  accounts_payable_cents: number | null;
+  gst_payable_cents: number | null;
+  total_liabilities_cents: number;
 };
 
-type FinancePnlResponse = {
-  from: string;
-  to: string;
-  revenue_cents: number;
-  expense_cents: number;
-  net_cents: number;
-  revenue_breakdown: FinancePnlBreakdownItem[];
-  expense_breakdown_by_category: FinancePnlExpenseCategoryBreakdown[];
-  data_sources: FinancePnlDataSources;
+type FinanceBalanceSheetEquity = {
+  simplified_equity_cents: number | null;
+  formula: string;
+};
+
+type FinanceBalanceSheetDataSources = {
+  cash: string;
+  accounts_receivable: string;
+  liabilities: string;
+};
+
+type FinanceBalanceSheetResponse = {
+  as_of: string;
+  assets: FinanceBalanceSheetAssets;
+  liabilities: FinanceBalanceSheetLiabilities;
+  equity: FinanceBalanceSheetEquity;
+  data_sources: FinanceBalanceSheetDataSources;
+  data_coverage_notes: string[];
 };
 
 function formatCurrency(cents: number) {
@@ -53,21 +63,14 @@ function formatDateInput(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
-function defaultFromDate() {
-  const date = new Date();
-  date.setDate(date.getDate() - 30);
-  return formatDateInput(date);
-}
-
-export default function FinancePnlPage() {
+export default function FinanceBalanceSheetPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [profile, setProfile] = useState<AdminProfile | null>(null);
   const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
-  const [fromDate, setFromDate] = useState(defaultFromDate);
-  const [toDate, setToDate] = useState(() => formatDateInput(new Date()));
-  const [pnl, setPnl] = useState<FinancePnlResponse | null>(null);
+  const [asOfDate, setAsOfDate] = useState(() => formatDateInput(new Date()));
+  const [balanceSheet, setBalanceSheet] = useState<FinanceBalanceSheetResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -176,24 +179,24 @@ export default function FinancePnlPage() {
     }
   }, [authHeaders, password, username]);
 
-  const loadPnl = useCallback(async () => {
+  const loadBalanceSheet = useCallback(async () => {
     if (!username || !password) return;
     setErrorMessage(null);
     setStatusMessage(null);
     setIsLoading(true);
-    const params = new URLSearchParams({ from: fromDate, to: toDate });
-    const response = await fetch(`${API_BASE}/v1/admin/finance/pnl?${params.toString()}`, {
+    const params = new URLSearchParams({ as_of: asOfDate });
+    const response = await fetch(`${API_BASE}/v1/admin/finance/balance_sheet?${params.toString()}`, {
       headers: authHeaders,
       cache: "no-store",
     });
     if (response.ok) {
-      const data = (await response.json()) as FinancePnlResponse;
-      setPnl(data);
+      const data = (await response.json()) as FinanceBalanceSheetResponse;
+      setBalanceSheet(data);
     } else {
-      setErrorMessage("Unable to load profit & loss data.");
+      setErrorMessage("Unable to load balance sheet data.");
     }
     setIsLoading(false);
-  }, [authHeaders, fromDate, password, toDate, username]);
+  }, [asOfDate, authHeaders, password, username]);
 
   const saveCredentials = useCallback(() => {
     localStorage.setItem(STORAGE_USERNAME_KEY, username);
@@ -209,31 +212,9 @@ export default function FinancePnlPage() {
     setProfile(null);
     setFeatureConfig(null);
     setUiPrefs(null);
-    setPnl(null);
+    setBalanceSheet(null);
     setStatusMessage("Cleared admin credentials.");
   }, []);
-
-  const exportCsv = useCallback(async () => {
-    if (!username || !password) return;
-    const params = new URLSearchParams({ from: fromDate, to: toDate, format: "csv" });
-    const response = await fetch(`${API_BASE}/v1/admin/finance/pnl?${params.toString()}`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      setErrorMessage("Unable to export CSV.");
-      return;
-    }
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `pnl_${fromDate}_${toDate}.csv`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.URL.revokeObjectURL(url);
-  }, [authHeaders, fromDate, password, toDate, username]);
 
   useEffect(() => {
     const storedUsername = localStorage.getItem(STORAGE_USERNAME_KEY) ?? "";
@@ -251,18 +232,18 @@ export default function FinancePnlPage() {
 
   useEffect(() => {
     if (!username || !password || !canViewFinance) return;
-    loadPnl();
-  }, [canViewFinance, loadPnl, password, username]);
+    loadBalanceSheet();
+  }, [canViewFinance, loadBalanceSheet, password, username]);
 
   if (!pageVisible) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100">
-        <AdminNav links={navLinks} activeKey="finance-pnl" />
+        <AdminNav links={navLinks} activeKey="finance-balance-sheet" />
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-16">
           <div className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center">
             <h1 className="text-2xl font-semibold">Finance module hidden</h1>
             <p className="mt-2 text-sm text-slate-300">
-              Enable the finance module or update your visibility settings to access P&L reports.
+              Enable the finance module or update your visibility settings to access balance sheet reports.
             </p>
           </div>
         </div>
@@ -272,12 +253,12 @@ export default function FinancePnlPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
-      <AdminNav links={navLinks} activeKey="finance-pnl" />
+      <AdminNav links={navLinks} activeKey="finance-balance-sheet" />
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
         <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-          <h1 className="text-2xl font-semibold">Profit &amp; Loss</h1>
+          <h1 className="text-2xl font-semibold">Balance sheet (simplified)</h1>
           <p className="mt-2 text-sm text-slate-300">
-            Review realized revenue (payments) against logged expenses for a selected period.
+            Snapshot of assets, liabilities, and simplified equity as of a selected date.
           </p>
           <div className="mt-4 grid gap-3 md:grid-cols-5">
             <input
@@ -315,156 +296,140 @@ export default function FinancePnlPage() {
 
         <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="flex flex-col text-sm text-slate-300">
-                From
-                <input
-                  type="date"
-                  className="mt-1 rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-                  value={fromDate}
-                  onChange={(event) => setFromDate(event.target.value)}
-                />
-              </label>
-              <label className="flex flex-col text-sm text-slate-300">
-                To
-                <input
-                  type="date"
-                  className="mt-1 rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-                  value={toDate}
-                  onChange={(event) => setToDate(event.target.value)}
-                />
-              </label>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                className="rounded-lg border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold"
-                onClick={loadPnl}
-                disabled={isLoading || !canViewFinance}
-              >
-                {isLoading ? "Loading..." : "Refresh"}
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-white/10 bg-transparent px-4 py-2 text-sm font-semibold text-slate-300"
-                onClick={exportCsv}
-                disabled={!pnl}
-              >
-                Export CSV
-              </button>
-            </div>
+            <label className="flex flex-col text-sm text-slate-300">
+              As of
+              <input
+                type="date"
+                className="mt-1 rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                value={asOfDate}
+                onChange={(event) => setAsOfDate(event.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="rounded-lg border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold"
+              onClick={loadBalanceSheet}
+              disabled={isLoading || !canViewFinance}
+            >
+              {isLoading ? "Loading..." : "Refresh"}
+            </button>
           </div>
           {!canViewFinance ? (
             <p className="mt-4 text-sm text-rose-300">You need finance.view to access this report.</p>
           ) : null}
         </section>
 
-        <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-          <h2 className="text-lg font-semibold">Summary</h2>
-          {pnl ? (
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
-                <p className="text-sm text-slate-400">Revenue</p>
-                <p className="mt-2 text-2xl font-semibold text-emerald-300">
-                  {formatCurrency(pnl.revenue_cents)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
-                <p className="text-sm text-slate-400">Expenses</p>
-                <p className="mt-2 text-2xl font-semibold text-rose-300">
-                  {formatCurrency(pnl.expense_cents)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
-                <p className="text-sm text-slate-400">Net</p>
-                <p className="mt-2 text-2xl font-semibold text-slate-100">
-                  {formatCurrency(pnl.net_cents)}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <p className="mt-3 text-sm text-slate-400">Select a date range to load totals.</p>
-          )}
-          {pnl?.data_sources ? (
-            <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/60 p-4 text-sm text-slate-300">
-              <p className="font-semibold text-slate-200">Data sources</p>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                <li>Revenue: {pnl.data_sources.revenue}</li>
-                <li>Expenses: {pnl.data_sources.expenses}</li>
-              </ul>
-            </div>
-          ) : null}
-        </section>
-
         <div className="grid gap-6 lg:grid-cols-2">
           <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-            <h2 className="text-lg font-semibold">Revenue breakdown</h2>
-            <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
-              <table className="min-w-full text-sm">
-                <thead className="bg-white/5 text-slate-300">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-semibold">Method</th>
-                    <th className="px-4 py-2 text-right font-semibold">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pnl?.revenue_breakdown?.length ? (
-                    pnl.revenue_breakdown.map((item) => (
-                      <tr key={item.label} className="border-t border-white/10">
-                        <td className="px-4 py-2 text-slate-100">{item.label}</td>
-                        <td className="px-4 py-2 text-right text-slate-100">
-                          {formatCurrency(item.total_cents)}
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr className="border-t border-white/10">
-                      <td className="px-4 py-3 text-sm text-slate-400" colSpan={2}>
-                        No revenue recorded for this period.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <h2 className="text-lg font-semibold">Assets</h2>
+            {balanceSheet ? (
+              <div className="mt-4 space-y-3 text-sm text-slate-200">
+                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                  <div>
+                    <p className="text-slate-400">Cash</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {balanceSheet.assets.cash.as_of_date
+                        ? `Snapshot as of ${balanceSheet.assets.cash.as_of_date}`
+                        : "No snapshot on or before as_of"}
+                      {balanceSheet.assets.cash.note ? ` • ${balanceSheet.assets.cash.note}` : ""}
+                    </p>
+                  </div>
+                  <p className="text-base font-semibold">
+                    {balanceSheet.assets.cash.cash_cents === null
+                      ? "Unknown"
+                      : formatCurrency(balanceSheet.assets.cash.cash_cents)}
+                  </p>
+                </div>
+                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                  <p>Accounts receivable</p>
+                  <p className="text-base font-semibold text-emerald-300">
+                    {formatCurrency(balanceSheet.assets.accounts_receivable_cents)}
+                  </p>
+                </div>
+                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                  <p>Total assets</p>
+                  <p className="text-base font-semibold">
+                    {balanceSheet.assets.total_assets_cents === null
+                      ? "Unknown"
+                      : formatCurrency(balanceSheet.assets.total_assets_cents)}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-400">Select a date to load assets.</p>
+            )}
           </section>
 
           <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-            <h2 className="text-lg font-semibold">Expense breakdown</h2>
-            <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
-              <table className="min-w-full text-sm">
-                <thead className="bg-white/5 text-slate-300">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-semibold">Category</th>
-                    <th className="px-4 py-2 text-right font-semibold">Total</th>
-                    <th className="px-4 py-2 text-right font-semibold">Tax</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pnl?.expense_breakdown_by_category?.length ? (
-                    pnl.expense_breakdown_by_category.map((item) => (
-                      <tr key={item.category_id} className="border-t border-white/10">
-                        <td className="px-4 py-2 text-slate-100">{item.category_name}</td>
-                        <td className="px-4 py-2 text-right text-slate-100">
-                          {formatCurrency(item.total_cents)}
-                        </td>
-                        <td className="px-4 py-2 text-right text-slate-100">
-                          {formatCurrency(item.tax_cents)}
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr className="border-t border-white/10">
-                      <td className="px-4 py-3 text-sm text-slate-400" colSpan={3}>
-                        No expenses recorded for this period.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <h2 className="text-lg font-semibold">Liabilities</h2>
+            {balanceSheet ? (
+              <div className="mt-4 space-y-3 text-sm text-slate-200">
+                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                  <p>Accounts payable</p>
+                  <p className="text-base font-semibold">
+                    {balanceSheet.liabilities.accounts_payable_cents === null
+                      ? "Not tracked"
+                      : formatCurrency(balanceSheet.liabilities.accounts_payable_cents)}
+                  </p>
+                </div>
+                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                  <p>GST payable</p>
+                  <p className="text-base font-semibold">
+                    {balanceSheet.liabilities.gst_payable_cents === null
+                      ? "Not tracked"
+                      : formatCurrency(balanceSheet.liabilities.gst_payable_cents)}
+                  </p>
+                </div>
+                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                  <p>Total liabilities</p>
+                  <p className="text-base font-semibold">
+                    {formatCurrency(balanceSheet.liabilities.total_liabilities_cents)}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-400">Select a date to load liabilities.</p>
+            )}
           </section>
         </div>
+
+        <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+          <h2 className="text-lg font-semibold">Equity</h2>
+          {balanceSheet ? (
+            <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/60 p-4">
+              <p className="text-sm text-slate-400">{balanceSheet.equity.formula}</p>
+              <p className="mt-2 text-2xl font-semibold">
+                {balanceSheet.equity.simplified_equity_cents === null
+                  ? "Unknown"
+                  : formatCurrency(balanceSheet.equity.simplified_equity_cents)}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-slate-400">Select a date to load equity.</p>
+          )}
+        </section>
+
+        {balanceSheet?.data_coverage_notes?.length ? (
+          <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <h2 className="text-lg font-semibold">Data coverage notes</h2>
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-300">
+              {balanceSheet.data_coverage_notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {balanceSheet?.data_sources ? (
+          <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <h2 className="text-lg font-semibold">Data sources</h2>
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-300">
+              <li>Cash: {balanceSheet.data_sources.cash}</li>
+              <li>Accounts receivable: {balanceSheet.data_sources.accounts_receivable}</li>
+              <li>Liabilities: {balanceSheet.data_sources.liabilities}</li>
+            </ul>
+          </section>
+        ) : null}
       </div>
     </main>
   );

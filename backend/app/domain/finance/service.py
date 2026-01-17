@@ -5,12 +5,12 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.finance import db_models
 from app.domain.invoices import statuses as invoice_statuses
-from app.domain.invoices.db_models import Payment
+from app.domain.invoices.db_models import Invoice, Payment
 
 
 def _month_range(start: date, end: date) -> list[str]:
@@ -396,6 +396,60 @@ async def summarize_cashflow(
         "inflows_breakdown": inflow_breakdown,
         "outflows_breakdown_by_category": outflow_breakdown,
     }
+
+
+async def summarize_accounts_receivable(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    as_of_date: date,
+) -> int:
+    end_dt = datetime.combine(as_of_date + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    payment_timestamp = func.coalesce(Payment.received_at, Payment.created_at)
+
+    payments_subquery = (
+        select(
+            Payment.invoice_id,
+            func.coalesce(func.sum(Payment.amount_cents), 0).label("paid_cents"),
+        )
+        .where(
+            Payment.org_id == org_id,
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            payment_timestamp < end_dt,
+        )
+        .group_by(Payment.invoice_id)
+        .subquery()
+    )
+
+    outstanding_expr = case(
+        (
+            Invoice.total_cents - func.coalesce(payments_subquery.c.paid_cents, 0) < 0,
+            0,
+        ),
+        else_=Invoice.total_cents - func.coalesce(payments_subquery.c.paid_cents, 0),
+    )
+
+    receivable_stmt = (
+        select(func.coalesce(func.sum(outstanding_expr), 0))
+        .select_from(Invoice)
+        .outerjoin(
+            payments_subquery,
+            payments_subquery.c.invoice_id == Invoice.invoice_id,
+        )
+        .where(
+            Invoice.org_id == org_id,
+            Invoice.issue_date <= as_of_date,
+            Invoice.status.in_(
+                [
+                    invoice_statuses.INVOICE_STATUS_SENT,
+                    invoice_statuses.INVOICE_STATUS_PARTIAL,
+                    invoice_statuses.INVOICE_STATUS_OVERDUE,
+                ]
+            ),
+        )
+    )
+    result = await session.execute(receivable_stmt)
+    return int(result.scalar_one() or 0)
 
 
 async def get_expense(
