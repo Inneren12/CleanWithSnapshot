@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from typing import Literal
 
@@ -124,6 +125,7 @@ class AdminLeadResponse(BaseModel):
     postal_code: Optional[str] = None
     preferred_dates: List[str]
     notes: Optional[str] = None
+    loss_reason: Optional[str] = None
     source: Optional[str] = None
     campaign: Optional[str] = None
     keyword: Optional[str] = None
@@ -148,6 +150,7 @@ class AdminLeadUpdateRequest(BaseModel):
 
     status: Optional[LeadStatus] = None
     notes: Optional[str] = None
+    loss_reason: Optional[str] = None
 
 
 class AdminLeadListResponse(BaseModel):
@@ -176,6 +179,53 @@ class AdminLeadDetailResponse(AdminLeadResponse):
     timeline: List[TimelineEvent]
 
 
+QuoteStatus = Literal["DRAFT", "SENT", "EXPIRED", "ACCEPTED", "DECLINED"]
+
+
+class AdminLeadQuoteFollowUpResponse(BaseModel):
+    followup_id: str
+    note: str
+    created_at: datetime
+    created_by: Optional[str] = None
+
+
+class AdminLeadQuoteResponse(BaseModel):
+    quote_id: str
+    lead_id: str
+    amount: int
+    currency: str
+    service_type: Optional[str] = None
+    status: QuoteStatus
+    expires_at: Optional[datetime] = None
+    sent_at: Optional[datetime] = None
+    metadata: dict
+    created_at: datetime
+    updated_at: datetime
+    followups: List[AdminLeadQuoteFollowUpResponse]
+
+
+class AdminLeadQuoteListResponse(BaseModel):
+    items: List[AdminLeadQuoteResponse]
+
+
+class AdminLeadQuoteCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: int = Field(..., ge=0)
+    currency: str = Field(default="CAD", min_length=1, max_length=8)
+    service_type: Optional[str] = Field(default=None, max_length=100)
+    status: QuoteStatus = Field(default="DRAFT")
+    expires_at: Optional[datetime] = None
+    sent_at: Optional[datetime] = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class AdminLeadQuoteFollowUpCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str = Field(..., min_length=1, max_length=500)
+
+
 def admin_lead_from_model(model, referral_credit_count: int | None = None) -> AdminLeadResponse:
     credits_attr = getattr(model, "__dict__", {}).get("referral_credits")
     credit_count = referral_credit_count
@@ -189,6 +239,7 @@ def admin_lead_from_model(model, referral_credit_count: int | None = None) -> Ad
         postal_code=model.postal_code,
         preferred_dates=model.preferred_dates,
         notes=model.notes,
+        loss_reason=getattr(model, "loss_reason", None),
         source=getattr(model, "source", None),
         campaign=getattr(model, "campaign", None),
         keyword=getattr(model, "keyword", None),

@@ -495,13 +495,15 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Backend Routers:**
 - `backend/app/api/routes_leads.py` - `/v1/leads/*`
 - `backend/app/api/routes_public.py` - `/v1/public/leads` (public submission)
-- `backend/app/api/routes_admin.py` - `/v1/admin/leads` (list, detail, update, timeline)
+- `backend/app/api/routes_admin.py` - `/v1/admin/leads` (list, detail, update, timeline, quotes)
 
 **Key Services:**
-- `backend/app/domain/leads/service.py` - Lead CRUD, status management
+- `backend/app/domain/leads/service.py` - Lead CRUD, status management, quote helpers
 
 **Key Tables:**
-- `leads` - Lead records (status, source/campaign/keyword/landing page, notes)
+- `leads` - Lead records (status, loss reason, attribution fields, notes)
+- `lead_quotes` - Lead quote log (amount, currency, service type, status, expiry, sent timestamp)
+- `lead_quote_followups` - Manual quote follow-up notes
 
 **Permissions Required:**
 - `contacts.view` - View leads

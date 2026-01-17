@@ -37,6 +37,7 @@ type LeadDetail = {
   address?: string | null;
   preferred_dates: string[];
   notes?: string | null;
+  loss_reason?: string | null;
   access_notes?: string | null;
   parking?: string | null;
   pets?: string | null;
@@ -56,6 +57,27 @@ type LeadDetail = {
   estimate_snapshot: Record<string, unknown>;
   pricing_config_version: string;
   timeline: TimelineEvent[];
+};
+
+type LeadQuoteFollowUp = {
+  followup_id: string;
+  note: string;
+  created_at: string;
+  created_by?: string | null;
+};
+
+type LeadQuote = {
+  quote_id: string;
+  lead_id: string;
+  amount: number;
+  currency: string;
+  service_type?: string | null;
+  status: string;
+  expires_at?: string | null;
+  sent_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  followups: LeadQuoteFollowUp[];
 };
 
 const ACTIVITY_OPTIONS = [
@@ -127,6 +149,16 @@ export default function LeadDetailPage() {
   const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
   const [lead, setLead] = useState<LeadDetail | null>(null);
+  const [quotes, setQuotes] = useState<LeadQuote[]>([]);
+  const [quotesLoading, setQuotesLoading] = useState(false);
+  const [quotesError, setQuotesError] = useState<string | null>(null);
+  const [quoteAmount, setQuoteAmount] = useState("");
+  const [quoteCurrency, setQuoteCurrency] = useState("CAD");
+  const [quoteServiceType, setQuoteServiceType] = useState("");
+  const [quoteExpiresAt, setQuoteExpiresAt] = useState("");
+  const [quoteStatus, setQuoteStatus] = useState<string | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [followupNotes, setFollowupNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activity, setActivity] = useState(ACTIVITY_OPTIONS[0]?.value ?? "Contacted");
@@ -267,6 +299,27 @@ export default function LeadDetailPage() {
     setLoading(false);
   }, [authHeaders, leadId, password, username]);
 
+  const loadQuotes = useCallback(async () => {
+    if (!username || !password) return;
+    setQuotesLoading(true);
+    setQuotesError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}/quotes`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as { items: LeadQuote[] };
+      setQuotes(data.items ?? []);
+    } else if (response.status === 403) {
+      setQuotesError("You do not have permission to view quotes.");
+      setQuotes([]);
+    } else {
+      setQuotesError("Failed to load quotes.");
+      setQuotes([]);
+    }
+    setQuotesLoading(false);
+  }, [authHeaders, leadId, password, username]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
@@ -288,6 +341,10 @@ export default function LeadDetailPage() {
     void loadLead();
   }, [loadLead]);
 
+  useEffect(() => {
+    void loadQuotes();
+  }, [loadQuotes]);
+
   const handleActivitySubmit = async () => {
     if (!canEditLeads) {
       setActivityError("Read-only role cannot add timeline events.");
@@ -306,6 +363,67 @@ export default function LeadDetailPage() {
       void loadLead();
     } else {
       setActivityError("Failed to add timeline entry.");
+    }
+  };
+
+  const handleQuoteCreate = async (status: "DRAFT" | "SENT") => {
+    if (!canEditLeads) {
+      setQuoteError("Read-only role cannot create quotes.");
+      return;
+    }
+    setQuoteStatus(null);
+    setQuoteError(null);
+    const amountValue = Number(quoteAmount);
+    if (!quoteAmount || Number.isNaN(amountValue) || amountValue < 0) {
+      setQuoteError("Enter a valid quote amount.");
+      return;
+    }
+    const payload: Record<string, unknown> = {
+      amount: Math.round(amountValue * 100),
+      currency: quoteCurrency || "CAD",
+      status,
+    };
+    if (quoteServiceType.trim()) payload.service_type = quoteServiceType.trim();
+    if (quoteExpiresAt) payload.expires_at = new Date(quoteExpiresAt).toISOString();
+    if (status === "SENT") payload.sent_at = new Date().toISOString();
+
+    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}/quotes`, {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (response.ok) {
+      setQuoteStatus(status === "SENT" ? "Quote logged as sent." : "Draft quote created.");
+      setQuoteAmount("");
+      setQuoteServiceType("");
+      setQuoteExpiresAt("");
+      void loadQuotes();
+    } else {
+      setQuoteError("Failed to create quote.");
+    }
+  };
+
+  const handleFollowupSubmit = async (quoteId: string) => {
+    if (!canEditLeads) {
+      setQuoteError("Read-only role cannot log follow-ups.");
+      return;
+    }
+    const note = followupNotes[quoteId]?.trim();
+    if (!note) {
+      setQuoteError("Follow-up note cannot be empty.");
+      return;
+    }
+    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}/quotes/${quoteId}/followups`, {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    });
+    if (response.ok) {
+      setQuoteStatus("Follow-up logged.");
+      setFollowupNotes((prev) => ({ ...prev, [quoteId]: "" }));
+      void loadQuotes();
+    } else {
+      setQuoteError("Failed to log follow-up.");
     }
   };
 
@@ -459,6 +577,170 @@ export default function LeadDetailPage() {
               <p className="muted">Current notes and follow-up context.</p>
             </div>
             <div className="inline-alert">{lead.notes ?? "No notes yet."}</div>
+            {lead.status === "LOST" ? (
+              <div style={{ marginTop: 12 }}>
+                <span className="label">Loss reason</span>
+                <div>{lead.loss_reason ?? "—"}</div>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="admin-card admin-section">
+            <div className="section-heading">
+              <h2>Attribution</h2>
+              <p className="muted">Source, campaign, and landing page details.</p>
+            </div>
+            <div className="admin-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+              <div>
+                <span className="label">Source</span>
+                <div>{lead.source ?? "—"}</div>
+              </div>
+              <div>
+                <span className="label">Campaign</span>
+                <div>{lead.campaign ?? "—"}</div>
+              </div>
+              <div>
+                <span className="label">Keyword</span>
+                <div>{lead.keyword ?? "—"}</div>
+              </div>
+              <div>
+                <span className="label">Landing page</span>
+                <div>{lead.landing_page ?? "—"}</div>
+              </div>
+            </div>
+          </section>
+
+          <section className="admin-card admin-section">
+            <div className="section-heading">
+              <h2>Quotes</h2>
+              <p className="muted">Log quotes, follow-ups, and track expiry status.</p>
+            </div>
+            <div className="admin-actions" style={{ flexWrap: "wrap" }}>
+              <label>
+                <span className="label">Amount (CAD)</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={quoteAmount}
+                  onChange={(event) => setQuoteAmount(event.target.value)}
+                  placeholder="0.00"
+                />
+              </label>
+              <label>
+                <span className="label">Currency</span>
+                <input
+                  value={quoteCurrency}
+                  onChange={(event) => setQuoteCurrency(event.target.value.toUpperCase())}
+                  placeholder="CAD"
+                />
+              </label>
+              <label>
+                <span className="label">Service type</span>
+                <input
+                  value={quoteServiceType}
+                  onChange={(event) => setQuoteServiceType(event.target.value)}
+                  placeholder="Standard clean"
+                />
+              </label>
+              <label>
+                <span className="label">Expires</span>
+                <input
+                  type="date"
+                  value={quoteExpiresAt}
+                  onChange={(event) => setQuoteExpiresAt(event.target.value)}
+                />
+              </label>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                disabled={!canEditLeads}
+                onClick={() => void handleQuoteCreate("DRAFT")}
+              >
+                Create draft
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={!canEditLeads}
+                onClick={() => void handleQuoteCreate("SENT")}
+              >
+                Log sent
+              </button>
+            </div>
+            {quoteStatus ? <p className="alert">{quoteStatus}</p> : null}
+            {quoteError ? <p className="alert alert-error">{quoteError}</p> : null}
+            {quotesLoading ? <p className="muted">Loading quotes...</p> : null}
+            {quotesError ? <p className="alert alert-error">{quotesError}</p> : null}
+            {quotes.length ? (
+              <div className="table-responsive">
+                <table className="table-like">
+                  <thead>
+                    <tr>
+                      <th>Created</th>
+                      <th>Amount</th>
+                      <th>Status</th>
+                      <th>Expires</th>
+                      <th>Sent</th>
+                      <th>Service</th>
+                      <th>Follow-ups</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quotes.map((quote) => {
+                      const expiresAt = quote.expires_at ? formatDate(quote.expires_at) : "—";
+                      const isExpired = quote.status === "EXPIRED";
+                      return (
+                        <tr key={quote.quote_id}>
+                          <td>{formatDate(quote.created_at)}</td>
+                          <td>{formatCurrency(quote.amount / 100, quote.currency)}</td>
+                          <td>{isExpired ? "EXPIRED" : quote.status}</td>
+                          <td>{isExpired ? `${expiresAt} (Expired)` : expiresAt}</td>
+                          <td>{quote.sent_at ? formatDateTime(quote.sent_at) : "—"}</td>
+                          <td>{quote.service_type ?? "—"}</td>
+                          <td>
+                            {quote.followups.length ? (
+                              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                                {quote.followups.map((followup) => (
+                                  <li key={followup.followup_id}>
+                                    {followup.note} · {formatDateTime(followup.created_at)}
+                                    {followup.created_by ? ` · ${followup.created_by}` : ""}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <div className="muted">No follow-ups</div>
+                            )}
+                            <div className="admin-actions" style={{ marginTop: 8 }}>
+                              <input
+                                value={followupNotes[quote.quote_id] ?? ""}
+                                onChange={(event) =>
+                                  setFollowupNotes((prev) => ({
+                                    ...prev,
+                                    [quote.quote_id]: event.target.value,
+                                  }))
+                                }
+                                placeholder="Add follow-up note"
+                              />
+                              <button
+                                className="btn btn-ghost"
+                                type="button"
+                                disabled={!canEditLeads}
+                                onClick={() => void handleFollowupSubmit(quote.quote_id)}
+                              >
+                                Log follow-up
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="muted">No quotes logged yet.</p>
+            )}
           </section>
 
           <section className="admin-card admin-section">

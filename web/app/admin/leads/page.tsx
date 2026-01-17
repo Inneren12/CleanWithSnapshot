@@ -23,6 +23,7 @@ type Lead = {
   phone: string;
   status: string;
   notes?: string | null;
+  loss_reason?: string | null;
   source?: string | null;
   campaign?: string | null;
   keyword?: string | null;
@@ -53,7 +54,9 @@ export default function LeadsPage() {
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
   const [page, setPage] = useState(1);
-  const [drafts, setDrafts] = useState<Record<string, { status?: string; notes?: string }>>({});
+  const [drafts, setDrafts] = useState<
+    Record<string, { status?: string; notes?: string; loss_reason?: string }>
+  >({});
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -245,12 +248,13 @@ export default function LeadsPage() {
     }
   };
 
-  const updateDraft = (leadId: string, field: "status" | "notes", value: string) => {
+  const updateDraft = (leadId: string, field: "status" | "notes" | "loss_reason", value: string) => {
     setDrafts((prev) => ({
       ...prev,
       [leadId]: {
         status: field === "status" ? value : prev[leadId]?.status,
         notes: field === "notes" ? value : prev[leadId]?.notes,
+        loss_reason: field === "loss_reason" ? value : prev[leadId]?.loss_reason,
       },
     }));
   };
@@ -265,6 +269,7 @@ export default function LeadsPage() {
     const payload = {
       status: draft.status ?? lead.status,
       notes: draft.notes ?? (lead.notes ?? ""),
+      loss_reason: draft.loss_reason ?? (lead.loss_reason ?? ""),
     };
     const response = await fetch(`${API_BASE}/v1/admin/leads/${lead.lead_id}`, {
       method: "PATCH",
@@ -382,6 +387,8 @@ export default function LeadsPage() {
                   const draft = drafts[lead.lead_id] ?? {};
                   const statusValue = draft.status ?? lead.status;
                   const notesValue = draft.notes ?? (lead.notes ?? "");
+                  const lossReasonValue = draft.loss_reason ?? (lead.loss_reason ?? "");
+                  const showLossReason = statusValue === "LOST";
                   return (
                     <tr key={lead.lead_id}>
                       <td>
@@ -418,6 +425,16 @@ export default function LeadsPage() {
                           onChange={(event) => updateDraft(lead.lead_id, "notes", event.target.value)}
                           placeholder="Add notes"
                         />
+                        {showLossReason ? (
+                          <input
+                            value={lossReasonValue}
+                            onChange={(event) =>
+                              updateDraft(lead.lead_id, "loss_reason", event.target.value)
+                            }
+                            placeholder="Loss reason"
+                            style={{ marginTop: 8 }}
+                          />
+                        ) : null}
                       </td>
                       <td>
                         <button
