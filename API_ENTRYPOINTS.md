@@ -574,6 +574,8 @@ Schedules: `daily`, `weekly`, `monthly`.
 | PATCH | `/v1/admin/inventory/items/{item_id}` | `inventory.manage` or `admin.manage` | Update an existing item |
 | DELETE | `/v1/admin/inventory/items/{item_id}` | `inventory.manage` or `admin.manage` | Delete an inventory item |
 
+**Auth:** Admin HTTP Basic (`ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD`, `VIEWER_BASIC_USERNAME`/`VIEWER_BASIC_PASSWORD`).
+
 **Category query params (`GET /v1/admin/inventory/categories`):**
 
 | Param | Type | Description |
@@ -636,6 +638,8 @@ Schedules: `daily`, `weekly`, `monthly`.
 ```
 
 **Org scoping:** All endpoints are org-scoped. Categories and items from other organizations are not visible or accessible.
+
+**Status codes:** `401` when auth is missing/invalid, `403` when authenticated but lacking permission, `400` for validation errors (ex: unknown category on item create/update), `404` for missing or cross-org resources.
 
 **Cascade behavior:** Deleting a category sets `category_id` to NULL for all items in that category (does not delete items).
 
