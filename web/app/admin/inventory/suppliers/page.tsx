@@ -417,7 +417,10 @@ export default function InventorySuppliersPage() {
           </div>
           <div className="admin-actions">
             <a className="btn btn-ghost" href="/admin/inventory">
-              Back to inventory
+              Inventory items
+            </a>
+            <a className="btn btn-ghost" href="/admin/inventory/purchase-orders">
+              Purchase orders
             </a>
             {canManageInventory ? (
               <button className="btn btn-primary" type="button" onClick={openCreateModal}>

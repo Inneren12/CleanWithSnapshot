@@ -524,6 +524,9 @@ export default function InventoryItemsPage() {
             <p className="muted">Track on-hand cleaning supplies and reorder thresholds.</p>
           </div>
           <div className="admin-actions">
+            <a className="btn btn-ghost" href="/admin/inventory/purchase-orders">
+              Purchase orders
+            </a>
             <a className="btn btn-ghost" href="/admin/inventory/suppliers">
               Suppliers
             </a>
@@ -566,14 +569,9 @@ export default function InventoryItemsPage() {
             </p>
           </div>
           <div className="admin-actions">
-            <button
-              className="btn btn-ghost"
-              type="button"
-              disabled
-              title="Purchase orders will be available once the PO module ships."
-            >
-              Generate purchase order
-            </button>
+            <a className="btn btn-ghost" href="/admin/inventory/purchase-orders">
+              Create purchase order
+            </a>
           </div>
         </div>
         {lowStockItems.length ? (

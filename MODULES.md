@@ -610,6 +610,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - API: `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/purchase-orders/*`
 - Service: `backend/app/domain/inventory/service.py` - `list_purchase_orders()`, `create_purchase_order()`, `mark_purchase_order_ordered()`, `mark_purchase_order_received()`
 - Models: `backend/app/domain/inventory/db_models.py` - `PurchaseOrder`, `PurchaseOrderItem`
+- UI note: draft purchase orders default missing totals to `0` until all line inputs are valid.
 
 #### Search and Pagination
 - Implement in service layer using SQLAlchemy filters
