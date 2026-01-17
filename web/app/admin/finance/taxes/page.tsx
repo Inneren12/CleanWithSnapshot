@@ -127,9 +127,11 @@ export default function FinanceTaxesPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
 
-  const authHeaders = useMemo(() => {
-    if (!username || !password) return {};
-    return { Authorization: `Basic ${btoa(`${username}:${password}`)}` };
+  const authHeaders = useMemo<Record<string, string>>(() => {
+    const headers: Record<string, string> = {};
+    if (!username || !password) return headers;
+    headers.Authorization = `Basic ${btoa(`${username}:${password}`)}`;
+    return headers;
   }, [password, username]);
 
   const permissionKeys = profile?.permissions ?? [];
