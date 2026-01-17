@@ -269,9 +269,41 @@ alembic heads
 ```bash
 cd backend
 alembic heads
+# Output: abc123 (branch1), def456 (branch2)
+
 alembic merge -m "merge heads abc123 and def456" abc123 def456
 alembic upgrade head
 ```
+
+**Real-world scenario (parallel feature development):**
+
+When two feature branches independently create migrations from the same parent, you get multiple heads:
+
+```bash
+# Scenario: Two PRs both branched from f0b1c2d3e4f5
+# PR #1 (inventory): creates migration a1b2c3d4e5f6
+# PR #2 (marketing): creates migration aa12b3cd45ef
+# Both merged to main → multiple heads!
+
+cd backend
+alembic heads
+# Output:
+# a1b2c3d4e5f6 (add inventory categories and items)
+# aa12b3cd45ef (add marketing spend and email manual)
+
+# Create merge migration
+alembic merge -m "merge heads a1b2c3d4e5f6 and aa12b3cd45ef" a1b2c3d4e5f6 aa12b3cd45ef
+# Creates: b1c2d3e4f5a6_merge_heads_inventory_and_marketing.py
+
+# Verify single head
+alembic heads
+# Output: b1c2d3e4f5a6 (merge heads...)
+
+# Upgrade to merged head
+alembic upgrade head
+```
+
+**Prevention tip:** Always pull latest `main` and merge any pending heads BEFORE creating new migrations. Check `alembic heads` first!
 
 ### Merging Heads
 

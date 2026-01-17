@@ -553,6 +553,11 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Feature Key:** `module.inventory`
 
+**Cascade Behavior:**
+- Deleting a category **preserves** items (category_id set to NULL)
+- FK constraint: `ondelete="SET NULL"`
+- ORM relationship: `passive_deletes=True`, no `delete-orphan`
+
 **Status:** Database schema complete, API/UI pending
 
 ---

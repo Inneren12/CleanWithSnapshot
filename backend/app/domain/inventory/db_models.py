@@ -49,7 +49,8 @@ class InventoryCategory(Base):
     items: Mapped[list["InventoryItem"]] = relationship(
         "InventoryItem",
         back_populates="category",
-        cascade="all, delete-orphan",
+        cascade="save-update, merge",
+        passive_deletes=True,
     )
 
     __table_args__ = (
