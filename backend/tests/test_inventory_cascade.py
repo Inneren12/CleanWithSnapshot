@@ -208,3 +208,71 @@ async def test_category_relationship_uses_passive_deletes():
     # Cascade should include save-update and merge (standard)
     assert "save-update" in cascade_str, "Should include save-update cascade"
     assert "merge" in cascade_str, "Should include merge cascade"
+
+
+@pytest.mark.anyio
+async def test_inventory_item_stock_fields_defaults():
+    """
+    Test that new stock fields (current_qty, min_qty, location_label) have correct defaults.
+    - current_qty should default to 0
+    - min_qty should default to 0
+    - location_label should default to None
+    """
+    configure_mappers()
+
+    # Create in-memory SQLite database with foreign keys enabled
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with async_session() as session:
+        # Create organization
+        org = Organization(
+            org_id=uuid.uuid4(),
+            name="Test Org",
+        )
+        session.add(org)
+        await session.flush()
+
+        # Create item without specifying stock fields
+        item = InventoryItem(
+            item_id=uuid.uuid4(),
+            org_id=org.org_id,
+            name="Test Cleaner",
+            unit="bottles",
+            # Not specifying current_qty, min_qty, or location_label
+        )
+        session.add(item)
+        await session.commit()
+
+        item_id = item.item_id
+
+    # Verify defaults in a new session
+    async with async_session() as session:
+        result = await session.execute(
+            select(InventoryItem).where(InventoryItem.item_id == item_id)
+        )
+        fetched_item = result.scalar_one()
+
+        # Verify stock field defaults
+        from decimal import Decimal
+        assert fetched_item.current_qty == Decimal("0"), (
+            f"Expected current_qty to be 0, got {fetched_item.current_qty}"
+        )
+        assert fetched_item.min_qty == Decimal("0"), (
+            f"Expected min_qty to be 0, got {fetched_item.min_qty}"
+        )
+        assert fetched_item.location_label is None, (
+            f"Expected location_label to be None, got {fetched_item.location_label}"
+        )
+
+    await engine.dispose()

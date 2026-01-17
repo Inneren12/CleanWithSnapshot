@@ -11,6 +11,7 @@
 - **SaaS & billing**: org membership, plans, usage, and session handling (`saas/service.py`, `saas/billing_service.py`, `saas/plans.py`).
 - **Operational tooling**: org-scoped search with weighted results and worker coverage, scheduling/bulk/messaging helpers (`ops/service.py`, `ops/schemas.py`).
 - **Operator productivity**: work queue queries for photos/invoices/assignments/DLQ (`queues/service.py`, `queues/schemas.py`), unified timeline aggregation for bookings/invoices combining audit logs, outbox events, payments, photo reviews, NPS, support tickets (`timeline/service.py`, `timeline/schemas.py`).
+- **Inventory**: tracks cleaning supplies and equipment (`inventory/db_models.py`, `inventory/service.py`). Items are organized in categories (nullable FK with SET NULL on category deletion). Stock state fields: `current_qty` (numeric 10,2, default 0) tracks current stock level; `min_qty` (numeric 10,2, default 0) sets reorder threshold; `location_label` (varchar 255, nullable) optionally identifies storage location (e.g., "Warehouse", "Van A", "Office"). Future extensions: stock movements, automated reorder alerts.
 - **Boundaries:** domain code should be storage-agnostic, use repository/data-access helpers in `app/infra/models.py` and DB sessions injected via dependencies.
 
 ## Infrastructure layer (`app/infra`)
