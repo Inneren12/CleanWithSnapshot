@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.inventory.db_models import InventoryCategory, InventoryItem
 from app.domain.saas.db_models import Organization
 from app.main import app
+from app.settings import settings
 
 client = TestClient(app)
 
@@ -20,11 +21,16 @@ client = TestClient(app)
 @pytest.fixture
 async def org_a(db_session: AsyncSession) -> Organization:
     """Create test organization A."""
-    org = Organization(
-        org_id=uuid.uuid4(),
-        name="Organization A",
-    )
-    db_session.add(org)
+    org_id = settings.default_org_id
+    org = await db_session.get(Organization, org_id)
+    if org is None:
+        org = Organization(
+            org_id=org_id,
+            name="Organization A",
+        )
+        db_session.add(org)
+    else:
+        org.name = "Organization A"
     await db_session.commit()
     return org
 

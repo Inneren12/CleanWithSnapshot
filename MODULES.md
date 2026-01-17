@@ -561,6 +561,12 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `inventory.view` or `core.view` - List and view categories/items
 - `inventory.manage` or `admin.manage` - Create, update, delete categories/items
 
+**Expected Status Codes:**
+- `401` - Missing/invalid admin auth
+- `403` - Authenticated but missing permission
+- `400` - Validation errors (e.g., invalid category)
+- `404` - Missing or cross-org resources
+
 **Feature Key:** `module.inventory`
 
 **Cascade Behavior:**
