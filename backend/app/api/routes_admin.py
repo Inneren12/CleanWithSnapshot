@@ -2488,7 +2488,12 @@ async def get_lead_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
 
     credit_count = await session.scalar(
-        select(func.count()).select_from(ReferralCredit).where(ReferralCredit.referrer_lead_id == lead.lead_id)
+        select(func.count())
+        .select_from(ReferralCredit)
+        .where(
+            ReferralCredit.referrer_lead_id == lead.lead_id,
+            ReferralCredit.recipient_role == "referrer",
+        )
     )
     timeline = await timeline_service.get_lead_timeline(session, org_id, lead)
     return admin_lead_detail_from_model(
@@ -6018,7 +6023,12 @@ async def confirm_booking(
             )
     if lead:
         try:
-            await grant_referral_credit(session, lead)
+            await grant_referral_credit(
+                session,
+                lead,
+                booking=booking,
+                trigger_event="booking_confirmed",
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "referral_credit_failed",

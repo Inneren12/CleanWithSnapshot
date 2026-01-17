@@ -29,6 +29,7 @@ class OrganizationSettings(Base):
     legal_email: Mapped[str | None] = mapped_column(sa.String(255))
     legal_website: Mapped[str | None] = mapped_column(sa.String(255))
     branding: Mapped[dict] = mapped_column(JSON, default=dict, server_default=sa.text("'{}'"))
+    referral_settings: Mapped[dict] = mapped_column(JSON, default=dict, server_default=sa.text("'{}'"))
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

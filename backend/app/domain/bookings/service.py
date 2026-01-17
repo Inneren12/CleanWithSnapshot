@@ -1222,8 +1222,22 @@ async def mark_deposit_paid(
                 },
             )
     if lead and not manual_confirmation_required:
+        payment = await session.scalar(
+            select(Payment)
+            .where(
+                Payment.booking_id == booking.booking_id,
+                Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            )
+            .order_by(Payment.created_at.desc())
+        )
         try:
-            await grant_referral_credit(session, lead)
+            await grant_referral_credit(
+                session,
+                lead,
+                booking=booking,
+                payment=payment,
+                trigger_event="deposit_paid",
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "referral_credit_failed",

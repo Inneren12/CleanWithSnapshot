@@ -808,6 +808,21 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 
 ---
 
+### Marketing (Referrals)
+
+**Path:** `/v1/admin/marketing/referrals*`
+**File:** `backend/app/api/routes_admin_marketing.py`
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/marketing/referrals` | `core.view` | List referrals + conversion status |
+| POST | `/v1/admin/marketing/referrals` | `settings.manage` | Link a referred lead to a referrer code |
+| GET | `/v1/admin/marketing/referrals/leaderboard` | `core.view` | Top referrers leaderboard |
+| GET | `/v1/admin/marketing/referrals/config` | `settings.manage` (Owner) | View referral program rules |
+| PATCH | `/v1/admin/marketing/referrals/config` | `settings.manage` (Owner) | Update referral program rules |
+
+---
+
 ### Dead Letter Queue
 
 **Path:** `/v1/admin/queue/*`

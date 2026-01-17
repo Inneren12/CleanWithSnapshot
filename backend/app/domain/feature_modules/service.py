@@ -33,6 +33,8 @@ SUBFEATURE_KEYS = [
     "schedule.optimization_ai",
     "finance.reports",
     "finance.cash_flow",
+    "marketing.promo_codes",
+    "marketing.referrals",
     "pricing.service_types",
     "pricing.booking_policies",
     "api.settings",

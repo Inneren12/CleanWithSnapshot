@@ -1,8 +1,6 @@
 import asyncio
-
-from sqlalchemy import select
-
-import asyncio
+import base64
+import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -10,6 +8,7 @@ from sqlalchemy import func, select
 
 from app.domain.bookings import service as booking_service
 from app.domain.leads.db_models import Lead, ReferralCredit
+from app.domain.saas.db_models import Organization
 from app.settings import settings
 
 
@@ -38,6 +37,19 @@ def _make_estimate(client):
     )
     assert response.status_code == 200
     return response.json()
+
+
+def _auth_headers(username: str, password: str, org_id: uuid.UUID) -> dict[str, str]:
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}", "X-Test-Org": str(org_id)}
+
+
+async def _seed_orgs(async_session_maker) -> tuple[uuid.UUID, uuid.UUID]:
+    org_a, org_b = uuid.uuid4(), uuid.uuid4()
+    async with async_session_maker() as session:
+        session.add_all([Organization(org_id=org_a, name="Org A"), Organization(org_id=org_b, name="Org B")])
+        await session.commit()
+    return org_a, org_b
 
 
 def test_referral_credit_created_after_confirmation(client, async_session_maker):
@@ -114,7 +126,7 @@ def test_referral_credit_created_after_confirmation(client, async_session_maker)
             return await session.scalar(select(func.count()).select_from(ReferralCredit))
 
     credit_count_after = asyncio.run(_fetch_credit_count())
-    assert credit_count_after == 1
+    assert credit_count_after == 2
 
 
 def test_invalid_referral_code_rejected(client):
@@ -208,13 +220,11 @@ def test_referral_credit_created_on_deposit_paid(client, async_session_maker):
                 payment_intent_id="pi_test",
                 email_adapter=None,
             )
-            credit_count = await session.scalar(
-                select(func.count()).select_from(ReferralCredit)
-            )
+            credit_count = await session.scalar(select(func.count()).select_from(ReferralCredit))
             return credit_count
 
     credit_count_after = asyncio.run(_mark_paid_and_count())
-    assert credit_count_after == 1
+    assert credit_count_after == 2
 
 def test_admin_lists_referral_metadata(client, async_session_maker):
     settings.admin_basic_username = "admin"
@@ -276,3 +286,69 @@ def test_admin_lists_referral_metadata(client, async_session_maker):
     assert any(entry["referral_code"] == referral_code for entry in payload["items"])
     referrer_entry = next(entry for entry in payload["items"] if entry["referral_code"] == referral_code)
     assert referrer_entry["referral_credits"] == 1
+
+
+def test_referral_leaderboard_org_scoped(client, async_session_maker):
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    estimate = _make_estimate(client)
+    org_a, org_b = asyncio.run(_seed_orgs(async_session_maker))
+
+    referrer_response = client.post(
+        "/v1/leads",
+        headers={"X-Test-Org": str(org_a)},
+        json={
+            "name": "Scoped Referrer",
+            "phone": "780-555-1000",
+            "address": "10 Referral Road",
+            "preferred_dates": ["Mon morning"],
+            "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
+            "estimate_snapshot": estimate,
+        },
+    )
+    assert referrer_response.status_code == 201
+    referral_code = referrer_response.json()["referral_code"]
+
+    referred_response = client.post(
+        "/v1/leads",
+        headers={"X-Test-Org": str(org_a)},
+        json={
+            "name": "Scoped Referred",
+            "phone": "780-555-1001",
+            "address": "11 Referral Road",
+            "preferred_dates": ["Tue morning"],
+            "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
+            "estimate_snapshot": estimate,
+            "referral_code": referral_code,
+        },
+    )
+    assert referred_response.status_code == 201
+
+    starts_at = _next_available_start()
+
+    async def _create_booking() -> str:
+        async with async_session_maker() as session:
+            booking = await booking_service.create_booking(
+                starts_at=starts_at,
+                duration_minutes=120,
+                lead_id=referred_response.json()["lead_id"],
+                session=session,
+                manage_transaction=True,
+            )
+            return booking.booking_id
+
+    booking_id = asyncio.run(_create_booking())
+    headers = _auth_headers(settings.admin_basic_username, settings.admin_basic_password, org_a)
+    confirm_response = client.post(f"/v1/admin/bookings/{booking_id}/confirm", headers=headers)
+    assert confirm_response.status_code == 200
+
+    leaderboard_a = client.get("/v1/admin/marketing/referrals/leaderboard", headers=headers)
+    assert leaderboard_a.status_code == 200
+    entries_a = leaderboard_a.json()["entries"]
+    assert any(entry["referral_code"] == referral_code for entry in entries_a)
+
+    headers_b = _auth_headers(settings.admin_basic_username, settings.admin_basic_password, org_b)
+    leaderboard_b = client.get("/v1/admin/marketing/referrals/leaderboard", headers=headers_b)
+    assert leaderboard_b.status_code == 200
+    entries_b = leaderboard_b.json()["entries"]
+    assert all(entry["referral_code"] != referral_code for entry in entries_b)
