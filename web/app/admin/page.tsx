@@ -230,6 +230,7 @@ export default function AdminPage() {
       { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "leads", label: "Leads", href: "/admin/leads", featureKey: "module.leads" },
+      { key: "training", label: "Training", href: "/admin/training/courses", featureKey: "module.training" },
       {
         key: "notifications",
         label: "Notifications",

@@ -49,6 +49,17 @@ type TrainingStatusResponse = {
   requirements: TrainingRequirementStatus[];
 };
 
+type TrainingAssignment = {
+  assignment_id: string;
+  course_id: string;
+  course_title?: string | null;
+  status: "assigned" | "in_progress" | "completed" | "overdue";
+  assigned_at: string;
+  due_at?: string | null;
+  completed_at?: string | null;
+  score?: number | null;
+};
+
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—";
   return new Date(value).toLocaleString("en-US", {
@@ -96,6 +107,9 @@ export default function WorkerDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [trainingLoading, setTrainingLoading] = useState(false);
   const [trainingError, setTrainingError] = useState<string | null>(null);
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  const [assignments, setAssignments] = useState<TrainingAssignment[]>([]);
   const [trainingFormOpen, setTrainingFormOpen] = useState(false);
   const [trainingRequirementKey, setTrainingRequirementKey] = useState("");
   const [trainingCompletedAt, setTrainingCompletedAt] = useState("");
@@ -138,6 +152,7 @@ export default function WorkerDetailPage() {
         featureKey: "module.notifications_center",
       },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
+      { key: "training", label: "Training", href: "/admin/training/courses", featureKey: "module.training" },
       { key: "inventory", label: "Inventory", href: "/admin/inventory", featureKey: "module.inventory" },
       { key: "invoices", label: "Invoices", href: "/admin/invoices", featureKey: "module.invoices" },
       { key: "quality", label: "Quality", href: "/admin/quality", featureKey: "module.quality" },
@@ -242,6 +257,28 @@ export default function WorkerDetailPage() {
     }
   }, [authHeaders, password, username, workerId]);
 
+  const loadAssignments = useCallback(async () => {
+    if (!username || !password) return;
+    if (!Number.isFinite(workerId)) return;
+    setAssignmentLoading(true);
+    setAssignmentError(null);
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/training/workers/${workerId}/assignments`, {
+        headers: authHeaders,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load assignments (${response.status})`);
+      }
+      const data = (await response.json()) as { items: TrainingAssignment[] };
+      setAssignments(data.items ?? []);
+    } catch (err) {
+      console.error("Failed to load assignments", err);
+      setAssignmentError("Unable to load assignments.");
+    } finally {
+      setAssignmentLoading(false);
+    }
+  }, [authHeaders, password, username, workerId]);
+
   const handleTrainingSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -320,8 +357,9 @@ export default function WorkerDetailPage() {
     if (!username || !password) return;
     if (trainingVisible && hasTrainingViewPermission) {
       loadTrainingStatus();
+      loadAssignments();
     }
-  }, [hasTrainingViewPermission, loadTrainingStatus, password, trainingVisible, username]);
+  }, [hasTrainingViewPermission, loadAssignments, loadTrainingStatus, password, trainingVisible, username]);
 
   useEffect(() => {
     if (!trainingStatus?.requirements?.length) return;
@@ -534,6 +572,57 @@ export default function WorkerDetailPage() {
                       {trainingLoading ? "Loading training status..." : "No training requirements configured."}
                     </p>
                   )}
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <strong>Assignments</strong>
+                        <div className="muted">Courses assigned to this worker.</div>
+                      </div>
+                      <Link className="btn btn-ghost" href="/admin/training/courses">
+                        View courses
+                      </Link>
+                    </div>
+                    <div className="card-body">
+                      {assignmentError ? <div className="error">{assignmentError}</div> : null}
+                      {assignments.length ? (
+                        <table className="table-like">
+                          <thead>
+                            <tr>
+                              <th>Course</th>
+                              <th>Status</th>
+                              <th>Assigned</th>
+                              <th>Due</th>
+                              <th>Completed</th>
+                              <th>Score</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {assignments.map((assignment) => (
+                              <tr key={assignment.assignment_id}>
+                                <td>
+                                  <div>{assignment.course_title ?? assignment.course_id}</div>
+                                  <div className="muted">{assignment.course_id}</div>
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${assignment.status}`}>
+                                    {assignment.status.replace("_", " ")}
+                                  </span>
+                                </td>
+                                <td>{formatDateTime(assignment.assigned_at)}</td>
+                                <td>{formatDateTime(assignment.due_at)}</td>
+                                <td>{formatDateTime(assignment.completed_at)}</td>
+                                <td>{assignment.score ?? "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <p className="muted">
+                          {assignmentLoading ? "Loading assignments..." : "No assignments yet."}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 </>
               )}
             </div>

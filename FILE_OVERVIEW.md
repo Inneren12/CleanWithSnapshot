@@ -276,6 +276,11 @@ web/app/
     │   ├── page.tsx            # Invoice list
     │   └── [id]/page.tsx       # Invoice detail
     │
+    ├── training/               # Training admin
+    │   └── courses/            # Training courses
+    │       ├── page.tsx        # Course list
+    │       └── [course_id]/page.tsx # Course detail + assignments
+    │
     ├── iam/                    # IAM
     │   └── roles/              # Role management
     │       └── page.tsx
@@ -421,6 +426,8 @@ web/app/
 | `web/app/admin/invoices/[id]/page.tsx` | **Invoice detail** |
 | `web/app/admin/inventory/page.tsx` | **Inventory items list** |
 | `web/app/admin/inventory/suppliers/page.tsx` | **Inventory suppliers list** |
+| `web/app/admin/training/courses/page.tsx` | **Training courses list** |
+| `web/app/admin/training/courses/[course_id]/page.tsx` | **Training course detail** |
 | `web/app/admin/iam/roles/page.tsx` | **Role management** |
 | `web/app/admin/settings/modules/page.tsx` | **Feature toggles** |
 | `web/app/admin/settings/availability-blocks/page.tsx` | **Availability blocking** |

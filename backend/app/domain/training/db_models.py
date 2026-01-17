@@ -95,3 +95,76 @@ class WorkerTrainingRecord(Base):
         Index("ix_worker_training_records_requirement_id", "requirement_id"),
         Index("ix_worker_training_records_expires_at", "expires_at"),
     )
+
+
+class TrainingCourse(Base):
+    __tablename__ = "training_courses"
+
+    course_id: Mapped[uuid.UUID] = mapped_column(UUID_TYPE, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    duration_minutes: Mapped[int | None] = mapped_column(Integer)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    format: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    assignments: Mapped[list["TrainingAssignment"]] = relationship(
+        "TrainingAssignment",
+        back_populates="course",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_training_courses_org_id", "org_id"),
+        Index("ix_training_courses_org_active", "org_id", "active"),
+        Index("ix_training_courses_title", "title"),
+    )
+
+
+class TrainingAssignment(Base):
+    __tablename__ = "training_assignments"
+
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE, primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    course_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("training_courses.course_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    worker_id: Mapped[int] = mapped_column(
+        ForeignKey("workers.worker_id", ondelete="CASCADE"), nullable=False
+    )
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="assigned", server_default="assigned")
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    score: Mapped[int | None] = mapped_column(Integer)
+    assigned_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID_TYPE)
+
+    course: Mapped[TrainingCourse] = relationship("TrainingCourse", back_populates="assignments")
+    worker: Mapped["Worker"] = relationship("Worker")
+
+    __table_args__ = (
+        Index("ix_training_assignments_org_id", "org_id"),
+        Index("ix_training_assignments_course_id", "course_id"),
+        Index("ix_training_assignments_worker_id", "worker_id"),
+        Index("ix_training_assignments_status", "status"),
+        Index("ix_training_assignments_due_at", "due_at"),
+    )

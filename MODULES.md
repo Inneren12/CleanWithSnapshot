@@ -633,23 +633,39 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Key Pages:**
 - `web/app/admin/workers/[id]/page.tsx` - Worker profile training status card
+- `web/app/admin/training/courses/page.tsx` - Training course list + create/edit
+- `web/app/admin/training/courses/[course_id]/page.tsx` - Course detail + assignments
 
 **Backend Routes:**
 - `backend/app/api/routes_admin.py::/v1/admin/training/workers/{worker_id}/status`
 - `backend/app/api/routes_admin.py::/v1/admin/training/workers/{worker_id}/records`
+- `backend/app/api/routes_admin.py::/v1/admin/training/courses`
+- `backend/app/api/routes_admin.py::/v1/admin/training/courses/{course_id}`
+- `backend/app/api/routes_admin.py::/v1/admin/training/courses/{course_id}/assignments`
+- `backend/app/api/routes_admin.py::/v1/admin/training/courses/{course_id}/assign`
+- `backend/app/api/routes_admin.py::/v1/admin/training/workers/{worker_id}/assignments`
+- `backend/app/api/routes_admin.py::/v1/admin/training/assignments/{assignment_id}`
 
 **Key Services:**
 - `backend/app/domain/training/service.py` - Training requirement status logic
+- `backend/app/domain/training/service.py` - Course and assignment CRUD
 
 **Key Tables:**
 - `training_requirements` (training catalog + renewal rules)
 - `worker_training_records` (worker completions + expiry)
+- `training_courses` (course catalog)
+- `training_assignments` (worker assignments + status)
 - `worker_onboarding` (migration 0072)
 - `worker_certificates` (migration 0072)
 
 **Where to Change Worker Status Logic:**
 - Status computation and next-due logic: `backend/app/domain/training/service.py::build_training_status_payload()`
 - Training UI rendering: `web/app/admin/workers/[id]/page.tsx`
+
+**Where to Change Courses & Assignments:**
+- API + service logic: `backend/app/api/routes_admin.py` and `backend/app/domain/training/service.py`
+- Course list UI: `web/app/admin/training/courses/page.tsx`
+- Course detail + assignments UI: `web/app/admin/training/courses/[course_id]/page.tsx`
 
 **Training Date/Status Rules:**
 - Admin training form uses **local time** inputs and converts them to UTC ISO for storage.
