@@ -958,6 +958,15 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 |--------|------|------------|---------|
 | GET | `/v1/admin/training/workers/{worker_id}/status` | `training.view` (fallback `core.view`) | Worker training status (requirements + completion + expiry) |
 | POST | `/v1/admin/training/workers/{worker_id}/records` | `training.manage` (fallback `admin.manage`) | Record a completion/certificate update |
+| GET | `/v1/admin/training/courses` | `training.view` | List training courses |
+| POST | `/v1/admin/training/courses` | `training.manage` | Create a training course |
+| GET | `/v1/admin/training/courses/{course_id}` | `training.view` | Training course detail |
+| PATCH | `/v1/admin/training/courses/{course_id}` | `training.manage` | Update a training course |
+| DELETE | `/v1/admin/training/courses/{course_id}` | `training.manage` | Delete a training course |
+| GET | `/v1/admin/training/courses/{course_id}/assignments` | `training.view` | List assignments for a course |
+| POST | `/v1/admin/training/courses/{course_id}/assign` | `training.manage` | Assign workers to a course |
+| GET | `/v1/admin/training/workers/{worker_id}/assignments` | `training.view` | List assignments for a worker |
+| PATCH | `/v1/admin/training/assignments/{assignment_id}` | `training.manage` | Update assignment status/score |
 
 **Status response fields:** `requirements` entries include `key`, `title`, `required`, `completed_at`, `expires_at`, `next_due_at`, and `status` (`ok`, `due`, `overdue`).
 

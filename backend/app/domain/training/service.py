@@ -6,7 +6,12 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.training.db_models import TrainingRequirement, WorkerTrainingRecord
+from app.domain.training.db_models import (
+    TrainingAssignment,
+    TrainingCourse,
+    TrainingRequirement,
+    WorkerTrainingRecord,
+)
 from app.domain.workers.db_models import Worker
 
 
@@ -210,3 +215,246 @@ def build_training_status_payload(
             }
         )
     return payload
+
+
+UNSET = object()
+
+ASSIGNMENT_STATUS_ORDER = {
+    "assigned": {"assigned", "in_progress", "completed", "overdue"},
+    "in_progress": {"in_progress", "completed", "overdue"},
+    "overdue": {"overdue", "in_progress", "completed"},
+    "completed": {"completed"},
+}
+
+
+def _normalize_assignment_status(status: str | None) -> str | None:
+    if status is None:
+        return None
+    return status.strip().lower() or None
+
+
+def _validate_assignment_transition(current: str, target: str) -> None:
+    allowed = ASSIGNMENT_STATUS_ORDER.get(current, set())
+    if target not in allowed:
+        raise ValueError("invalid_status_transition")
+
+
+async def list_training_courses(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    include_inactive: bool = True,
+) -> list[TrainingCourse]:
+    stmt = select(TrainingCourse).where(TrainingCourse.org_id == org_id)
+    if not include_inactive:
+        stmt = stmt.where(TrainingCourse.active.is_(True))
+    return (await session.execute(stmt.order_by(TrainingCourse.title.asc()))).scalars().all()
+
+
+async def get_training_course(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    course_id: uuid.UUID,
+) -> TrainingCourse | None:
+    return (
+        await session.execute(
+            select(TrainingCourse).where(
+                TrainingCourse.org_id == org_id, TrainingCourse.course_id == course_id
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def create_training_course(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    title: str,
+    description: str | None,
+    duration_minutes: int | None,
+    active: bool,
+    format: str | None,
+) -> TrainingCourse:
+    course = TrainingCourse(
+        org_id=org_id,
+        title=title.strip(),
+        description=description,
+        duration_minutes=duration_minutes,
+        active=active,
+        format=format,
+    )
+    session.add(course)
+    await session.flush()
+    return course
+
+
+async def update_training_course(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    course_id: uuid.UUID,
+    title: str | None | object = UNSET,
+    description: str | None | object = UNSET,
+    duration_minutes: int | None | object = UNSET,
+    active: bool | None | object = UNSET,
+    format: str | None | object = UNSET,
+) -> TrainingCourse | None:
+    course = await get_training_course(session, org_id=org_id, course_id=course_id)
+    if not course:
+        return None
+    if title is not UNSET:
+        course.title = title.strip() if isinstance(title, str) else course.title
+    if description is not UNSET:
+        course.description = (
+            description
+            if description is None or isinstance(description, str)
+            else course.description
+        )
+    if duration_minutes is not UNSET:
+        course.duration_minutes = (
+            duration_minutes
+            if duration_minutes is None or isinstance(duration_minutes, int)
+            else course.duration_minutes
+        )
+    if active is not UNSET:
+        course.active = active if isinstance(active, bool) else course.active
+    if format is not UNSET:
+        course.format = format if format is None or isinstance(format, str) else course.format
+    await session.flush()
+    return course
+
+
+async def delete_training_course(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    course_id: uuid.UUID,
+) -> bool:
+    course = await get_training_course(session, org_id=org_id, course_id=course_id)
+    if not course:
+        return False
+    await session.delete(course)
+    await session.flush()
+    return True
+
+
+async def list_course_assignments(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    course_id: uuid.UUID,
+) -> list[tuple[TrainingAssignment, str]]:
+    stmt = (
+        select(TrainingAssignment, Worker.name)
+        .join(Worker, Worker.worker_id == TrainingAssignment.worker_id)
+        .where(
+            TrainingAssignment.org_id == org_id,
+            TrainingAssignment.course_id == course_id,
+        )
+        .order_by(TrainingAssignment.assigned_at.desc())
+    )
+    return (await session.execute(stmt)).all()
+
+
+async def assign_workers_to_course(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    course_id: uuid.UUID,
+    worker_ids: list[int],
+    due_at: datetime | None,
+    assigned_by_user_id: uuid.UUID | None,
+) -> list[TrainingAssignment]:
+    course = await get_training_course(session, org_id=org_id, course_id=course_id)
+    if not course:
+        raise ValueError("course_not_found")
+    if not worker_ids:
+        return []
+    unique_ids = sorted(set(worker_ids))
+    workers = (
+        await session.execute(
+            select(Worker).where(Worker.org_id == org_id, Worker.worker_id.in_(unique_ids))
+        )
+    ).scalars().all()
+    found_ids = {worker.worker_id for worker in workers}
+    missing = [worker_id for worker_id in unique_ids if worker_id not in found_ids]
+    if missing:
+        raise ValueError("workers_not_found")
+    resolved_due_at = _ensure_utc(due_at)
+    now = datetime.now(timezone.utc)
+    assignments: list[TrainingAssignment] = []
+    for worker_id in unique_ids:
+        status = "overdue" if resolved_due_at and resolved_due_at <= now else "assigned"
+        assignment = TrainingAssignment(
+            org_id=org_id,
+            course_id=course_id,
+            worker_id=worker_id,
+            due_at=resolved_due_at,
+            status=status,
+            assigned_by_user_id=assigned_by_user_id,
+        )
+        session.add(assignment)
+        assignments.append(assignment)
+    await session.flush()
+    return assignments
+
+
+async def list_worker_assignments(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    worker_id: int,
+) -> list[tuple[TrainingAssignment, str]]:
+    worker = (
+        await session.execute(select(Worker).where(Worker.org_id == org_id, Worker.worker_id == worker_id))
+    ).scalar_one_or_none()
+    if worker is None:
+        raise ValueError("worker_not_found")
+    stmt = (
+        select(TrainingAssignment, TrainingCourse.title)
+        .join(TrainingCourse, TrainingCourse.course_id == TrainingAssignment.course_id)
+        .where(
+            TrainingAssignment.org_id == org_id,
+            TrainingAssignment.worker_id == worker_id,
+        )
+        .order_by(TrainingAssignment.assigned_at.desc())
+    )
+    return (await session.execute(stmt)).all()
+
+
+async def update_training_assignment(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    status: str | None,
+    completed_at: datetime | None,
+    score: int | None,
+) -> TrainingAssignment | None:
+    assignment = (
+        await session.execute(
+            select(TrainingAssignment).where(
+                TrainingAssignment.org_id == org_id,
+                TrainingAssignment.assignment_id == assignment_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if assignment is None:
+        return None
+    resolved_status = _normalize_assignment_status(status)
+    if resolved_status:
+        _validate_assignment_transition(assignment.status, resolved_status)
+        assignment.status = resolved_status
+    resolved_completed_at = _ensure_utc(completed_at)
+    if resolved_completed_at and not resolved_status:
+        assignment.status = "completed"
+        resolved_status = "completed"
+    if resolved_status == "completed":
+        assignment.completed_at = resolved_completed_at or datetime.now(timezone.utc)
+    elif resolved_status:
+        assignment.completed_at = None
+    if score is not None:
+        assignment.score = score
+    await session.flush()
+    return assignment

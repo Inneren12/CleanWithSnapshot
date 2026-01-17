@@ -3404,6 +3404,289 @@ async def create_worker_training_record(
 
 
 @router.get(
+    "/v1/admin/training/courses",
+    response_model=training_schemas.TrainingCourseListResponse,
+)
+async def list_training_courses(
+    request: Request,
+    include_inactive: bool = True,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.view")),
+) -> training_schemas.TrainingCourseListResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    courses = await training_service.list_training_courses(
+        session,
+        org_id=org_id,
+        include_inactive=include_inactive,
+    )
+    return training_schemas.TrainingCourseListResponse(
+        items=[training_schemas.TrainingCourseResponse.model_validate(course) for course in courses],
+        total=len(courses),
+    )
+
+
+@router.post(
+    "/v1/admin/training/courses",
+    response_model=training_schemas.TrainingCourseResponse,
+)
+async def create_training_course(
+    request: Request,
+    payload: training_schemas.TrainingCourseCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.manage")),
+) -> training_schemas.TrainingCourseResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    course = await training_service.create_training_course(
+        session,
+        org_id=org_id,
+        title=payload.title,
+        description=payload.description,
+        duration_minutes=payload.duration_minutes,
+        active=payload.active,
+        format=payload.format,
+    )
+    await session.commit()
+    return training_schemas.TrainingCourseResponse.model_validate(course)
+
+
+@router.get(
+    "/v1/admin/training/courses/{course_id}",
+    response_model=training_schemas.TrainingCourseResponse,
+)
+async def get_training_course(
+    request: Request,
+    course_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.view")),
+) -> training_schemas.TrainingCourseResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    course = await training_service.get_training_course(
+        session,
+        org_id=org_id,
+        course_id=course_id,
+    )
+    if not course:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Training Course Not Found",
+            detail="Training course does not exist or is not accessible.",
+        )
+    return training_schemas.TrainingCourseResponse.model_validate(course)
+
+
+@router.patch(
+    "/v1/admin/training/courses/{course_id}",
+    response_model=training_schemas.TrainingCourseResponse,
+)
+async def update_training_course(
+    request: Request,
+    course_id: uuid.UUID,
+    payload: training_schemas.TrainingCourseUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.manage")),
+) -> training_schemas.TrainingCourseResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    fields = payload.model_fields_set
+    course = await training_service.update_training_course(
+        session,
+        org_id=org_id,
+        course_id=course_id,
+        title=payload.title if "title" in fields else training_service.UNSET,
+        description=payload.description if "description" in fields else training_service.UNSET,
+        duration_minutes=payload.duration_minutes if "duration_minutes" in fields else training_service.UNSET,
+        active=payload.active if "active" in fields else training_service.UNSET,
+        format=payload.format if "format" in fields else training_service.UNSET,
+    )
+    if not course:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Training Course Not Found",
+            detail="Training course does not exist or is not accessible.",
+        )
+    await session.commit()
+    return training_schemas.TrainingCourseResponse.model_validate(course)
+
+
+@router.delete("/v1/admin/training/courses/{course_id}")
+async def delete_training_course(
+    request: Request,
+    course_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.manage")),
+) -> dict[str, str]:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    deleted = await training_service.delete_training_course(
+        session,
+        org_id=org_id,
+        course_id=course_id,
+    )
+    if not deleted:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Training Course Not Found",
+            detail="Training course does not exist or is not accessible.",
+        )
+    await session.commit()
+    return {"status": "deleted"}
+
+
+@router.get(
+    "/v1/admin/training/courses/{course_id}/assignments",
+    response_model=training_schemas.TrainingAssignmentListResponse,
+)
+async def list_course_assignments(
+    request: Request,
+    course_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.view")),
+) -> training_schemas.TrainingAssignmentListResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    course = await training_service.get_training_course(
+        session,
+        org_id=org_id,
+        course_id=course_id,
+    )
+    if not course:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Training Course Not Found",
+            detail="Training course does not exist or is not accessible.",
+        )
+    rows = await training_service.list_course_assignments(
+        session,
+        org_id=org_id,
+        course_id=course_id,
+    )
+    items = []
+    for assignment, worker_name in rows:
+        entry = training_schemas.TrainingAssignmentResponse.model_validate(assignment).model_copy(
+            update={"course_title": course.title, "worker_name": worker_name}
+        )
+        items.append(entry)
+    return training_schemas.TrainingAssignmentListResponse(items=items, total=len(items))
+
+
+@router.post(
+    "/v1/admin/training/courses/{course_id}/assign",
+    response_model=training_schemas.TrainingAssignmentListResponse,
+)
+async def assign_training_course(
+    request: Request,
+    course_id: uuid.UUID,
+    payload: training_schemas.TrainingCourseAssignRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.manage")),
+) -> training_schemas.TrainingAssignmentListResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        assignments = await training_service.assign_workers_to_course(
+            session,
+            org_id=org_id,
+            course_id=course_id,
+            worker_ids=payload.worker_ids,
+            due_at=payload.due_at,
+            assigned_by_user_id=None,
+        )
+    except ValueError as exc:
+        if str(exc) == "course_not_found":
+            return problem_details(
+                request=request,
+                status=404,
+                title="Training Course Not Found",
+                detail="Training course does not exist or is not accessible.",
+            )
+        if str(exc) == "workers_not_found":
+            return problem_details(
+                request=request,
+                status=404,
+                title="Worker Not Found",
+                detail="One or more workers do not exist or are not accessible.",
+            )
+        raise
+    await session.commit()
+    items = [training_schemas.TrainingAssignmentResponse.model_validate(assignment) for assignment in assignments]
+    return training_schemas.TrainingAssignmentListResponse(items=items, total=len(items))
+
+
+@router.get(
+    "/v1/admin/training/workers/{worker_id}/assignments",
+    response_model=training_schemas.TrainingAssignmentListResponse,
+)
+async def list_worker_assignments(
+    request: Request,
+    worker_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.view")),
+) -> training_schemas.TrainingAssignmentListResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        rows = await training_service.list_worker_assignments(
+            session,
+            org_id=org_id,
+            worker_id=worker_id,
+        )
+    except ValueError:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Worker Not Found",
+            detail="Worker does not exist or is not accessible.",
+        )
+    items = []
+    for assignment, course_title in rows:
+        entry = training_schemas.TrainingAssignmentResponse.model_validate(assignment).model_copy(
+            update={"course_title": course_title}
+        )
+        items.append(entry)
+    return training_schemas.TrainingAssignmentListResponse(items=items, total=len(items))
+
+
+@router.patch(
+    "/v1/admin/training/assignments/{assignment_id}",
+    response_model=training_schemas.TrainingAssignmentResponse,
+)
+async def update_training_assignment(
+    request: Request,
+    assignment_id: uuid.UUID,
+    payload: training_schemas.TrainingAssignmentUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.manage")),
+) -> training_schemas.TrainingAssignmentResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        assignment = await training_service.update_training_assignment(
+            session,
+            org_id=org_id,
+            assignment_id=assignment_id,
+            status=payload.status,
+            completed_at=payload.completed_at,
+            score=payload.score,
+        )
+    except ValueError as exc:
+        if str(exc) == "invalid_status_transition":
+            return problem_details(
+                request=request,
+                status=400,
+                title="Invalid Training Status Transition",
+                detail="The requested status change is not allowed.",
+            )
+        raise
+    if assignment is None:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Training Assignment Not Found",
+            detail="Training assignment does not exist or is not accessible.",
+        )
+    await session.commit()
+    return training_schemas.TrainingAssignmentResponse.model_validate(assignment)
+
+
+@router.get(
     "/v1/admin/quality/clients/{client_id}/summary",
     response_model=quality_schemas.ClientQualitySummaryResponse,
 )
