@@ -241,6 +241,31 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 **Lead detail response fields:** includes lead contact data plus `structured_inputs`, `estimate_snapshot`, and `timeline`
 entries sorted by newest first. Each timeline entry includes `action`, `timestamp`, and optional `metadata.note`.
 
+### Analytics
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/analytics/geo` | `finance.view` | Geographic heatmap aggregates by area (optional coordinate points) |
+
+**Query params:** `from`, `to` (ISO 8601 timestamps, optional)
+
+**Geo analytics response (example):**
+```json
+{
+  "by_area": [
+    {
+      "area": "Downtown",
+      "bookings": 12,
+      "revenue_cents": 184000,
+      "avg_ticket_cents": 15333
+    }
+  ],
+  "points": [
+    { "lat": 53.54, "lng": -113.50, "count": 3 }
+  ]
+}
+```
+
 #### Ops Dashboard Response (critical alerts)
 
 `GET /v1/admin/dashboard/ops` includes `critical_alerts` for the Critical Alerts widget.

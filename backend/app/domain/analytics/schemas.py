@@ -99,6 +99,24 @@ class CohortAnalyticsResponse(BaseModel):
     cohorts: list[CohortBreakdown]
 
 
+class GeoAreaSummary(BaseModel):
+    area: str
+    bookings: int
+    revenue_cents: int
+    avg_ticket_cents: int | None
+
+
+class GeoPointSummary(BaseModel):
+    lat: float
+    lng: float
+    count: int
+
+
+class GeoAnalyticsResponse(BaseModel):
+    by_area: list[GeoAreaSummary]
+    points: list[GeoPointSummary] | None = None
+
+
 class AdminMetricsResponse(BaseModel):
     range_start: datetime
     range_end: datetime

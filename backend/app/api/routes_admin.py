@@ -53,6 +53,7 @@ from app.domain.analytics.service import (
     conversion_counts,
     duration_accuracy,
     funnel_summary,
+    geo_area_analytics,
     kpi_aggregates,
     nps_distribution,
     nps_trends,
@@ -6053,6 +6054,26 @@ async def get_cohort_analytics(
     ]
     return analytics_schemas.CohortAnalyticsResponse(
         range_start=start, range_end=end, cohorts=cohort_payload
+    )
+
+
+@router.get(
+    "/v1/admin/analytics/geo",
+    response_model=analytics_schemas.GeoAnalyticsResponse,
+)
+async def get_geo_analytics(
+    request: Request,
+    from_ts: datetime | None = Query(default=None, alias="from"),
+    to_ts: datetime | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_finance),
+) -> analytics_schemas.GeoAnalyticsResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    start, end = _normalize_range(from_ts, to_ts)
+    by_area, points = await geo_area_analytics(session, start, end, org_id=org_id)
+    return analytics_schemas.GeoAnalyticsResponse(
+        by_area=[analytics_schemas.GeoAreaSummary(**row) for row in by_area],
+        points=[analytics_schemas.GeoPointSummary(**row) for row in points] if points else None,
     )
 
 
