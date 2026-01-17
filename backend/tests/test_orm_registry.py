@@ -4,6 +4,7 @@ from sqlalchemy.orm import configure_mappers
 
 from app.domain.bookings.db_models import Booking, EmailEvent, Team
 from app.domain.workers.db_models import Worker
+from app.domain.inventory.db_models import InventoryCategory, InventoryItem
 from app.infra.db import Base
 
 
@@ -65,5 +66,27 @@ async def test_team_worker_relationships_are_explicit():
 
     team_lead_fk = Team.__mapper__.relationships["lead_worker"]._calculated_foreign_keys
     assert Team.__table__.c.lead_worker_id in team_lead_fk
+
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_inventory_tables_exist_in_metadata():
+    """Test that inventory_categories and inventory_items tables are registered."""
+    configure_mappers()
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Verify tables exist in metadata
+    assert "inventory_categories" in Base.metadata.tables
+    assert "inventory_items" in Base.metadata.tables
+
+    # Verify relationship between InventoryItem and InventoryCategory
+    assert any(
+        rel.mapper.class_.__name__ == "InventoryCategory"
+        for rel in InventoryItem.__mapper__.relationships
+    )
 
     await engine.dispose()

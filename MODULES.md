@@ -536,10 +536,67 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Purpose:** Cleaning supplies inventory management
 
-**Key Pages:**
-- TBD (not fully implemented)
+**Data model:**
+- `inventory_categories` - Product categories (org-scoped, sortable)
+- `inventory_items` - Inventory items (category FK, SKU, unit, active flag, stock fields)
+
+**Key Tables:**
+- `inventory_categories` (category_id UUID pk, org_id, name, sort_order)
+- `inventory_items` (item_id UUID pk, org_id, category_id nullable FK, sku, name, unit, current_qty, min_qty, location_label, active)
+
+**Indexes:**
+- `(org_id, name)` for search
+- `(org_id, active)` for filtering
+
+**Backend Routers:**
+- `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/*` (Categories and Items CRUD)
+
+**Key Services:**
+- `backend/app/domain/inventory/service.py` - Category and Item CRUD, search, pagination
+
+**Key Schemas:**
+- `backend/app/domain/inventory/schemas.py` - Request/response models
+
+**Permissions Required:**
+- `inventory.view` or `core.view` - List and view categories/items
+- `inventory.manage` or `admin.manage` - Create, update, delete categories/items
+
+**Expected Status Codes:**
+- `401` - Missing/invalid admin auth
+- `403` - Authenticated but missing permission
+- `400` - Validation errors (e.g., invalid category)
+- `404` - Missing or cross-org resources
 
 **Feature Key:** `module.inventory`
+
+**Cascade Behavior:**
+- Deleting a category **preserves** items (category_id set to NULL)
+- FK constraint: `ondelete="SET NULL"`
+- ORM relationship: `passive_deletes=True`, no `delete-orphan`
+- SQLite tests require PRAGMA foreign_keys=ON; use shared fixtures.
+
+**Where to Change:**
+
+#### Category CRUD
+- API: `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/categories/*`
+- Service: `backend/app/domain/inventory/service.py` - `list_categories()`, `create_category()`, `update_category()`, `delete_category()`
+- Models: `backend/app/domain/inventory/db_models.py` - `InventoryCategory`
+
+#### Item CRUD
+- API: `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/items/*`
+- Service: `backend/app/domain/inventory/service.py` - `list_items()`, `create_item()`, `update_item()`, `delete_item()`
+- Models: `backend/app/domain/inventory/db_models.py` - `InventoryItem`
+
+#### Search and Pagination
+- Implement in service layer using SQLAlchemy filters
+- Category search: name (ilike)
+- Item search: name or SKU (ilike)
+- Pagination: page + page_size with total count from subquery
+
+**Key Pages:**
+- TBD (UI not yet implemented; API complete)
+
+**Status:** API complete with CRUD, org-scoping, RBAC, search, and pagination
 
 ---
 

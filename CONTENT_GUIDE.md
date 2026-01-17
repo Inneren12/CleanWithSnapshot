@@ -33,6 +33,14 @@ This guide covers coding conventions, patterns, and best practices for contribut
 2. Get approval from maintainers
 3. Make dependency change in a separate PR
 
+### 🔐 Never Hardcode Secrets
+
+**Policy:** Admin credentials, API keys, and secret keys must be provided via environment variables or configuration
+(`ADMIN_BASIC_USERNAME`, `ADMIN_BASIC_PASSWORD`, `VIEWER_BASIC_USERNAME`, `VIEWER_BASIC_PASSWORD`, etc.).
+
+**Enforced by tests:** `tests/test_repo_security_scan.py::test_no_hardcoded_secrets` fails when runtime code contains
+hardcoded passwords or secret keys.
+
 ---
 
 ## Backend Patterns

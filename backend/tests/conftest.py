@@ -145,6 +145,26 @@ def async_session_maker(test_engine):
     return async_sessionmaker(test_engine, expire_on_commit=False)
 
 
+@pytest.fixture
+async def db_session(async_session_maker):
+    async with async_session_maker() as session:
+        yield session
+
+
+@pytest.fixture(autouse=True)
+def override_db_session(async_session_maker):
+    async def _override_db_session():
+        async with async_session_maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db_session] = _override_db_session
+    original_factory = getattr(app.state, "db_session_factory", None)
+    app.state.db_session_factory = async_session_maker
+    yield
+    app.dependency_overrides.pop(get_db_session, None)
+    app.state.db_session_factory = original_factory
+
+
 @pytest.fixture(autouse=True)
 def restore_admin_settings():
     original_username = settings.admin_basic_username
@@ -214,6 +234,11 @@ def enable_test_mode():
     settings.deposits_enabled = False
     settings.app_env = "dev"
     settings.email_mode = "sendgrid"
+    settings.legacy_basic_auth_enabled = True
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "admin123"
+    settings.viewer_basic_username = "viewer"
+    settings.viewer_basic_password = "viewer123"
     from app.infra.email import resolve_email_adapter
 
     app.state.email_adapter = resolve_email_adapter(settings)
