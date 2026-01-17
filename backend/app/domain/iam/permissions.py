@@ -149,6 +149,18 @@ PERMISSION_CATALOG: list[PermissionDefinition] = [
         group="analytics",
     ),
     PermissionDefinition(
+        key="training.view",
+        label="View training status",
+        description="Read worker training requirements and completion status.",
+        group="training",
+    ),
+    PermissionDefinition(
+        key="training.manage",
+        label="Manage training records",
+        description="Record training completions and certificates.",
+        group="training",
+    ),
+    PermissionDefinition(
         key="admin.manage",
         label="Admin management",
         description="Access high-risk admin endpoints.",
