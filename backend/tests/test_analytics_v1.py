@@ -7,10 +7,9 @@ from app.settings import settings
 from app.domain.saas.db_models import Organization
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.leads.db_models import Lead
-from app.domain.invoices import statuses as invoice_statuses
-from app.domain.invoices.db_models import Payment
 from app.domain.nps.db_models import NpsResponse
 from app.domain.clients.db_models import ClientUser
+from app.domain.leads.db_models import LeadQuote
 
 
 def _auth() -> tuple[str, str]:
@@ -19,53 +18,7 @@ def _auth() -> tuple[str, str]:
     return (settings.admin_basic_username, settings.admin_basic_password)
 
 
-async def _seed_booking(
-    session,
-    *,
-    org_id: uuid.UUID,
-    now: datetime,
-    lead_label: str,
-    booking_status: str = "DONE",
-) -> Booking:
-    team = Team(org_id=org_id, name=f"Team {lead_label}")
-    org = Organization(org_id=org_id, name=f"Org {lead_label}")
-    session.add_all([org, team])
-    await session.flush()
-
-    lead = Lead(
-        org_id=org_id,
-        name=f"Lead {lead_label}",
-        phone="780-000-0000",
-        email=f"{lead_label.lower()}@example.com",
-        preferred_dates=["Mon"],
-        structured_inputs={"beds": 1, "baths": 1, "cleaning_type": "standard"},
-        estimate_snapshot={"total_before_tax": 120.0},
-        pricing_config_version="v1",
-        config_hash="hash",
-        status="NEW",
-        created_at=now - timedelta(days=5),
-    )
-    session.add(lead)
-    await session.flush()
-
-    booking = Booking(
-        org_id=org_id,
-        team_id=team.team_id,
-        lead_id=lead.lead_id,
-        starts_at=now,
-        duration_minutes=90,
-        status=booking_status,
-        deposit_required=False,
-        deposit_policy=[],
-        created_at=now - timedelta(days=2),
-        updated_at=now - timedelta(days=1),
-    )
-    session.add(booking)
-    await session.flush()
-    return booking
-
-
-def test_funnel_analytics_are_org_scoped_and_private(client, async_session_maker):
+def test_funnel_analytics_counts_conversion_and_loss_reasons(client, async_session_maker):
     auth = _auth()
     org_a, org_b = uuid.uuid4(), uuid.uuid4()
     now = datetime.now(tz=timezone.utc)
@@ -91,6 +44,21 @@ def test_funnel_analytics_are_org_scoped_and_private(client, async_session_maker
                 status="NEW",
                 created_at=now - timedelta(days=5),
             )
+            lead_a_lost = Lead(
+                org_id=org_a,
+                name="Lead A Lost",
+                phone="780-000-0002",
+                email="lost@example.com",
+                preferred_dates=["Wed"],
+                structured_inputs={"beds": 2, "baths": 1, "cleaning_type": "standard"},
+                estimate_snapshot={"total_before_tax": 200.0},
+                pricing_config_version="v1",
+                config_hash="hash",
+                status="LOST",
+                loss_reason="Too expensive",
+                created_at=now - timedelta(days=6),
+                updated_at=now - timedelta(days=1),
+            )
             lead_b = Lead(
                 org_id=org_b,
                 name="Lead B",
@@ -104,8 +72,26 @@ def test_funnel_analytics_are_org_scoped_and_private(client, async_session_maker
                 status="NEW",
                 created_at=now - timedelta(days=4),
             )
-            session.add_all([lead_a, lead_b])
+            session.add_all([lead_a, lead_a_lost, lead_b])
             await session.flush()
+
+            quote_a = LeadQuote(
+                lead_id=lead_a.lead_id,
+                org_id=org_a,
+                amount=15000,
+                currency="USD",
+                status="SENT",
+                created_at=now - timedelta(days=3),
+            )
+            quote_b = LeadQuote(
+                lead_id=lead_b.lead_id,
+                org_id=org_b,
+                amount=18000,
+                currency="USD",
+                status="SENT",
+                created_at=now - timedelta(days=2),
+            )
+            session.add_all([quote_a, quote_b])
 
             booking_a = Booking(
                 org_id=org_a,
@@ -133,37 +119,12 @@ def test_funnel_analytics_are_org_scoped_and_private(client, async_session_maker
             session.add_all([booking_a, booking_b])
             await session.flush()
 
-            payment_a = Payment(
-                booking_id=booking_a.booking_id,
-                provider="test",
-                method="card",
-                amount_cents=1000,
-                currency="USD",
-                status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
-                received_at=now - timedelta(hours=1),
-                org_id=org_a,
+            session.add_all(
+                [
+                    NpsResponse(order_id=booking_a.booking_id, score=9, created_at=now - timedelta(days=1)),
+                    NpsResponse(order_id=booking_b.booking_id, score=3, created_at=now - timedelta(days=1)),
+                ]
             )
-            payment_b = Payment(
-                booking_id=booking_b.booking_id,
-                provider="test",
-                method="card",
-                amount_cents=2000,
-                currency="USD",
-                status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
-                received_at=now - timedelta(hours=2),
-                org_id=org_b,
-            )
-            pending_payment = Payment(
-                booking_id=booking_a.booking_id,
-                provider="test",
-                method="card",
-                amount_cents=500,
-                currency="USD",
-                status=invoice_statuses.PAYMENT_STATUS_PENDING,
-                received_at=now - timedelta(hours=3),
-                org_id=org_a,
-            )
-            session.add_all([payment_a, payment_b, pending_payment])
             await session.commit()
 
     asyncio.run(_seed())
@@ -177,19 +138,22 @@ def test_funnel_analytics_are_org_scoped_and_private(client, async_session_maker
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["counts"]["leads"] == 1
-    assert body["counts"]["bookings"] == 1
-    assert body["counts"]["completed"] == 1
-    assert body["counts"]["paid"] == 1
-    assert body["counts"]["paid"] > 0
-    assert body["conversion_rates"]["lead_to_booking"] == 1.0
-    assert body["counts"]["paid"] != 2  # org B payment should not be counted
+    assert body["counts"]["inquiries"] == 2
+    assert body["counts"]["quotes"] == 1
+    assert body["counts"]["bookings_created"] == 1
+    assert body["counts"]["bookings_completed"] == 1
+    assert body["counts"]["reviews"] == 1
+    assert body["conversion_rates"]["inquiry_to_quote"] == 0.5
+    assert body["conversion_rates"]["quote_to_booking"] == 1.0
+    assert body["conversion_rates"]["booking_to_completed"] == 1.0
+    assert body["conversion_rates"]["completed_to_review"] == 1.0
+    assert body["loss_reasons"] == [{"reason": "Too expensive", "count": 1}]
     serialized = json.dumps(body)
     assert "Lead A" not in serialized
     assert "a@example.com" not in serialized
 
 
-def test_funnel_paid_counts_only_settled_payments(client, async_session_maker):
+def test_funnel_analytics_returns_zero_rates_without_activity(client, async_session_maker):
     auth = _auth()
     org_id = uuid.uuid4()
     now = datetime.now(tz=timezone.utc)
@@ -197,20 +161,7 @@ def test_funnel_paid_counts_only_settled_payments(client, async_session_maker):
 
     async def _seed() -> None:
         async with async_session_maker() as session:
-            booking = await _seed_booking(
-                session, org_id=org_id, now=now, lead_label="Settled"
-            )
-            payment = Payment(
-                booking_id=booking.booking_id,
-                provider="test",
-                method="card",
-                amount_cents=1500,
-                currency="USD",
-                status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
-                received_at=now - timedelta(hours=1),
-                org_id=org_id,
-            )
-            session.add(payment)
+            session.add(Organization(org_id=org_id, name="Org Zero"))
             await session.commit()
 
     asyncio.run(_seed())
@@ -223,97 +174,16 @@ def test_funnel_paid_counts_only_settled_payments(client, async_session_maker):
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["counts"]["paid"] == 1
-    assert body["counts"]["completed"] == 1
-
-
-def test_funnel_paid_counts_excludes_failed_and_refunded(client, async_session_maker):
-    auth = _auth()
-    org_id = uuid.uuid4()
-    now = datetime.now(tz=timezone.utc)
-    start = now - timedelta(days=30)
-
-    async def _seed() -> None:
-        async with async_session_maker() as session:
-            booking = await _seed_booking(
-                session, org_id=org_id, now=now, lead_label="Failed"
-            )
-            failed_payment = Payment(
-                booking_id=booking.booking_id,
-                provider="test",
-                method="card",
-                amount_cents=2000,
-                currency="USD",
-                status=invoice_statuses.PAYMENT_STATUS_FAILED,
-                received_at=now - timedelta(hours=2),
-                org_id=org_id,
-            )
-            session.add(failed_payment)
-            booking.refund_total_cents = 500
-            await session.commit()
-
-    asyncio.run(_seed())
-
-    response = client.get(
-        "/v1/admin/analytics/funnel",
-        auth=auth,
-        headers={"X-Test-Org": str(org_id)},
-        params={"from": start.isoformat()},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["counts"]["paid"] == 0
-    assert body["counts"]["completed"] == 1
-
-
-def test_funnel_paid_counts_multiple_payments_single_booking(client, async_session_maker):
-    auth = _auth()
-    org_id = uuid.uuid4()
-    now = datetime.now(tz=timezone.utc)
-    start = now - timedelta(days=30)
-
-    async def _seed() -> None:
-        async with async_session_maker() as session:
-            booking = await _seed_booking(
-                session, org_id=org_id, now=now, lead_label="Multi"
-            )
-            payments = [
-                Payment(
-                    booking_id=booking.booking_id,
-                    provider="test",
-                    method="card",
-                    amount_cents=2500,
-                    currency="USD",
-                    status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
-                    received_at=now - timedelta(hours=3),
-                    org_id=org_id,
-                ),
-                Payment(
-                    booking_id=booking.booking_id,
-                    provider="test",
-                    method="card",
-                    amount_cents=500,
-                    currency="USD",
-                    status=invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
-                    received_at=now - timedelta(hours=1),
-                    org_id=org_id,
-                ),
-            ]
-            session.add_all(payments)
-            await session.commit()
-
-    asyncio.run(_seed())
-
-    response = client.get(
-        "/v1/admin/analytics/funnel",
-        auth=auth,
-        headers={"X-Test-Org": str(org_id)},
-        params={"from": start.isoformat()},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["counts"]["paid"] == 1
-    assert body["counts"]["completed"] == 1
+    assert body["counts"]["inquiries"] == 0
+    assert body["counts"]["quotes"] == 0
+    assert body["counts"]["bookings_created"] == 0
+    assert body["counts"]["bookings_completed"] == 0
+    assert body["counts"]["reviews"] == 0
+    assert body["conversion_rates"]["inquiry_to_quote"] == 0.0
+    assert body["conversion_rates"]["quote_to_booking"] == 0.0
+    assert body["conversion_rates"]["booking_to_completed"] == 0.0
+    assert body["conversion_rates"]["completed_to_review"] == 0.0
+    assert body["loss_reasons"] == []
 
 
 def test_nps_analytics_distribution_and_trends(client, async_session_maker):

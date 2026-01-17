@@ -37,17 +37,23 @@ class OperationalKpis(BaseModel):
 
 
 class FunnelCounts(BaseModel):
-    leads: int
-    bookings: int
-    completed: int
-    paid: int
+    inquiries: int
+    quotes: int
+    bookings_created: int
+    bookings_completed: int
+    reviews: int
 
 
 class FunnelConversionRates(BaseModel):
-    lead_to_booking: float
+    inquiry_to_quote: float
+    quote_to_booking: float
     booking_to_completed: float
-    completed_to_paid: float
-    lead_to_paid: float
+    completed_to_review: float
+
+
+class FunnelLossReasonSummary(BaseModel):
+    reason: str
+    count: int
 
 
 class FunnelAnalyticsResponse(BaseModel):
@@ -55,6 +61,7 @@ class FunnelAnalyticsResponse(BaseModel):
     range_end: datetime
     counts: FunnelCounts
     conversion_rates: FunnelConversionRates
+    loss_reasons: list[FunnelLossReasonSummary]
 
 
 class NpsDistribution(BaseModel):

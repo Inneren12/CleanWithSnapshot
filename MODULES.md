@@ -390,6 +390,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Purpose:** Reports, KPIs, operational dashboards
 
 **Key Pages:**
+- `web/app/admin/analytics/funnel/page.tsx` - Booking funnel (`/admin/analytics/funnel`)
 - `web/app/admin/analytics/geo/page.tsx` - Geo heatmap by area (`/admin/analytics/geo`)
 - `web/app/admin/analytics/clients/page.tsx` - Client CLV + retention cohorts (`/admin/analytics/clients`)
 
@@ -402,12 +403,15 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Key Tables:**
 - `events` - Analytics events
+- `leads` - Inquiry records (funnel entry point)
+- `lead_quotes` - Quotes tied to inquiries
 - `bookings` - Job data
 - `invoices` - Financial data
 - `invoice_payments` - Paid revenue signals
 - `client_users` - Client identities for CLV/retention
 - `client_addresses` - Area labels + coordinates
 - `teams` - Zone metadata
+- `nps_responses` - Post-service reviews
 
 **Permissions Required:**
 - `reports.view` - View reports

@@ -10,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, Team
-from app.domain.leads.db_models import Lead
+from app.domain.leads.db_models import Lead, LeadQuote
+from app.domain.leads import statuses as lead_statuses
 from app.domain.clients.db_models import ClientAddress, ClientUser
+from app.domain.nps.db_models import NpsResponse
 from app.domain.nps.db_models import NpsResponse
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment
@@ -471,8 +473,13 @@ async def client_retention_cohorts(
 async def funnel_summary(
     session: AsyncSession, start: datetime, end: datetime, *, org_id: uuid.UUID
 ) -> dict[str, int]:
-    lead_stmt = select(func.count()).select_from(Lead).where(
+    inquiry_stmt = select(func.count()).select_from(Lead).where(
         Lead.org_id == org_id, Lead.created_at >= start, Lead.created_at <= end
+    )
+    quote_stmt = select(func.count()).select_from(LeadQuote).where(
+        LeadQuote.org_id == org_id,
+        LeadQuote.created_at >= start,
+        LeadQuote.created_at <= end,
     )
     booking_stmt = select(func.count()).select_from(Booking).where(
         Booking.org_id == org_id,
@@ -485,32 +492,56 @@ async def funnel_summary(
         Booking.updated_at >= start,
         Booking.updated_at <= end,
     )
-    paid_stmt = (
-        select(func.count(sa.distinct(Booking.booking_id)))
-        .select_from(Payment)
-        .join(Booking, Booking.booking_id == Payment.booking_id)
+    review_stmt = (
+        select(func.count())
+        .select_from(NpsResponse)
+        .join(Booking, Booking.booking_id == NpsResponse.order_id)
         .where(
             Booking.org_id == org_id,
-            Payment.org_id == org_id,
-            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
-            Payment.booking_id.isnot(None),
-            Payment.received_at.isnot(None),
-            Payment.received_at >= start,
-            Payment.received_at <= end,
+            NpsResponse.created_at >= start,
+            NpsResponse.created_at <= end,
         )
     )
 
-    lead_count = int((await session.execute(lead_stmt)).scalar_one())
+    inquiry_count = int((await session.execute(inquiry_stmt)).scalar_one())
+    quote_count = int((await session.execute(quote_stmt)).scalar_one())
     booking_count = int((await session.execute(booking_stmt)).scalar_one())
     completed_count = int((await session.execute(completed_stmt)).scalar_one())
-    paid_count = int((await session.execute(paid_stmt)).scalar_one())
+    review_count = int((await session.execute(review_stmt)).scalar_one())
 
     return {
-        "leads": lead_count,
-        "bookings": booking_count,
-        "completed": completed_count,
-        "paid": paid_count,
+        "inquiries": inquiry_count,
+        "quotes": quote_count,
+        "bookings_created": booking_count,
+        "bookings_completed": completed_count,
+        "reviews": review_count,
     }
+
+
+async def funnel_loss_reasons(
+    session: AsyncSession, start: datetime, end: datetime, *, org_id: uuid.UUID
+) -> list[dict[str, int | str]]:
+    trimmed_reason = func.trim(Lead.loss_reason)
+    stmt = (
+        select(trimmed_reason, func.count())
+        .select_from(Lead)
+        .where(
+            Lead.org_id == org_id,
+            Lead.status == lead_statuses.LEAD_STATUS_LOST,
+            Lead.updated_at >= start,
+            Lead.updated_at <= end,
+            Lead.loss_reason.isnot(None),
+            trimmed_reason != "",
+        )
+        .group_by(trimmed_reason)
+        .order_by(func.count().desc())
+    )
+    result = await session.execute(stmt)
+    return [
+        {"reason": str(reason), "count": int(count)}
+        for reason, count in result.all()
+        if reason is not None
+    ]
 
 
 async def nps_distribution(

@@ -14,34 +14,44 @@ const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-type GeoAreaSummary = {
-  area: string;
-  bookings: number;
-  revenue_cents: number;
-  avg_ticket_cents: number | null;
-};
-
-type GeoPointSummary = {
-  lat: number;
-  lng: number;
+type FunnelLossReason = {
+  reason: string;
   count: number;
 };
 
-type GeoAnalyticsResponse = {
-  by_area: GeoAreaSummary[];
-  points?: GeoPointSummary[] | null;
+type FunnelCounts = {
+  inquiries: number;
+  quotes: number;
+  bookings_created: number;
+  bookings_completed: number;
+  reviews: number;
 };
 
-function currencyFromCents(value: number) {
-  return `$${(value / 100).toFixed(2)}`;
+type FunnelConversionRates = {
+  inquiry_to_quote: number;
+  quote_to_booking: number;
+  booking_to_completed: number;
+  completed_to_review: number;
+};
+
+type FunnelAnalyticsResponse = {
+  range_start: string;
+  range_end: string;
+  counts: FunnelCounts;
+  conversion_rates: FunnelConversionRates;
+  loss_reasons: FunnelLossReason[];
+};
+
+function formatPercent(value: number) {
+  return `${(value * 100).toFixed(0)}%`;
 }
 
-function toIsoDate(value: string) {
+function toIsoDate(value: string, endOfDay = false) {
   if (!value) return null;
-  return `${value}T00:00:00Z`;
+  return endOfDay ? `${value}T23:59:59Z` : `${value}T00:00:00Z`;
 }
 
-export default function GeoAnalyticsPage() {
+export default function FunnelAnalyticsPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [profile, setProfile] = useState<AdminProfile | null>(null);
@@ -49,9 +59,9 @@ export default function GeoAnalyticsPage() {
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [analytics, setAnalytics] = useState<GeoAnalyticsResponse | null>(null);
+  const [analytics, setAnalytics] = useState<FunnelAnalyticsResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -81,12 +91,6 @@ export default function GeoAnalyticsPage() {
       },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
       {
-        key: "analytics-geo",
-        label: "Geo Heatmap",
-        href: "/admin/analytics/geo",
-        featureKey: "module.analytics",
-      },
-      {
         key: "analytics-funnel",
         label: "Booking Funnel",
         href: "/admin/analytics/funnel",
@@ -96,6 +100,12 @@ export default function GeoAnalyticsPage() {
         key: "analytics-clients",
         label: "Client Analytics",
         href: "/admin/analytics/clients",
+        featureKey: "module.analytics",
+      },
+      {
+        key: "analytics-geo",
+        label: "Geo Heatmap",
+        href: "/admin/analytics/geo",
         featureKey: "module.analytics",
       },
       {
@@ -160,22 +170,22 @@ export default function GeoAnalyticsPage() {
 
   const loadAnalytics = useCallback(async () => {
     if (!username || !password) return;
-    setSettingsError(null);
+    setErrorMessage(null);
     const params = new URLSearchParams();
     const fromIso = toIsoDate(fromDate);
-    const toIso = toIsoDate(toDate);
+    const toIso = toIsoDate(toDate, true);
     if (fromIso) params.set("from", fromIso);
     if (toIso) params.set("to", toIso);
-    const response = await fetch(`${API_BASE}/v1/admin/analytics/geo?${params.toString()}`, {
+    const response = await fetch(`${API_BASE}/v1/admin/analytics/funnel?${params.toString()}`, {
       headers: authHeaders,
       cache: "no-store",
     });
     if (response.ok) {
-      const data = (await response.json()) as GeoAnalyticsResponse;
+      const data = (await response.json()) as FunnelAnalyticsResponse;
       setAnalytics(data);
       setStatusMessage(null);
     } else {
-      setSettingsError("Failed to load geo analytics");
+      setErrorMessage("Failed to load funnel analytics");
     }
   }, [authHeaders, fromDate, password, toDate, username]);
 
@@ -199,122 +209,140 @@ export default function GeoAnalyticsPage() {
     void loadAnalytics();
   }, [loadAnalytics, pageVisible, password, username]);
 
-  const areaRows = analytics?.by_area ?? [];
-  const maxBookings = areaRows.reduce((acc, row) => Math.max(acc, row.bookings), 0);
+  const counts = analytics?.counts;
+  const lossReasons = analytics?.loss_reasons ?? [];
+  const stageEntries = counts
+    ? [
+        { key: "inquiries", label: "Inquiries", value: counts.inquiries },
+        { key: "quotes", label: "Quotes", value: counts.quotes },
+        { key: "bookings_created", label: "Bookings Created", value: counts.bookings_created },
+        { key: "bookings_completed", label: "Bookings Completed", value: counts.bookings_completed },
+        { key: "reviews", label: "Reviews", value: counts.reviews },
+      ]
+    : [];
+  const maxStageValue = stageEntries.reduce((max, stage) => Math.max(max, stage.value), 0);
+  const conversions = analytics?.conversion_rates
+    ? [
+        {
+          label: "Inquiry → Quote",
+          value: analytics.conversion_rates.inquiry_to_quote,
+        },
+        {
+          label: "Quote → Booking",
+          value: analytics.conversion_rates.quote_to_booking,
+        },
+        {
+          label: "Booking → Completed",
+          value: analytics.conversion_rates.booking_to_completed,
+        },
+        {
+          label: "Completed → Review",
+          value: analytics.conversion_rates.completed_to_review,
+        },
+      ]
+    : [];
 
   return (
     <div className="admin-page">
-      {navLinks.length > 0 ? <AdminNav links={navLinks} activeKey="analytics-geo" /> : null}
+      {navLinks.length > 0 ? <AdminNav links={navLinks} activeKey="analytics-funnel" /> : null}
       <div className="admin-content">
         <div className="page-header">
           <div>
-            <h1>Geo Heatmap</h1>
+            <h1>Booking Funnel</h1>
             <p className="muted">
-              Bookings by area with lightweight heat bars. Lat/lng points appear when available.
+              Funnel performance based on real inquiries (leads), quotes, bookings, and reviews.
             </p>
           </div>
         </div>
 
-        {!pageVisible && visibilityReady ? (
-          <div className="card">You do not have access to Analytics.</div>
-        ) : (
+        {!pageVisible ? (
           <div className="card">
-            <div className="filters">
-              <label className="field">
-                <span>From</span>
-                <input
-                  type="date"
-                  value={fromDate}
-                  onChange={(event) => setFromDate(event.target.value)}
-                />
-              </label>
-              <label className="field">
-                <span>To</span>
-                <input
-                  type="date"
-                  value={toDate}
-                  onChange={(event) => setToDate(event.target.value)}
-                />
-              </label>
-              <button
-                className="primary"
-                onClick={() => {
-                  setStatusMessage("Refreshing...");
-                  void loadAnalytics();
-                }}
-              >
-                Refresh
-              </button>
-              {statusMessage ? <span className="muted">{statusMessage}</span> : null}
+            <p>You do not have access to analytics for this organization.</p>
+          </div>
+        ) : (
+          <>
+            <div className="card">
+              <div className="filters">
+                <label>
+                  From
+                  <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+                </label>
+                <label>
+                  To
+                  <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+                </label>
+                <button type="button" className="btn" onClick={() => void loadAnalytics()}>
+                  Refresh
+                </button>
+              </div>
+              {statusMessage ? <p className="muted">{statusMessage}</p> : null}
+              {errorMessage ? <p className="error">{errorMessage}</p> : null}
             </div>
 
-            {settingsError ? <div className="error-banner">{settingsError}</div> : null}
+            <div className="card">
+              <h2>Stage Counts</h2>
+              {stageEntries.length === 0 ? (
+                <p className="muted">No funnel activity in the selected range.</p>
+              ) : (
+                <div className="funnel-stages">
+                  {stageEntries.map((stage) => {
+                    const width = maxStageValue > 0 ? (stage.value / maxStageValue) * 100 : 0;
+                    return (
+                      <div key={stage.key} className="funnel-stage">
+                        <div className="funnel-stage-header">
+                          <span>{stage.label}</span>
+                          <strong>{stage.value}</strong>
+                        </div>
+                        <div className="funnel-bar">
+                          <div className="funnel-bar-fill" style={{ width: `${width}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
-            {areaRows.length === 0 ? (
-              <div className="empty-state">
-                <h3>No area data yet</h3>
-                <p>Capture address labels or team zones to populate the geo heatmap.</p>
-              </div>
-            ) : (
-              <div className="table-wrap">
-                <table>
+            <div className="card">
+              <h2>Conversion Rates</h2>
+              {conversions.length === 0 ? (
+                <p className="muted">No conversions to display yet.</p>
+              ) : (
+                <ul className="conversion-list">
+                  {conversions.map((conversion) => (
+                    <li key={conversion.label}>
+                      <span>{conversion.label}</span>
+                      <strong>{formatPercent(conversion.value)}</strong>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="card">
+              <h2>Lost Reasons</h2>
+              {lossReasons.length === 0 ? (
+                <p className="muted">No loss reasons recorded in this range.</p>
+              ) : (
+                <table className="table">
                   <thead>
                     <tr>
-                      <th>Area</th>
-                      <th>Bookings</th>
-                      <th>Revenue</th>
-                      <th>Avg Ticket</th>
-                      <th>Heat</th>
+                      <th>Reason</th>
+                      <th>Count</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {areaRows.map((row) => {
-                      const intensity = maxBookings > 0 ? Math.round((row.bookings / maxBookings) * 100) : 0;
-                      return (
-                        <tr key={row.area}>
-                          <td>{row.area}</td>
-                          <td>{row.bookings}</td>
-                          <td>{currencyFromCents(row.revenue_cents)}</td>
-                          <td>
-                            {row.avg_ticket_cents === null
-                              ? "—"
-                              : currencyFromCents(row.avg_ticket_cents)}
-                          </td>
-                          <td>
-                            <div
-                              style={{
-                                height: "10px",
-                                borderRadius: "6px",
-                                background: "rgba(15, 118, 110, 0.15)",
-                                overflow: "hidden",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: `${intensity}%`,
-                                  height: "100%",
-                                  background: "rgba(15, 118, 110, 0.6)",
-                                }}
-                              />
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {lossReasons.map((reason) => (
+                      <tr key={reason.reason}>
+                        <td>{reason.reason}</td>
+                        <td>{reason.count}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
-              </div>
-            )}
-
-            {analytics?.points && analytics.points.length > 0 ? (
-              <div className="subtle-note">
-                {analytics.points.length} coordinate cluster
-                {analytics.points.length === 1 ? "" : "s"} available for map overlays.
-              </div>
-            ) : (
-              <div className="subtle-note">No coordinate points available yet.</div>
-            )}
-          </div>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
