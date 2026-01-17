@@ -2,7 +2,7 @@
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import configure_mappers, sessionmaker
 
@@ -20,8 +20,16 @@ async def test_deleting_category_preserves_items():
     """
     configure_mappers()
 
-    # Create in-memory SQLite database
+    # Create in-memory SQLite database with foreign keys enabled
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+
+    # CRITICAL: Enable foreign keys for SQLite so ondelete="SET NULL" is enforced
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -29,11 +37,10 @@ async def test_deleting_category_preserves_items():
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with async_session() as session:
-        # Create organization
+        # Create organization (only org_id and name are valid fields)
         org = Organization(
             org_id=uuid.uuid4(),
             name="Test Org",
-            slug="test-org",
         )
         session.add(org)
         await session.flush()
@@ -103,18 +110,26 @@ async def test_disassociating_category_preserves_items():
     """
     configure_mappers()
 
+    # Create in-memory SQLite database with foreign keys enabled
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+
+    # CRITICAL: Enable foreign keys for SQLite so ondelete="SET NULL" is enforced
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with async_session() as session:
-        # Create organization
+        # Create organization (only org_id and name are valid fields)
         org = Organization(
             org_id=uuid.uuid4(),
             name="Test Org",
-            slug="test-org",
         )
         session.add(org)
         await session.flush()
@@ -142,15 +157,15 @@ async def test_disassociating_category_preserves_items():
         item_id = item.item_id
         category_id = category.category_id
 
-    # Disassociate item from category by clearing the collection
+    # Disassociate item from category by setting category_id to None
     async with async_session() as session:
         result = await session.execute(
-            select(InventoryCategory).where(InventoryCategory.category_id == category_id)
+            select(InventoryItem).where(InventoryItem.item_id == item_id)
         )
-        cat = result.scalar_one()
+        item_to_update = result.scalar_one()
 
-        # Clear items collection (simulates removing orphan)
-        cat.items.clear()
+        # Set category_id to None (disassociate from category)
+        item_to_update.category_id = None
         await session.commit()
 
     # Verify item still exists
