@@ -7,6 +7,7 @@ import pytest
 from app.domain.bookings.db_models import Booking, TeamBlackout, Team
 from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.bookings.service import BUFFER_MINUTES, ensure_default_team
+from app.domain.integrations.db_models import ScheduleExternalBlock
 from app.domain.saas.db_models import Organization
 from app.domain.workers.db_models import Worker
 from app.settings import settings
@@ -62,6 +63,36 @@ async def test_conflict_check_catches_overlap(client, async_session_maker):
     assert body["has_conflict"] is True
     kinds = {item["kind"] for item in body["conflicts"]}
     assert {"booking", "blackout"}.issubset(kinds)
+
+
+@pytest.mark.anyio
+async def test_conflict_check_includes_external_blocks(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        start = dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(days=2)
+        session.add(
+            ScheduleExternalBlock(
+                org_id=team.org_id,
+                source="gcal",
+                external_event_id="evt-123",
+                starts_at=start,
+                ends_at=start + dt.timedelta(hours=2),
+                summary="External hold",
+            )
+        )
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    params = {
+        "starts_at": (start + dt.timedelta(minutes=30)).isoformat(),
+        "ends_at": (start + dt.timedelta(minutes=90)).isoformat(),
+        "team_id": team.team_id,
+    }
+    resp = client.get("/v1/admin/schedule/conflicts", headers=headers, params=params)
+    assert resp.status_code == 200
+    body = resp.json()
+    kinds = {item["kind"] for item in body["conflicts"]}
+    assert "external_block" in kinds
 
 
 @pytest.mark.anyio
@@ -219,6 +250,16 @@ async def test_conflicts_and_suggestions_are_org_scoped(client, async_session_ma
                 starts_at=start,
                 duration_minutes=60,
                 status="PENDING",
+            )
+        )
+        session.add(
+            ScheduleExternalBlock(
+                org_id=other_org_id,
+                source="gcal",
+                external_event_id="other-org-event",
+                starts_at=start,
+                ends_at=start + dt.timedelta(hours=1),
+                summary="Other org block",
             )
         )
         await session.commit()

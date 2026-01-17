@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.bookings.db_models import Booking, Team
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import gcal_service
 from app.domain.integrations.db_models import (
@@ -12,14 +16,14 @@ from app.domain.integrations.db_models import (
     IntegrationsGcalCalendar,
     IntegrationsGcalEventMap,
     IntegrationsGoogleAccount,
+    ScheduleExternalBlock,
 )
-from app.domain.bookings.db_models import Booking, Team
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import MembershipRole
 from app.settings import settings
 
 
-async def _enable_gcal(session, org_id):
+async def _enable_gcal(session: AsyncSession, org_id):
     await feature_service.upsert_org_feature_overrides(
         session,
         org_id,
@@ -27,14 +31,25 @@ async def _enable_gcal(session, org_id):
     )
 
 
-async def _create_team(session, org_id, name_suffix: str) -> Team:
+def _transport_for_events(events: list[dict]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "token-123", "expires_in": 3600})
+        if request.url.host == "www.googleapis.com" and "calendar/v3/calendars" in str(request.url):
+            return httpx.Response(200, json={"items": events})
+        return httpx.Response(404, json={"error": "unknown"})
+
+    return httpx.MockTransport(handler)
+
+
+async def _create_team(session: AsyncSession, org_id, name_suffix: str) -> Team:
     team = Team(org_id=org_id, name=f"Gcal Team {name_suffix}")
     session.add(team)
     await session.flush()
     return team
 
 
-async def _create_booking(session, org_id, team_id: int, starts_at: datetime) -> Booking:
+async def _create_booking(session: AsyncSession, org_id, team_id: int, starts_at: datetime) -> Booking:
     booking = Booking(
         org_id=org_id,
         team_id=team_id,
@@ -112,9 +127,7 @@ async def test_gcal_status_reflects_db(async_session_maker, client, monkeypatch)
 
 
 @pytest.mark.anyio
-async def test_owner_can_connect_and_disconnect_google_calendar(
-    async_session_maker, client, monkeypatch
-):
+async def test_owner_can_connect_and_disconnect_google_calendar(async_session_maker, client, monkeypatch):
     async with async_session_maker() as session:
         org = await saas_service.create_organization(session, "Gcal Connect Org")
         owner = await saas_service.create_user(session, "owner@gcal-connect.com", "secret")
@@ -239,6 +252,150 @@ async def test_google_calendar_oauth_tokens_not_logged(async_session_maker, clie
 
 
 @pytest.mark.anyio
+async def test_import_sync_creates_external_blocks(async_session_maker, client, monkeypatch):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Gcal Import Org")
+        owner = await saas_service.create_user(session, "owner@gcal-import.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await _enable_gcal(session, org.org_id)
+        session.add(
+            IntegrationsGoogleAccount(
+                org_id=org.org_id,
+                encrypted_refresh_token="refresh-token",
+                token_scopes=["scope1"],
+            )
+        )
+        session.add(
+            IntegrationsGcalCalendar(
+                org_id=org.org_id,
+                calendar_id="primary",
+                mode=GcalSyncMode.IMPORT,
+            )
+        )
+        await session.commit()
+
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+
+    events = [
+        {
+            "id": "evt-1",
+            "summary": "Blocked",
+            "start": {"dateTime": "2025-02-01T10:00:00Z"},
+            "end": {"dateTime": "2025-02-01T11:00:00Z"},
+        },
+        {
+            "id": "evt-2",
+            "summary": "Out of office",
+            "start": {"dateTime": "2025-02-02T09:00:00Z"},
+            "end": {"dateTime": "2025-02-02T10:30:00Z"},
+        },
+    ]
+    monkeypatch.setattr(gcal_service, "TOKEN_EXCHANGE_TRANSPORT", _transport_for_events(events))
+
+    owner_token = saas_service.build_access_token(owner, membership)
+    response = client.post(
+        "/v1/admin/integrations/google/gcal/import_sync",
+        params={"from": "2025-02-01T00:00:00Z", "to": "2025-02-03T00:00:00Z"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["imported"] == 2
+
+    async with async_session_maker() as session:
+        blocks = (
+            await session.scalars(
+                sa.select(ScheduleExternalBlock).where(ScheduleExternalBlock.org_id == org.org_id)
+            )
+        ).all()
+        assert {block.external_event_id for block in blocks} == {"evt-1", "evt-2"}
+
+
+@pytest.mark.anyio
+async def test_import_sync_updates_existing_blocks(async_session_maker, client, monkeypatch):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Gcal Import Update Org")
+        owner = await saas_service.create_user(session, "owner@gcal-import-update.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await _enable_gcal(session, org.org_id)
+        session.add(
+            IntegrationsGoogleAccount(
+                org_id=org.org_id,
+                encrypted_refresh_token="refresh-token",
+                token_scopes=["scope1"],
+            )
+        )
+        session.add(
+            IntegrationsGcalCalendar(
+                org_id=org.org_id,
+                calendar_id="primary",
+                mode=GcalSyncMode.IMPORT,
+            )
+        )
+        await session.commit()
+
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+
+    original_events = [
+        {
+            "id": "evt-1",
+            "summary": "Blocked",
+            "start": {"dateTime": "2025-03-01T10:00:00Z"},
+            "end": {"dateTime": "2025-03-01T11:00:00Z"},
+        }
+    ]
+    monkeypatch.setattr(gcal_service, "TOKEN_EXCHANGE_TRANSPORT", _transport_for_events(original_events))
+
+    owner_token = saas_service.build_access_token(owner, membership)
+    response = client.post(
+        "/v1/admin/integrations/google/gcal/import_sync",
+        params={"from": "2025-03-01T00:00:00Z", "to": "2025-03-02T00:00:00Z"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200
+
+    updated_events = [
+        {
+            "id": "evt-1",
+            "summary": "Blocked Updated",
+            "start": {"dateTime": "2025-03-01T12:00:00Z"},
+            "end": {"dateTime": "2025-03-01T13:30:00Z"},
+        }
+    ]
+    monkeypatch.setattr(gcal_service, "TOKEN_EXCHANGE_TRANSPORT", _transport_for_events(updated_events))
+
+    response = client.post(
+        "/v1/admin/integrations/google/gcal/import_sync",
+        params={"from": "2025-03-01T00:00:00Z", "to": "2025-03-02T00:00:00Z"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200
+
+    async with async_session_maker() as session:
+        block = await session.scalar(
+            sa.select(ScheduleExternalBlock).where(
+                ScheduleExternalBlock.org_id == org.org_id,
+                ScheduleExternalBlock.external_event_id == "evt-1",
+            )
+        )
+        assert block is not None
+        assert block.summary == "Blocked Updated"
+
+        starts_at = block.starts_at
+        ends_at = block.ends_at
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=timezone.utc)
+        if ends_at.tzinfo is None:
+            ends_at = ends_at.replace(tzinfo=timezone.utc)
+
+        assert starts_at == datetime(2025, 3, 1, 12, 0, tzinfo=timezone.utc)
+        assert ends_at == datetime(2025, 3, 1, 13, 30, tzinfo=timezone.utc)
+
+
+@pytest.mark.anyio
 async def test_gcal_export_creates_event_and_mapping(async_session_maker, client, monkeypatch):
     async with async_session_maker() as session:
         org = await saas_service.create_organization(session, "Gcal Export Org")
@@ -271,6 +428,7 @@ async def test_gcal_export_creates_event_and_mapping(async_session_maker, client
     monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
     monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
     monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+
     _mock_access_token(monkeypatch)
     created: list[dict] = []
     updated: list[dict] = []
@@ -333,6 +491,7 @@ async def test_gcal_export_is_idempotent(async_session_maker, client, monkeypatc
     monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
     monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
     monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+
     _mock_access_token(monkeypatch)
     created: list[dict] = []
     updated: list[dict] = []
@@ -344,6 +503,7 @@ async def test_gcal_export_is_idempotent(async_session_maker, client, monkeypatc
     assert first.status_code == 200
     second = client.post(url, headers={"Authorization": f"Bearer {owner_token}"})
     assert second.status_code == 200
+
     assert first.json()["created"] == 1
     assert second.json()["skipped"] == 1
     assert len(created) == 1
@@ -383,6 +543,7 @@ async def test_gcal_export_updates_rescheduled_booking(async_session_maker, clie
     monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
     monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
     monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+
     _mock_access_token(monkeypatch)
     created: list[dict] = []
     updated: list[dict] = []
@@ -418,9 +579,7 @@ async def test_gcal_export_dispatcher_allowed(async_session_maker, client, monke
             session, org, dispatcher, MembershipRole.DISPATCHER
         )
         viewer = await saas_service.create_user(session, "viewer@gcal-export.com", "secret")
-        viewer_membership = await saas_service.create_membership(
-            session, org, viewer, MembershipRole.VIEWER
-        )
+        viewer_membership = await saas_service.create_membership(session, org, viewer, MembershipRole.VIEWER)
         await _enable_gcal(session, org.org_id)
         team = await _create_team(session, org.org_id, "rbac")
         booking = await _create_booking(
@@ -448,12 +607,14 @@ async def test_gcal_export_dispatcher_allowed(async_session_maker, client, monke
     monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
     monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
     monkeypatch.setattr(settings, "google_oauth_redirect_uri", "https://example.com/callback")
+
     _mock_access_token(monkeypatch)
     created: list[dict] = []
     updated: list[dict] = []
     _mock_gcal_client(monkeypatch, created, updated)
 
     url = _export_url(booking.starts_at - timedelta(hours=1), booking.starts_at + timedelta(hours=1))
+
     dispatcher_token = saas_service.build_access_token(dispatcher, dispatcher_membership)
     dispatcher_resp = client.post(url, headers={"Authorization": f"Bearer {dispatcher_token}"})
     assert dispatcher_resp.status_code == 200

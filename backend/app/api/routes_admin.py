@@ -180,6 +180,8 @@ from app.domain.ops.schemas import (
     GlobalSearchResult,
     ConflictCheckResponse,
     ConflictDetail,
+    ExternalBlockDetail,
+    ExternalBlocksResponse,
     JobStatusResponse,
     ActivityFeedAction,
     ActivityFeedItem,
@@ -4915,6 +4917,38 @@ async def check_schedule_conflicts(
     return ConflictCheckResponse(
         has_conflict=bool(conflicts),
         conflicts=[ConflictDetail(**conflict) for conflict in conflicts],
+    )
+
+
+@router.get("/v1/admin/schedule/external_blocks", response_model=ExternalBlocksResponse)
+async def list_external_blocks(
+    request: Request,
+    from_: datetime = Query(alias="from"),
+    to: datetime = Query(alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_dispatch),
+) -> ExternalBlocksResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        blocks = await ops_service.list_external_blocks(
+            session, org_id, starts_at=from_, ends_at=to
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    return ExternalBlocksResponse(
+        from_time=from_,
+        to_time=to,
+        blocks=[
+            ExternalBlockDetail(
+                external_event_id=block.external_event_id,
+                starts_at=block.starts_at,
+                ends_at=block.ends_at,
+                source=block.source,
+                summary=block.summary,
+            )
+            for block in blocks
+        ],
     )
 
 

@@ -62,7 +62,6 @@ class GcalConnectCallbackResponse(BaseModel):
     connected: bool
     calendar_id: str | None = None
 
-
 class GcalExportSyncResponse(BaseModel):
     model_config = {"populate_by_name": True}
 
@@ -73,3 +72,4 @@ class GcalExportSyncResponse(BaseModel):
     updated: int
     skipped: int
     total: int
+    imported: int

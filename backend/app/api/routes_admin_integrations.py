@@ -29,9 +29,7 @@ async def _require_google_calendar_enabled(
     org_id: uuid.UUID,
 ) -> None:
     module_enabled = await feature_service.effective_feature_enabled(session, org_id, "module.integrations")
-    gcal_enabled = await feature_service.effective_feature_enabled(
-        session, org_id, "integrations.google_calendar"
-    )
+    gcal_enabled = await feature_service.effective_feature_enabled(session, org_id, "integrations.google_calendar")
     if not (module_enabled and gcal_enabled):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Disabled by org settings")
 
@@ -47,9 +45,7 @@ async def get_google_calendar_status(
     session: AsyncSession = Depends(get_db_session),
 ) -> integrations_schemas.GcalIntegrationStatus:
     module_enabled = await feature_service.effective_feature_enabled(session, org_id, "module.integrations")
-    gcal_enabled = await feature_service.effective_feature_enabled(
-        session, org_id, "integrations.google_calendar"
-    )
+    gcal_enabled = await feature_service.effective_feature_enabled(session, org_id, "integrations.google_calendar")
     if not (module_enabled and gcal_enabled):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Disabled by org settings")
 
@@ -143,6 +139,64 @@ async def disconnect_google_calendar(
 
 
 @router.post(
+    "/v1/admin/integrations/google/gcal/import_sync",
+    response_model=integrations_schemas.GcalImportSyncResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def import_google_calendar_events(
+    request: Request,
+    from_date: datetime = Query(..., alias="from"),
+    to_date: datetime = Query(..., alias="to"),
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.GcalImportSyncResponse:
+    await _require_google_calendar_enabled(session, org_id)
+    if not gcal_service.oauth_configured():
+        return problem_details(
+            request=request,
+            status=400,
+            title="Google OAuth Not Configured",
+            detail="Missing Google OAuth configuration.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+
+    if from_date.tzinfo is None:
+        from_date = from_date.replace(tzinfo=timezone.utc)
+    if to_date.tzinfo is None:
+        to_date = to_date.replace(tzinfo=timezone.utc)
+
+    if to_date <= from_date:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_window")
+
+    try:
+        result = await gcal_service.import_external_blocks(
+            session,
+            org_id,
+            starts_at=from_date,
+            ends_at=to_date,
+        )
+    except ValueError as exc:
+        return problem_details(
+            request=request,
+            status=400,
+            title="Google Calendar Import Failed",
+            detail=str(exc),
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+
+    await session.commit()
+    return integrations_schemas.GcalImportSyncResponse(
+        calendar_id=result.calendar_id,
+        from_utc=result.from_utc,
+        to_utc=result.to_utc,
+        imported=result.imported,
+        skipped=result.skipped,
+        total=result.total,
+    )
+
+
+@router.post(
     "/v1/admin/integrations/google/gcal/export_sync",
     response_model=integrations_schemas.GcalExportSyncResponse,
     status_code=status.HTTP_200_OK,
@@ -164,10 +218,12 @@ async def export_google_calendar_sync(
             detail="Missing Google OAuth configuration.",
             type_=PROBLEM_TYPE_DOMAIN,
         )
+
     if from_date.tzinfo is None:
         from_date = from_date.replace(tzinfo=timezone.utc)
     if to_date.tzinfo is None:
         to_date = to_date.replace(tzinfo=timezone.utc)
+
     try:
         result = await gcal_service.export_bookings_to_gcal(
             session,
@@ -183,6 +239,7 @@ async def export_google_calendar_sync(
             detail=str(exc),
             type_=PROBLEM_TYPE_DOMAIN,
         )
+
     await session.commit()
     return integrations_schemas.GcalExportSyncResponse(
         calendar_id=result.calendar_id,

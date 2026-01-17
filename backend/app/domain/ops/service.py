@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
@@ -20,6 +21,7 @@ from app.domain.bookings.service import (
 )
 from app.domain.availability import service as availability_service
 from app.domain.clients.db_models import ClientAddress, ClientUser
+from app.domain.integrations.db_models import ScheduleExternalBlock
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.leads.db_models import Lead
 from app.domain.org_settings import service as org_settings_service
@@ -648,6 +650,26 @@ def _availability_note(block_type: str, reason: str | None) -> str:
     return block_type
 
 
+def _external_block_note(block: ScheduleExternalBlock) -> str:
+    if block.summary:
+        return block.summary
+    return f"external block ({block.source})"
+
+
+async def _external_blocks(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[ScheduleExternalBlock]:
+    stmt = select(ScheduleExternalBlock).where(
+        ScheduleExternalBlock.org_id == org_id,
+        ScheduleExternalBlock.starts_at < window_end,
+        ScheduleExternalBlock.ends_at > window_start,
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
 async def _blocking_bookings(
     session: AsyncSession,
     team_id: int,
@@ -746,6 +768,18 @@ async def _team_conflicts(
                 "starts_at": _normalize(block.starts_at),
                 "ends_at": _normalize(block.ends_at),
                 "note": _availability_note(block.block_type, block.reason),
+            }
+        )
+
+    external_blocks = await _external_blocks(session, team.org_id, window_start, window_end)
+    for block in external_blocks:
+        conflicts.append(
+            {
+                "kind": "external_block",
+                "reference": block.external_event_id,
+                "starts_at": _normalize(block.starts_at),
+                "ends_at": _normalize(block.ends_at),
+                "note": _external_block_note(block),
             }
         )
 
@@ -1226,6 +1260,20 @@ async def check_schedule_conflicts(
     return conflicts
 
 
+async def list_external_blocks(
+    session: AsyncSession,
+    org_id,
+    *,
+    starts_at: datetime,
+    ends_at: datetime,
+) -> list[ScheduleExternalBlock]:
+    normalized_start = _normalize(starts_at)
+    normalized_end = _normalize(ends_at)
+    if normalized_end <= normalized_start:
+        raise ValueError("invalid_window")
+    return await _external_blocks(session, org_id, normalized_start, normalized_end)
+
+
 async def move_booking(
     session: AsyncSession,
     org_id,
@@ -1270,6 +1318,10 @@ async def move_booking(
     )
     if blocks:
         raise ValueError("conflict_with_availability_block")
+
+    external_blocks = await _external_blocks(session, target_team.org_id, normalized_start, normalized_end)
+    if external_blocks:
+        raise ValueError("conflict_with_external_block")
 
     booking.starts_at = normalized_start
     booking.duration_minutes = duration
