@@ -413,25 +413,32 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 ### 8. Finance
 
-**Purpose:** Financial reporting, payment reconciliation
+**Purpose:** Financial reporting, payment reconciliation, and expense tracking
 
 **Key Pages:**
-- `web/app/admin/finance/` (if exists)
+- `web/app/admin/finance/expenses/page.tsx` - Expense tracking (`/admin/finance/expenses`)
+- `web/app/admin/finance/budgets/page.tsx` - Monthly budgets (`/admin/finance/budgets`)
 
 **Backend Routers:**
-- `backend/app/api/routes_admin.py` - Finance endpoints
+- `backend/app/api/routes_admin_finance.py` - Expense categories, expenses, budgets, summary
+- `backend/app/api/routes_admin.py` - Invoice reconciliation endpoints
 - `backend/app/api/routes_payments.py` - Payment processing
 
 **Key Services:**
+- `backend/app/domain/finance/service.py` - Expense/budget CRUD + summaries
 - `backend/app/domain/invoices/service.py` - Invoice/payment logic
 
 **Key Tables:**
+- `finance_expense_categories` - Expense category catalog
+- `finance_expenses` - Expense ledger (by day)
+- `finance_budgets` - Monthly category budgets
 - `invoices` - Invoice records
 - `payments` - Payment records
 - `stripe_events` - Stripe webhooks
 
 **Permissions Required:**
 - `finance.view` - View finance reports
+- `finance.manage` - Manage expenses/budgets
 - `invoices.view` - View invoices
 - `payments.record` - Record payments
 
@@ -816,7 +823,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `roles` (migration 0085_iam_roles_permissions)
 - `user_roles` (mapping table)
 
-**Permissions Catalog (19 total):**
+**Permissions Catalog (20 total):**
 
 | Key | Description | Group |
 |-----|-------------|-------|
@@ -832,6 +839,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 | `invoices.edit` | Create/update invoices | finance |
 | `payments.record` | Record payments | finance |
 | `finance.view` | Finance analytics | finance |
+| `finance.manage` | Manage finance expenses and budgets | finance |
 | `pricing.manage` | Pricing configuration | settings |
 | `policies.manage` | Booking policies | settings |
 | `settings.manage` | Org settings | settings |
@@ -844,8 +852,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 | Role | Permissions | Use Case |
 |------|-------------|----------|
-| **owner** | All 19 permissions | Full system access |
-| **admin** | All 19 permissions | Full system access |
+| **owner** | All 20 permissions | Full system access |
+| **admin** | All 20 permissions | Full system access |
 | **dispatcher** | view, bookings.*, contacts.*, reports.view | Manage schedule/jobs |
 | **accountant** | view, bookings.view, invoices.*, payments.*, finance.view, exports.run | Finance operations |
 | **finance** | (same as accountant) | Finance operations |
