@@ -249,6 +249,7 @@ entries sorted by newest first. Each timeline entry includes `action`, `timestam
 | GET | `/v1/admin/analytics/clients/clv` | `finance.view` | Client lifetime value stats and top clients (paid payments only) |
 | GET | `/v1/admin/analytics/clients/retention` | `finance.view` | Client retention cohorts (monthly, paid payments only) |
 | GET | `/v1/admin/analytics/geo` | `finance.view` | Geographic heatmap aggregates by area (optional coordinate points) |
+| GET | `/v1/admin/analytics/financial_summary` | `finance.view` | Revenue/expense/profit summary (returns `ready=false` until finance data is trustworthy) |
 
 **Query params:** `from`, `to` (ISO 8601 timestamps, optional)
 
@@ -331,6 +332,26 @@ entries sorted by newest first. Each timeline entry includes `action`, `timestam
   "points": [
     { "lat": 53.54, "lng": -113.50, "count": 3 }
   ]
+}
+```
+
+**Financial summary response (example):**
+```json
+{
+  "ready": true,
+  "revenue_cents": 15000,
+  "expenses_cents": 5300,
+  "profit_cents": 9700,
+  "margin_pp": 64.67,
+  "gst_owed_cents": 1200
+}
+```
+
+**Financial summary not ready (example):**
+```json
+{
+  "ready": false,
+  "reason": "Finance data not ready — enable expense tracking."
 }
 ```
 

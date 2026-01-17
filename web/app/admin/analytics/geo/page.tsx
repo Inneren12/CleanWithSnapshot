@@ -81,6 +81,12 @@ export default function GeoAnalyticsPage() {
       },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
       {
+        key: "analytics-summary",
+        label: "Financial Summary",
+        href: "/admin/analytics",
+        featureKey: "module.analytics",
+      },
+      {
         key: "analytics-geo",
         label: "Geo Heatmap",
         href: "/admin/analytics/geo",

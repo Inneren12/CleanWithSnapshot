@@ -162,3 +162,13 @@ class AdminMetricsResponse(BaseModel):
     accuracy: DurationAccuracy
     financial: FinancialKpis
     operational: OperationalKpis
+
+
+class FinancialSummaryResponse(BaseModel):
+    ready: bool
+    reason: str | None = None
+    revenue_cents: int | None = None
+    expenses_cents: int | None = None
+    profit_cents: int | None = None
+    margin_pp: float | None = None
+    gst_owed_cents: int | None = None
