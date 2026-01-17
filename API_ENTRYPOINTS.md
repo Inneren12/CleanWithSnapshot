@@ -792,6 +792,22 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 
 ---
 
+### Marketing (Promo Codes)
+
+**Path:** `/v1/admin/marketing/promo-codes*`
+**File:** `backend/app/api/routes_admin_marketing.py`
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/marketing/promo-codes` | `settings.manage` | List promo codes |
+| POST | `/v1/admin/marketing/promo-codes` | `settings.manage` | Create promo code |
+| GET | `/v1/admin/marketing/promo-codes/{id}` | `settings.manage` | Promo code detail |
+| PATCH | `/v1/admin/marketing/promo-codes/{id}` | `settings.manage` | Update promo code |
+| DELETE | `/v1/admin/marketing/promo-codes/{id}` | `settings.manage` | Delete promo code |
+| POST | `/v1/admin/marketing/promo-codes/validate` | `settings.manage` | Validate promo code restrictions |
+
+---
+
 ### Dead Letter Queue
 
 **Path:** `/v1/admin/queue/*`

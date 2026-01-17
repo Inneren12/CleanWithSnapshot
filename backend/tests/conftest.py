@@ -72,6 +72,7 @@ from app.domain.notifications_digests import db_models as notifications_digests_
 from app.domain.saas.service import ensure_default_org_and_team
 from app.domain.ops import db_models as ops_db_models  # noqa: F401
 from app.domain.pricing_settings import db_models as pricing_settings_db_models  # noqa: F401
+from app.domain.marketing import db_models as marketing_db_models  # noqa: F401
 from app.infra.bot_store import InMemoryBotStore
 from app.infra.db import Base, get_db_session
 from app.infra.org_context import set_current_org_id
