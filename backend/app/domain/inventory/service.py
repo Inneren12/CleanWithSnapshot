@@ -10,9 +10,14 @@ from sqlalchemy import case, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.inventory import db_models, schemas
+from app.domain.notifications_center import service as notifications_service
 
 
 # ===== Category Service Functions =====
+
+def _is_low_stock(current_qty: Decimal, min_qty: Decimal) -> bool:
+    return current_qty < min_qty
+
 
 
 async def list_categories(
@@ -321,6 +326,8 @@ async def update_item(
     if not item:
         return None
 
+    was_low = _is_low_stock(item.current_qty, item.min_qty)
+
     # Validate category exists if being updated
     if data.category_id is not None:
         category = await get_category(session, org_id, data.category_id)
@@ -344,6 +351,24 @@ async def update_item(
         item.location_label = data.location_label
     if data.active is not None:
         item.active = data.active
+
+    is_low = _is_low_stock(item.current_qty, item.min_qty)
+    if not was_low and is_low:
+        await notifications_service.emit_preset_event(
+            session,
+            org_id=org_id,
+            preset_key="low_stock",
+            priority="HIGH",
+            title="Low inventory",
+            body=(
+                f"{item.name} is below minimum stock "
+                f"({item.current_qty} {item.unit} remaining, min {item.min_qty})."
+            ),
+            entity_type="inventory_item",
+            entity_id=str(item.item_id),
+            action_href=f"/admin/inventory?item_id={item.item_id}",
+            action_kind="open_inventory",
+        )
 
     await session.flush()
     return item
