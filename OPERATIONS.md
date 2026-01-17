@@ -154,6 +154,21 @@ python -m app.jobs.run --job notifications-digest-monthly --once
 
 ---
 
+## Finance tax exports
+
+Finance tax exports are generated on-demand as ZIP bundles of CSV files for GST reporting (summary, payments,
+expenses, instalments). These endpoints are admin-authenticated and require `finance.view`.
+
+**Example (GST export):**
+
+```bash
+curl -u "$ADMIN_BASIC_USERNAME:$ADMIN_BASIC_PASSWORD" \\
+  "https://api.panidobro.com/v1/admin/finance/taxes/export?from=2026-01-01&to=2026-03-31" \\
+  -o gst_export_2026_Q1.zip
+```
+
+---
+
 ## Environment Configuration
 
 ### Critical Environment Variables

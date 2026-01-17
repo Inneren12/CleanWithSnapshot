@@ -950,6 +950,12 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
 | POST | `/v1/admin/finance/cash_snapshots` | `finance.manage` | Create cash snapshot |
 | PATCH | `/v1/admin/finance/cash_snapshots/{snapshot_id}` | `finance.manage` | Update cash snapshot |
 | DELETE | `/v1/admin/finance/cash_snapshots/{snapshot_id}` | `finance.manage` | Delete cash snapshot |
+| GET | `/v1/admin/finance/taxes/gst_summary` | `finance.view` | GST summary (collected/paid/owed for period) |
+| GET | `/v1/admin/finance/taxes/instalments` | `finance.view` | List manual tax instalments |
+| POST | `/v1/admin/finance/taxes/instalments` | `finance.manage` | Create tax instalment |
+| PATCH | `/v1/admin/finance/taxes/instalments/{instalment_id}` | `finance.manage` | Update tax instalment |
+| GET | `/v1/admin/finance/taxes/calendar` | `finance.view` | GST filing calendar (Alberta defaults) |
+| GET | `/v1/admin/finance/taxes/export` | `finance.view` | Download GST export ZIP (CSV package) |
 
 **Expense list query params:** `from`, `to`, `category_id`, `query`, `page`, `page_size`.
 
@@ -984,6 +990,14 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
 **Balance sheet query params:** `as_of` (required, `YYYY-MM-DD`).
 
 **Cash snapshot query params:** `from`, `to` (optional).
+
+**GST summary query params:** `from`, `to` (required).
+
+**Tax instalments query params:** `from`, `to` (optional, filters by due date).
+
+**Tax calendar query params:** `from`, `to` (optional, defaults to current year).
+
+**Tax export query params:** `from`, `to` (required, returns a ZIP of CSVs).
 
 **P&L response shape (example):**
 ```json
