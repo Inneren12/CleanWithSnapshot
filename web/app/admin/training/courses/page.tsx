@@ -280,11 +280,16 @@ export default function TrainingCoursesPage() {
             <h1>Training courses</h1>
             <p className="muted">Manage courses and assign workers to required trainings.</p>
           </div>
-          {canManage ? (
-            <button className="btn btn-primary" type="button" onClick={openCreate}>
-              Create course
-            </button>
-          ) : null}
+          <div className="actions">
+            <a className="btn btn-secondary" href="/admin/training/calendar">
+              Training calendar
+            </a>
+            {canManage ? (
+              <button className="btn btn-primary" type="button" onClick={openCreate}>
+                Create course
+              </button>
+            ) : null}
+          </div>
         </div>
         <div className="card-body">
           {statusMessage ? <div className="success">{statusMessage}</div> : null}

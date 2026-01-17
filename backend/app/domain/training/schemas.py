@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TrainingRequirementStatus(BaseModel):
@@ -52,6 +52,7 @@ class TrainingRecordResponse(BaseModel):
 
 TrainingCourseFormat = Literal["video", "doc", "in_person", "mixed"]
 TrainingAssignmentStatus = Literal["assigned", "in_progress", "completed", "overdue"]
+TrainingSessionAttendeeStatus = Literal["enrolled", "attended", "no_show"]
 
 
 class TrainingCourseCreateRequest(BaseModel):
@@ -116,4 +117,70 @@ class TrainingAssignmentResponse(BaseModel):
 
 class TrainingAssignmentListResponse(BaseModel):
     items: list[TrainingAssignmentResponse]
+    total: int
+
+
+class TrainingSessionAttendeeResponse(BaseModel):
+    worker_id: int
+    status: TrainingSessionAttendeeStatus
+    worker_name: str | None = None
+    block_id: int | None = None
+
+
+class TrainingSessionCreateRequest(BaseModel):
+    title: str
+    starts_at: datetime
+    ends_at: datetime
+    location: str | None = None
+    instructor_user_id: uuid.UUID | None = None
+    notes: str | None = None
+    worker_ids: list[int] = Field(default_factory=list)
+
+
+class TrainingSessionUpdateRequest(BaseModel):
+    title: str | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    location: str | None = None
+    instructor_user_id: uuid.UUID | None = None
+    notes: str | None = None
+
+
+class TrainingSessionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: uuid.UUID
+    title: str
+    starts_at: datetime
+    ends_at: datetime
+    location: str | None = None
+    instructor_user_id: uuid.UUID | None = None
+    notes: str | None = None
+    attendees: list[TrainingSessionAttendeeResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrainingSessionListResponse(BaseModel):
+    org_timezone: str
+    from_date: date | None = None
+    to_date: date | None = None
+    items: list[TrainingSessionResponse]
+    total: int
+
+
+class TrainingSessionAttendeesRequest(BaseModel):
+    worker_ids: list[int]
+
+
+class TrainingWorkerSummary(BaseModel):
+    worker_id: int
+    name: str
+    team_id: int | None = None
+    team_name: str | None = None
+    is_active: bool = True
+
+
+class TrainingWorkerListResponse(BaseModel):
+    items: list[TrainingWorkerSummary]
     total: int

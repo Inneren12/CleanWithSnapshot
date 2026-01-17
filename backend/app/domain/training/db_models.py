@@ -168,3 +168,69 @@ class TrainingAssignment(Base):
         Index("ix_training_assignments_status", "status"),
         Index("ix_training_assignments_due_at", "due_at"),
     )
+
+
+class TrainingSession(Base):
+    __tablename__ = "training_sessions"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID_TYPE, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    location: Mapped[str | None] = mapped_column(String(255))
+    instructor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID_TYPE)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    attendees: Mapped[list["TrainingSessionAttendee"]] = relationship(
+        "TrainingSessionAttendee",
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_training_sessions_org_id", "org_id"),
+        Index("ix_training_sessions_window", "starts_at", "ends_at"),
+    )
+
+
+class TrainingSessionAttendee(Base):
+    __tablename__ = "training_session_attendees"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("training_sessions.session_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    worker_id: Mapped[int] = mapped_column(
+        ForeignKey("workers.worker_id", ondelete="CASCADE"), primary_key=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="enrolled", server_default="enrolled"
+    )
+    block_id: Mapped[int | None] = mapped_column(
+        ForeignKey("availability_blocks.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    session: Mapped["TrainingSession"] = relationship("TrainingSession", back_populates="attendees")
+    worker: Mapped["Worker"] = relationship("Worker")
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "worker_id", name="uq_training_session_attendee"),
+        Index("ix_training_session_attendees_worker", "worker_id"),
+        Index("ix_training_session_attendees_status", "status"),
+    )

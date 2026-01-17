@@ -3063,6 +3063,60 @@ def _resolve_quality_distribution_range(
     return month_start, month_end
 
 
+def _resolve_training_session_range(
+    from_date: date | None,
+    to_date: date | None,
+    org_timezone: str,
+) -> tuple[date, date]:
+    if from_date and to_date:
+        return from_date, to_date
+    if from_date and not to_date:
+        return from_date, from_date
+    if to_date and not from_date:
+        return to_date, to_date
+    try:
+        org_tz = ZoneInfo(org_timezone)
+    except Exception:  # noqa: BLE001
+        org_tz = ZoneInfo(org_settings_service.DEFAULT_TIMEZONE)
+    today_local = datetime.now(org_tz).date()
+    month_start = date(today_local.year, today_local.month, 1)
+    last_day = calendar.monthrange(today_local.year, today_local.month)[1]
+    month_end = date(today_local.year, today_local.month, last_day)
+    return month_start, month_end
+
+
+def _training_session_window(
+    from_date: date,
+    to_date: date,
+    org_timezone: str,
+) -> tuple[datetime, datetime]:
+    try:
+        org_tz = ZoneInfo(org_timezone)
+    except Exception:  # noqa: BLE001
+        org_tz = ZoneInfo(org_settings_service.DEFAULT_TIMEZONE)
+    start_local = datetime.combine(from_date, time(0, 0), tzinfo=org_tz)
+    end_local = datetime.combine(to_date + timedelta(days=1), time(0, 0), tzinfo=org_tz)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _serialize_training_session(
+    session_row,
+    attendees: list[training_schemas.TrainingSessionAttendeeResponse],
+) -> training_schemas.TrainingSessionResponse:
+    return training_schemas.TrainingSessionResponse(
+        session_id=session_row.session_id,
+        title=session_row.title,
+        starts_at=session_row.starts_at,
+        ends_at=session_row.ends_at,
+        location=session_row.location,
+        instructor_user_id=session_row.instructor_user_id,
+        notes=session_row.notes,
+        attendees=attendees,
+        created_at=session_row.created_at,
+        updated_at=session_row.updated_at,
+    )
+
+
 @router.get("/v1/admin/quality/issues", response_model=quality_schemas.QualityIssueListResponse)
 async def list_quality_issues(
     request: Request,
@@ -3684,6 +3738,319 @@ async def update_training_assignment(
         )
     await session.commit()
     return training_schemas.TrainingAssignmentResponse.model_validate(assignment)
+
+
+@router.get(
+    "/v1/admin/training/sessions",
+    response_model=training_schemas.TrainingSessionListResponse,
+)
+async def list_training_sessions(
+    request: Request,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.view")),
+) -> training_schemas.TrainingSessionListResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
+    resolved_from, resolved_to = _resolve_training_session_range(from_date, to_date, org_timezone)
+    window_start, window_end = _training_session_window(resolved_from, resolved_to, org_timezone)
+    sessions = await training_service.list_training_sessions(
+        session,
+        org_id=org_id,
+        starts_at=window_start,
+        ends_at=window_end,
+    )
+    attendee_rows = await training_service.list_training_session_attendees(
+        session,
+        org_id=org_id,
+        session_ids=[row.session_id for row in sessions],
+    )
+    attendee_map: dict[uuid.UUID, list[training_schemas.TrainingSessionAttendeeResponse]] = {}
+    for attendee, worker_name in attendee_rows:
+        attendee_map.setdefault(attendee.session_id, []).append(
+            training_schemas.TrainingSessionAttendeeResponse(
+                worker_id=attendee.worker_id,
+                status=attendee.status,
+                worker_name=worker_name,
+                block_id=attendee.block_id,
+            )
+        )
+    items = [
+        _serialize_training_session(row, attendee_map.get(row.session_id, [])) for row in sessions
+    ]
+    return training_schemas.TrainingSessionListResponse(
+        org_timezone=org_timezone,
+        from_date=resolved_from,
+        to_date=resolved_to,
+        items=items,
+        total=len(items),
+    )
+
+
+@router.post(
+    "/v1/admin/training/sessions",
+    response_model=training_schemas.TrainingSessionResponse,
+)
+async def create_training_session(
+    request: Request,
+    payload: training_schemas.TrainingSessionCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_permission_keys("training.manage")),
+) -> training_schemas.TrainingSessionResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        session_row = await training_service.create_training_session(
+            session,
+            org_id=org_id,
+            title=payload.title,
+            starts_at=payload.starts_at,
+            ends_at=payload.ends_at,
+            location=payload.location,
+            instructor_user_id=payload.instructor_user_id,
+            notes=payload.notes,
+            worker_ids=payload.worker_ids,
+            created_by=identity.username,
+        )
+    except ValueError as exc:
+        return problem_details(
+            request=request,
+            status=422,
+            title="Training Session Invalid",
+            detail=str(exc),
+        )
+    await session.commit()
+    attendee_rows = await training_service.list_training_session_attendees(
+        session,
+        org_id=org_id,
+        session_ids=[session_row.session_id],
+    )
+    attendees = [
+        training_schemas.TrainingSessionAttendeeResponse(
+            worker_id=attendee.worker_id,
+            status=attendee.status,
+            worker_name=worker_name,
+            block_id=attendee.block_id,
+        )
+        for attendee, worker_name in attendee_rows
+    ]
+    return _serialize_training_session(session_row, attendees)
+
+
+@router.get(
+    "/v1/admin/training/sessions/{session_id}",
+    response_model=training_schemas.TrainingSessionResponse,
+)
+async def get_training_session(
+    session_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.view")),
+) -> training_schemas.TrainingSessionResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    session_row = await training_service.get_training_session(
+        session,
+        org_id=org_id,
+        session_id=session_id,
+    )
+    if session_row is None:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Training Session Not Found",
+            detail="Training session does not exist or is not accessible.",
+        )
+    attendee_rows = await training_service.list_training_session_attendees(
+        session,
+        org_id=org_id,
+        session_ids=[session_row.session_id],
+    )
+    attendees = [
+        training_schemas.TrainingSessionAttendeeResponse(
+            worker_id=attendee.worker_id,
+            status=attendee.status,
+            worker_name=worker_name,
+            block_id=attendee.block_id,
+        )
+        for attendee, worker_name in attendee_rows
+    ]
+    return _serialize_training_session(session_row, attendees)
+
+
+@router.patch(
+    "/v1/admin/training/sessions/{session_id}",
+    response_model=training_schemas.TrainingSessionResponse,
+)
+async def update_training_session(
+    session_id: uuid.UUID,
+    request: Request,
+    payload: training_schemas.TrainingSessionUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.manage")),
+) -> training_schemas.TrainingSessionResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    fields = payload.model_fields_set
+    if not fields:
+        return problem_details(
+            request=request,
+            status=422,
+            title="Training Session Invalid",
+            detail="No updates provided.",
+        )
+    try:
+        session_row = await training_service.update_training_session(
+            session,
+            org_id=org_id,
+            session_id=session_id,
+            title=payload.title if "title" in fields else training_service.UNSET,
+            starts_at=payload.starts_at if "starts_at" in fields else training_service.UNSET,
+            ends_at=payload.ends_at if "ends_at" in fields else training_service.UNSET,
+            location=payload.location if "location" in fields else training_service.UNSET,
+            instructor_user_id=payload.instructor_user_id
+            if "instructor_user_id" in fields
+            else training_service.UNSET,
+            notes=payload.notes if "notes" in fields else training_service.UNSET,
+        )
+    except ValueError as exc:
+        return problem_details(
+            request=request,
+            status=422,
+            title="Training Session Invalid",
+            detail=str(exc),
+        )
+    if session_row is None:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Training Session Not Found",
+            detail="Training session does not exist or is not accessible.",
+        )
+    await session.commit()
+    attendee_rows = await training_service.list_training_session_attendees(
+        session,
+        org_id=org_id,
+        session_ids=[session_row.session_id],
+    )
+    attendees = [
+        training_schemas.TrainingSessionAttendeeResponse(
+            worker_id=attendee.worker_id,
+            status=attendee.status,
+            worker_name=worker_name,
+            block_id=attendee.block_id,
+        )
+        for attendee, worker_name in attendee_rows
+    ]
+    return _serialize_training_session(session_row, attendees)
+
+
+@router.delete("/v1/admin/training/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_training_session(
+    session_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.manage")),
+) -> Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    deleted = await training_service.delete_training_session(
+        session,
+        org_id=org_id,
+        session_id=session_id,
+    )
+    if not deleted:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Training Session Not Found",
+            detail="Training session does not exist or is not accessible.",
+        )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/v1/admin/training/sessions/{session_id}/attendees",
+    response_model=training_schemas.TrainingSessionResponse,
+)
+async def set_training_session_attendees(
+    session_id: uuid.UUID,
+    request: Request,
+    payload: training_schemas.TrainingSessionAttendeesRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_permission_keys("training.manage")),
+) -> training_schemas.TrainingSessionResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        session_row = await training_service.sync_training_session_attendees(
+            session,
+            org_id=org_id,
+            session_id=session_id,
+            worker_ids=payload.worker_ids,
+            created_by=identity.username,
+        )
+    except ValueError as exc:
+        return problem_details(
+            request=request,
+            status=422,
+            title="Training Session Invalid",
+            detail=str(exc),
+        )
+    if session_row is None:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Training Session Not Found",
+            detail="Training session does not exist or is not accessible.",
+        )
+    await session.commit()
+    attendee_rows = await training_service.list_training_session_attendees(
+        session,
+        org_id=org_id,
+        session_ids=[session_row.session_id],
+    )
+    attendees = [
+        training_schemas.TrainingSessionAttendeeResponse(
+            worker_id=attendee.worker_id,
+            status=attendee.status,
+            worker_name=worker_name,
+            block_id=attendee.block_id,
+        )
+        for attendee, worker_name in attendee_rows
+    ]
+    return _serialize_training_session(session_row, attendees)
+
+
+@router.get(
+    "/v1/admin/training/workers",
+    response_model=training_schemas.TrainingWorkerListResponse,
+)
+async def list_training_workers(
+    request: Request,
+    active_only: bool = Query(default=True),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("training.view")),
+) -> training_schemas.TrainingWorkerListResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    stmt = (
+        select(Worker, Team.name)
+        .join(Team, Team.team_id == Worker.team_id, isouter=True)
+        .where(Worker.org_id == org_id)
+        .order_by(Worker.name.asc())
+    )
+    if active_only:
+        stmt = stmt.where(Worker.is_active.is_(True))
+    rows = (await session.execute(stmt)).all()
+    items = [
+        training_schemas.TrainingWorkerSummary(
+            worker_id=worker.worker_id,
+            name=worker.name,
+            team_id=worker.team_id,
+            team_name=team_name,
+            is_active=worker.is_active,
+        )
+        for worker, team_name in rows
+    ]
+    return training_schemas.TrainingWorkerListResponse(items=items, total=len(items))
 
 
 @router.get(
@@ -18583,6 +18950,21 @@ async def admin_assign_worker(
         for worker in workers:
             if worker.team_id != booking.team_id:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker must be on the same team")
+        duration_minutes = booking.duration_minutes or ops_service.DEFAULT_SLOT_DURATION_MINUTES
+        booking_end = booking.starts_at + timedelta(minutes=duration_minutes)
+        for worker in workers:
+            blocks = await availability_service.list_worker_blocks(
+                session,
+                org_id,
+                worker.worker_id,
+                starts_at=booking.starts_at,
+                ends_at=booking_end,
+            )
+            if blocks:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="conflict_with_availability_block",
+                )
     booking.assigned_worker_id = unique_worker_ids[0] if unique_worker_ids else None
     await _sync_booking_workers(session, booking.booking_id, unique_worker_ids, replace=True)
 
