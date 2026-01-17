@@ -22,6 +22,13 @@ def _is_low_stock(current_qty: Decimal, min_qty: Decimal) -> bool:
     return current_qty < min_qty
 
 
+def _normalize_notes(notes: str | None) -> str | None:
+    if notes is None:
+        return None
+    trimmed = notes.strip()
+    return trimmed or None
+
+
 
 async def list_categories(
     session: AsyncSession,
@@ -648,7 +655,7 @@ async def create_purchase_order(
         status=schemas.PurchaseOrderStatus.draft.value,
         ordered_at=None,
         received_at=None,
-        notes=data.notes,
+        notes=_normalize_notes(data.notes),
         subtotal_cents=subtotal_cents,
         tax_cents=data.tax_cents,
         shipping_cents=data.shipping_cents,
@@ -701,7 +708,7 @@ async def update_purchase_order(
         purchase_order.supplier_id = data.supplier_id
 
     if data.notes is not None:
-        purchase_order.notes = data.notes
+        purchase_order.notes = _normalize_notes(data.notes)
 
     if data.tax_cents is not None:
         purchase_order.tax_cents = data.tax_cents

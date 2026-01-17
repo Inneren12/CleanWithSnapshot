@@ -127,9 +127,9 @@ function parseQtyInput(value: string) {
   return numeric;
 }
 
-function normalizeOptional(value: string) {
+function normalizeNotes(value: string) {
   const trimmed = value.trim();
-  return trimmed.length ? trimmed : null;
+  return trimmed.length ? trimmed : "";
 }
 
 function lineTotalCents(line: PurchaseOrderLineDraft) {
@@ -436,7 +436,7 @@ export default function PurchaseOrderDetailPage() {
         },
         body: JSON.stringify({
           supplier_id: draft.supplier_id,
-          notes: normalizeOptional(draft.notes),
+          notes: normalizeNotes(draft.notes),
           tax_cents: parsedTax ?? 0,
           shipping_cents: parsedShipping ?? 0,
           items: preparedItems,
