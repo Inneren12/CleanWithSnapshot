@@ -38,7 +38,7 @@ const MODULE_PERMISSIONS: Record<string, string> = {
   training: "core.view",
   notifications_center: "core.view",
   settings: "settings.manage",
-  integrations: "settings.manage",
+  integrations: "core.view",
   api: "settings.manage",
 };
 
@@ -111,6 +111,7 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
     key: "module.integrations",
     label: "Integrations",
     description: "Payments, messaging, and email providers.",
+    children: [{ key: "integrations.google_calendar", label: "Google Calendar" }],
   },
   {
     key: "module.api",
@@ -128,6 +129,8 @@ const DEFAULT_DISABLED_KEYS = new Set<string>([
   "training.library",
   "training.quizzes",
   "training.certs",
+  "module.integrations",
+  "integrations.google_calendar",
 ]);
 
 export function moduleBaseForKey(key: string): string {

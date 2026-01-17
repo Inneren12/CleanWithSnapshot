@@ -12,6 +12,11 @@ async def test_owner_can_read_integrations_status_masked(async_session_maker, cl
         org = await saas_service.create_organization(session, "Integrations Org")
         owner = await saas_service.create_user(session, "owner@integrations.com", "secret")
         membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await feature_service.upsert_org_feature_overrides(
+            session,
+            org.org_id,
+            {"module.integrations": True},
+        )
         await session.commit()
 
     monkeypatch.setattr(settings, "stripe_secret_key", "sk_live_1234567890")
@@ -54,6 +59,11 @@ async def test_integrations_status_requires_owner(async_session_maker, client):
         dispatcher = await saas_service.create_user(session, "dispatcher@guard.com", "secret")
         dispatcher_membership = await saas_service.create_membership(
             session, org, dispatcher, MembershipRole.DISPATCHER
+        )
+        await feature_service.upsert_org_feature_overrides(
+            session,
+            org.org_id,
+            {"module.integrations": True},
         )
         await session.commit()
 

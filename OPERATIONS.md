@@ -199,6 +199,19 @@ STRICT_CORS="true"
 TRUST_PROXY_HEADERS="true"
 ```
 
+### Google Calendar OAuth (Integrations)
+
+Set these to enable Google Calendar OAuth connect/disconnect:
+
+```bash
+GOOGLE_OAUTH_CLIENT_ID="<google-oauth-client-id>"
+GOOGLE_OAUTH_CLIENT_SECRET="<google-oauth-client-secret>"
+GOOGLE_OAUTH_REDIRECT_URI="https://panidobro.com/admin/settings/integrations"
+```
+
+The redirect URI should match the OAuth consent screen configuration and point to the
+admin integrations page where the callback is handled.
+
 **Optional variables:**
 
 ```bash
