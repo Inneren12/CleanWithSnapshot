@@ -160,6 +160,8 @@ from app.domain.reason_logs.db_models import ReasonLog
 from app.domain.quality import schemas as quality_schemas
 from app.domain.quality import service as quality_service
 from app.domain.quality.db_models import QualityIssue, QualityIssueResponse
+from app.domain.training import schemas as training_schemas
+from app.domain.training import service as training_service
 from app.domain.saas import billing_service, service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, Organization, PasswordResetEvent, User
 from app.domain.ops import service as ops_service
@@ -3311,6 +3313,93 @@ async def get_quality_worker_summary(
         review_count=int(summary.get("review_count", 0)),
         complaint_count=int(summary.get("complaint_count", 0)),
         last_review=last_review,
+    )
+
+
+@router.get(
+    "/v1/admin/training/workers/{worker_id}/status",
+    response_model=training_schemas.TrainingStatusResponse,
+)
+async def get_worker_training_status(
+    request: Request,
+    worker_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_any_permission_keys("training.view", "core.view")),
+) -> training_schemas.TrainingStatusResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    worker, requirements, records = await training_service.list_worker_training_status(
+        session,
+        org_id=org_id,
+        worker_id=worker_id,
+    )
+    if not worker:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Worker Not Found",
+            detail="Worker does not exist or is not accessible.",
+        )
+    payload = training_service.build_training_status_payload(
+        worker=worker,
+        requirements=requirements,
+        records=records,
+    )
+    return training_schemas.TrainingStatusResponse(
+        worker_id=worker.worker_id,
+        requirements=[training_schemas.TrainingRequirementStatus(**entry) for entry in payload],
+    )
+
+
+@router.post(
+    "/v1/admin/training/workers/{worker_id}/records",
+    response_model=training_schemas.TrainingRecordResponse,
+)
+async def create_worker_training_record(
+    request: Request,
+    worker_id: int,
+    payload: training_schemas.TrainingRecordCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_any_permission_keys("training.manage", "admin.manage")),
+) -> training_schemas.TrainingRecordResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    try:
+        record = await training_service.create_worker_training_record(
+            session,
+            org_id=org_id,
+            worker_id=worker_id,
+            requirement_id=payload.requirement_id,
+            requirement_key=payload.requirement_key,
+            completed_at=payload.completed_at,
+            expires_at=payload.expires_at,
+            score=payload.score,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        if str(exc) == "worker_not_found":
+            return problem_details(
+                request=request,
+                status=404,
+                title="Worker Not Found",
+                detail="Worker does not exist or is not accessible.",
+            )
+        if str(exc) == "requirement_not_found":
+            return problem_details(
+                request=request,
+                status=404,
+                title="Training Requirement Not Found",
+                detail="Training requirement does not exist or is not accessible.",
+            )
+        raise
+    await session.commit()
+    return training_schemas.TrainingRecordResponse(
+        record_id=record.record_id,
+        worker_id=record.worker_id,
+        requirement_id=record.requirement_id,
+        completed_at=record.completed_at,
+        expires_at=record.expires_at,
+        score=record.score,
+        note=record.note,
+        created_at=record.created_at,
     )
 
 

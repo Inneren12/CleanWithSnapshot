@@ -1215,6 +1215,24 @@ button:focus-visible {
   border-color: rgba(239, 68, 68, 0.2);
 }
 
+.status-badge.ok {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.status-badge.due {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: rgba(245, 158, 11, 0.2);
+}
+
+.status-badge.overdue {
+  background: var(--error-soft);
+  color: var(--error);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
 .admin-page {
   padding: 24px;
   display: flex;
