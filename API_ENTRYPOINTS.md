@@ -174,7 +174,9 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
 | GET | `/v1/admin/leads` | `contacts.view` (or `leads.view`) | Lead pipeline list (status/query/date filters + pagination) |
+| GET | `/v1/admin/leads/{lead_id}` | `contacts.view` (or `leads.view`) | Lead detail with contact info, requested service snapshot, notes, and timeline |
 | PATCH | `/v1/admin/leads/{lead_id}` | `contacts.edit` (or `leads.edit`) | Update lead status or notes |
+| POST | `/v1/admin/leads/{lead_id}/timeline` | `contacts.edit` (or `leads.edit`) | Add a lead timeline entry (quote sent, contacted, etc.) |
 
 **Query params:** `status`, `query`, `from`, `to`, `page`
 
@@ -209,6 +211,9 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
   "page_size": 25
 }
 ```
+
+**Lead detail response fields:** includes lead contact data plus `structured_inputs`, `estimate_snapshot`, and `timeline`
+entries sorted by newest first. Each timeline entry includes `action`, `timestamp`, and optional `metadata.note`.
 
 #### Ops Dashboard Response (critical alerts)
 

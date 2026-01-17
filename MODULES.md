@@ -490,11 +490,12 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Key Pages:**
 - `web/app/page.tsx` - Public lead capture form
 - `web/app/admin/leads/page.tsx` - Lead pipeline list + status updates
+- `web/app/admin/leads/[lead_id]/page.tsx` - Lead detail (contact, notes, timeline, schedule CTA)
 
 **Backend Routers:**
 - `backend/app/api/routes_leads.py` - `/v1/leads/*`
 - `backend/app/api/routes_public.py` - `/v1/public/leads` (public submission)
-- `backend/app/api/routes_admin.py` - `/v1/admin/leads` (list + update)
+- `backend/app/api/routes_admin.py` - `/v1/admin/leads` (list, detail, update, timeline)
 
 **Key Services:**
 - `backend/app/domain/leads/service.py` - Lead CRUD, status management

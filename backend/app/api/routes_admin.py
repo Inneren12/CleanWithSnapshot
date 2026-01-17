@@ -108,10 +108,13 @@ from app.domain.leads.db_models import Lead, ReferralCredit
 from app.domain.nps.db_models import NpsResponse, SupportTicket
 from app.domain.leads.service import grant_referral_credit, export_payload_from_lead
 from app.domain.leads.schemas import (
+    AdminLeadDetailResponse,
     AdminLeadListResponse,
     AdminLeadResponse,
     AdminLeadStatusUpdateRequest,
+    AdminLeadTimelineCreateRequest,
     AdminLeadUpdateRequest,
+    admin_lead_detail_from_model,
     admin_lead_from_model,
 )
 from app.domain.leads.statuses import assert_valid_transition, is_valid_status
@@ -145,6 +148,7 @@ from app.domain.saas import billing_service, service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, Organization, PasswordResetEvent, User
 from app.domain.ops import service as ops_service
 from app.domain.ops.db_models import JobHeartbeat
+from app.domain.timeline import service as timeline_service
 from app.domain.ops.schemas import (
     BlockSlotRequest,
     BulkBookingsRequest,
@@ -182,6 +186,7 @@ from app.domain.ops.schemas import (
     TemplatePreviewResponse,
     WorkerTimelineResponse,
 )
+from app.domain.timeline.schemas import TimelineEvent
 from app.domain.errors import DomainError
 from app.domain.retention import cleanup_retention
 from app.domain.subscriptions import schemas as subscription_schemas
@@ -2421,6 +2426,34 @@ async def list_leads(
     )
 
 
+@router.get("/v1/admin/leads/{lead_id}", response_model=AdminLeadDetailResponse)
+async def get_lead_detail(
+    http_request: Request,
+    lead_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_any_permission_keys("contacts.view", "leads.view")),
+) -> AdminLeadDetailResponse:
+    org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
+    lead_result = await session.execute(
+        select(Lead)
+        .options(selectinload(Lead.referral_credits))
+        .where(Lead.lead_id == lead_id, Lead.org_id == org_id)
+    )
+    lead = lead_result.scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    credit_count = await session.scalar(
+        select(func.count()).select_from(ReferralCredit).where(ReferralCredit.referrer_lead_id == lead.lead_id)
+    )
+    timeline = await timeline_service.get_lead_timeline(session, org_id, lead)
+    return admin_lead_detail_from_model(
+        lead,
+        timeline=timeline,
+        referral_credit_count=int(credit_count or 0),
+    )
+
+
 @router.patch("/v1/admin/leads/{lead_id}", response_model=AdminLeadResponse)
 async def update_lead(
     http_request: Request,
@@ -2471,6 +2504,47 @@ async def update_lead(
     )
     await session.commit()
     return response_body
+
+
+@router.post("/v1/admin/leads/{lead_id}/timeline", response_model=TimelineEvent)
+async def create_lead_timeline_event(
+    http_request: Request,
+    lead_id: str,
+    payload: AdminLeadTimelineCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_any_permission_keys("contacts.edit", "leads.edit")),
+) -> TimelineEvent:
+    org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
+    lead_result = await session.execute(
+        select(Lead).where(Lead.lead_id == lead_id, Lead.org_id == org_id)
+    )
+    lead = lead_result.scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    http_request.state.explicit_admin_audit = True
+    log_entry = await audit_service.record_action(
+        session,
+        identity=identity,
+        action="lead_timeline_event",
+        resource_type="lead",
+        resource_id=lead.lead_id,
+        before=None,
+        after={"label": payload.action, "note": payload.note},
+    )
+    await session.flush()
+    await session.refresh(log_entry)
+    await session.commit()
+    return TimelineEvent(
+        event_id=log_entry.audit_id,
+        event_type="lead_event",
+        timestamp=log_entry.created_at,
+        actor=log_entry.actor,
+        action=payload.action,
+        resource_type="lead",
+        resource_id=lead.lead_id,
+        metadata={"role": log_entry.role, "note": payload.note},
+    )
 
 
 @router.post("/v1/admin/leads/{lead_id}/status", response_model=AdminLeadResponse)

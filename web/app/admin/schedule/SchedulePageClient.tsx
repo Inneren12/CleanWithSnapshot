@@ -424,6 +424,7 @@ export default function SchedulePage() {
   const [quickCreatePrice, setQuickCreatePrice] = useState("");
   const [priceTouched, setPriceTouched] = useState(false);
   const [quickCreateDeposit, setQuickCreateDeposit] = useState("");
+  const [prefillApplied, setPrefillApplied] = useState(false);
   const [clientQuery, setClientQuery] = useState("");
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [selectedClientId, setSelectedClientId] = useState("");
@@ -1630,6 +1631,38 @@ export default function SchedulePage() {
     },
     [orgTimezone]
   );
+
+  useEffect(() => {
+    if (prefillApplied) return;
+    if (searchParams.get("quick_create") !== "1") return;
+    if (!canCreate) return;
+    const leadName = searchParams.get("lead_name") ?? "";
+    const leadEmail = searchParams.get("lead_email") ?? "";
+    const leadPhone = searchParams.get("lead_phone") ?? "";
+    const leadAddress = searchParams.get("lead_address") ?? "";
+    const leadPostal = searchParams.get("lead_postal_code") ?? "";
+    const targetDay = searchParams.get("date") ?? defaultDate;
+
+    openQuickCreate(targetDay, 9 * 60);
+    if (leadName || leadEmail || leadPhone) {
+      setCreatingClient(true);
+      setNewClientName(leadName);
+      setNewClientEmail(leadEmail);
+      setNewClientPhone(leadPhone);
+    }
+    if (leadAddress || leadPostal) {
+      setUseNewAddress(true);
+      setNewAddressLabel("Lead");
+      setNewAddressText(`${leadAddress}${leadPostal ? `, ${leadPostal}` : ""}`.trim());
+    }
+    setPrefillApplied(true);
+  }, [
+    canCreate,
+    defaultDate,
+    openQuickCreate,
+    prefillApplied,
+    searchParams,
+  ]);
 
   const closeQuickCreate = useCallback(() => {
     setQuickCreateOpen(false);

@@ -11,6 +11,7 @@ from app.domain.leads.statuses import (
     LEAD_STATUS_QUOTED,
     LEAD_STATUS_WON,
 )
+from app.domain.timeline.schemas import TimelineEvent
 
 LeadStatus = Literal[
     LEAD_STATUS_NEW,
@@ -156,6 +157,25 @@ class AdminLeadListResponse(BaseModel):
     page_size: int
 
 
+class AdminLeadTimelineCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: str = Field(..., min_length=1, max_length=200)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class AdminLeadDetailResponse(AdminLeadResponse):
+    address: Optional[str] = None
+    access_notes: Optional[str] = None
+    parking: Optional[str] = None
+    pets: Optional[str] = None
+    allergies: Optional[str] = None
+    structured_inputs: dict
+    estimate_snapshot: dict
+    pricing_config_version: str
+    timeline: List[TimelineEvent]
+
+
 def admin_lead_from_model(model, referral_credit_count: int | None = None) -> AdminLeadResponse:
     credits_attr = getattr(model, "__dict__", {}).get("referral_credits")
     credit_count = referral_credit_count
@@ -180,4 +200,22 @@ def admin_lead_from_model(model, referral_credit_count: int | None = None) -> Ad
         referral_code=model.referral_code,
         referred_by_code=model.referred_by_code,
         referral_credits=credit_count,
+    )
+
+
+def admin_lead_detail_from_model(
+    model, *, timeline: List[TimelineEvent], referral_credit_count: int | None = None
+) -> AdminLeadDetailResponse:
+    base = admin_lead_from_model(model, referral_credit_count=referral_credit_count)
+    return AdminLeadDetailResponse(
+        **base.model_dump(mode="json"),
+        address=model.address,
+        access_notes=model.access_notes,
+        parking=model.parking,
+        pets=model.pets,
+        allergies=model.allergies,
+        structured_inputs=model.structured_inputs or {},
+        estimate_snapshot=model.estimate_snapshot or {},
+        pricing_config_version=model.pricing_config_version,
+        timeline=timeline,
     )
