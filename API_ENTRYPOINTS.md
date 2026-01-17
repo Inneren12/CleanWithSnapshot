@@ -632,6 +632,11 @@ Schedules: `daily`, `weekly`, `monthly`.
 | `page` | `int` | Page number (default: 1) |
 | `page_size` | `int` | Items per page (default: 50, max: 100) |
 
+**Purchase order update semantics (`PATCH /v1/admin/inventory/purchase-orders/{po_id}`):**
+- Omit `notes` to leave the current notes unchanged.
+- Send `notes: ""` (empty string) to clear notes (stored as `null`).
+- Send a non-empty string to replace notes.
+
 **Usage analytics query params (`GET /v1/admin/inventory/usage_analytics`):**
 
 | Param | Type | Description |

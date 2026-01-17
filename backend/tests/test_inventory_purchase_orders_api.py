@@ -114,6 +114,50 @@ async def test_receiving_increases_stock(
 
 
 @pytest.mark.anyio
+async def test_purchase_order_notes_can_be_cleared(
+    db_session: AsyncSession,
+    org_a: Organization,
+    supplier_a: InventorySupplier,
+    item_a: InventoryItem,
+):
+    headers = {"Authorization": "Basic YWRtaW46YWRtaW4xMjM="}
+    payload = {
+        "supplier_id": str(supplier_a.supplier_id),
+        "notes": "Initial notes",
+        "items": [
+            {
+                "item_id": str(item_a.item_id),
+                "qty": "2",
+                "unit_cost_cents": 150,
+            }
+        ],
+    }
+
+    response = client.post(
+        "/v1/admin/inventory/purchase-orders",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 201
+    po_id = response.json()["po_id"]
+    assert response.json()["notes"] == "Initial notes"
+
+    response = client.patch(
+        f"/v1/admin/inventory/purchase-orders/{po_id}",
+        json={"notes": ""},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["notes"] is None
+
+    result = await db_session.execute(
+        select(PurchaseOrder).where(PurchaseOrder.po_id == uuid.UUID(po_id))
+    )
+    purchase_order = result.scalar_one()
+    assert purchase_order.notes is None
+
+
+@pytest.mark.anyio
 async def test_cannot_receive_twice(
     org_a: Organization,
     supplier_a: InventorySupplier,
