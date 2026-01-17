@@ -142,8 +142,7 @@ export default function PromoCodesPage() {
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "notifications", label: "Notifications", href: "/admin/notifications", featureKey: "module.notifications_center" },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
-      { key: "marketing.promo_codes", label: "Promo Codes", href: "/admin/marketing/promo-codes", featureKey: "marketing.promo_codes" },
-      { key: "marketing.referrals", label: "Referrals", href: "/admin/marketing/referrals", featureKey: "marketing.referrals" },
+      { key: "marketing", label: "Promo Codes", href: "/admin/marketing/promo-codes", featureKey: "marketing.promo_codes" },
       { key: "pricing", label: "Service Types & Pricing", href: "/admin/settings/pricing", featureKey: "pricing.service_types" },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },
       {
@@ -342,7 +341,7 @@ export default function PromoCodesPage() {
   if (visibilityReady && !pageVisible) {
     return (
       <div className="admin-page">
-        <AdminNav links={navLinks} activeKey="marketing.promo_codes" />
+        <AdminNav links={navLinks} activeKey="marketing" />
         <div className="admin-card admin-section">
           <h1>Promo codes</h1>
           <p className="alert alert-warning">Disabled by org settings.</p>
@@ -353,7 +352,7 @@ export default function PromoCodesPage() {
 
   return (
     <div className="admin-page">
-      <AdminNav links={navLinks} activeKey="marketing.promo_codes" />
+      <AdminNav links={navLinks} activeKey="marketing" />
       <div className="admin-section">
         <h1>Promo codes</h1>
         <p className="muted">Create and manage discounts, free add-ons, and redemption rules.</p>

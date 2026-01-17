@@ -111,65 +111,11 @@ class PromoCodeValidationResponse(BaseModel):
     promo_code: PromoCodeResponse | None = None
 
 
-ReferralTrigger = Literal["booking_confirmed", "deposit_paid", "booking_or_payment"]
-ReferralRecipientRole = Literal["referrer", "referee"]
-
-
-class ReferralSettings(BaseModel):
-    enabled: bool = True
-    referrer_credit_cents: int = Field(default=2500, ge=0)
-    referee_credit_cents: int = Field(default=1500, ge=0)
-    credit_trigger: ReferralTrigger = "booking_or_payment"
-
-
-class ReferralSettingsUpdateRequest(BaseModel):
-    enabled: bool | None = None
-    referrer_credit_cents: int | None = Field(default=None, ge=0)
-    referee_credit_cents: int | None = Field(default=None, ge=0)
-    credit_trigger: ReferralTrigger | None = None
-
-
-class ReferralSettingsResponse(BaseModel):
-    org_id: uuid.UUID
-    settings: ReferralSettings
-
-
-class ReferralCreateRequest(BaseModel):
-    referred_lead_id: str = Field(min_length=1)
-    referrer_code: str = Field(min_length=1, max_length=16)
-
-
-class ReferralCreditSummary(BaseModel):
-    credit_id: str
-    recipient_role: ReferralRecipientRole
-    credit_cents: int | None
-    trigger_event: str | None
-    created_at: datetime
-
-
-class ReferralResponse(BaseModel):
-    referral_id: uuid.UUID
-    org_id: uuid.UUID
-    referrer_lead_id: str
-    referrer_name: str | None
-    referred_lead_id: str
-    referred_name: str | None
-    referral_code: str
-    status: Literal["pending", "booked", "paid"]
-    booking_id: str | None
-    payment_id: str | None
-    created_at: datetime
-    booked_at: datetime | None
-    paid_at: datetime | None
-    credits: list[ReferralCreditSummary]
-
-
 class ReferralLeaderboardEntry(BaseModel):
     referrer_lead_id: str
     referrer_name: str | None
     referral_code: str
     credits_awarded: int
-    credit_cents: int
     referrals_count: int
 
 

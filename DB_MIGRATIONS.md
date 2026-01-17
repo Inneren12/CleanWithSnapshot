@@ -26,11 +26,9 @@ This guide covers database schema management using Alembic in the CleanWithSnaps
 **Policy:** Forward-only (no downgrades in production)
 **Validation:** Health endpoint checks migration status
 
-**Recent migrations:** `f1a2b3c4d5e6_add_referrals_tracking.py` adds `referrals`, extends
-`referral_credits` with credit metadata, and stores referral settings in `organization_settings`;
-`e6b1c2d3f4a5_add_promo_codes.py` adds `promo_codes` + `promo_code_redemptions`,
-`d3b7c1a4f8e2_add_lead_quotes_and_loss_reason.py` adds lead quotes + loss reason tracking,
-`6ddda2f1b93a_quality_issue_responses.py` adds `quality_issue_responses`,
+**Recent migrations:** `e6b1c2d3f4a5_add_promo_codes.py` adds `promo_codes` +
+`promo_code_redemptions`, `d3b7c1a4f8e2_add_lead_quotes_and_loss_reason.py` adds lead quotes +
+loss reason tracking, `6ddda2f1b93a_quality_issue_responses.py` adds `quality_issue_responses`,
 `9b7c1d2e3f4a_quality_issue_tags.py` adds `quality_issue_tags` + `quality_tag_catalog`, and
 `1b2c3d4e5f6a_quality_issue_tag_position.py` adds tag ordering via `quality_issue_tags.position`.
 

@@ -469,25 +469,22 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Key Pages:**
 - `web/app/admin/marketing/promo-codes/page.tsx` - Promo code management
-- `web/app/admin/marketing/referrals/page.tsx` - Referral program dashboard + leaderboard
+- Referral leaderboard view is exposed via the marketing admin endpoints (no dedicated UI page yet).
 
 **Backend Routers:**
 - `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/promo-codes`
-- `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/referrals` (config, list, leaderboard)
+- `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/referrals/leaderboard`
 
 **Key Services:**
 - `backend/app/domain/marketing/service.py` - Promo code CRUD + validation
-- `backend/app/domain/marketing/service.py` - Referral settings, conversion tracking, and leaderboard
+- `backend/app/domain/marketing/service.py` - Referral leaderboard aggregation (`list_referral_leaderboard`)
 
 **Key Tables:**
 - `promo_codes` - Promo definitions and restrictions
 - `promo_code_redemptions` - Redemption log for limits and per-customer rules
-- `referrals` - Referral relationships + conversion tracking (booking/payment)
-- `referral_credits` - Credits issued to referrers/referees
 
 **Permissions Required:**
 - `settings.manage` - Manage marketing settings and promo codes
-- `core.view` - View referral leaderboard
 
 **Feature Key:** `module.marketing`
 

@@ -126,7 +126,7 @@ def test_referral_credit_created_after_confirmation(client, async_session_maker)
             return await session.scalar(select(func.count()).select_from(ReferralCredit))
 
     credit_count_after = asyncio.run(_fetch_credit_count())
-    assert credit_count_after == 2
+    assert credit_count_after == 1
 
 
 def test_invalid_referral_code_rejected(client):
@@ -220,11 +220,13 @@ def test_referral_credit_created_on_deposit_paid(client, async_session_maker):
                 payment_intent_id="pi_test",
                 email_adapter=None,
             )
-            credit_count = await session.scalar(select(func.count()).select_from(ReferralCredit))
+            credit_count = await session.scalar(
+                select(func.count()).select_from(ReferralCredit)
+            )
             return credit_count
 
     credit_count_after = asyncio.run(_mark_paid_and_count())
-    assert credit_count_after == 2
+    assert credit_count_after == 1
 
 def test_admin_lists_referral_metadata(client, async_session_maker):
     settings.admin_basic_username = "admin"
@@ -334,6 +336,7 @@ def test_referral_leaderboard_org_scoped(client, async_session_maker):
                 lead_id=referred_response.json()["lead_id"],
                 session=session,
                 manage_transaction=True,
+                org_id=org_a,
             )
             return booking.booking_id
 

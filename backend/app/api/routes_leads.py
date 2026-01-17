@@ -17,7 +17,6 @@ from app.domain.analytics.service import (
 )
 from app.domain.leads.db_models import Lead
 from app.domain.leads.service import ensure_unique_referral_code, export_payload_from_lead
-from app.domain.marketing import service as marketing_service
 from app.domain.leads.schemas import LeadCreateRequest, LeadResponse
 from app.domain.leads.statuses import LEAD_STATUS_NEW
 from app.infra.captcha import log_captcha_event, log_captcha_unavailable, verify_turnstile
@@ -182,12 +181,6 @@ async def create_lead(
         )
         session.add(lead)
         await ensure_unique_referral_code(session, lead)
-        if referrer:
-            await marketing_service.ensure_referral_record(
-                session,
-                referrer=referrer,
-                referred=lead,
-            )
 
         try:
             await log_event(

@@ -815,11 +815,7 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
-| GET | `/v1/admin/marketing/referrals` | `core.view` | List referrals + conversion status |
-| POST | `/v1/admin/marketing/referrals` | `settings.manage` | Link a referred lead to a referrer code |
-| GET | `/v1/admin/marketing/referrals/leaderboard` | `core.view` | Top referrers leaderboard |
-| GET | `/v1/admin/marketing/referrals/config` | `settings.manage` (Owner) | View referral program rules |
-| PATCH | `/v1/admin/marketing/referrals/config` | `settings.manage` (Owner) | Update referral program rules |
+| GET | `/v1/admin/marketing/referrals/leaderboard` | `core.view` | Referral leaderboard |
 
 ---
 

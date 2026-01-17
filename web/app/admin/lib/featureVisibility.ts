@@ -79,10 +79,7 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
   {
     key: "module.marketing",
     label: "Marketing",
-    children: [
-      { key: "marketing.promo_codes", label: "Promo codes" },
-      { key: "marketing.referrals", label: "Referrals" },
-    ],
+    children: [{ key: "marketing.promo_codes", label: "Promo codes" }],
   },
   { key: "module.leads", label: "Leads" },
   { key: "module.inventory", label: "Inventory" },

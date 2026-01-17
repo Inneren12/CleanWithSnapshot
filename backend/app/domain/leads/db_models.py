@@ -7,7 +7,7 @@ from datetime import datetime
 
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -105,30 +105,13 @@ class Lead(Base):
 
     referral_credits: Mapped[list["ReferralCredit"]] = relationship(
         "ReferralCredit",
-        primaryjoin=(
-            "and_(Lead.lead_id == foreign(ReferralCredit.referrer_lead_id), "
-            "ReferralCredit.recipient_role == 'referrer')"
-        ),
-        viewonly=True,
+        back_populates="referrer",
+        foreign_keys="ReferralCredit.referrer_lead_id",
     )
     referred_credit: Mapped[Optional["ReferralCredit"]] = relationship(
         "ReferralCredit",
-        primaryjoin=(
-            "and_(Lead.lead_id == foreign(ReferralCredit.referred_lead_id), "
-            "ReferralCredit.recipient_role == 'referee')"
-        ),
-        viewonly=True,
-        uselist=False,
-    )
-    referrals_sent: Mapped[list["Referral"]] = relationship(
-        "Referral",
-        back_populates="referrer",
-        foreign_keys="Referral.referrer_lead_id",
-    )
-    referral_received: Mapped[Optional["Referral"]] = relationship(
-        "Referral",
         back_populates="referred",
-        foreign_keys="Referral.referred_lead_id",
+        foreign_keys="ReferralCredit.referred_lead_id",
         uselist=False,
     )
     quotes: Mapped[list["LeadQuote"]] = relationship(
@@ -151,16 +134,6 @@ class Lead(Base):
 
 class ReferralCredit(Base):
     __tablename__ = "referral_credits"
-    __table_args__ = (
-        UniqueConstraint(
-            "referred_lead_id",
-            "recipient_role",
-            name="uq_referral_credits_referred_role",
-        ),
-        Index("ix_referral_credits_referrer_lead_id", "referrer_lead_id"),
-        Index("ix_referral_credits_referred_lead_id", "referred_lead_id"),
-        Index("ix_referral_credits_referral_id", "referral_id"),
-    )
 
     credit_id: Mapped[str] = mapped_column(
         String(36),
@@ -171,61 +144,9 @@ class ReferralCredit(Base):
         ForeignKey("leads.lead_id"), nullable=False
     )
     referred_lead_id: Mapped[str] = mapped_column(
-        ForeignKey("leads.lead_id"), nullable=False
-    )
-    referral_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID_TYPE,
-        ForeignKey("referrals.referral_id", ondelete="SET NULL"),
-        nullable=True,
+        ForeignKey("leads.lead_id"), nullable=False, unique=True
     )
     applied_code: Mapped[str] = mapped_column(String(16), nullable=False)
-    recipient_role: Mapped[str] = mapped_column(String(16), nullable=False, default="referrer")
-    credit_cents: Mapped[int | None] = mapped_column(Integer)
-    trigger_event: Mapped[str | None] = mapped_column(String(32))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-
-    referrer: Mapped[Lead] = relationship(Lead, foreign_keys=[referrer_lead_id])
-    referred: Mapped[Lead] = relationship(Lead, foreign_keys=[referred_lead_id])
-    referral: Mapped[Optional["Referral"]] = relationship("Referral", back_populates="credits")
-
-
-class Referral(Base):
-    __tablename__ = "referrals"
-    __table_args__ = (
-        UniqueConstraint("referred_lead_id", name="uq_referrals_referred_lead"),
-        Index("ix_referrals_org_id", "org_id"),
-        Index("ix_referrals_referrer_lead_id", "referrer_lead_id"),
-        Index("ix_referrals_referred_lead_id", "referred_lead_id"),
-    )
-
-    referral_id: Mapped[uuid.UUID] = mapped_column(
-        UUID_TYPE, primary_key=True, default=uuid.uuid4
-    )
-    org_id: Mapped[uuid.UUID] = mapped_column(
-        UUID_TYPE,
-        ForeignKey("organizations.org_id", ondelete="CASCADE"),
-        nullable=False,
-        default=lambda: settings.default_org_id,
-    )
-    referrer_lead_id: Mapped[str] = mapped_column(
-        ForeignKey("leads.lead_id"), nullable=False
-    )
-    referred_lead_id: Mapped[str] = mapped_column(
-        ForeignKey("leads.lead_id"), nullable=False
-    )
-    referral_code: Mapped[str] = mapped_column(String(16), nullable=False)
-    booking_id: Mapped[str | None] = mapped_column(
-        ForeignKey("bookings.booking_id", ondelete="SET NULL")
-    )
-    payment_id: Mapped[str | None] = mapped_column(
-        ForeignKey("invoice_payments.payment_id", ondelete="SET NULL")
-    )
-    booked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -233,19 +154,10 @@ class Referral(Base):
     )
 
     referrer: Mapped[Lead] = relationship(
-        Lead,
-        back_populates="referrals_sent",
-        foreign_keys=[referrer_lead_id],
+        Lead, back_populates="referral_credits", foreign_keys=[referrer_lead_id]
     )
     referred: Mapped[Lead] = relationship(
-        Lead,
-        back_populates="referral_received",
-        foreign_keys=[referred_lead_id],
-    )
-    credits: Mapped[list[ReferralCredit]] = relationship(
-        "ReferralCredit",
-        back_populates="referral",
-        cascade="all, delete-orphan",
+        Lead, back_populates="referred_credit", foreign_keys=[referred_lead_id]
     )
 
 
