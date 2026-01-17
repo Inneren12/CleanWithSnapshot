@@ -420,6 +420,7 @@ web/app/
 | `web/app/admin/invoices/page.tsx` | **Invoice list + overdue alerts** |
 | `web/app/admin/invoices/[id]/page.tsx` | **Invoice detail** |
 | `web/app/admin/inventory/page.tsx` | **Inventory items list** |
+| `web/app/admin/inventory/suppliers/page.tsx` | **Inventory suppliers list** |
 | `web/app/admin/iam/roles/page.tsx` | **Role management** |
 | `web/app/admin/settings/modules/page.tsx` | **Feature toggles** |
 | `web/app/admin/settings/availability-blocks/page.tsx` | **Availability blocking** |

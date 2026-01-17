@@ -518,9 +518,16 @@ export default function InventoryItemsPage() {
     <div className="admin-page">
       <AdminNav links={navLinks} activeKey="inventory" />
       <section className="admin-card admin-section">
-        <div className="section-heading">
-          <h1>Inventory items</h1>
-          <p className="muted">Track on-hand cleaning supplies and reorder thresholds.</p>
+        <div className="section-heading" style={{ alignItems: "flex-start" }}>
+          <div>
+            <h1>Inventory items</h1>
+            <p className="muted">Track on-hand cleaning supplies and reorder thresholds.</p>
+          </div>
+          <div className="admin-actions">
+            <a className="btn btn-ghost" href="/admin/inventory/suppliers">
+              Suppliers
+            </a>
+          </div>
         </div>
         <div className="admin-actions" style={{ flexWrap: "wrap" }}>
           <label style={{ minWidth: 200 }}>
