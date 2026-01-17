@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
 import {
@@ -122,6 +122,7 @@ export default function QualityReviewsPage() {
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replyLoading, setReplyLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const initializedFromParams = useRef(false);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -291,6 +292,24 @@ export default function QualityReviewsPage() {
   }, []);
 
   useEffect(() => {
+    if (initializedFromParams.current) return;
+    initializedFromParams.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const workerParam = params.get("worker_id") ?? "";
+    const clientParam = params.get("client_id") ?? "";
+    const fromParam = params.get("from") ?? "";
+    const toParam = params.get("to") ?? "";
+    const starsParam = params.get("stars") ?? "";
+    const hasIssueParam = params.get("has_issue") ?? "";
+    if (workerParam) setWorkerId(workerParam);
+    if (clientParam) setClientId(clientParam);
+    if (fromParam) setFromDate(fromParam);
+    if (toParam) setToDate(toParam);
+    if (starsParam) setStars(starsParam);
+    if (hasIssueParam) setHasIssue(hasIssueParam);
+  }, []);
+
+  useEffect(() => {
     if (username && password) {
       void loadProfile();
       void loadFeatureConfig();
@@ -435,6 +454,9 @@ export default function QualityReviewsPage() {
           <p className="muted">Timeline of client feedback with follow-up tools.</p>
         </div>
         <div className="admin-actions">
+          <a className="btn btn-ghost" href="/admin/quality">
+            Quality overview
+          </a>
           <a className="btn btn-ghost" href="/admin/quality/leaderboard">
             Worker leaderboard
           </a>

@@ -281,6 +281,9 @@ export default function QualityLeaderboardPage() {
           <p className="muted">Average ratings, review volume, and complaint counts per worker.</p>
         </div>
         <div className="admin-actions">
+          <Link className="btn btn-ghost" href="/admin/quality">
+            Quality overview
+          </Link>
           <Link className="btn btn-ghost" href="/admin/quality/reviews">
             View reviews
           </Link>

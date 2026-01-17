@@ -246,3 +246,45 @@ class CommonIssueTagsResponse(BaseModel):
     to_date: date
     as_of: datetime
     tags: list[CommonIssueTagEntry]
+
+
+class ServiceQualityBreakdownEntry(BaseModel):
+    service_label: str
+    average_rating: float | None = None
+    review_count: int
+    complaint_count: int
+
+
+class ServiceQualityBreakdownResponse(BaseModel):
+    from_date: date
+    to_date: date
+    as_of: datetime
+    services: list[ServiceQualityBreakdownEntry]
+
+
+class QualitySummaryReview(BaseModel):
+    feedback_id: int
+    booking_id: str
+    rating: int
+    comment: str | None = None
+    created_at: datetime
+    worker_id: int | None = None
+    worker_name: str | None = None
+    client_id: str | None = None
+    client_name: str | None = None
+
+
+class WorkerQualitySummaryResponse(BaseModel):
+    worker_id: int
+    average_rating: float | None = None
+    review_count: int
+    complaint_count: int
+    last_review: QualitySummaryReview | None = None
+
+
+class ClientQualitySummaryResponse(BaseModel):
+    client_id: str
+    average_rating: float | None = None
+    review_count: int
+    complaint_count: int
+    last_review: QualitySummaryReview | None = None

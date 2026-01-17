@@ -376,6 +376,11 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - API: `backend/app/api/routes_admin.py::/v1/admin/quality/issues`
 - Service: `backend/app/domain/quality/service.py`
 - Models: `backend/app/domain/quality/db_models.py`
+- Service breakdown: `backend/app/api/routes_admin.py::/v1/admin/quality/services/breakdown`,
+  `backend/app/domain/quality/service.py::get_service_quality_breakdown()`,
+  `web/app/admin/quality/page.tsx`
+- Detail widgets: `web/app/admin/workers/[id]/page.tsx` and
+  `web/app/admin/clients/[id]/page.tsx` (quality summary widgets linking to `/admin/quality`)
 
 ---
 

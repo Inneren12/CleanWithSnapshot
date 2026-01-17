@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.clients.db_models import ClientFeedback, ClientUser
+from app.domain.leads.db_models import Lead
 from app.domain.quality.db_models import (
     QualityIssue,
     QualityIssueResponse,
@@ -48,6 +49,26 @@ QUALITY_TAG_CATALOG: dict[str, str] = {
     "supplies": "Supplies",
     "time_overrun": "Time overrun",
 }
+
+
+def _resolve_service_label(policy_snapshot: dict | None, lead_inputs: dict | None) -> str:
+    label = None
+    if isinstance(policy_snapshot, dict):
+        label = (
+            policy_snapshot.get("service_type")
+            or policy_snapshot.get("cleaning_type")
+            or policy_snapshot.get("service")
+        )
+    if not label and isinstance(lead_inputs, dict):
+        label = (
+            lead_inputs.get("cleaning_type")
+            or lead_inputs.get("service_type")
+            or lead_inputs.get("service")
+        )
+    if label is None:
+        return "Unspecified"
+    normalized = str(label).strip()
+    return normalized or "Unspecified"
 
 
 def resolve_severity(
@@ -649,3 +670,212 @@ async def list_worker_quality_leaderboard(
     entries.sort(key=_sort_key)
 
     return entries, previous_aggregates
+
+
+async def get_service_quality_breakdown(
+    session: AsyncSession,
+    *,
+    org_id,
+    from_date: date,
+    to_date: date,
+) -> list[dict[str, object]]:
+    review_filters: list[sa.ColumnElement[bool]] = [
+        ClientFeedback.org_id == org_id,
+        Booking.org_id == org_id,
+        ClientFeedback.created_at >= _date_start(from_date),
+        ClientFeedback.created_at <= _date_end(to_date),
+    ]
+    review_stmt = (
+        sa.select(
+            ClientFeedback.rating,
+            Booking.policy_snapshot,
+            Lead.structured_inputs,
+        )
+        .select_from(ClientFeedback)
+        .join(Booking, Booking.booking_id == ClientFeedback.booking_id)
+        .outerjoin(Lead, Lead.lead_id == Booking.lead_id)
+        .where(*review_filters)
+    )
+    review_rows = (await session.execute(review_stmt)).all()
+
+    review_totals: dict[str, dict[str, float | int]] = {}
+    for rating, policy_snapshot, structured_inputs in review_rows:
+        if rating is None:
+            continue
+        label = _resolve_service_label(policy_snapshot, structured_inputs)
+        entry = review_totals.setdefault(label, {"review_count": 0, "rating_total": 0.0})
+        entry["review_count"] = int(entry.get("review_count", 0)) + 1
+        entry["rating_total"] = float(entry.get("rating_total", 0.0)) + float(rating)
+
+    complaint_filters: list[sa.ColumnElement[bool]] = [
+        QualityIssue.org_id == org_id,
+        QualityIssue.created_at >= _date_start(from_date),
+        QualityIssue.created_at <= _date_end(to_date),
+    ]
+    complaint_stmt = (
+        sa.select(
+            QualityIssue.id,
+            Booking.policy_snapshot,
+            Lead.structured_inputs,
+        )
+        .select_from(QualityIssue)
+        .outerjoin(Booking, Booking.booking_id == QualityIssue.booking_id)
+        .outerjoin(Lead, Lead.lead_id == Booking.lead_id)
+        .where(*complaint_filters)
+    )
+    complaint_rows = (await session.execute(complaint_stmt)).all()
+
+    complaint_totals: dict[str, int] = {}
+    for _issue_id, policy_snapshot, structured_inputs in complaint_rows:
+        label = _resolve_service_label(policy_snapshot, structured_inputs)
+        complaint_totals[label] = complaint_totals.get(label, 0) + 1
+
+    service_keys = set(review_totals.keys()).union(complaint_totals.keys())
+    breakdown: list[dict[str, object]] = []
+    for service_label in service_keys:
+        review_data = review_totals.get(service_label, {})
+        review_count = int(review_data.get("review_count", 0) or 0)
+        rating_total = float(review_data.get("rating_total", 0.0) or 0.0)
+        avg_rating = (rating_total / review_count) if review_count else None
+        breakdown.append(
+            {
+                "service_label": service_label,
+                "average_rating": avg_rating,
+                "review_count": review_count,
+                "complaint_count": int(complaint_totals.get(service_label, 0)),
+            }
+        )
+
+    breakdown.sort(
+        key=lambda entry: (
+            -int(entry["review_count"]),
+            -int(entry["complaint_count"]),
+            str(entry["service_label"]),
+        )
+    )
+    return breakdown
+
+
+async def get_worker_quality_summary(
+    session: AsyncSession,
+    *,
+    org_id,
+    worker_id: int,
+) -> dict[str, object]:
+    review_filters = [
+        ClientFeedback.org_id == org_id,
+        Booking.org_id == org_id,
+        Booking.assigned_worker_id == worker_id,
+    ]
+    review_summary_stmt = (
+        sa.select(
+            sa.func.count(ClientFeedback.feedback_id),
+            sa.func.avg(ClientFeedback.rating),
+        )
+        .select_from(ClientFeedback)
+        .join(Booking, Booking.booking_id == ClientFeedback.booking_id)
+        .where(*review_filters)
+    )
+    review_count, avg_rating = (await session.execute(review_summary_stmt)).one()
+
+    complaint_stmt = sa.select(sa.func.count(QualityIssue.id)).where(
+        QualityIssue.org_id == org_id,
+        QualityIssue.worker_id == worker_id,
+    )
+    complaint_count = int((await session.execute(complaint_stmt)).scalar_one() or 0)
+
+    last_review_stmt = (
+        sa.select(
+            ClientFeedback,
+            ClientUser,
+        )
+        .select_from(ClientFeedback)
+        .join(Booking, Booking.booking_id == ClientFeedback.booking_id)
+        .join(ClientUser, ClientUser.client_id == ClientFeedback.client_id)
+        .where(*review_filters)
+        .order_by(ClientFeedback.created_at.desc())
+        .limit(1)
+    )
+    last_review_row = (await session.execute(last_review_stmt)).first()
+    last_review = None
+    if last_review_row:
+        feedback, client = last_review_row
+        last_review = {
+            "feedback_id": feedback.feedback_id,
+            "booking_id": feedback.booking_id,
+            "rating": feedback.rating,
+            "comment": feedback.comment,
+            "created_at": feedback.created_at,
+            "client_id": client.client_id,
+            "client_name": client.name,
+        }
+
+    return {
+        "worker_id": worker_id,
+        "average_rating": float(avg_rating) if avg_rating is not None else None,
+        "review_count": int(review_count or 0),
+        "complaint_count": complaint_count,
+        "last_review": last_review,
+    }
+
+
+async def get_client_quality_summary(
+    session: AsyncSession,
+    *,
+    org_id,
+    client_id: str,
+) -> dict[str, object]:
+    review_filters = [
+        ClientFeedback.org_id == org_id,
+        ClientFeedback.client_id == client_id,
+    ]
+    review_summary_stmt = (
+        sa.select(
+            sa.func.count(ClientFeedback.feedback_id),
+            sa.func.avg(ClientFeedback.rating),
+        )
+        .select_from(ClientFeedback)
+        .where(*review_filters)
+    )
+    review_count, avg_rating = (await session.execute(review_summary_stmt)).one()
+
+    complaint_stmt = sa.select(sa.func.count(QualityIssue.id)).where(
+        QualityIssue.org_id == org_id,
+        QualityIssue.client_id == client_id,
+    )
+    complaint_count = int((await session.execute(complaint_stmt)).scalar_one() or 0)
+
+    last_review_stmt = (
+        sa.select(
+            ClientFeedback,
+            Booking,
+            Worker,
+        )
+        .select_from(ClientFeedback)
+        .join(Booking, Booking.booking_id == ClientFeedback.booking_id)
+        .outerjoin(Worker, Worker.worker_id == Booking.assigned_worker_id)
+        .where(*review_filters)
+        .order_by(ClientFeedback.created_at.desc())
+        .limit(1)
+    )
+    last_review_row = (await session.execute(last_review_stmt)).first()
+    last_review = None
+    if last_review_row:
+        feedback, booking, worker = last_review_row
+        last_review = {
+            "feedback_id": feedback.feedback_id,
+            "booking_id": feedback.booking_id,
+            "rating": feedback.rating,
+            "comment": feedback.comment,
+            "created_at": feedback.created_at,
+            "worker_id": worker.worker_id if worker else None,
+            "worker_name": worker.name if worker else None,
+        }
+
+    return {
+        "client_id": client_id,
+        "average_rating": float(avg_rating) if avg_rating is not None else None,
+        "review_count": int(review_count or 0),
+        "complaint_count": complaint_count,
+        "last_review": last_review,
+    }
