@@ -273,6 +273,6 @@ def test_admin_lists_referral_metadata(client, async_session_maker):
     leads = client.get("/v1/admin/leads", auth=auth)
     assert leads.status_code == 200
     payload = leads.json()
-    assert any(entry["referral_code"] == referral_code for entry in payload)
-    referrer_entry = next(entry for entry in payload if entry["referral_code"] == referral_code)
+    assert any(entry["referral_code"] == referral_code for entry in payload["items"])
+    referrer_entry = next(entry for entry in payload["items"] if entry["referral_code"] == referral_code)
     assert referrer_entry["referral_credits"] == 1

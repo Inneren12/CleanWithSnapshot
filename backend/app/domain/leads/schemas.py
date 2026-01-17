@@ -5,19 +5,19 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.domain.pricing.models import AddOns, CleaningType, EstimateRequest, EstimateResponse, Frequency
 from app.domain.leads.statuses import (
-    LEAD_STATUS_BOOKED,
-    LEAD_STATUS_CANCELLED,
     LEAD_STATUS_CONTACTED,
-    LEAD_STATUS_DONE,
+    LEAD_STATUS_LOST,
     LEAD_STATUS_NEW,
+    LEAD_STATUS_QUOTED,
+    LEAD_STATUS_WON,
 )
 
 LeadStatus = Literal[
     LEAD_STATUS_NEW,
     LEAD_STATUS_CONTACTED,
-    LEAD_STATUS_BOOKED,
-    LEAD_STATUS_DONE,
-    LEAD_STATUS_CANCELLED,
+    LEAD_STATUS_QUOTED,
+    LEAD_STATUS_WON,
+    LEAD_STATUS_LOST,
 ]
 
 
@@ -76,6 +76,10 @@ class LeadCreateRequest(BaseModel):
     utm_term: Optional[str] = None
     utm_content: Optional[str] = None
     utm: Optional[UTMParams] = None
+    source: Optional[str] = None
+    campaign: Optional[str] = None
+    keyword: Optional[str] = None
+    landing_page: Optional[str] = None
     referrer: Optional[str] = None
     referral_code: Optional[str] = Field(
         default=None, min_length=4, max_length=16, description="Referral code applied"
@@ -119,7 +123,12 @@ class AdminLeadResponse(BaseModel):
     postal_code: Optional[str] = None
     preferred_dates: List[str]
     notes: Optional[str] = None
+    source: Optional[str] = None
+    campaign: Optional[str] = None
+    keyword: Optional[str] = None
+    landing_page: Optional[str] = None
     created_at: str
+    updated_at: str
     referrer: Optional[str] = None
     status: LeadStatus
     referral_code: str
@@ -131,6 +140,20 @@ class AdminLeadStatusUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: LeadStatus
+
+
+class AdminLeadUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Optional[LeadStatus] = None
+    notes: Optional[str] = None
+
+
+class AdminLeadListResponse(BaseModel):
+    items: List[AdminLeadResponse]
+    total: int
+    page: int
+    page_size: int
 
 
 def admin_lead_from_model(model, referral_credit_count: int | None = None) -> AdminLeadResponse:
@@ -146,7 +169,12 @@ def admin_lead_from_model(model, referral_credit_count: int | None = None) -> Ad
         postal_code=model.postal_code,
         preferred_dates=model.preferred_dates,
         notes=model.notes,
+        source=getattr(model, "source", None),
+        campaign=getattr(model, "campaign", None),
+        keyword=getattr(model, "keyword", None),
+        landing_page=getattr(model, "landing_page", None),
         created_at=model.created_at.isoformat(),
+        updated_at=model.updated_at.isoformat(),
         referrer=model.referrer,
         status=model.status or LEAD_STATUS_NEW,
         referral_code=model.referral_code,

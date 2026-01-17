@@ -74,6 +74,10 @@ class Lead(Base):
     utm_campaign: Mapped[str | None] = mapped_column(String(100))
     utm_term: Mapped[str | None] = mapped_column(String(100))
     utm_content: Mapped[str | None] = mapped_column(String(100))
+    source: Mapped[str | None] = mapped_column(String(100))
+    campaign: Mapped[str | None] = mapped_column(String(100))
+    keyword: Mapped[str | None] = mapped_column(String(100))
+    landing_page: Mapped[str | None] = mapped_column(String(255))
     referrer: Mapped[str | None] = mapped_column(String(255))
     referral_code: Mapped[str] = mapped_column(
         String(16),

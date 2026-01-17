@@ -3,7 +3,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from app.domain.leads.db_models import ChatSession, Lead
-from app.domain.leads.statuses import LEAD_STATUS_BOOKED
+from app.domain.leads.statuses import LEAD_STATUS_WON
 from app.settings import settings
 
 
@@ -52,7 +52,7 @@ def test_retention_cleanup_counts_and_skips_leads_by_default(client, async_sessi
             lead = await session.get(Lead, lead_id)
             assert lead
             lead.created_at = datetime.now(tz=timezone.utc) - timedelta(days=400)
-            lead.status = LEAD_STATUS_BOOKED
+            lead.status = LEAD_STATUS_WON
             session.add(chat)
             await session.commit()
 

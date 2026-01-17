@@ -54,6 +54,13 @@ type Lead = {
   status?: string;
 };
 
+type LeadListResponse = {
+  items: Lead[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
 type Booking = {
   booking_id: string;
   lead_id?: string | null;
@@ -198,6 +205,7 @@ export default function AdminPage() {
   const canManageBookings =
     permissionKeys.includes("bookings.edit") || permissionKeys.includes("bookings.assign");
   const isReadOnly = !canManageBookings;
+  const canEditLeads = permissionKeys.includes("contacts.edit") || permissionKeys.includes("leads.edit");
   const canAdminMetrics = permissionKeys.includes("admin.manage");
 
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
@@ -221,6 +229,7 @@ export default function AdminPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      { key: "leads", label: "Leads", href: "/admin/leads", featureKey: "module.leads" },
       {
         key: "notifications",
         label: "Notifications",
@@ -399,8 +408,8 @@ export default function AdminPage() {
       cache: "no-store",
     });
     if (!response.ok) return;
-    const data = (await response.json()) as Lead[];
-    setLeads(data);
+    const data = (await response.json()) as LeadListResponse;
+    setLeads(data.items);
   };
 
   const loadBookings = async () => {
@@ -494,13 +503,13 @@ export default function AdminPage() {
   };
 
   const updateLeadStatus = async (leadId: string, status: string) => {
-    if (isReadOnly) {
+    if (!canEditLeads) {
       setMessage("Read-only role cannot update leads");
       return;
     }
     setMessage(null);
-    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}/status`, {
-      method: "POST",
+    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}`, {
+      method: "PATCH",
       headers: { ...authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
     });
@@ -828,12 +837,12 @@ return (
                   <td>{statusBadge(lead.status)}</td>
                   <td>
                     <div className="admin-actions">
-                      {["CONTACTED", "BOOKED", "DONE", "CANCELLED"].map((status) => (
+                      {["CONTACTED", "QUOTED", "WON", "LOST"].map((status) => (
                         <button
                           key={status}
                           className="btn btn-ghost"
                           type="button"
-                          disabled={isReadOnly}
+                          disabled={!canEditLeads}
                           onClick={() => updateLeadStatus(lead.lead_id, status)}
                         >
                           {status}
