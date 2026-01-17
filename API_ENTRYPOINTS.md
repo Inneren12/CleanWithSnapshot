@@ -245,6 +245,7 @@ entries sorted by newest first. Each timeline entry includes `action`, `timestam
 
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
+| GET | `/v1/admin/analytics/funnel` | `finance.view` | Booking funnel counts (inquiries, quotes, bookings, reviews) + conversions + loss reasons |
 | GET | `/v1/admin/analytics/clients/clv` | `finance.view` | Client lifetime value stats and top clients (paid payments only) |
 | GET | `/v1/admin/analytics/clients/retention` | `finance.view` | Client retention cohorts (monthly, paid payments only) |
 | GET | `/v1/admin/analytics/geo` | `finance.view` | Geographic heatmap aggregates by area (optional coordinate points) |
@@ -270,6 +271,31 @@ entries sorted by newest first. Each timeline entry includes `action`, `timestam
       "first_payment_at": "2025-02-01T12:00:00Z",
       "last_payment_at": "2025-08-30T10:15:00Z"
     }
+  ]
+}
+```
+
+**Funnel response (example):**
+```json
+{
+  "range_start": "2025-01-01T00:00:00Z",
+  "range_end": "2025-01-31T23:59:59Z",
+  "counts": {
+    "inquiries": 42,
+    "quotes": 18,
+    "bookings_created": 12,
+    "bookings_completed": 9,
+    "reviews": 5
+  },
+  "conversion_rates": {
+    "inquiry_to_quote": 0.4286,
+    "quote_to_booking": 0.6667,
+    "booking_to_completed": 0.75,
+    "completed_to_review": 0.5556
+  },
+  "loss_reasons": [
+    { "reason": "Too expensive", "count": 6 },
+    { "reason": "Booked elsewhere", "count": 3 }
   ]
 }
 ```

@@ -54,6 +54,7 @@ from app.domain.analytics.service import (
     cohort_repeat_rates,
     conversion_counts,
     duration_accuracy,
+    funnel_loss_reasons,
     funnel_summary,
     geo_area_analytics,
     kpi_aggregates,
@@ -5969,16 +5970,22 @@ async def get_funnel_analytics(
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     start, end = _normalize_range(from_ts, to_ts)
     counts = await funnel_summary(session, start, end, org_id=org_id)
+    loss_reasons = await funnel_loss_reasons(session, start, end, org_id=org_id)
     return analytics_schemas.FunnelAnalyticsResponse(
         range_start=start,
         range_end=end,
         counts=analytics_schemas.FunnelCounts(**counts),
         conversion_rates=analytics_schemas.FunnelConversionRates(
-            lead_to_booking=_rate(counts["bookings"], counts["leads"]),
-            booking_to_completed=_rate(counts["completed"], counts["bookings"]),
-            completed_to_paid=_rate(counts["paid"], counts["completed"]),
-            lead_to_paid=_rate(counts["paid"], counts["leads"]),
+            inquiry_to_quote=_rate(counts["quotes"], counts["inquiries"]),
+            quote_to_booking=_rate(counts["bookings_created"], counts["quotes"]),
+            booking_to_completed=_rate(
+                counts["bookings_completed"], counts["bookings_created"]
+            ),
+            completed_to_review=_rate(counts["reviews"], counts["bookings_completed"]),
         ),
+        loss_reasons=[
+            analytics_schemas.FunnelLossReasonSummary(**reason) for reason in loss_reasons
+        ],
     )
 
 

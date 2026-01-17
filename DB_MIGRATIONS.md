@@ -41,6 +41,9 @@ and `c6f2b8d1a4e7_add_training_sessions.py` adds `training_sessions` and `traini
 and `f2a4b7c8d9e0_add_finance_expenses_budgets.py` adds `finance_expense_categories`, `finance_expenses`, and `finance_budgets`,
 and `f9c1d2e3a4b5_add_finance_cash_snapshots.py` adds `finance_cash_snapshots` for optional cash balance snapshots.
 
+**Analytics booking funnel:** No schema changes required (uses existing `leads`, `lead_quotes`, `bookings`,
+and `nps_responses` tables for inquiries, quotes, bookings, and reviews).
+
 ---
 
 ## How Alembic is Structured

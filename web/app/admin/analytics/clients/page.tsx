@@ -115,6 +115,12 @@ export default function ClientAnalyticsPage() {
         featureKey: "module.analytics",
       },
       {
+        key: "analytics-funnel",
+        label: "Booking Funnel",
+        href: "/admin/analytics/funnel",
+        featureKey: "module.analytics",
+      },
+      {
         key: "analytics-geo",
         label: "Geo Heatmap",
         href: "/admin/analytics/geo",
