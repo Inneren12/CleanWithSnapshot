@@ -286,6 +286,9 @@ alembic merge -m "merge migration heads" abc123 def456
 # This creates a new migration like:
 # alembic/versions/96339be46688_merge_alembic_heads.py
 
+# Example (training head merge):
+# alembic merge -m "merge heads b1c2d3e4f5a6 and b7f4d2e9c1a0" b1c2d3e4f5a6 b7f4d2e9c1a0
+
 # Example (no-op merge between two specific heads):
 # alembic merge -m "merge heads 9f2b7c4d1a0e and b8e1c2d3f4a5" 9f2b7c4d1a0e b8e1c2d3f4a5
 # Ensure the generated migration has down_revision = ("9f2b7c4d1a0e", "b8e1c2d3f4a5") and empty upgrade/downgrade.
