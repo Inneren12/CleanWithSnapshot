@@ -570,6 +570,7 @@ Schedules: `daily`, `weekly`, `monthly`.
 | PATCH | `/v1/admin/inventory/categories/{category_id}` | `inventory.manage` or `admin.manage` | Update an existing category |
 | DELETE | `/v1/admin/inventory/categories/{category_id}` | `inventory.manage` or `admin.manage` | Delete a category (items' category_id set to NULL) |
 | GET | `/v1/admin/inventory/items` | `inventory.view` or `core.view` | List inventory items with filters and pagination |
+| GET | `/v1/admin/inventory/low_stock` | `inventory.view` | List low stock inventory items with need quantities |
 | POST | `/v1/admin/inventory/items` | `inventory.manage` or `admin.manage` | Create a new inventory item |
 | PATCH | `/v1/admin/inventory/items/{item_id}` | `inventory.manage` or `admin.manage` | Update an existing item |
 | DELETE | `/v1/admin/inventory/items/{item_id}` | `inventory.manage` or `admin.manage` | Delete an inventory item |
@@ -591,6 +592,14 @@ Schedules: `daily`, `weekly`, `monthly`.
 | `query` | `string` | Search by item name or SKU (optional) |
 | `category_id` | `UUID` | Filter by category (optional) |
 | `active` | `bool` | Filter by active status (optional) |
+| `page` | `int` | Page number (default: 1) |
+| `page_size` | `int` | Items per page (default: 50, max: 100) |
+
+**Low stock query params (`GET /v1/admin/inventory/low_stock`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `only_below_min` | `bool` | When true, return only items with `current_qty < min_qty` (default: true) |
 | `page` | `int` | Page number (default: 1) |
 | `page_size` | `int` | Items per page (default: 50, max: 100) |
 
@@ -625,6 +634,32 @@ Schedules: `daily`, `weekly`, `monthly`.
       "unit": "bottles",
       "current_qty": "10.00",
       "min_qty": "5.00",
+      "location_label": "Shelf A",
+      "active": true,
+      "created_at": "2026-01-15T10:00:00Z",
+      "category_name": null
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+**Low stock list response shape:**
+```json
+{
+  "items": [
+    {
+      "item_id": "1f5a1c2d-3e4f-5a6b-7c8d-9e0f1a2b3c4d",
+      "org_id": "b7d3ef62-6b4b-4f3b-9f48-6a89a80fb2d5",
+      "category_id": "c6e4c9c8-9f51-4ce9-a5e8-9b3b6d8b87c1",
+      "sku": "SKU001",
+      "name": "Glass Cleaner",
+      "unit": "bottles",
+      "current_qty": "2.00",
+      "min_qty": "5.00",
+      "need_qty": "3.00",
       "location_label": "Shelf A",
       "active": true,
       "created_at": "2026-01-15T10:00:00Z",

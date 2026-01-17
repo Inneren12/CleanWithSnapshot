@@ -105,3 +105,30 @@ class InventoryItemListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class InventoryLowStockItemResponse(BaseModel):
+    """Response model for low stock inventory item."""
+
+    item_id: UUID
+    org_id: UUID
+    category_id: UUID | None
+    sku: str | None
+    name: str
+    unit: str
+    current_qty: Decimal
+    min_qty: Decimal
+    need_qty: Decimal
+    location_label: str | None
+    active: bool
+    created_at: datetime
+    category_name: str | None = None
+
+
+class InventoryLowStockListResponse(BaseModel):
+    """Paginated list response for low stock inventory items."""
+
+    items: list[InventoryLowStockItemResponse]
+    total: int
+    page: int
+    page_size: int

@@ -6,7 +6,7 @@ from decimal import Decimal
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select, or_
+from sqlalchemy import case, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.inventory import db_models, schemas
@@ -208,6 +208,60 @@ async def list_items(
     # Execute query
     result = await session.execute(stmt)
     items = list(result.scalars().all())
+
+    return items, total
+
+
+async def list_low_stock_items(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    only_below_min: bool = True,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[tuple[db_models.InventoryItem, Decimal]], int]:
+    """
+    List inventory items with computed need quantities for low stock monitoring.
+
+    Args:
+        session: Database session
+        org_id: Organization ID for scoping
+        only_below_min: When true, only items with current_qty < min_qty are returned
+        page: Page number (1-indexed)
+        page_size: Number of items per page
+
+    Returns:
+        Tuple of (list of (item, need_qty), total count)
+    """
+    need_qty_expr = case(
+        (
+            db_models.InventoryItem.current_qty < db_models.InventoryItem.min_qty,
+            db_models.InventoryItem.min_qty - db_models.InventoryItem.current_qty,
+        ),
+        else_=Decimal("0"),
+    ).label("need_qty")
+
+    stmt = select(db_models.InventoryItem, need_qty_expr).where(
+        db_models.InventoryItem.org_id == org_id
+    )
+
+    if only_below_min:
+        stmt = stmt.where(
+            db_models.InventoryItem.current_qty < db_models.InventoryItem.min_qty
+        )
+
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total_result = await session.execute(count_stmt)
+    total = total_result.scalar_one()
+
+    stmt = stmt.order_by(
+        need_qty_expr.desc(),
+        db_models.InventoryItem.name.asc(),
+    )
+    stmt = stmt.limit(page_size).offset((page - 1) * page_size)
+
+    result = await session.execute(stmt)
+    items = [(row[0], row[1]) for row in result.all()]
 
     return items, total
 
