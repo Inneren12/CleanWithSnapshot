@@ -465,19 +465,23 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 ### 10. Marketing
 
-**Purpose:** Marketing campaigns, promotional codes
+**Purpose:** Marketing campaigns, promotional codes, and discount governance
 
 **Key Pages:**
-- TBD (not fully implemented)
+- `web/app/admin/marketing/promo-codes/page.tsx` - Promo code management
 
 **Backend Routers:**
-- TBD
+- `backend/app/api/routes_admin_marketing.py` - `/v1/admin/marketing/promo-codes`
+
+**Key Services:**
+- `backend/app/domain/marketing/service.py` - Promo code CRUD + validation
 
 **Key Tables:**
-- TBD
+- `promo_codes` - Promo definitions and restrictions
+- `promo_code_redemptions` - Redemption log for limits and per-customer rules
 
 **Permissions Required:**
-- TBD
+- `settings.manage` - Manage marketing settings and promo codes
 
 **Feature Key:** `module.marketing`
 
