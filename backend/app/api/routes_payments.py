@@ -20,6 +20,7 @@ from app.domain.bookings import service as booking_service
 from app.domain.bookings.db_models import Booking
 from app.domain.invoices import schemas as invoice_schemas, service as invoice_service, statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment, StripeEvent, StripeProcessedEvent
+from app.domain.notifications_center import service as notifications_service
 from app.domain.saas import billing_service
 from app.domain.saas.plans import get_plan
 from app.domain.disputes import schemas as dispute_schemas
@@ -342,6 +343,18 @@ async def _handle_invoice_event(session: AsyncSession, event: Any, ctx: StripeOr
     if payment_status == invoice_statuses.PAYMENT_STATUS_FAILED:
         await invoice_service.enqueue_dunning_email(
             session, invoice, failure_reason=str(event_type)
+        )
+        await notifications_service.emit_preset_event(
+            session,
+            org_id=invoice.org_id,
+            preset_key="payment_failed",
+            priority="HIGH",
+            title="Payment failed",
+            body=f"Invoice {invoice.invoice_number} payment attempt failed.",
+            entity_type="invoice",
+            entity_id=str(invoice.invoice_id),
+            action_href=f"/admin/invoices/{invoice.invoice_id}",
+            action_kind="open_invoice",
         )
 
     logger.info(

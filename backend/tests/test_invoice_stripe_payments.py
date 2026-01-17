@@ -8,6 +8,7 @@ import sqlalchemy as sa
 
 from app.domain.invoices import service as invoice_service, statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment, StripeEvent, StripeProcessedEvent
+from app.domain.notifications_center.db_models import NotificationEvent, NotificationRulePreset
 from app.domain.leads.db_models import Lead
 from app.infra import stripe_client as stripe_infra
 from app.main import app
@@ -362,6 +363,13 @@ def test_dunning_outbox_on_payment_failure(client, async_session_maker, monkeypa
             session.add_all([lead, invoice])
             await session.flush()
             await invoice_service.upsert_public_token(session, invoice)
+            session.add(
+                NotificationRulePreset(
+                    org_id=DEFAULT_ORG_ID,
+                    preset_key="payment_failed",
+                    enabled=True,
+                )
+            )
             await session.commit()
             return invoice.invoice_id
 
@@ -398,3 +406,16 @@ def test_dunning_outbox_on_payment_failure(client, async_session_maker, monkeypa
     assert response.status_code == 200
     assert response.json()["processed"] is True
     assert called["value"] is True
+
+    async def _fetch_notifications():
+        async with async_session_maker() as session:
+            rows = await session.execute(
+                sa.select(NotificationEvent).where(
+                    NotificationEvent.org_id == DEFAULT_ORG_ID,
+                    NotificationEvent.type == "payment_failed",
+                )
+            )
+            return list(rows.scalars())
+
+    events = asyncio.run(_fetch_notifications())
+    assert len(events) == 1

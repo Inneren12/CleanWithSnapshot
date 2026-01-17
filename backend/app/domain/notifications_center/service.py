@@ -7,7 +7,23 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.feature_modules import service as feature_service
 from app.domain.notifications_center import db_models
+
+PRESET_KEYS = [
+    "no_show",
+    "payment_failed",
+    "negative_review",
+    "low_stock",
+    "high_value_lead",
+]
+
+DEFAULT_PRESET = {
+    "enabled": False,
+    "notify_roles": [],
+    "notify_user_ids": [],
+    "escalation_delay_min": None,
+}
 
 URGENT_PRIORITIES = {"CRITICAL", "HIGH"}
 
@@ -217,3 +233,132 @@ async def mark_all_notifications_read(
 
 def parse_cursor(cursor: str | None) -> tuple[datetime, uuid.UUID] | None:
     return _decode_cursor(cursor) if cursor else None
+
+
+def _normalize_list(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = str(raw).strip()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
+def _default_preset_record(
+    org_id: uuid.UUID, preset_key: str
+) -> db_models.NotificationRulePreset:
+    return db_models.NotificationRulePreset(
+        org_id=org_id,
+        preset_key=preset_key,
+        enabled=DEFAULT_PRESET["enabled"],
+        notify_roles=list(DEFAULT_PRESET["notify_roles"]),
+        notify_user_ids=list(DEFAULT_PRESET["notify_user_ids"]),
+        escalation_delay_min=DEFAULT_PRESET["escalation_delay_min"],
+    )
+
+
+async def list_rule_presets(
+    session: AsyncSession, *, org_id: uuid.UUID
+) -> list[db_models.NotificationRulePreset]:
+    rows = await session.execute(
+        sa.select(db_models.NotificationRulePreset).where(
+            db_models.NotificationRulePreset.org_id == org_id
+        )
+    )
+    existing = {row.preset_key: row for row in rows.scalars()}
+    presets: list[db_models.NotificationRulePreset] = []
+    for key in PRESET_KEYS:
+        presets.append(existing.get(key) or _default_preset_record(org_id, key))
+    return presets
+
+
+async def upsert_rule_presets(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    updates: list[dict],
+) -> list[db_models.NotificationRulePreset]:
+    keys = [update.get("preset_key") for update in updates or [] if update.get("preset_key")]
+    if not keys:
+        return await list_rule_presets(session, org_id=org_id)
+
+    rows = await session.execute(
+        sa.select(db_models.NotificationRulePreset).where(
+            db_models.NotificationRulePreset.org_id == org_id,
+            db_models.NotificationRulePreset.preset_key.in_(keys),
+        )
+    )
+    existing = {row.preset_key: row for row in rows.scalars()}
+
+    for payload in updates:
+        preset_key = payload.get("preset_key")
+        if not preset_key:
+            continue
+        record = existing.get(preset_key)
+        if record is None:
+            record = _default_preset_record(org_id, preset_key)
+            session.add(record)
+            existing[preset_key] = record
+        if "enabled" in payload and payload["enabled"] is not None:
+            record.enabled = bool(payload["enabled"])
+        if "notify_roles" in payload and payload["notify_roles"] is not None:
+            record.notify_roles = _normalize_list(payload["notify_roles"])
+        if "notify_user_ids" in payload and payload["notify_user_ids"] is not None:
+            record.notify_user_ids = _normalize_list(payload["notify_user_ids"])
+        if "escalation_delay_min" in payload:
+            record.escalation_delay_min = payload["escalation_delay_min"]
+    await session.flush()
+    return await list_rule_presets(session, org_id=org_id)
+
+
+async def emit_preset_event(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    preset_key: str,
+    priority: str,
+    title: str,
+    body: str,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    action_href: str | None = None,
+    action_kind: str | None = None,
+) -> db_models.NotificationEvent | None:
+    if preset_key not in PRESET_KEYS:
+        raise ValueError("Unknown preset key")
+    enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "module.notifications_center"
+    )
+    if not enabled:
+        return None
+
+    preset = await session.scalar(
+        sa.select(db_models.NotificationRulePreset).where(
+            db_models.NotificationRulePreset.org_id == org_id,
+            db_models.NotificationRulePreset.preset_key == preset_key,
+        )
+    )
+    if preset is None:
+        preset = _default_preset_record(org_id, preset_key)
+    if not preset.enabled:
+        return None
+
+    event = db_models.NotificationEvent(
+        org_id=org_id,
+        priority=priority,
+        type=preset_key,
+        title=title,
+        body=body,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action_href=action_href,
+        action_kind=action_kind,
+    )
+    session.add(event)
+    await session.flush()
+    return event

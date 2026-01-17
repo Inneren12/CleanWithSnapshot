@@ -365,6 +365,30 @@ Query parameters:
 - `POST /v1/admin/notifications/{id}/read` marks a single event as read.
 - `POST /v1/admin/notifications/read_all` marks all events read for the current user.
 
+#### Notifications Rules Presets (Owner-only)
+
+`GET /v1/admin/notifications/rules` returns preset notification rules configuration.
+`PATCH /v1/admin/notifications/rules` updates preset configuration.
+Requires Owner basic auth (role check).
+
+**Preset keys:**
+`no_show`, `payment_failed`, `negative_review`, `low_stock`, `high_value_lead`
+
+```json
+{
+  "org_id": "b7d3ef62-6b4b-4f3b-9f48-6a89a80fb2d5",
+  "presets": [
+    {
+      "preset_key": "payment_failed",
+      "enabled": true,
+      "notify_roles": ["owner", "finance"],
+      "notify_user_ids": [],
+      "escalation_delay_min": 30
+    }
+  ]
+}
+```
+
 ### Quality
 
 | Method | Path | Permission | Purpose |

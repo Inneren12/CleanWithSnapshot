@@ -13,6 +13,7 @@ from app.domain.bookings.db_models import Booking, BookingWorker, Team
 from app.domain.clients.db_models import ClientAddress, ClientFeedback, ClientNote, ClientUser
 from app.domain.invoices import service as invoice_service
 from app.domain.invoices.schemas import InvoiceItemCreate
+from app.domain.notifications_center.db_models import NotificationEvent, NotificationRulePreset
 from app.domain.saas.db_models import Organization
 from app.domain.subscriptions.db_models import Subscription
 from app.domain.workers.db_models import Worker
@@ -1257,6 +1258,106 @@ def test_admin_can_create_client_feedback_and_scope_booking(client, async_sessio
             follow_redirects=False,
         )
         assert invalid_response.status_code == 400
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_negative_review_notifications_enabled(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, booking_id, _ = _seed_client_and_cross_org_booking(async_session_maker)
+
+        async def enable_preset():
+            async with async_session_maker() as session:
+                session.add(
+                    NotificationRulePreset(
+                        org_id=settings.default_org_id,
+                        preset_key="negative_review",
+                        enabled=True,
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(enable_preset())
+
+        headers = _basic_auth("admin", "secret")
+        create_response = client.post(
+            f"/v1/admin/ui/clients/{client_id}/feedback/create",
+            headers=headers,
+            data={"booking_id": booking_id, "rating": "2", "comment": "Not good"},
+            follow_redirects=False,
+        )
+        assert create_response.status_code == 303
+
+        async def fetch_event_count() -> int:
+            async with async_session_maker() as session:
+                result = await session.execute(
+                    sa.select(sa.func.count())
+                    .select_from(NotificationEvent)
+                    .where(
+                        NotificationEvent.org_id == settings.default_org_id,
+                        NotificationEvent.type == "negative_review",
+                        NotificationEvent.entity_id == booking_id,
+                    )
+                )
+                return int(result.scalar() or 0)
+
+        assert asyncio.run(fetch_event_count()) == 1
+    finally:
+        settings.admin_basic_username = previous_username
+        settings.admin_basic_password = previous_password
+
+
+def test_negative_review_notifications_disabled(client, async_session_maker):
+    previous_username = settings.admin_basic_username
+    previous_password = settings.admin_basic_password
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        client_id, booking_id, _ = _seed_client_and_cross_org_booking(async_session_maker)
+
+        async def disable_preset():
+            async with async_session_maker() as session:
+                session.add(
+                    NotificationRulePreset(
+                        org_id=settings.default_org_id,
+                        preset_key="negative_review",
+                        enabled=False,
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(disable_preset())
+
+        headers = _basic_auth("admin", "secret")
+        create_response = client.post(
+            f"/v1/admin/ui/clients/{client_id}/feedback/create",
+            headers=headers,
+            data={"booking_id": booking_id, "rating": "1", "comment": "Bad"},
+            follow_redirects=False,
+        )
+        assert create_response.status_code == 303
+
+        async def fetch_event_count() -> int:
+            async with async_session_maker() as session:
+                result = await session.execute(
+                    sa.select(sa.func.count())
+                    .select_from(NotificationEvent)
+                    .where(
+                        NotificationEvent.org_id == settings.default_org_id,
+                        NotificationEvent.type == "negative_review",
+                        NotificationEvent.entity_id == booking_id,
+                    )
+                )
+                return int(result.scalar() or 0)
+
+        assert asyncio.run(fetch_event_count()) == 0
     finally:
         settings.admin_basic_username = previous_username
         settings.admin_basic_password = previous_password

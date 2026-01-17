@@ -7,6 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 NotificationFilter = Literal["all", "urgent", "unread"]
+NotificationPresetKey = Literal[
+    "no_show",
+    "payment_failed",
+    "negative_review",
+    "low_stock",
+    "high_value_lead",
+]
 
 
 class NotificationEventResponse(BaseModel):
@@ -38,3 +45,28 @@ class NotificationReadResponse(BaseModel):
 
 class NotificationReadAllResponse(BaseModel):
     marked_count: int
+
+
+class NotificationRulePresetResponse(BaseModel):
+    preset_key: NotificationPresetKey
+    enabled: bool
+    notify_roles: list[str] = Field(default_factory=list)
+    notify_user_ids: list[str] = Field(default_factory=list)
+    escalation_delay_min: int | None = None
+
+
+class NotificationRulesResponse(BaseModel):
+    org_id: str
+    presets: list[NotificationRulePresetResponse] = Field(default_factory=list)
+
+
+class NotificationRulePresetUpdate(BaseModel):
+    preset_key: NotificationPresetKey
+    enabled: bool | None = None
+    notify_roles: list[str] | None = None
+    notify_user_ids: list[str] | None = None
+    escalation_delay_min: int | None = None
+
+
+class NotificationRulesUpdateRequest(BaseModel):
+    presets: list[NotificationRulePresetUpdate] = Field(default_factory=list)
