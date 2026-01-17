@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class StripeCapabilities(BaseModel):
@@ -61,3 +61,15 @@ class GcalConnectCallbackRequest(BaseModel):
 class GcalConnectCallbackResponse(BaseModel):
     connected: bool
     calendar_id: str | None = None
+
+
+class GcalExportSyncResponse(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    calendar_id: str
+    from_utc: datetime = Field(alias="from")
+    to_utc: datetime = Field(alias="to")
+    created: int
+    updated: int
+    skipped: int
+    total: int

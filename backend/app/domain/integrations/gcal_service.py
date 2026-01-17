@@ -1,26 +1,81 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
-from typing import Iterable
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Iterable
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.bookings.db_models import Booking
+from app.domain.bookings.service import BLOCKING_STATUSES
 from app.domain.integrations.db_models import (
+    GcalSyncMode,
     IntegrationsGcalCalendar,
     IntegrationsGcalEventMap,
     IntegrationsGcalSyncState,
     IntegrationsGoogleAccount,
     ScheduleExternalBlock,
 )
+from app.domain.org_settings import service as org_settings_service
 from app.settings import settings
 
 GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar"]
 GCAL_AUTH_BASE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GCAL_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GCAL_API_BASE_URL = "https://www.googleapis.com/calendar/v3"
 TOKEN_EXCHANGE_TRANSPORT: httpx.AsyncBaseTransport | None = None
+GCAL_API_TRANSPORT: httpx.AsyncBaseTransport | None = None
+
+
+@dataclass(frozen=True)
+class GcalExportSyncResult:
+    calendar_id: str
+    from_utc: datetime
+    to_utc: datetime
+    created: int
+    updated: int
+    skipped: int
+
+    @property
+    def total(self) -> int:
+        return self.created + self.updated + self.skipped
+
+
+class GcalClient:
+    def __init__(self, access_token: str, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        self._client = httpx.AsyncClient(
+            base_url=GCAL_API_BASE_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=httpx.Timeout(15.0, connect=5.0),
+            transport=transport,
+        )
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    async def create_event(self, calendar_id: str, payload: dict) -> dict:
+        response = await self._client.post(f"/calendars/{calendar_id}/events", json=payload)
+        if response.status_code >= 400:
+            raise ValueError("gcal_event_create_failed")
+        return response.json()
+
+    async def update_event(self, calendar_id: str, event_id: str, payload: dict) -> dict:
+        response = await self._client.put(f"/calendars/{calendar_id}/events/{event_id}", json=payload)
+        if response.status_code >= 400:
+            raise ValueError("gcal_event_update_failed")
+        return response.json()
+
+
+GCAL_CLIENT_FACTORY: Callable[[str], GcalClient] = (
+    lambda access_token: GcalClient(access_token, transport=GCAL_API_TRANSPORT)
+)
 
 
 def oauth_configured() -> bool:
@@ -68,6 +123,25 @@ async def exchange_code_for_refresh_token(code: str) -> tuple[str, list[str]]:
     return refresh_token, scopes
 
 
+async def exchange_refresh_token_for_access_token(refresh_token: str) -> str:
+    payload = {
+        "client_id": settings.google_oauth_client_id,
+        "client_secret": settings.google_oauth_client_secret,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }
+    timeout = httpx.Timeout(10.0, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout, transport=TOKEN_EXCHANGE_TRANSPORT) as client:
+        response = await client.post(GCAL_TOKEN_URL, data=payload)
+    if response.status_code != 200:
+        raise ValueError("access_token_exchange_failed")
+    data = response.json()
+    access_token = data.get("access_token")
+    if not access_token:
+        raise ValueError("missing_access_token")
+    return access_token
+
+
 async def get_google_account(
     session: AsyncSession, org_id: uuid.UUID
 ) -> IntegrationsGoogleAccount | None:
@@ -104,6 +178,15 @@ async def get_primary_calendar_id(session: AsyncSession, org_id: uuid.UUID) -> s
     )
 
 
+async def get_export_calendar(session: AsyncSession, org_id: uuid.UUID) -> IntegrationsGcalCalendar | None:
+    return await session.scalar(
+        sa.select(IntegrationsGcalCalendar).where(
+            IntegrationsGcalCalendar.org_id == org_id,
+            IntegrationsGcalCalendar.mode.in_([GcalSyncMode.EXPORT, GcalSyncMode.TWO_WAY]),
+        )
+    )
+
+
 async def disconnect_google_calendar(session: AsyncSession, org_id: uuid.UUID) -> None:
     await session.execute(
         sa.delete(IntegrationsGoogleAccount).where(IntegrationsGoogleAccount.org_id == org_id)
@@ -122,4 +205,142 @@ async def disconnect_google_calendar(session: AsyncSession, org_id: uuid.UUID) -
             ScheduleExternalBlock.org_id == org_id,
             ScheduleExternalBlock.source == "gcal",
         )
+    )
+
+
+def _ensure_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _booking_end(booking: Booking) -> datetime:
+    return _ensure_aware(booking.starts_at) + timedelta(minutes=booking.duration_minutes)
+
+
+def _build_event_payload(booking: Booking, *, org_tz: str) -> dict:
+    starts_at = _ensure_aware(booking.starts_at).astimezone(timezone.utc)
+    ends_at = _booking_end(booking).astimezone(timezone.utc)
+    description_lines = [
+        f"Booking ID: {booking.booking_id}",
+        f"Status: {booking.status}",
+    ]
+    return {
+        "summary": f"Booking {booking.booking_id}",
+        "description": "\n".join(description_lines),
+        "start": {
+            "dateTime": starts_at.isoformat(),
+            "timeZone": org_tz,
+        },
+        "end": {
+            "dateTime": ends_at.isoformat(),
+            "timeZone": org_tz,
+        },
+    }
+
+
+def _event_payload_hash(payload: dict) -> str:
+    normalized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+async def export_bookings_to_gcal(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: datetime,
+    to_date: datetime,
+) -> GcalExportSyncResult:
+    account = await get_google_account(session, org_id)
+    if not account:
+        raise ValueError("missing_google_account")
+    calendar = await get_export_calendar(session, org_id)
+    if not calendar:
+        raise ValueError("missing_google_calendar")
+    settings_record = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_tz = org_settings_service.resolve_timezone(settings_record)
+    tzinfo = ZoneInfo(org_tz)
+    from_utc = _ensure_aware(from_date).astimezone(timezone.utc)
+    to_utc = _ensure_aware(to_date).astimezone(timezone.utc)
+    if from_utc > to_utc:
+        raise ValueError("invalid_date_range")
+
+    bookings = (
+        await session.scalars(
+            sa.select(Booking)
+            .where(
+                Booking.org_id == org_id,
+                Booking.archived_at.is_(None),
+                Booking.status.in_(BLOCKING_STATUSES),
+                Booking.starts_at >= from_utc,
+                Booking.starts_at <= to_utc,
+            )
+            .order_by(Booking.starts_at.asc())
+        )
+    ).all()
+    booking_ids = [booking.booking_id for booking in bookings]
+    existing_maps: dict[str, IntegrationsGcalEventMap] = {}
+    if booking_ids:
+        rows = (
+            await session.scalars(
+                sa.select(IntegrationsGcalEventMap).where(
+                    IntegrationsGcalEventMap.org_id == org_id,
+                    IntegrationsGcalEventMap.calendar_id == calendar.calendar_id,
+                    IntegrationsGcalEventMap.booking_id.in_(booking_ids),
+                )
+            )
+        ).all()
+        existing_maps = {row.booking_id: row for row in rows}
+
+    access_token = await exchange_refresh_token_for_access_token(account.encrypted_refresh_token)
+    client = GCAL_CLIENT_FACTORY(access_token)
+    created = 0
+    updated = 0
+    skipped = 0
+    try:
+        for booking in bookings:
+            payload = _build_event_payload(booking, org_tz=tzinfo.key)
+            payload_hash = _event_payload_hash(payload)
+            existing_map = existing_maps.get(booking.booking_id)
+            if existing_map and existing_map.last_pushed_hash == payload_hash:
+                skipped += 1
+                continue
+            if existing_map:
+                response = await client.update_event(
+                    calendar.calendar_id,
+                    existing_map.external_event_id,
+                    payload,
+                )
+                existing_map.external_event_id = response.get(
+                    "id", existing_map.external_event_id
+                )
+                existing_map.last_pushed_hash = payload_hash
+                updated += 1
+            else:
+                response = await client.create_event(calendar.calendar_id, payload)
+                event_id = response.get("id")
+                if not event_id:
+                    raise ValueError("missing_event_id")
+                new_map = IntegrationsGcalEventMap(
+                    org_id=org_id,
+                    booking_id=booking.booking_id,
+                    calendar_id=calendar.calendar_id,
+                    external_event_id=event_id,
+                    last_pushed_hash=payload_hash,
+                )
+                session.add(new_map)
+                created += 1
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+    return GcalExportSyncResult(
+        calendar_id=calendar.calendar_id,
+        from_utc=from_utc,
+        to_utc=to_utc,
+        created=created,
+        updated=updated,
+        skipped=skipped,
     )

@@ -828,6 +828,11 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `schedule_external_blocks` - External calendar blocks
 - `integrations_gcal_event_map` - Booking-to-event mapping for exports
 
+**Export Idempotency Rules (Google Calendar):**
+- `integrations_gcal_event_map` stores `booking_id` → `external_event_id` plus `last_pushed_hash`.
+- Export sync updates existing events when the booking hash changes; unchanged bookings are skipped.
+- Export sync never deletes remote events (manual sync is create/update only).
+
 **Permissions Required:**
 - `settings.manage` - Configure integrations
 

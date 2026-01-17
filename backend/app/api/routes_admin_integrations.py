@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, require_permissions, require_viewer
@@ -139,3 +140,56 @@ async def disconnect_google_calendar(
     await gcal_service.disconnect_google_calendar(session, org_id)
     await session.commit()
     return integrations_schemas.GcalConnectCallbackResponse(connected=False, calendar_id=None)
+
+
+@router.post(
+    "/v1/admin/integrations/google/gcal/export_sync",
+    response_model=integrations_schemas.GcalExportSyncResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def export_google_calendar_sync(
+    request: Request,
+    from_date: datetime = Query(..., alias="from"),
+    to_date: datetime = Query(..., alias="to"),
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.DISPATCH)),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.GcalExportSyncResponse:
+    await _require_google_calendar_enabled(session, org_id)
+    if not gcal_service.oauth_configured():
+        return problem_details(
+            request=request,
+            status=400,
+            title="Google OAuth Not Configured",
+            detail="Missing Google OAuth configuration.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    if from_date.tzinfo is None:
+        from_date = from_date.replace(tzinfo=timezone.utc)
+    if to_date.tzinfo is None:
+        to_date = to_date.replace(tzinfo=timezone.utc)
+    try:
+        result = await gcal_service.export_bookings_to_gcal(
+            session,
+            org_id,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except ValueError as exc:
+        return problem_details(
+            request=request,
+            status=400,
+            title="Google Calendar Export Failed",
+            detail=str(exc),
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    await session.commit()
+    return integrations_schemas.GcalExportSyncResponse(
+        calendar_id=result.calendar_id,
+        from_utc=result.from_utc,
+        to_utc=result.to_utc,
+        created=result.created,
+        updated=result.updated,
+        skipped=result.skipped,
+        total=result.total,
+    )
