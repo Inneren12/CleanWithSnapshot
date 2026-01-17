@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import TYPE_CHECKING
+import uuid
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.infra.db import UUID_TYPE, Base
+from app.settings import settings
+
+if TYPE_CHECKING:  # pragma: no cover
+    from app.domain.workers.db_models import Worker
+
+
+class TrainingRequirement(Base):
+    __tablename__ = "training_requirements"
+
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE, primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    key: Mapped[str] = mapped_column(String(120), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    renewal_months: Mapped[int | None] = mapped_column(Integer)
+    required_for_role: Mapped[str | None] = mapped_column(String(80))
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="1"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    records: Mapped[list["WorkerTrainingRecord"]] = relationship(
+        "WorkerTrainingRecord",
+        back_populates="requirement",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "key", name="uq_training_requirements_org_key"),
+        Index("ix_training_requirements_org_id", "org_id"),
+        Index("ix_training_requirements_org_active", "org_id", "active"),
+        Index("ix_training_requirements_key", "key"),
+        Index("ix_training_requirements_required_for_role", "required_for_role"),
+    )
+
+
+class WorkerTrainingRecord(Base):
+    __tablename__ = "worker_training_records"
+
+    record_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE, primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    worker_id: Mapped[int] = mapped_column(
+        ForeignKey("workers.worker_id", ondelete="CASCADE"), nullable=False
+    )
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("training_requirements.requirement_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    score: Mapped[int | None] = mapped_column(Integer)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    requirement: Mapped[TrainingRequirement] = relationship(
+        "TrainingRequirement", back_populates="records"
+    )
+    worker: Mapped["Worker"] = relationship("Worker")
+
+    __table_args__ = (
+        Index("ix_worker_training_records_org_id", "org_id"),
+        Index("ix_worker_training_records_worker_id", "worker_id"),
+        Index("ix_worker_training_records_requirement_id", "requirement_id"),
+        Index("ix_worker_training_records_expires_at", "expires_at"),
+    )

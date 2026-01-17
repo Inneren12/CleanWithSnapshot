@@ -548,11 +548,24 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Purpose:** Worker training, certifications, onboarding
 
 **Key Pages:**
-- TBD (partially implemented)
+- `web/app/admin/workers/[id]/page.tsx` - Worker profile training status card
+
+**Backend Routes:**
+- `backend/app/api/routes_admin.py::/v1/admin/training/workers/{worker_id}/status`
+- `backend/app/api/routes_admin.py::/v1/admin/training/workers/{worker_id}/records`
+
+**Key Services:**
+- `backend/app/domain/training/service.py` - Training requirement status logic
 
 **Key Tables:**
+- `training_requirements` (training catalog + renewal rules)
+- `worker_training_records` (worker completions + expiry)
 - `worker_onboarding` (migration 0072)
 - `worker_certificates` (migration 0072)
+
+**Where to Change Worker Status Logic:**
+- Status computation and next-due logic: `backend/app/domain/training/service.py::build_training_status_payload()`
+- Training UI rendering: `web/app/admin/workers/[id]/page.tsx`
 
 **Feature Key:** `module.training`
 

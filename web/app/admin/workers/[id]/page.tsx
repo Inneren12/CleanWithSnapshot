@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
 import {
@@ -34,6 +34,21 @@ type WorkerQualitySummaryResponse = {
   last_review: QualitySummaryReview | null;
 };
 
+type TrainingRequirementStatus = {
+  key: string;
+  title: string;
+  required: boolean;
+  completed_at: string | null;
+  expires_at: string | null;
+  next_due_at?: string | null;
+  status: "ok" | "due" | "overdue";
+};
+
+type TrainingStatusResponse = {
+  worker_id: number;
+  requirements: TrainingRequirementStatus[];
+};
+
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—";
   return new Date(value).toLocaleString("en-US", {
@@ -42,6 +57,15 @@ function formatDateTime(value: string | null | undefined): string {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
   });
 }
 
@@ -61,8 +85,18 @@ export default function WorkerDetailPage() {
   const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
   const [summary, setSummary] = useState<WorkerQualitySummaryResponse | null>(null);
+  const [trainingStatus, setTrainingStatus] = useState<TrainingStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [trainingLoading, setTrainingLoading] = useState(false);
+  const [trainingError, setTrainingError] = useState<string | null>(null);
+  const [trainingFormOpen, setTrainingFormOpen] = useState(false);
+  const [trainingRequirementKey, setTrainingRequirementKey] = useState("");
+  const [trainingCompletedAt, setTrainingCompletedAt] = useState("");
+  const [trainingExpiresAt, setTrainingExpiresAt] = useState("");
+  const [trainingScore, setTrainingScore] = useState("");
+  const [trainingNote, setTrainingNote] = useState("");
+  const [trainingSubmitting, setTrainingSubmitting] = useState(false);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -78,6 +112,13 @@ export default function WorkerDetailPage() {
     ? isVisible("module.quality", permissionKeys, featureOverrides, hiddenKeys)
     : true;
   const hasViewPermission = permissionKeys.includes("quality.view");
+  const trainingVisible = visibilityReady
+    ? isVisible("module.training", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
+  const hasTrainingViewPermission =
+    permissionKeys.includes("training.view") || permissionKeys.includes("core.view");
+  const hasTrainingManagePermission =
+    permissionKeys.includes("training.manage") || permissionKeys.includes("admin.manage");
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -172,6 +213,81 @@ export default function WorkerDetailPage() {
     }
   }, [authHeaders, password, username, workerId]);
 
+  const loadTrainingStatus = useCallback(async () => {
+    if (!username || !password) return;
+    if (!Number.isFinite(workerId)) return;
+    setTrainingLoading(true);
+    setTrainingError(null);
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/training/workers/${workerId}/status`, {
+        headers: authHeaders,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load training status (${response.status})`);
+      }
+      const data = (await response.json()) as TrainingStatusResponse;
+      setTrainingStatus(data);
+    } catch (err) {
+      console.error("Failed to load training status", err);
+      setTrainingError("Unable to load training status.");
+    } finally {
+      setTrainingLoading(false);
+    }
+  }, [authHeaders, password, username, workerId]);
+
+  const handleTrainingSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!trainingRequirementKey) return;
+      if (!username || !password) return;
+      setTrainingSubmitting(true);
+      setTrainingError(null);
+      try {
+        const payload = {
+          requirement_key: trainingRequirementKey,
+          completed_at: trainingCompletedAt ? new Date(trainingCompletedAt).toISOString() : undefined,
+          expires_at: trainingExpiresAt ? new Date(trainingExpiresAt).toISOString() : undefined,
+          score: trainingScore ? Number(trainingScore) : undefined,
+          note: trainingNote.trim() ? trainingNote.trim() : undefined,
+        };
+        const response = await fetch(`${API_BASE}/v1/admin/training/workers/${workerId}/records`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders,
+          },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to record completion (${response.status})`);
+        }
+        await loadTrainingStatus();
+        setTrainingCompletedAt("");
+        setTrainingExpiresAt("");
+        setTrainingScore("");
+        setTrainingNote("");
+        setTrainingFormOpen(false);
+      } catch (err) {
+        console.error("Failed to record training completion", err);
+        setTrainingError("Unable to record training completion.");
+      } finally {
+        setTrainingSubmitting(false);
+      }
+    },
+    [
+      authHeaders,
+      loadTrainingStatus,
+      password,
+      trainingCompletedAt,
+      trainingExpiresAt,
+      trainingNote,
+      trainingRequirementKey,
+      trainingScore,
+      username,
+      workerId,
+    ]
+  );
+
   useEffect(() => {
     const storedUsername = localStorage.getItem(STORAGE_USERNAME_KEY);
     const storedPassword = localStorage.getItem(STORAGE_PASSWORD_KEY);
@@ -192,6 +308,20 @@ export default function WorkerDetailPage() {
       loadSummary();
     }
   }, [hasViewPermission, loadSummary, password, username]);
+
+  useEffect(() => {
+    if (!username || !password) return;
+    if (trainingVisible && hasTrainingViewPermission) {
+      loadTrainingStatus();
+    }
+  }, [hasTrainingViewPermission, loadTrainingStatus, password, trainingVisible, username]);
+
+  useEffect(() => {
+    if (!trainingStatus?.requirements?.length) return;
+    if (!trainingRequirementKey) {
+      setTrainingRequirementKey(trainingStatus.requirements[0].key);
+    }
+  }, [trainingRequirementKey, trainingStatus]);
 
   if (!pageVisible) {
     return (
@@ -266,6 +396,141 @@ export default function WorkerDetailPage() {
           ) : (
             <p className="muted">{loading ? "Loading summary..." : "No summary data yet."}</p>
           )}
+          <div className="card admin-card">
+            <div className="card-header">
+              <div>
+                <strong>Training status</strong>
+                <div className="muted">Required trainings, completions, and certificate status.</div>
+              </div>
+              {trainingVisible && hasTrainingManagePermission ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setTrainingFormOpen((prev) => !prev)}
+                >
+                  {trainingFormOpen ? "Close" : "Add completion record"}
+                </button>
+              ) : null}
+            </div>
+            <div className="card-body">
+              {!trainingVisible ? (
+                <div className="muted">Training module is disabled for your account.</div>
+              ) : !hasTrainingViewPermission ? (
+                <div className="muted">You do not have permission to view training status.</div>
+              ) : (
+                <>
+                  {trainingError ? <div className="error">{trainingError}</div> : null}
+                  {trainingFormOpen && hasTrainingManagePermission ? (
+                    <form className="stack" onSubmit={handleTrainingSubmit}>
+                      <label className="stack">
+                        <span>Requirement</span>
+                        <select
+                          value={trainingRequirementKey}
+                          onChange={(event) => setTrainingRequirementKey(event.target.value)}
+                        >
+                          {trainingStatus?.requirements?.map((requirement) => (
+                            <option key={requirement.key} value={requirement.key}>
+                              {requirement.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="stack">
+                        <span>Completed at (UTC)</span>
+                        <input
+                          type="datetime-local"
+                          value={trainingCompletedAt}
+                          onChange={(event) => setTrainingCompletedAt(event.target.value)}
+                        />
+                      </label>
+                      <label className="stack">
+                        <span>Expires at (UTC)</span>
+                        <input
+                          type="datetime-local"
+                          value={trainingExpiresAt}
+                          onChange={(event) => setTrainingExpiresAt(event.target.value)}
+                        />
+                      </label>
+                      <label className="stack">
+                        <span>Score</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={trainingScore}
+                          onChange={(event) => setTrainingScore(event.target.value)}
+                        />
+                      </label>
+                      <label className="stack">
+                        <span>Note</span>
+                        <textarea
+                          rows={3}
+                          value={trainingNote}
+                          onChange={(event) => setTrainingNote(event.target.value)}
+                        />
+                      </label>
+                      <button className="btn btn-primary" type="submit" disabled={trainingSubmitting}>
+                        {trainingSubmitting ? "Saving..." : "Save completion"}
+                      </button>
+                    </form>
+                  ) : null}
+                  {trainingStatus?.requirements?.length ? (
+                    <table className="table-like">
+                      <thead>
+                        <tr>
+                          <th>Requirement</th>
+                          <th>Status</th>
+                          <th>Completed</th>
+                          <th>Expires</th>
+                          <th>Next due</th>
+                          <th>Certificate</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trainingStatus.requirements.map((requirement) => (
+                          <tr key={requirement.key}>
+                            <td>
+                              <div>
+                                <div>{requirement.title}</div>
+                                <div className="muted">
+                                  {requirement.required ? "Required" : "Optional"} · {requirement.key}
+                                </div>
+                              </div>
+                            </td>
+                            <td>
+                              <span className={`status-badge ${requirement.status}`}>
+                                {requirement.status.toUpperCase()}
+                              </span>
+                            </td>
+                            <td>{formatDateTime(requirement.completed_at)}</td>
+                            <td>{formatDateTime(requirement.expires_at)}</td>
+                            <td>{formatDate(requirement.next_due_at ?? requirement.expires_at)}</td>
+                            <td>
+                              {requirement.completed_at ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={(event) => event.preventDefault()}
+                                >
+                                  Download certificate
+                                </button>
+                              ) : (
+                                <span className="muted">No certificate</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="muted">
+                      {trainingLoading ? "Loading training status..." : "No training requirements configured."}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
