@@ -260,6 +260,15 @@ alembic heads
 
 **CI validation:** `tests/test_migrations.py` fails if multiple heads exist.
 
+**Quick check + merge (example):**
+
+```bash
+cd backend
+alembic heads
+alembic merge -m "merge heads abc123 and def456" abc123 def456
+alembic upgrade head
+```
+
 ### Merging Heads
 
 **When you see multiple heads:**

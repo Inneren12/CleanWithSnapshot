@@ -113,6 +113,8 @@ from app.domain.config import schemas as config_schemas
 from app.domain.notifications import email_service
 from app.domain.notifications_center import schemas as notifications_schemas
 from app.domain.notifications_center import service as notifications_service
+from app.domain.notifications_digests import schemas as notifications_digest_schemas
+from app.domain.notifications_digests import service as notifications_digest_service
 from app.domain.notifications_center.db_models import NotificationEvent
 from app.domain.data_rights import schemas as data_rights_schemas, service as data_rights_service
 from app.infra.email import resolve_app_email_adapter
@@ -1279,6 +1281,70 @@ async def update_notification_rules(
                 escalation_delay_min=rule.escalation_delay_min,
             )
             for rule in presets
+        ],
+    )
+
+
+@router.get(
+    "/v1/admin/notifications/digests",
+    response_model=notifications_digest_schemas.NotificationDigestSettingsResponse,
+)
+async def list_notification_digests(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> notifications_digest_schemas.NotificationDigestSettingsResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    digests = await notifications_digest_service.list_digest_settings(session, org_id=org_id)
+    return notifications_digest_schemas.NotificationDigestSettingsResponse(
+        org_id=str(org_id),
+        digests=[
+            notifications_digest_schemas.NotificationDigestSettingResponse(
+                digest_key=record.digest_key,
+                enabled=record.enabled,
+                schedule=record.schedule,
+                recipients=record.recipients or [],
+            )
+            for record in digests
+        ],
+    )
+
+
+@router.patch(
+    "/v1/admin/notifications/digests",
+    response_model=notifications_digest_schemas.NotificationDigestSettingsResponse,
+)
+async def update_notification_digests(
+    payload: notifications_digest_schemas.NotificationDigestSettingsUpdateRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> notifications_digest_schemas.NotificationDigestSettingsResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    digest_keys = [entry.digest_key for entry in payload.digests]
+    if len(digest_keys) != len(set(digest_keys)):
+        return problem_details(
+            request=request,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            title="Duplicate digest keys",
+            detail="Each digest key may only appear once per request.",
+        )
+    digests = await notifications_digest_service.apply_digest_settings_update(
+        session,
+        org_id,
+        updates=payload.digests,
+    )
+    await session.commit()
+    return notifications_digest_schemas.NotificationDigestSettingsResponse(
+        org_id=str(org_id),
+        digests=[
+            notifications_digest_schemas.NotificationDigestSettingResponse(
+                digest_key=record.digest_key,
+                enabled=record.enabled,
+                schedule=record.schedule,
+                recipients=record.recipients or [],
+            )
+            for record in digests
         ],
     )
 

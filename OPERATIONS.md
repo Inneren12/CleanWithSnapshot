@@ -131,6 +131,27 @@ git reset --hard <sha>
 
 ---
 
+## Scheduled Jobs
+
+The API container runs the job runner to process background tasks (email reminders, outbox delivery, storage cleanup).
+Digest jobs are executed by the same runner and can be triggered on-demand.
+
+**Run locally (one-shot):**
+
+```bash
+cd backend
+python -m app.jobs.run --job notifications-digest-daily --once
+python -m app.jobs.run --job notifications-digest-weekly --once
+python -m app.jobs.run --job notifications-digest-monthly --once
+```
+
+**Digest configuration:**
+- Settings are stored in `notifications_digest_settings` (`digest_key`, `enabled`, `schedule`, `recipients`).
+- Only enabled digests matching the job schedule are sent.
+- Digest delivery is gated by `module.notifications_center` feature toggle.
+
+---
+
 ## Environment Configuration
 
 ### Critical Environment Variables

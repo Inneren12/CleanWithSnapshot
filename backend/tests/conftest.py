@@ -68,6 +68,7 @@ from app.domain.message_templates import db_models as message_templates_db_model
 from app.domain.saas import db_models as saas_db_models  # noqa: F401
 from app.domain.iam import db_models as iam_db_models  # noqa: F401
 from app.domain.outbox import db_models as outbox_db_models  # noqa: F401
+from app.domain.notifications_digests import db_models as notifications_digests_db_models  # noqa: F401
 from app.domain.saas.service import ensure_default_org_and_team
 from app.domain.ops import db_models as ops_db_models  # noqa: F401
 from app.domain.pricing_settings import db_models as pricing_settings_db_models  # noqa: F401

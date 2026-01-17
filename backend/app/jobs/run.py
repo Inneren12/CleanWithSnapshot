@@ -12,7 +12,7 @@ from app.infra.email import EmailAdapter, resolve_email_adapter
 from app.infra.logging import clear_log_context
 from app.infra.metrics import configure_metrics, metrics
 from app.jobs.heartbeat import _resolve_runner_id, record_heartbeat
-from app.jobs import accounting_export, dlq_auto_replay, email_jobs, outbox, storage_janitor
+from app.jobs import accounting_export, dlq_auto_replay, email_jobs, notifications_digests, outbox, storage_janitor
 from app.infra.storage import new_storage_backend
 from app.domain.ops.db_models import JobHeartbeat
 from app.settings import settings
@@ -129,6 +129,18 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         )
     if name == "storage-janitor":
         return lambda session: storage_janitor.run_storage_janitor(session, _STORAGE)
+    if name == "notifications-digest-daily":
+        return lambda session: notifications_digests.run_notifications_digest(
+            session, _ADAPTER, schedule="daily"
+        )
+    if name == "notifications-digest-weekly":
+        return lambda session: notifications_digests.run_notifications_digest(
+            session, _ADAPTER, schedule="weekly"
+        )
+    if name == "notifications-digest-monthly":
+        return lambda session: notifications_digests.run_notifications_digest(
+            session, _ADAPTER, schedule="monthly"
+        )
     raise ValueError(f"unknown_job:{name}")
 
 
@@ -154,6 +166,9 @@ async def main(argv: list[str] | None = None) -> None:
         "outbox-delivery",
         "dlq-auto-replay",
         "storage-janitor",
+        "notifications-digest-daily",
+        "notifications-digest-weekly",
+        "notifications-digest-monthly",
     ]
     runners = [_job_runner(name, base_url=args.base_url) for name in job_names]
 
