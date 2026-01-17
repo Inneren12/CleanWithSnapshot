@@ -20,3 +20,4 @@ from app.domain.addons import db_models as addons_db_models  # noqa: F401
 from app.domain.dispatcher import db_models as dispatcher_db_models  # noqa: F401
 from app.domain.feature_modules import db_models as feature_modules_db_models  # noqa: F401
 from app.domain.quality import db_models as quality_db_models  # noqa: F401
+from app.domain.notifications_center import db_models as notifications_center_db_models  # noqa: F401

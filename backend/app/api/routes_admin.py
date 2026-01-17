@@ -108,6 +108,9 @@ from app.domain.leads.schemas import AdminLeadResponse, AdminLeadStatusUpdateReq
 from app.domain.leads.statuses import assert_valid_transition, is_valid_status
 from app.domain.config import schemas as config_schemas
 from app.domain.notifications import email_service
+from app.domain.notifications_center import schemas as notifications_schemas
+from app.domain.notifications_center import service as notifications_service
+from app.domain.notifications_center.db_models import NotificationEvent
 from app.domain.data_rights import schemas as data_rights_schemas, service as data_rights_service
 from app.infra.email import resolve_app_email_adapter
 from app.domain.outbox.db_models import OutboxEvent
@@ -1194,6 +1197,140 @@ async def get_admin_activity(
     return ActivityFeedResponse(as_of=datetime.now(timezone.utc), items=items[:resolved_limit])
 
 
+@router.get(
+    "/v1/admin/notifications",
+    response_model=notifications_schemas.NotificationFeedResponse,
+)
+async def list_notifications(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_any_permission_keys("core.view", "notifications.manage")),
+    filter: str = "all",
+    limit: int = 50,
+    cursor: str | None = None,
+    from_ts: datetime | None = Query(None, alias="from"),
+    to_ts: datetime | None = Query(None, alias="to"),
+) -> notifications_schemas.NotificationFeedResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    normalized_filter = filter.strip().lower()
+    if normalized_filter not in {"all", "urgent", "unread"}:
+        return problem_details(
+            request=request,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            title="Invalid filter",
+            detail="Filter must be one of: all, urgent, unread.",
+        )
+    if from_ts and to_ts and from_ts > to_ts:
+        return problem_details(
+            request=request,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            title="Invalid date range",
+            detail="The from timestamp must be before the to timestamp.",
+        )
+    if cursor and notifications_service.parse_cursor(cursor) is None:
+        return problem_details(
+            request=request,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            title="Invalid cursor",
+            detail="The cursor value is not valid.",
+        )
+
+    resolved_limit = max(1, min(limit, 200))
+    user_key = _resolve_notifications_user_key(request, identity)
+    events, read_map, next_cursor = await notifications_service.list_notifications(
+        session,
+        org_id=org_id,
+        user_key=user_key,
+        filter_key=normalized_filter,
+        limit=resolved_limit,
+        cursor=cursor,
+        from_ts=from_ts,
+        to_ts=to_ts,
+    )
+
+    items = [
+        notifications_schemas.NotificationEventResponse(
+            id=str(event.id),
+            created_at=event.created_at,
+            priority=event.priority,
+            type=event.type,
+            title=event.title,
+            body=event.body,
+            entity_type=event.entity_type,
+            entity_id=event.entity_id,
+            action_href=event.action_href,
+            action_kind=event.action_kind,
+            is_read=event.id in read_map,
+            read_at=read_map.get(event.id),
+        )
+        for event in events
+    ]
+
+    return notifications_schemas.NotificationFeedResponse(
+        items=items,
+        next_cursor=next_cursor,
+        limit=resolved_limit,
+    )
+
+
+@router.post(
+    "/v1/admin/notifications/{event_id}/read",
+    response_model=notifications_schemas.NotificationReadResponse,
+)
+async def mark_notification_read(
+    request: Request,
+    event_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_any_permission_keys("core.view", "notifications.manage")),
+) -> notifications_schemas.NotificationReadResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    event = await session.scalar(
+        select(NotificationEvent).where(
+            NotificationEvent.id == event_id,
+            NotificationEvent.org_id == org_id,
+        )
+    )
+    if not event:
+        return problem_details(
+            request=request,
+            status=status.HTTP_404_NOT_FOUND,
+            title="Notification not found",
+            detail="Notification does not exist or is not available for this organization.",
+        )
+    user_key = _resolve_notifications_user_key(request, identity)
+    read_record = await notifications_service.mark_notification_read(
+        session,
+        org_id=org_id,
+        user_key=user_key,
+        event_id=event_id,
+    )
+    await session.commit()
+    return notifications_schemas.NotificationReadResponse(
+        event_id=str(read_record.event_id),
+        read_at=read_record.read_at,
+    )
+
+
+@router.post(
+    "/v1/admin/notifications/read_all",
+    response_model=notifications_schemas.NotificationReadAllResponse,
+)
+async def mark_all_notifications_read(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_any_permission_keys("core.view", "notifications.manage")),
+) -> notifications_schemas.NotificationReadAllResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    user_key = _resolve_notifications_user_key(request, identity)
+    marked_count = await notifications_service.mark_all_notifications_read(
+        session,
+        org_id=org_id,
+        user_key=user_key,
+    )
+    await session.commit()
+    return notifications_schemas.NotificationReadAllResponse(marked_count=marked_count)
+
+
 class AdminUserCreateRequest(BaseModel):
     email: EmailStr
     target_type: Literal["client", "worker"]
@@ -1306,6 +1443,13 @@ def _parse_activity_since(since: str | None) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _resolve_notifications_user_key(request: Request, identity: AdminIdentity) -> str:
+    saas_identity = getattr(request.state, "saas_identity", None)
+    if saas_identity and getattr(saas_identity, "user_id", None):
+        return f"saas:{saas_identity.user_id}"
+    return f"basic:{identity.username}"
 
 
 async def _require_dashboard_enabled(

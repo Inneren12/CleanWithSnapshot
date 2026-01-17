@@ -75,6 +75,12 @@ export default function QualityOverviewPage() {
     const candidates = [
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      {
+        key: "notifications",
+        label: "Notifications",
+        href: "/admin/notifications",
+        featureKey: "module.notifications_center",
+      },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
       { key: "invoices", label: "Invoices", href: "/admin/invoices", featureKey: "module.invoices" },
       { key: "quality-reviews", label: "Reviews", href: "/admin/quality/reviews", featureKey: "module.quality" },
