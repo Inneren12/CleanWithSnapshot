@@ -12,6 +12,7 @@ import {
 
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
+const LOW_STOCK_ORDERED_KEY = "inventory_low_stock_ordered";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const DEFAULT_PAGE_SIZE = 25;
 
@@ -77,9 +78,23 @@ function formatQuantity(value: number | string | null | undefined) {
   return numeric.toLocaleString("en-CA", { maximumFractionDigits: 2 });
 }
 
+function parseQuantity(value: number | string | null | undefined) {
+  if (value === null || typeof value === "undefined") return null;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return numeric;
+}
+
 function normalizeOptional(value: string) {
   const trimmed = value.trim();
   return trimmed.length ? trimmed : null;
+}
+
+function isLowStock(item: InventoryItem) {
+  const current = parseQuantity(item.current_qty);
+  const minimum = parseQuantity(item.min_qty);
+  if (current === null || minimum === null) return false;
+  return current <= minimum;
 }
 
 export default function InventoryItemsPage() {
@@ -105,6 +120,7 @@ export default function InventoryItemsPage() {
   const [draft, setDraft] = useState<ItemDraft>(EMPTY_DRAFT);
   const [draftErrors, setDraftErrors] = useState<string[]>([]);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [orderedItems, setOrderedItems] = useState<Record<string, string>>({});
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -125,6 +141,19 @@ export default function InventoryItemsPage() {
   const canManageInventory = permissionKeys.includes("inventory.manage");
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const lowStockItems = useMemo(
+    () => items.filter((item) => item.active && isLowStock(item)),
+    [items]
+  );
+  const filteredItems = useMemo(
+    () => (lowStockOnly ? items.filter((item) => isLowStock(item)) : items),
+    [items, lowStockOnly]
+  );
+  const listCountLabel = itemsLoading
+    ? "Loading items…"
+    : lowStockOnly
+      ? `${filteredItems.length} low stock items on this page`
+      : `${total} items`;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -279,6 +308,18 @@ export default function InventoryItemsPage() {
     }
   };
 
+  const toggleOrderedStatus = (itemId: string) => {
+    setOrderedItems((prev) => {
+      const next = { ...prev };
+      if (next[itemId]) {
+        delete next[itemId];
+      } else {
+        next[itemId] = new Date().toISOString();
+      }
+      return next;
+    });
+  };
+
   const resetDraft = useCallback(() => {
     setDraft(EMPTY_DRAFT);
     setDraftErrors([]);
@@ -419,6 +460,22 @@ export default function InventoryItemsPage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedOrdered = window.localStorage.getItem(LOW_STOCK_ORDERED_KEY);
+    if (!storedOrdered) return;
+    try {
+      setOrderedItems(JSON.parse(storedOrdered) as Record<string, string>);
+    } catch (error) {
+      console.error("Failed to parse low stock ordered state", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(LOW_STOCK_ORDERED_KEY, JSON.stringify(orderedItems));
+  }, [orderedItems]);
+
+  useEffect(() => {
     if (username && password) {
       void loadProfile();
       void loadFeatureConfig();
@@ -494,9 +551,91 @@ export default function InventoryItemsPage() {
       <section className="admin-card admin-section">
         <div className="section-heading" style={{ alignItems: "flex-start" }}>
           <div>
+            <h2>Low stock</h2>
+            <p className="muted">
+              {lowStockItems.length
+                ? `${lowStockItems.length} item${lowStockItems.length === 1 ? "" : "s"} below minimum on this page.`
+                : "No items are below minimum stock on this page."}
+            </p>
+          </div>
+          <div className="admin-actions">
+            <button
+              className="btn btn-ghost"
+              type="button"
+              disabled
+              title="Purchase orders will be available once the PO module ships."
+            >
+              Generate purchase order
+            </button>
+          </div>
+        </div>
+        {lowStockItems.length ? (
+          <div className="table-responsive">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Category</th>
+                  <th>Current qty</th>
+                  <th>Min qty</th>
+                  <th>Unit</th>
+                  <th>Status</th>
+                  {canManageInventory ? <th>Actions</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {lowStockItems.map((item) => {
+                  const orderedAt = orderedItems[item.item_id];
+                  return (
+                    <tr key={item.item_id}>
+                      <td>
+                        <div style={{ display: "grid", gap: "2px" }}>
+                          <strong>{item.name}</strong>
+                          <span className="muted small">{item.sku || "No SKU"}</span>
+                        </div>
+                      </td>
+                      <td>{item.category_name || "Uncategorized"}</td>
+                      <td>{formatQuantity(item.current_qty)}</td>
+                      <td>{formatQuantity(item.min_qty)}</td>
+                      <td>{item.unit}</td>
+                      <td>
+                        {orderedAt ? (
+                          <span className="pill pill-success">Ordered</span>
+                        ) : (
+                          <span className="pill pill-warning">Needs reorder</span>
+                        )}
+                      </td>
+                      {canManageInventory ? (
+                        <td>
+                          <div className="admin-actions">
+                            <button
+                              className="btn btn-ghost"
+                              type="button"
+                              onClick={() => toggleOrderedStatus(item.item_id)}
+                            >
+                              {orderedAt ? "Undo ordered" : "Mark as ordered"}
+                            </button>
+                            <button className="btn btn-ghost" type="button" onClick={() => openEditModal(item)}>
+                              Edit
+                            </button>
+                          </div>
+                        </td>
+                      ) : null}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="admin-card admin-section">
+        <div className="section-heading" style={{ alignItems: "flex-start" }}>
+          <div>
             <h2>Inventory list</h2>
             <p className="muted">
-              {itemsLoading ? "Loading items…" : `${total} items`} · Page {page} of {totalPages}
+              {listCountLabel} · Page {page} of {totalPages}
             </p>
           </div>
           {canManageInventory ? (
@@ -531,7 +670,7 @@ export default function InventoryItemsPage() {
               checked={lowStockOnly}
               onChange={(event) => setLowStockOnly(event.target.checked)}
             />
-            <span>Low stock only (UI-only for now)</span>
+            <span>Low stock only (page filter)</span>
           </label>
           <label>
             <span className="label">Status</span>
@@ -560,14 +699,14 @@ export default function InventoryItemsPage() {
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && !itemsLoading ? (
+              {filteredItems.length === 0 && !itemsLoading ? (
                 <tr>
                   <td colSpan={canManageInventory ? 8 : 7} className="muted">
                     No inventory items match these filters.
                   </td>
                 </tr>
               ) : (
-                items.map((item) => (
+                filteredItems.map((item) => (
                   <tr key={item.item_id}>
                     <td>
                       <div style={{ display: "grid", gap: "2px" }}>

@@ -8,7 +8,8 @@ This guide covers the new admin features for worker password management, client 
 2. [Worker Login](#worker-login)
 3. [Client Management](#client-management)
 4. [Booking Creation](#booking-creation)
-5. [Troubleshooting](#troubleshooting)
+5. [Inventory Low Stock](#inventory-low-stock)
+6. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -245,6 +246,18 @@ curl -X POST https://your-domain.com/v1/admin/ui/bookings/create \
 - `"Worker not found"` - Worker doesn't exist or belongs to different org
 
 ---
+
+## Inventory Low Stock
+
+The Inventory page now includes a Low Stock panel to surface items at or below their minimum quantity.
+
+**How it works:**
+- Items are flagged as low stock when current quantity is less than or equal to the minimum quantity.
+- Use the “Mark as ordered” action to add a client-only ordered tag while the purchase order module is in development.
+- The “Generate purchase order” button is intentionally disabled until the purchasing module is available.
+
+**Tips:**
+- Use the “Low stock only” checkbox to filter the main inventory table to items that need reordering.
 
 ## Troubleshooting
 
