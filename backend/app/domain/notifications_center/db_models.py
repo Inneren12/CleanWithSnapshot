@@ -3,7 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
+import sqlalchemy as sa
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db import UUID_TYPE, Base
@@ -65,3 +66,28 @@ class NotificationRead(Base):
         Index("ix_notifications_reads_org_user", "org_id", "user_id"),
         Index("ix_notifications_reads_event", "event_id"),
     )
+
+
+class NotificationRulePreset(Base):
+    __tablename__ = "notifications_rules_presets"
+    __table_args__ = (
+        UniqueConstraint("org_id", "preset_key", name="uq_notifications_rules_presets_org_key"),
+        Index("ix_notifications_rules_presets_org_id", "org_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    preset_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    notify_roles: Mapped[list[str]] = mapped_column(
+        sa.JSON(), nullable=False, default=list, server_default=sa.text("'[]'")
+    )
+    notify_user_ids: Mapped[list[str]] = mapped_column(
+        sa.JSON(), nullable=False, default=list, server_default=sa.text("'[]'")
+    )
+    escalation_delay_min: Mapped[int | None] = mapped_column(Integer)

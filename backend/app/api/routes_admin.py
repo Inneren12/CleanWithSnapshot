@@ -28,10 +28,13 @@ from app.api.idempotency import enforce_org_action_rate_limit, require_idempoten
 from app.api.problem_details import problem_details
 from app.api.admin_auth import (
     AdminIdentity,
+    AdminPermission,
+    AdminRole,
     require_admin,
     require_dispatch,
     require_finance,
     require_any_permission_keys,
+    require_permissions,
     require_permission_keys,
     permission_keys_for_request,
     require_viewer,
@@ -217,6 +220,14 @@ def _email_adapter(request: Request | None):
     if request is None:
         return None
     return resolve_app_email_adapter(request)
+
+
+async def _require_owner(
+    identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
+) -> AdminIdentity:
+    if identity.role != AdminRole.OWNER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return identity
 
 
 class AdminProfileResponse(BaseModel):
@@ -1202,6 +1213,73 @@ async def list_notifications(
         items=items,
         next_cursor=next_cursor,
         limit=resolved_limit,
+    )
+
+
+@router.get(
+    "/v1/admin/notifications/rules",
+    response_model=notifications_schemas.NotificationRulesResponse,
+)
+async def list_notification_rules(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> notifications_schemas.NotificationRulesResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    presets = await notifications_service.list_rule_presets(session, org_id=org_id)
+    return notifications_schemas.NotificationRulesResponse(
+        org_id=str(org_id),
+        presets=[
+            notifications_schemas.NotificationRulePresetResponse(
+                preset_key=rule.preset_key,
+                enabled=rule.enabled,
+                notify_roles=rule.notify_roles or [],
+                notify_user_ids=rule.notify_user_ids or [],
+                escalation_delay_min=rule.escalation_delay_min,
+            )
+            for rule in presets
+        ],
+    )
+
+
+@router.patch(
+    "/v1/admin/notifications/rules",
+    response_model=notifications_schemas.NotificationRulesResponse,
+)
+async def update_notification_rules(
+    payload: notifications_schemas.NotificationRulesUpdateRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> notifications_schemas.NotificationRulesResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    preset_keys = [entry.preset_key for entry in payload.presets]
+    if len(preset_keys) != len(set(preset_keys)):
+        return problem_details(
+            request=request,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            title="Duplicate preset keys",
+            detail="Each preset key may only appear once per request.",
+        )
+    updates = [entry.model_dump(exclude_unset=True) for entry in payload.presets]
+    presets = await notifications_service.upsert_rule_presets(
+        session,
+        org_id=org_id,
+        updates=updates,
+    )
+    await session.commit()
+    return notifications_schemas.NotificationRulesResponse(
+        org_id=str(org_id),
+        presets=[
+            notifications_schemas.NotificationRulePresetResponse(
+                preset_key=rule.preset_key,
+                enabled=rule.enabled,
+                notify_roles=rule.notify_roles or [],
+                notify_user_ids=rule.notify_user_ids or [],
+                escalation_delay_min=rule.escalation_delay_min,
+            )
+            for rule in presets
+        ],
     )
 
 
@@ -15970,6 +16048,20 @@ async def admin_clients_add_feedback(
     )
     session.add(feedback)
     await session.flush()
+
+    if rating <= 2:
+        await notifications_service.emit_preset_event(
+            session,
+            org_id=org_id,
+            preset_key="negative_review",
+            priority="HIGH",
+            title="Negative review received",
+            body=f"Rating {rating}/5 for booking {booking_id}.",
+            entity_type="booking",
+            entity_id=str(booking_id),
+            action_href="/admin/quality/reviews",
+            action_kind="open_reviews",
+        )
 
     await audit_service.record_action(
         session,

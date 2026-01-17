@@ -553,6 +553,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Key Tables:**
 - `notifications_events` - Inbox events
 - `notifications_reads` - Per-user read state
+- `notifications_rules_presets` - Preset rule configuration (enable/recipients/escalation delay)
 - `email_events` - Email delivery tracking
 
 **Permissions Required:**
@@ -562,6 +563,13 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Where to change:**
 - Feed filtering, cursor logic, and read tracking: `backend/app/domain/notifications_center/service.py`
+- Preset rules configuration + emission: `backend/app/domain/notifications_center/service.py`
+- Preset rules API (Owner-only): `backend/app/api/routes_admin.py`
+- Preset keys: `no_show`, `payment_failed`, `negative_review`, `low_stock`, `high_value_lead`
+- Trigger points:
+  - `payment_failed` — Stripe webhook payment failure handling (`backend/app/api/routes_payments.py::_handle_invoice_event`)
+  - `negative_review` — Admin-created feedback with rating <= 2 (`backend/app/api/routes_admin.py::admin_clients_add_feedback`)
+  - `low_stock`, `high_value_lead`, `no_show` — placeholders until inventory/leads/check-in hooks exist
 - API endpoints and RBAC: `backend/app/api/routes_admin.py`
 - Event/read schema: `backend/app/domain/notifications_center/db_models.py` + Alembic migration
 - Admin UI, CTA link mapping, and filters: `web/app/admin/notifications/page.tsx`
