@@ -745,6 +745,27 @@ curl -X POST https://api.panidobro.com/v1/admin/ui/workers/new \
 
 See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 
+### Training
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/training/workers/{worker_id}/status` | `training.view` (fallback `core.view`) | Worker training status (requirements + completion + expiry) |
+| POST | `/v1/admin/training/workers/{worker_id}/records` | `training.manage` (fallback `admin.manage`) | Record a completion/certificate update |
+
+**Status response fields:** `requirements` entries include `key`, `title`, `required`, `completed_at`, `expires_at`, `next_due_at`, and `status` (`ok`, `due`, `overdue`).
+
+**Record request body (example):**
+
+```json
+{
+  "requirement_key": "whmis",
+  "completed_at": "2026-02-10T15:00:00Z",
+  "expires_at": "2027-02-10T15:00:00Z",
+  "score": 92,
+  "note": "Completed refresher course."
+}
+```
+
 ---
 
 ### Clients
