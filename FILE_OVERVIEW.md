@@ -50,6 +50,7 @@ CleanWithSnapshot/
 | `routes_admin_settings.py` | `/v1/admin/settings` | Organization settings, policies, integrations | Medium |
 | `routes_admin_iam.py` | `/v1/admin/iam` | Role & permission management | Small |
 | `routes_admin_pricing.py` | `/v1/admin/pricing` | Pricing configuration | Small |
+| `routes_admin_inventory.py` | `/v1/admin/inventory` | Inventory categories and items CRUD with RBAC | Small |
 | `routes_dispatcher.py` | `/v1/dispatcher` | Dispatch board, route optimization, AI suggestions | 23KB |
 | `routes_worker.py` | `/v1/worker` | Worker portal - job assignments, status updates | 82KB |
 | `routes_client.py` | `/v1/client` | Client portal - bookings, invoices | 31KB |
@@ -118,6 +119,7 @@ CleanWithSnapshot/
 | `iam/` | 2 files | **Permissions** - Permission catalog, role definitions |
 | `subscriptions/` | 2 files | **SaaS subscriptions** - Billing plans |
 | `saas/` | 5 files | **Multi-tenant** - Org isolation, billing |
+| `inventory/` | 3 files | **Inventory** - Categories, items (stock movements pending) |
 
 **Key files:**
 - `iam/permissions.py` - **Permission catalog** (19 permissions, 7 roles)
@@ -214,6 +216,7 @@ domain_module/
 - `0084_feature_modules_visibility.py` - Feature module toggles
 - `0085_iam_roles_permissions.py` - RBAC roles & permissions
 - `6a2b1c6f3c2b_availability_blocks.py` - Team availability blocking
+- `a1b2c3d4e5f6_add_inventory_categories_and_items.py` - Inventory categories + items tables
 
 ### Tests (`/backend/tests`)
 
@@ -405,7 +408,7 @@ web/app/
 | `backend/alembic/versions/0085_*.py` | **RBAC** - Roles & permissions tables |
 | `backend/alembic/versions/6a2b_*.py` | **Availability blocks** - Team blackout |
 
-### Frontend (15 files)
+### Frontend (16 files)
 
 | File | Why Important |
 |------|---------------|
@@ -416,6 +419,7 @@ web/app/
 | `web/app/admin/leads/page.tsx` | **Lead pipeline list** |
 | `web/app/admin/invoices/page.tsx` | **Invoice list + overdue alerts** |
 | `web/app/admin/invoices/[id]/page.tsx` | **Invoice detail** |
+| `web/app/admin/inventory/page.tsx` | **Inventory items list** |
 | `web/app/admin/iam/roles/page.tsx` | **Role management** |
 | `web/app/admin/settings/modules/page.tsx` | **Feature toggles** |
 | `web/app/admin/settings/availability-blocks/page.tsx` | **Availability blocking** |

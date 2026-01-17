@@ -31,8 +31,11 @@ This guide covers database schema management using Alembic in the CleanWithSnaps
 `e6b1c2d3f4a5_add_promo_codes.py` adds `promo_codes` + `promo_code_redemptions`,
 `d3b7c1a4f8e2_add_lead_quotes_and_loss_reason.py` adds lead quotes + loss reason tracking,
 `6ddda2f1b93a_quality_issue_responses.py` adds `quality_issue_responses`,
-`9b7c1d2e3f4a_quality_issue_tags.py` adds `quality_issue_tags` + `quality_tag_catalog`, and
-`1b2c3d4e5f6a_quality_issue_tag_position.py` adds tag ordering via `quality_issue_tags.position`.
+`9b7c1d2e3f4a_quality_issue_tags.py` adds `quality_issue_tags` + `quality_tag_catalog`,
+`1b2c3d4e5f6a_quality_issue_tag_position.py` adds tag ordering via `quality_issue_tags.position`,
+`a1b2c3d4e5f6_add_inventory_categories_and_items.py` adds `inventory_categories` and `inventory_items` tables,
+`b1c2d3e4f5a6_merge_heads_inventory_and_marketing.py` merges parallel migration heads, and
+`cf72c4eb59bc_add_inventory_stock_fields.py` adds stock state fields (`current_qty`, `min_qty`, `location_label`) to `inventory_items`.
 
 ---
 
@@ -269,9 +272,41 @@ alembic heads
 ```bash
 cd backend
 alembic heads
+# Output: abc123 (branch1), def456 (branch2)
+
 alembic merge -m "merge heads abc123 and def456" abc123 def456
 alembic upgrade head
 ```
+
+**Real-world scenario (parallel feature development):**
+
+When two feature branches independently create migrations from the same parent, you get multiple heads:
+
+```bash
+# Scenario: Two PRs both branched from f0b1c2d3e4f5
+# PR #1 (inventory): creates migration a1b2c3d4e5f6
+# PR #2 (marketing): creates migration aa12b3cd45ef
+# Both merged to main → multiple heads!
+
+cd backend
+alembic heads
+# Output:
+# a1b2c3d4e5f6 (add inventory categories and items)
+# aa12b3cd45ef (add marketing spend and email manual)
+
+# Create merge migration
+alembic merge -m "merge heads a1b2c3d4e5f6 and aa12b3cd45ef" a1b2c3d4e5f6 aa12b3cd45ef
+# Creates: b1c2d3e4f5a6_merge_heads_inventory_and_marketing.py
+
+# Verify single head
+alembic heads
+# Output: b1c2d3e4f5a6 (merge heads...)
+
+# Upgrade to merged head
+alembic upgrade head
+```
+
+**Prevention tip:** Always pull latest `main` and merge any pending heads BEFORE creating new migrations. Check `alembic heads` first!
 
 ### Merging Heads
 

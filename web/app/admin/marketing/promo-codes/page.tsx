@@ -142,6 +142,7 @@ export default function PromoCodesPage() {
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "notifications", label: "Notifications", href: "/admin/notifications", featureKey: "module.notifications_center" },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
+      { key: "inventory", label: "Inventory", href: "/admin/inventory", featureKey: "module.inventory" },
       {
         key: "marketing-analytics",
         label: "Marketing Analytics",
