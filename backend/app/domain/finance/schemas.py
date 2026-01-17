@@ -193,3 +193,63 @@ class FinancePnlResponse(BaseModel):
     revenue_breakdown: list[FinancePnlBreakdownItem]
     expense_breakdown_by_category: list[FinancePnlExpenseCategoryBreakdown]
     data_sources: FinancePnlDataSources
+
+
+class FinanceCashSnapshotResponse(BaseModel):
+    snapshot_id: UUID
+    org_id: UUID
+    as_of_date: date
+    cash_cents: int
+    note: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FinanceCashSnapshotCreate(BaseModel):
+    as_of_date: date
+    cash_cents: int
+    note: str | None = Field(None, max_length=1000)
+
+
+class FinanceCashSnapshotUpdate(BaseModel):
+    as_of_date: date | None = None
+    cash_cents: int | None = None
+    note: str | None = Field(None, max_length=1000)
+
+
+class FinanceCashSnapshotListResponse(BaseModel):
+    items: list[FinanceCashSnapshotResponse]
+
+
+class FinanceCashflowInflowBreakdown(BaseModel):
+    method: str
+    total_cents: int
+
+
+class FinanceCashflowOutflowBreakdown(BaseModel):
+    category_id: UUID
+    category_name: str
+    total_cents: int
+    tax_cents: int
+
+
+class FinanceCashflowDataSources(BaseModel):
+    inflows: str
+    outflows: str
+
+
+class FinanceCashflowResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_date: date = Field(..., alias="from")
+    to_date: date = Field(..., alias="to")
+    inflows_cents: int
+    outflows_cents: int
+    net_movement_cents: int
+    inflows_breakdown: list[FinanceCashflowInflowBreakdown]
+    outflows_breakdown_by_category: list[FinanceCashflowOutflowBreakdown]
+    data_sources: FinanceCashflowDataSources
+    start_cash_snapshot: FinanceCashSnapshotResponse | None = None
+    end_cash_snapshot: FinanceCashSnapshotResponse | None = None

@@ -169,3 +169,33 @@ class FinanceBudget(Base):
         Index("ix_finance_budgets_org_month", "org_id", "month_yyyymm"),
         Index("ix_finance_budgets_org_category", "org_id", "category_id"),
     )
+
+
+class FinanceCashSnapshot(Base):
+    __tablename__ = "finance_cash_snapshots"
+
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cash_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "as_of_date", name="uq_finance_cash_snapshots_org_date"),
+        Index("ix_finance_cash_snapshots_org_id", "org_id"),
+        Index("ix_finance_cash_snapshots_org_date", "org_id", "as_of_date"),
+    )

@@ -419,20 +419,22 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `web/app/admin/finance/expenses/page.tsx` - Expense tracking (`/admin/finance/expenses`)
 - `web/app/admin/finance/budgets/page.tsx` - Monthly budgets (`/admin/finance/budgets`)
 - `web/app/admin/finance/pnl/page.tsx` - Profit & Loss report (`/admin/finance/pnl`)
+- `web/app/admin/finance/cashflow/page.tsx` - Cashflow report (`/admin/finance/cashflow`)
 
 **Backend Routers:**
-- `backend/app/api/routes_admin_finance.py` - Expense categories, expenses, budgets, P&L, summary
+- `backend/app/api/routes_admin_finance.py` - Expense categories, expenses, budgets, P&L, cashflow, snapshots, summary
 - `backend/app/api/routes_admin.py` - Invoice reconciliation endpoints
 - `backend/app/api/routes_payments.py` - Payment processing
 
 **Key Services:**
-- `backend/app/domain/finance/service.py` - Expense/budget CRUD + summaries
+- `backend/app/domain/finance/service.py` - Expense/budget CRUD + summaries, cashflow, snapshots
 - `backend/app/domain/invoices/service.py` - Invoice/payment logic
 
 **Key Tables:**
 - `finance_expense_categories` - Expense category catalog
 - `finance_expenses` - Expense ledger (by day)
 - `finance_budgets` - Monthly category budgets
+- `finance_cash_snapshots` - Optional cash balance snapshots
 - `invoices` - Invoice records
 - `payments` - Payment records
 - `stripe_events` - Stripe webhooks
