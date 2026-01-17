@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.admin_audit.db_models import AdminAuditLog
 from app.domain.bookings.db_models import Booking, EmailEvent, OrderPhoto
 from app.domain.invoices.db_models import Invoice, Payment
+from app.domain.leads.db_models import Lead
 from app.domain.nps.db_models import NpsResponse, SupportTicket
 from app.domain.outbox.db_models import OutboxEvent
 from app.domain.timeline.schemas import TimelineEvent
@@ -396,5 +397,102 @@ async def get_invoice_timeline(
         )
 
     # Sort all events by timestamp (descending - most recent first)
+    events.sort(key=lambda e: e.timestamp, reverse=True)
+    return events
+
+
+async def get_lead_timeline(
+    session: AsyncSession, org_id: uuid.UUID, lead: Lead
+) -> list[TimelineEvent]:
+    """Fetch timeline events for a lead."""
+    events: list[TimelineEvent] = [
+        TimelineEvent(
+            event_id=f"lead_created:{lead.lead_id}",
+            event_type="lead_created",
+            timestamp=lead.created_at,
+            actor="customer",
+            action="Lead created",
+            resource_type="lead",
+            resource_id=lead.lead_id,
+            metadata={"status": lead.status},
+        )
+    ]
+
+    audit_stmt = (
+        select(AdminAuditLog)
+        .where(
+            AdminAuditLog.org_id == org_id,
+            AdminAuditLog.resource_id == lead.lead_id,
+            AdminAuditLog.resource_type == "lead",
+        )
+        .order_by(AdminAuditLog.created_at.desc())
+        .limit(100)
+    )
+    audit_logs = (await session.execute(audit_stmt)).scalars().all()
+    for audit in audit_logs:
+        before = audit.before or {}
+        after = audit.after or {}
+        if audit.action in {"lead_status_update", "lead_update"}:
+            before_status = before.get("status")
+            after_status = after.get("status")
+            if after_status and before_status != after_status:
+                events.append(
+                    TimelineEvent(
+                        event_id=audit.audit_id,
+                        event_type="status_changed",
+                        timestamp=audit.created_at,
+                        actor=audit.actor,
+                        action=f"Status set to {after_status}",
+                        resource_type="lead",
+                        resource_id=lead.lead_id,
+                        before={"status": before_status} if before_status else None,
+                        after={"status": after_status} if after_status else None,
+                        metadata={"role": audit.role},
+                    )
+                )
+                continue
+            if audit.action == "lead_update" and before.get("notes") != after.get("notes"):
+                events.append(
+                    TimelineEvent(
+                        event_id=f"{audit.audit_id}:notes",
+                        event_type="lead_event",
+                        timestamp=audit.created_at,
+                        actor=audit.actor,
+                        action="Notes updated",
+                        resource_type="lead",
+                        resource_id=lead.lead_id,
+                        metadata={"role": audit.role, "note": after.get("notes")},
+                    )
+                )
+                continue
+        if audit.action == "lead_timeline_event":
+            label = after.get("label") or "Lead activity logged"
+            note = after.get("note")
+            events.append(
+                TimelineEvent(
+                    event_id=audit.audit_id,
+                    event_type="lead_event",
+                    timestamp=audit.created_at,
+                    actor=audit.actor,
+                    action=label,
+                    resource_type="lead",
+                    resource_id=lead.lead_id,
+                    metadata={"role": audit.role, "note": note},
+                )
+            )
+            continue
+        events.append(
+            TimelineEvent(
+                event_id=audit.audit_id,
+                event_type="lead_event",
+                timestamp=audit.created_at,
+                actor=audit.actor,
+                action=audit.action,
+                resource_type="lead",
+                resource_id=lead.lead_id,
+                metadata={"role": audit.role},
+            )
+        )
+
     events.sort(key=lambda e: e.timestamp, reverse=True)
     return events

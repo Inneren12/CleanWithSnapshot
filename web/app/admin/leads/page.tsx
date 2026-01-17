@@ -428,6 +428,9 @@ export default function LeadsPage() {
                         >
                           Save
                         </button>
+                        <a className="btn btn-ghost" href={`/admin/leads/${lead.lead_id}`}>
+                          View
+                        </a>
                       </td>
                     </tr>
                   );

@@ -20,6 +20,8 @@ class TimelineEvent(BaseModel):
         "nps_response",
         "support_ticket",
         "outbox_event",
+        "lead_created",
+        "lead_event",
     ]
     timestamp: datetime
     actor: str | None = None  # Who performed the action
