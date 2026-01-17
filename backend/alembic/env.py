@@ -25,6 +25,7 @@ from app.domain.notifications_center import db_models as notifications_center_db
 from app.domain.notifications_digests import db_models as notifications_digests_db_models  # noqa: F401
 from app.domain.marketing import db_models as marketing_db_models  # noqa: F401
 from app.domain.training import db_models as training_db_models  # noqa: F401
+from app.domain.inventory import db_models as inventory_db_models  # noqa: F401
 from app.infra.db import Base
 from app.settings import settings
 

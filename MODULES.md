@@ -536,10 +536,31 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Purpose:** Cleaning supplies inventory management
 
+**Data model:**
+- `inventory_categories` - Product categories (org-scoped, sortable)
+- `inventory_items` - Inventory items (category FK, SKU, unit, active flag)
+
+**Key Tables:**
+- `inventory_categories` (category_id UUID pk, org_id, name, sort_order)
+- `inventory_items` (item_id UUID pk, org_id, category_id nullable FK, sku, name, unit, active)
+
+**Indexes:**
+- `(org_id, name)` for search
+- `(org_id, active)` for filtering
+
 **Key Pages:**
-- TBD (not fully implemented)
+- TBD (API/UI not yet implemented)
 
 **Feature Key:** `module.inventory`
+
+**Cascade Behavior:**
+- Deleting a category **preserves** items (category_id set to NULL)
+- FK constraint: `ondelete="SET NULL"`
+- ORM relationship: `passive_deletes=True`, no `delete-orphan`
+- Deleting categories retains items (category_id becomes NULL; FK ondelete=SET NULL).
+- SQLite tests require PRAGMA foreign_keys=ON; use shared fixtures.
+
+**Status:** Database schema complete, API/UI pending
 
 ---
 
