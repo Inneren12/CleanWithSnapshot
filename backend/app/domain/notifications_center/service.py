@@ -113,6 +113,41 @@ async def list_notifications(
     return events, read_map, next_cursor
 
 
+async def list_urgent_unread_notifications(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    user_key: str,
+    limit: int,
+) -> list[db_models.NotificationEvent]:
+    reads_subq = (
+        sa.select(db_models.NotificationRead.event_id.label("event_id"))
+        .where(
+            db_models.NotificationRead.org_id == org_id,
+            db_models.NotificationRead.user_id == user_key,
+        )
+        .subquery()
+    )
+
+    stmt = (
+        sa.select(db_models.NotificationEvent)
+        .outerjoin(reads_subq, db_models.NotificationEvent.id == reads_subq.c.event_id)
+        .where(
+            db_models.NotificationEvent.org_id == org_id,
+            db_models.NotificationEvent.priority.in_(sorted(URGENT_PRIORITIES)),
+            reads_subq.c.event_id.is_(None),
+        )
+        .order_by(
+            sa.desc(db_models.NotificationEvent.created_at),
+            sa.desc(db_models.NotificationEvent.id),
+        )
+        .limit(limit)
+    )
+
+    result = await session.execute(stmt)
+    return list(result.scalars())
+
+
 async def mark_notification_read(
     session: AsyncSession,
     *,

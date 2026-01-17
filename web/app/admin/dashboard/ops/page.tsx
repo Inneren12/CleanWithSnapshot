@@ -14,6 +14,7 @@ type OpsDashboardAlert = {
   severity: string;
   title: string;
   description: string;
+  notification_id?: string | null;
   entity_ref?: Record<string, unknown> | null;
   actions: OpsDashboardAlertAction[];
   created_at?: string | null;
@@ -512,7 +513,11 @@ export default function OpsDashboardPage() {
     ? activityItems
     : activityItems.slice(0, ACTIVITY_DEFAULT_LIMIT);
   const visibleAlerts = useMemo(
-    () => opsData?.critical_alerts.filter((alert) => !dismissedAlerts.has(alert.type)) ?? [],
+    () =>
+      opsData?.critical_alerts.filter((alert) => {
+        const key = alert.notification_id ?? alert.type;
+        return !dismissedAlerts.has(key);
+      }) ?? [],
     [dismissedAlerts, opsData?.critical_alerts]
   );
 
@@ -569,13 +574,26 @@ export default function OpsDashboardPage() {
     }
   }, []);
 
-  const handleDismissAlert = useCallback((alertType: string) => {
-    setDismissedAlerts((previous) => {
-      const next = new Set(previous);
-      next.add(alertType);
-      return next;
-    });
-  }, []);
+  const handleDismissAlert = useCallback(
+    async (alert: OpsDashboardAlert) => {
+      const alertKey = alert.notification_id ?? alert.type;
+      setDismissedAlerts((previous) => {
+        const next = new Set(previous);
+        next.add(alertKey);
+        return next;
+      });
+      if (!alert.notification_id) return;
+      try {
+        await fetch(`${API_BASE}/v1/admin/notifications/${alert.notification_id}/read`, {
+          method: "POST",
+          headers: authHeaders,
+        });
+      } catch (error) {
+        console.error("Failed to dismiss alert", error);
+      }
+    },
+    [authHeaders]
+  );
 
   if (visibilityReady && !dashboardVisible) {
     return (
@@ -745,8 +763,10 @@ export default function OpsDashboardPage() {
                   <p className="muted">No critical alerts reported.</p>
                 ) : (
                   <div className="admin-actions" style={{ flexDirection: "column", alignItems: "stretch", gap: "12px" }}>
-                    {visibleAlerts.map((alert) => (
-                      <div key={alert.type} className={alertClassName(alert.severity)}>
+                    {visibleAlerts.map((alert) => {
+                      const alertKey = alert.notification_id ?? alert.type;
+                      return (
+                      <div key={alertKey} className={alertClassName(alert.severity)}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
                           <div>
                             <strong>{alert.title}</strong>
@@ -761,19 +781,19 @@ export default function OpsDashboardPage() {
                                 {action.label}
                               </a>
                             ))}
-                            <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert.type)}>
+                            <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert)}>
                               Dismiss
                             </button>
                           </div>
                         ) : (
                           <div className="admin-actions" style={{ marginTop: "8px" }}>
-                            <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert.type)}>
+                            <button className="btn btn-ghost" type="button" onClick={() => handleDismissAlert(alert)}>
                               Dismiss
                             </button>
                           </div>
                         )}
                       </div>
-                    ))}
+                    )})}
                   </div>
                 )
               ) : (

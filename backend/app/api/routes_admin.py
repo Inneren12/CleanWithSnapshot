@@ -557,130 +557,62 @@ async def _build_ops_critical_alerts(
     session: AsyncSession,
     org_id: uuid.UUID,
     *,
-    permission_keys: set[str],
-    org_settings: org_settings_service.OrganizationSettings,
-    now_local: datetime,
-    quality_today: OpsDashboardQualityToday | None,
-    negative_reviews_today: int,
-    next24_start_local: datetime,
-    next24_end_local: datetime,
-    next24_start_utc: datetime,
-    next24_end_utc: datetime,
+    user_key: str,
+    limit: int,
 ) -> list[OpsDashboardAlert]:
-    alerts: list[OpsDashboardAlert] = []
-    created_at = datetime.now(timezone.utc)
-    currency_code = org_settings_service.resolve_currency(org_settings)
+    action_labels = {
+        "booking": "Open booking",
+        "invoice": "Open invoice",
+        "lead": "Open lead",
+        "issue": "Open issue",
+        "quality_issue": "Open issue",
+        "open_booking": "Open booking",
+        "open_invoice": "Open invoice",
+        "open_lead": "Open lead",
+        "open_issue": "Open issue",
+    }
 
-    if "invoices.view" in permission_keys and "finance.view" in permission_keys:
-        overdue_count, overdue_total = await _overdue_invoice_summary_totals(
-            session,
-            org_id,
-            as_of_date=now_local.date(),
-        )
-        if overdue_count > 0:
-            invoice_label = "invoice" if overdue_count == 1 else "invoices"
-            description = (
-                f"{overdue_count} {invoice_label} are overdue by 7+ days "
-                f"totaling {_format_money(overdue_total, currency_code)}."
-            )
-            alerts.append(
-                OpsDashboardAlert(
-                    type="overdue_invoices",
-                    severity="critical",
-                    title="Overdue invoices (7+ days)",
-                    description=description,
-                    entity_ref={
-                        "kind": "invoice",
-                        "count": overdue_count,
-                        "total_cents": overdue_total,
-                        "currency": currency_code,
-                        "min_days_overdue": 7,
-                    },
-                    actions=[
-                        OpsDashboardAlertAction(
-                            label="Open overdue invoices",
-                            href="/admin/invoices?overdue_bucket=attention",
-                        ),
-                        OpsDashboardAlertAction(
-                            label="Open 14+ day overdue",
-                            href="/admin/invoices?overdue_bucket=critical",
-                        ),
-                    ],
-                    created_at=created_at,
+    events = await notifications_service.list_urgent_unread_notifications(
+        session,
+        org_id=org_id,
+        user_key=user_key,
+        limit=limit,
+    )
+    alerts: list[OpsDashboardAlert] = []
+    for event in events:
+        action_label = None
+        if event.action_kind and event.action_kind in action_labels:
+            action_label = action_labels[event.action_kind]
+        elif event.entity_type and event.entity_type in action_labels:
+            action_label = action_labels[event.entity_type]
+        actions: list[OpsDashboardAlertAction] = []
+        if event.action_href:
+            actions.append(
+                OpsDashboardAlertAction(
+                    label=action_label or "Open",
+                    href=event.action_href,
                 )
             )
 
-    if quality_today and (negative_reviews_today > 0 or quality_today.open_critical_issues > 0):
-        def _pluralize(value: int, singular: str, plural: str | None = None) -> str:
-            return singular if value == 1 else (plural or f"{singular}s")
+        entity_ref = None
+        if event.entity_type or event.entity_id:
+            entity_ref = {
+                "kind": event.entity_type,
+                "id": event.entity_id,
+            }
 
-        description_parts: list[str] = []
-        if negative_reviews_today > 0:
-            description_parts.append(
-                f"{negative_reviews_today} "
-                f"{_pluralize(negative_reviews_today, 'negative review')} today"
-            )
-        if quality_today.open_critical_issues > 0:
-            description_parts.append(
-                f"{quality_today.open_critical_issues} "
-                f"{_pluralize(quality_today.open_critical_issues, 'critical issue')} open"
-            )
-        description = " and ".join(description_parts) + "."
         alerts.append(
             OpsDashboardAlert(
-                type="quality_risk",
-                severity="critical",
-                title="Negative review / critical issue",
-                description=description,
-                entity_ref={
-                    "kind": "quality",
-                    "negative_reviews_today": negative_reviews_today,
-                    "open_critical_issues": quality_today.open_critical_issues,
-                },
-                actions=[
-                    OpsDashboardAlertAction(
-                        label="Review critical issues",
-                        href="/admin/quality/issues?severity=critical",
-                    )
-                ],
-                created_at=created_at,
+                type=event.type,
+                severity=event.priority.lower(),
+                title=event.title,
+                description=event.body,
+                notification_id=str(event.id),
+                entity_ref=entity_ref,
+                actions=actions,
+                created_at=event.created_at,
             )
         )
-
-    if "bookings.view" in permission_keys:
-        unassigned_count = await _unassigned_bookings_count(
-            session,
-            org_id,
-            window_start_utc=next24_start_utc,
-            window_end_utc=next24_end_utc,
-        )
-        if unassigned_count > 0:
-            booking_label = "booking" if unassigned_count == 1 else "bookings"
-            description = (
-                f"{unassigned_count} {booking_label} in the next 24 hours "
-                "have no assigned worker."
-            )
-            alerts.append(
-                OpsDashboardAlert(
-                    type="unassigned_bookings_24h",
-                    severity="warning",
-                    title="Upcoming bookings missing workers",
-                    description=description,
-                    entity_ref={
-                        "kind": "booking",
-                        "count": unassigned_count,
-                        "window_start": next24_start_local.isoformat(),
-                        "window_end": next24_end_local.isoformat(),
-                    },
-                    actions=[
-                        OpsDashboardAlertAction(
-                            label="Open schedule",
-                            href=f"/admin/schedule?date={next24_start_local.date().isoformat()}",
-                        )
-                    ],
-                    created_at=created_at,
-                )
-            )
 
     return alerts
 
@@ -800,19 +732,19 @@ async def get_ops_dashboard(
         next24_end_utc=next24_end_utc,
     )
 
-    critical_alerts = await _build_ops_critical_alerts(
-        session,
-        org_id,
-        permission_keys=permission_keys,
-        org_settings=org_settings,
-        now_local=now_local,
-        quality_today=quality_today,
-        negative_reviews_today=negative_reviews_today,
-        next24_start_local=next24_start_local,
-        next24_end_local=next24_end_local,
-        next24_start_utc=next24_start_utc,
-        next24_end_utc=next24_end_utc,
+    notifications_enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "module.notifications_center"
     )
+    if notifications_enabled:
+        user_key = _resolve_notifications_user_key(request, _identity)
+        critical_alerts = await _build_ops_critical_alerts(
+            session,
+            org_id,
+            user_key=user_key,
+            limit=6,
+        )
+    else:
+        critical_alerts = []
 
     revenue_today_stmt = (
         select(func.coalesce(func.sum(Booking.base_charge_cents), 0))
