@@ -109,3 +109,15 @@ class PromoCodeValidationResponse(BaseModel):
     eligible: bool
     reasons: list[str] = Field(default_factory=list)
     promo_code: PromoCodeResponse | None = None
+
+
+class ReferralLeaderboardEntry(BaseModel):
+    referrer_lead_id: str
+    referrer_name: str | None
+    referral_code: str
+    credits_awarded: int
+    referrals_count: int
+
+
+class ReferralLeaderboardResponse(BaseModel):
+    entries: list[ReferralLeaderboardEntry]

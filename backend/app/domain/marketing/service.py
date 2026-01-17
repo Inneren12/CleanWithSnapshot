@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Booking
 from app.domain.clients.db_models import ClientUser
+from app.domain.leads.db_models import Lead, ReferralCredit
 from app.domain.errors import DomainError
 from app.domain.marketing import db_models, schemas
 from app.domain.pricing_settings import db_models as pricing_db_models
@@ -70,6 +71,40 @@ async def list_promo_codes(
         .order_by(db_models.PromoCode.created_at.desc())
     )
     return [_promo_response(model) for model in result.scalars().all()]
+
+
+async def list_referral_leaderboard(
+    session: AsyncSession, org_id: uuid.UUID, limit: int = 10
+) -> schemas.ReferralLeaderboardResponse:
+    result = await session.execute(
+        select(
+            Lead.lead_id,
+            Lead.name,
+            Lead.referral_code,
+            func.count(ReferralCredit.credit_id).label("credits_awarded"),
+            func.count(func.distinct(ReferralCredit.referred_lead_id)).label("referrals_count"),
+        )
+        .join(ReferralCredit, ReferralCredit.referrer_lead_id == Lead.lead_id)
+        .where(Lead.org_id == org_id)
+        .group_by(Lead.lead_id)
+        .order_by(
+            func.count(ReferralCredit.credit_id).desc(),
+            func.count(func.distinct(ReferralCredit.referred_lead_id)).desc(),
+            Lead.name.asc(),
+        )
+        .limit(limit)
+    )
+    entries = [
+        schemas.ReferralLeaderboardEntry(
+            referrer_lead_id=row.lead_id,
+            referrer_name=row.name,
+            referral_code=row.referral_code,
+            credits_awarded=int(row.credits_awarded or 0),
+            referrals_count=int(row.referrals_count or 0),
+        )
+        for row in result.all()
+    ]
+    return schemas.ReferralLeaderboardResponse(entries=entries)
 
 
 async def get_promo_code(

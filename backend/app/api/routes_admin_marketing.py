@@ -110,3 +110,18 @@ async def validate_promo_code(
     if promo is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promo code not found")
     return await service.validate_promo_code(session, org_id, promo, payload)
+
+
+@router.get(
+    "/v1/admin/marketing/referrals/leaderboard",
+    response_model=schemas.ReferralLeaderboardResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_referral_leaderboard(
+    limit: int = 10,
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.ReferralLeaderboardResponse:
+    normalized_limit = max(1, min(limit, 50))
+    return await service.list_referral_leaderboard(session, org_id, limit=normalized_limit)
