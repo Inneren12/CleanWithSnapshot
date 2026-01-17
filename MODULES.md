@@ -539,17 +539,19 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Data model:**
 - `inventory_categories` - Product categories (org-scoped, sortable)
 - `inventory_items` - Inventory items (category FK, SKU, unit, active flag, stock fields)
+- `inventory_suppliers` - Supplier directory (contact info, ordering terms, minimum order)
 
 **Key Tables:**
 - `inventory_categories` (category_id UUID pk, org_id, name, sort_order)
 - `inventory_items` (item_id UUID pk, org_id, category_id nullable FK, sku, name, unit, current_qty, min_qty, location_label, active)
+- `inventory_suppliers` (supplier_id UUID pk, org_id, name, email, phone, address, terms, delivery_days, min_order_cents, notes, created_at)
 
 **Indexes:**
 - `(org_id, name)` for search
 - `(org_id, active)` for filtering
 
 **Backend Routers:**
-- `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/*` (Categories and Items CRUD)
+- `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/*` (Categories, Items, Suppliers CRUD)
 
 **Key Services:**
 - `backend/app/domain/inventory/service.py` - Category and Item CRUD, search, pagination
@@ -594,14 +596,21 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Semantics: `need_qty = max(0, min_qty - current_qty)` with ordering by `need_qty` desc, then `name` asc
 - Default filter: `only_below_min=true` returns items where `current_qty < min_qty`
 
+#### Supplier CRUD
+- API: `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/suppliers/*`
+- Service: `backend/app/domain/inventory/service.py` - `list_suppliers()`, `create_supplier()`, `update_supplier()`, `delete_supplier()`
+- Models: `backend/app/domain/inventory/db_models.py` - `InventorySupplier`
+
 #### Search and Pagination
 - Implement in service layer using SQLAlchemy filters
 - Category search: name (ilike)
 - Item search: name or SKU (ilike)
+- Supplier search: name, email, or phone (ilike)
 - Pagination: page + page_size with total count from subquery
 
 **Key Pages:**
 - `web/app/admin/inventory/page.tsx` - Inventory items list UI (`/admin/inventory`)
+- `web/app/admin/inventory/suppliers/page.tsx` - Inventory suppliers UI (`/admin/inventory/suppliers`)
 
 **Status:** API complete with CRUD, org-scoping, RBAC, search, and pagination
 

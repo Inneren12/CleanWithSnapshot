@@ -9,7 +9,8 @@ This guide covers the new admin features for worker password management, client 
 3. [Client Management](#client-management)
 4. [Booking Creation](#booking-creation)
 5. [Inventory Low Stock](#inventory-low-stock)
-6. [Troubleshooting](#troubleshooting)
+6. [Inventory Suppliers](#inventory-suppliers)
+7. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -258,6 +259,19 @@ The Inventory page now includes a Low Stock panel to surface items at or below t
 
 **Tips:**
 - Use the “Low stock only” checkbox to filter the main inventory table to items that need reordering.
+
+## Inventory Suppliers
+
+The Inventory Suppliers page keeps a directory of preferred vendors for reordering.
+
+**How it works:**
+- Search by supplier name, email, or phone to find vendors quickly.
+- Capture delivery days, ordering terms, minimum order amounts, and internal notes.
+- Use Create/Edit/Delete actions (requires inventory manage permission) to maintain the list.
+
+**Tips:**
+- Store delivery cadence (e.g., “Mon/Wed/Fri”) in the Delivery Days field for quick reorder planning.
+- Use the Notes field for rep names, pickup instructions, or preferred order channels.
 
 ## Troubleshooting
 
