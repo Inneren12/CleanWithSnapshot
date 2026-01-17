@@ -2680,6 +2680,123 @@ async def get_quality_worker_leaderboard(
 
 
 @router.get(
+    "/v1/admin/quality/services/breakdown",
+    response_model=quality_schemas.ServiceQualityBreakdownResponse,
+)
+async def get_quality_service_breakdown(
+    request: Request,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.ServiceQualityBreakdownResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
+    resolved_from, resolved_to = _resolve_quality_distribution_range(
+        from_date,
+        to_date,
+        org_timezone,
+    )
+    services = await quality_service.get_service_quality_breakdown(
+        session,
+        org_id=org_id,
+        from_date=resolved_from,
+        to_date=resolved_to,
+    )
+    return quality_schemas.ServiceQualityBreakdownResponse(
+        from_date=resolved_from,
+        to_date=resolved_to,
+        as_of=datetime.now(timezone.utc),
+        services=[quality_schemas.ServiceQualityBreakdownEntry(**entry) for entry in services],
+    )
+
+
+@router.get(
+    "/v1/admin/quality/workers/{worker_id}/summary",
+    response_model=quality_schemas.WorkerQualitySummaryResponse,
+)
+async def get_quality_worker_summary(
+    request: Request,
+    worker_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.WorkerQualitySummaryResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    worker = (
+        await session.execute(
+            select(Worker).where(Worker.org_id == org_id, Worker.worker_id == worker_id)
+        )
+    ).scalar_one_or_none()
+    if not worker:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Worker Not Found",
+            detail="Worker does not exist or is not accessible.",
+        )
+    summary = await quality_service.get_worker_quality_summary(
+        session,
+        org_id=org_id,
+        worker_id=worker_id,
+    )
+    last_review = (
+        quality_schemas.QualitySummaryReview(**summary["last_review"])
+        if summary.get("last_review")
+        else None
+    )
+    return quality_schemas.WorkerQualitySummaryResponse(
+        worker_id=worker_id,
+        average_rating=summary.get("average_rating"),
+        review_count=int(summary.get("review_count", 0)),
+        complaint_count=int(summary.get("complaint_count", 0)),
+        last_review=last_review,
+    )
+
+
+@router.get(
+    "/v1/admin/quality/clients/{client_id}/summary",
+    response_model=quality_schemas.ClientQualitySummaryResponse,
+)
+async def get_quality_client_summary(
+    request: Request,
+    client_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.ClientQualitySummaryResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = (
+        await session.execute(
+            select(ClientUser).where(ClientUser.org_id == org_id, ClientUser.client_id == client_id)
+        )
+    ).scalar_one_or_none()
+    if not client:
+        return problem_details(
+            request=request,
+            status=404,
+            title="Client Not Found",
+            detail="Client does not exist or is not accessible.",
+        )
+    summary = await quality_service.get_client_quality_summary(
+        session,
+        org_id=org_id,
+        client_id=client_id,
+    )
+    last_review = (
+        quality_schemas.QualitySummaryReview(**summary["last_review"])
+        if summary.get("last_review")
+        else None
+    )
+    return quality_schemas.ClientQualitySummaryResponse(
+        client_id=client_id,
+        average_rating=summary.get("average_rating"),
+        review_count=int(summary.get("review_count", 0)),
+        complaint_count=int(summary.get("complaint_count", 0)),
+        last_review=last_review,
+    )
+
+
+@router.get(
     "/v1/admin/quality/issues/triage",
     response_model=quality_schemas.QualityIssueTriageResponse,
 )

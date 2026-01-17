@@ -250,6 +250,9 @@ export default function CommonIssueTagsPage() {
           <p className="muted">Top quality issue tags and the workers most impacted.</p>
         </div>
         <div className="admin-actions">
+          <Link className="btn btn-ghost" href="/admin/quality">
+            Quality overview
+          </Link>
           <Link className="btn btn-ghost" href="/admin/quality/reviews">
             View reviews
           </Link>

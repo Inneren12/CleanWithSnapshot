@@ -1346,6 +1346,25 @@ button:focus-visible {
   gap: 10px;
 }
 
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.input-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--type-sizes-xs);
+  color: var(--muted);
+}
+
+.input-label .input {
+  min-width: 180px;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;
