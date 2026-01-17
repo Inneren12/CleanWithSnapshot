@@ -308,6 +308,8 @@ alembic upgrade head
 
 **Prevention tip:** Always pull latest `main` and merge any pending heads BEFORE creating new migrations. Check `alembic heads` first!
 
+**Before merging feature PRs:** run `alembic heads`; if more than one head is present, merge **all current heads** into a single merge revision before the PR is merged.
+
 ### Merging Heads
 
 **When you see multiple heads:**
@@ -326,6 +328,11 @@ alembic merge -m "merge migration heads" abc123 def456
 
 # If you see more than two heads, list them first and merge all heads into one revision:
 # alembic heads
+#
+# N-head merge command template:
+# alembic merge -m "merge heads <head1> <head2> <head3> <head4>" <head1> <head2> <head3> <head4>
+#
+# Example:
 # alembic merge -m "merge heads a1b2c3d4e5f6 b1c2d3e4f5a6 cf72c4eb59bc e1f2a3b4c5d6" \
 #   a1b2c3d4e5f6 b1c2d3e4f5a6 cf72c4eb59bc e1f2a3b4c5d6
 # CI enforces the single-head policy via tests/test_migrations.py.
