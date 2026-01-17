@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class FinanceExpenseCategoryResponse(BaseModel):
@@ -163,3 +163,33 @@ class FinanceExpenseSummaryResponse(BaseModel):
     total_budget_cents: int
     percent_of_budget: float | None
     categories: list[FinanceExpenseSummaryCategory]
+
+
+class FinancePnlBreakdownItem(BaseModel):
+    label: str
+    total_cents: int
+
+
+class FinancePnlExpenseCategoryBreakdown(BaseModel):
+    category_id: UUID
+    category_name: str
+    total_cents: int
+    tax_cents: int
+
+
+class FinancePnlDataSources(BaseModel):
+    revenue: str
+    expenses: str
+
+
+class FinancePnlResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_date: date = Field(..., alias="from")
+    to_date: date = Field(..., alias="to")
+    revenue_cents: int
+    expense_cents: int
+    net_cents: int
+    revenue_breakdown: list[FinancePnlBreakdownItem]
+    expense_breakdown_by_category: list[FinancePnlExpenseCategoryBreakdown]
+    data_sources: FinancePnlDataSources

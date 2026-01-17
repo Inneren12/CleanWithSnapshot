@@ -275,6 +275,8 @@ web/app/admin/
 │       └── page.tsx  # /admin/invoices/{id} (detail)
 ```
 
+**AdminNav usage:** The `AdminNav` component accepts only `links` and optional `activeKey` props; do not pass a `title`.
+
 ### Client vs Server Components
 
 **Default to Server Components, use Client Components when needed:**

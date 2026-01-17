@@ -418,9 +418,10 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Key Pages:**
 - `web/app/admin/finance/expenses/page.tsx` - Expense tracking (`/admin/finance/expenses`)
 - `web/app/admin/finance/budgets/page.tsx` - Monthly budgets (`/admin/finance/budgets`)
+- `web/app/admin/finance/pnl/page.tsx` - Profit & Loss report (`/admin/finance/pnl`)
 
 **Backend Routers:**
-- `backend/app/api/routes_admin_finance.py` - Expense categories, expenses, budgets, summary
+- `backend/app/api/routes_admin_finance.py` - Expense categories, expenses, budgets, P&L, summary
 - `backend/app/api/routes_admin.py` - Invoice reconciliation endpoints
 - `backend/app/api/routes_payments.py` - Payment processing
 

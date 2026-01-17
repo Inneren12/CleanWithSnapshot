@@ -199,6 +199,12 @@ export default function FinanceExpensesPage() {
       { key: "inventory", label: "Inventory", href: "/admin/inventory", featureKey: "module.inventory" },
       { key: "invoices", label: "Invoices", href: "/admin/invoices", featureKey: "module.invoices" },
       {
+        key: "finance-pnl",
+        label: "P&L",
+        href: "/admin/finance/pnl",
+        featureKey: "module.finance",
+      },
+      {
         key: "finance-expenses",
         label: "Expenses",
         href: "/admin/finance/expenses",
