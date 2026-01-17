@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.clients.db_models import ClientFeedback, ClientUser
-from app.domain.quality.db_models import QualityIssue, QualityIssueResponse, QualityReviewReply
+from app.domain.quality.db_models import (
+    QualityIssue,
+    QualityIssueResponse,
+    QualityIssueTag,
+    QualityReviewReply,
+)
 from app.domain.quality.schemas import QualityIssueSeverity
 from app.domain.workers.db_models import Worker
 
@@ -35,6 +40,14 @@ REVIEW_REPLY_TEMPLATES = [
 
 
 ACTIVE_STATUSES = {"open", "in_progress"}
+
+QUALITY_TAG_CATALOG: dict[str, str] = {
+    "lateness": "Lateness",
+    "missed_spots": "Missed spots",
+    "communication": "Communication",
+    "supplies": "Supplies",
+    "time_overrun": "Time overrun",
+}
 
 
 def resolve_severity(
@@ -172,6 +185,160 @@ async def list_issue_responses(
         .order_by(QualityIssueResponse.created_at.desc())
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+def list_quality_tag_catalog() -> list[dict[str, str]]:
+    return [
+        {"tag_key": tag_key, "label": label}
+        for tag_key, label in QUALITY_TAG_CATALOG.items()
+    ]
+
+
+def _dedupe_tag_keys(tag_keys: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for key in tag_keys:
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(key)
+    return deduped
+
+
+def validate_tag_keys(tag_keys: list[str]) -> tuple[list[str], list[str]]:
+    normalized = [key.strip() for key in tag_keys if key and key.strip()]
+    deduped = _dedupe_tag_keys(normalized)
+    allowed = set(QUALITY_TAG_CATALOG.keys())
+    invalid = sorted({key for key in deduped if key not in allowed})
+    return deduped, invalid
+
+
+async def list_issue_tags(
+    session: AsyncSession,
+    *,
+    org_id,
+    issue_id,
+) -> list[dict[str, str]]:
+    position_order = sa.case(
+        (QualityIssueTag.position.is_(None), 1),
+        else_=0,
+    )
+    stmt = (
+        sa.select(QualityIssueTag.tag_key)
+        .where(
+            QualityIssueTag.org_id == org_id,
+            QualityIssueTag.issue_id == issue_id,
+        )
+        .order_by(position_order, QualityIssueTag.position.asc(), QualityIssueTag.tag_key.asc())
+    )
+    tag_keys = [row[0] for row in (await session.execute(stmt)).all()]
+    return [
+        {"tag_key": key, "label": QUALITY_TAG_CATALOG.get(key, key)}
+        for key in tag_keys
+    ]
+
+
+async def replace_issue_tags(
+    session: AsyncSession,
+    *,
+    org_id,
+    issue_id,
+    tag_keys: list[str],
+) -> list[dict[str, str]]:
+    deduped, invalid = validate_tag_keys(tag_keys)
+    if invalid:
+        raise ValueError(f"Invalid tag keys: {', '.join(invalid)}")
+    await session.execute(
+        sa.delete(QualityIssueTag).where(
+            QualityIssueTag.org_id == org_id,
+            QualityIssueTag.issue_id == issue_id,
+        )
+    )
+    for index, tag_key in enumerate(deduped):
+        session.add(
+            QualityIssueTag(
+                org_id=org_id,
+                issue_id=issue_id,
+                tag_key=tag_key,
+                position=index,
+            )
+        )
+    await session.commit()
+    return [
+        {"tag_key": key, "label": QUALITY_TAG_CATALOG.get(key, key)}
+        for key in deduped
+    ]
+
+
+async def list_common_issue_tags(
+    session: AsyncSession,
+    *,
+    org_id,
+    from_date: date,
+    to_date: date,
+) -> list[dict[str, object]]:
+    issue_filters = [
+        QualityIssueTag.org_id == org_id,
+        QualityIssue.created_at >= _date_start(from_date),
+        QualityIssue.created_at <= _date_end(to_date),
+    ]
+    totals_stmt = (
+        sa.select(
+            QualityIssueTag.tag_key,
+            sa.func.count(sa.distinct(QualityIssueTag.issue_id)).label("issue_count"),
+        )
+        .join(QualityIssue, QualityIssue.id == QualityIssueTag.issue_id)
+        .where(*issue_filters)
+        .group_by(QualityIssueTag.tag_key)
+    )
+    totals = {
+        row.tag_key: row.issue_count for row in (await session.execute(totals_stmt)).all()
+    }
+
+    worker_stmt = (
+        sa.select(
+            QualityIssueTag.tag_key,
+            QualityIssue.worker_id,
+            Worker.name,
+            sa.func.count(sa.distinct(QualityIssueTag.issue_id)).label("issue_count"),
+        )
+        .join(QualityIssue, QualityIssue.id == QualityIssueTag.issue_id)
+        .join(Worker, Worker.worker_id == QualityIssue.worker_id, isouter=True)
+        .where(
+            *issue_filters,
+            QualityIssue.worker_id.isnot(None),
+            sa.or_(Worker.org_id == org_id, Worker.org_id.is_(None)),
+        )
+        .group_by(QualityIssueTag.tag_key, QualityIssue.worker_id, Worker.name)
+    )
+    worker_rows = (await session.execute(worker_stmt)).all()
+    workers_by_tag: dict[str, list[dict[str, object]]] = {}
+    for row in worker_rows:
+        workers_by_tag.setdefault(row.tag_key, []).append(
+            {
+                "worker_id": row.worker_id,
+                "worker_name": row.name,
+                "issue_count": row.issue_count,
+            }
+        )
+
+    results: list[dict[str, object]] = []
+    for tag_key, issue_count in totals.items():
+        workers = sorted(
+            workers_by_tag.get(tag_key, []),
+            key=lambda entry: (-int(entry["issue_count"]), str(entry["worker_name"] or "")),
+        )
+        results.append(
+            {
+                "tag_key": tag_key,
+                "label": QUALITY_TAG_CATALOG.get(tag_key, tag_key),
+                "issue_count": issue_count,
+                "worker_count": len(workers),
+                "workers": workers,
+            }
+        )
+    results.sort(key=lambda entry: (-int(entry["issue_count"]), entry["tag_key"]))
+    return results
 
 
 def list_review_templates() -> list[dict[str, str]]:

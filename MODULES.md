@@ -327,6 +327,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Key Pages:**
 - `web/app/admin/quality/issues/[id]/page.tsx` - Issue detail workflow (`/admin/quality/issues/{id}`)
+- `web/app/admin/quality/common/page.tsx` - Common issue tags analytics (`/admin/quality/common`)
 - `web/app/admin/quality/reviews/page.tsx` - Reviews timeline + reply tools (`/admin/quality/reviews`)
 - `web/app/admin/quality/leaderboard/page.tsx` - Worker quality leaderboard (`/admin/quality/leaderboard`)
 
@@ -334,8 +335,10 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues` (list + filters)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/{id}` (detail)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/{id}` (PATCH status/resolution)
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/{id}/tags` (apply issue tags)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/{id}/respond` (response log + SLA timestamp)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/triage` (Critical/Medium/Low buckets)
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues/common` (common issue tags analytics)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/reviews` (client reviews list + filters)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/ratings/distribution` (monthly rating distribution)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/workers/leaderboard` (worker rating/review/complaint leaderboard)
@@ -349,11 +352,17 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Key Tables:**
 - `quality_issues` - Issue/complaint records
+- `quality_issue_tags` - Issue tag mappings
+- `quality_tag_catalog` - Allowed tag catalog
 - `quality_review_replies` - Logged review replies
 - `checklists` - Checklist templates
 - `checklist_items` - Individual check items
 
 **Review templates:** Stored in `backend/app/domain/quality/service.py` as `REVIEW_REPLY_TEMPLATES` (returned via the reviews list endpoint).
+
+**Common issues analytics:** `/v1/admin/quality/issues/common` supports `from`/`to` query params to scope the date range (defaults to the last 30 days).
+
+**Tag ordering:** Tag assignment order is stored in `quality_issue_tags.position` and returned in that position order.
 
 **Permissions Required:**
 - `quality.view` - View issue triage + issue details

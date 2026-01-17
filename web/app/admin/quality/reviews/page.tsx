@@ -438,6 +438,9 @@ export default function QualityReviewsPage() {
           <a className="btn btn-ghost" href="/admin/quality/leaderboard">
             Worker leaderboard
           </a>
+          <a className="btn btn-ghost" href="/admin/quality/common">
+            Common issues
+          </a>
         </div>
       </header>
 

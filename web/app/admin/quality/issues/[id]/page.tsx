@@ -66,12 +66,19 @@ type ResponseLog = {
   created_at: string;
 };
 
+type IssueTag = {
+  tag_key: string;
+  label: string;
+};
+
 type QualityIssueDetail = {
   issue: QualityIssue;
   booking: RelatedBooking | null;
   worker: RelatedWorker | null;
   client: RelatedClient | null;
   responses: ResponseLog[];
+  tags: IssueTag[];
+  tag_catalog: IssueTag[];
 };
 
 const RESOLUTION_OPTIONS = [
@@ -120,11 +127,14 @@ export default function QualityIssueDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [tagsSaving, setTagsSaving] = useState(false);
+  const [tagsError, setTagsError] = useState<string | null>(null);
 
   const [resolutionType, setResolutionType] = useState(RESOLUTION_OPTIONS[0].value);
   const [resolutionValue, setResolutionValue] = useState("");
   const [responseType, setResponseType] = useState(RESPONSE_TYPE_OPTIONS[0].value);
   const [responseMessage, setResponseMessage] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -226,6 +236,7 @@ export default function QualityIssueDetailPage() {
       if (response.ok) {
         const data: QualityIssueDetail = await response.json();
         setIssueDetail(data);
+        setSelectedTags(data.tags.map((tag) => tag.tag_key));
       } else if (response.status === 404) {
         setError("Issue not found");
       } else {
@@ -370,6 +381,41 @@ export default function QualityIssueDetailPage() {
     }
   }, [authHeaders, hasManagePermission, issueId, loadIssue, responseMessage, responseType]);
 
+  const handleTagToggle = (tagKey: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tagKey) ? prev.filter((key) => key !== tagKey) : [...prev, tagKey]
+    );
+  };
+
+  const handleTagSave = useCallback(async () => {
+    if (!hasManagePermission || !issueId) return;
+    setTagsSaving(true);
+    setTagsError(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/quality/issues/${issueId}/tags`, {
+        method: "PATCH",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ tag_keys: selectedTags }),
+      });
+      if (response.ok) {
+        setActionMessage("Tags saved.");
+        setTimeout(() => setActionMessage(null), 3000);
+        void loadIssue();
+      } else {
+        setTagsError("Failed to save tags.");
+      }
+    } catch (err) {
+      console.error("Failed to save tags", err);
+      setTagsError("Network error while saving tags.");
+    } finally {
+      setTagsSaving(false);
+    }
+  }, [authHeaders, hasManagePermission, issueId, loadIssue, selectedTags]);
+
   if (!profile) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -442,6 +488,15 @@ export default function QualityIssueDetailPage() {
                   <h1 className="text-2xl font-bold">Issue {issueDetail.issue.id}</h1>
                   <p className="text-gray-600">{issueDetail.issue.summary || "No summary provided"}</p>
                   <p className="text-sm text-gray-500 mt-1">{issueDetail.issue.details || "No details provided."}</p>
+                  {issueDetail.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {issueDetail.tags.map((tag) => (
+                        <span key={tag.tag_key} className="px-2 py-1 rounded-full bg-blue-50 text-blue-700 text-xs">
+                          {tag.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <span className="px-3 py-1 rounded-full bg-gray-100 text-gray-700 text-sm">
@@ -555,6 +610,43 @@ export default function QualityIssueDetailPage() {
                 >
                   Close
                 </button>
+              </div>
+
+              <div className="border rounded p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold">Issue tags</h3>
+                    <p className="text-sm text-gray-500">Apply root cause tags for reporting.</p>
+                  </div>
+                  <button
+                    disabled={!hasManagePermission || tagsSaving}
+                    onClick={handleTagSave}
+                    className="px-4 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+                  >
+                    {tagsSaving ? "Saving..." : "Save tags"}
+                  </button>
+                </div>
+                {tagsError && <p className="text-sm text-red-600">{tagsError}</p>}
+                <div className="flex flex-wrap gap-3">
+                  {issueDetail.tag_catalog.map((tag) => (
+                    <label
+                      key={tag.tag_key}
+                      className={`flex items-center gap-2 px-3 py-2 rounded border text-sm ${
+                        selectedTags.includes(tag.tag_key)
+                          ? "border-blue-500 bg-blue-50 text-blue-800"
+                          : "border-gray-200 text-gray-700"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedTags.includes(tag.tag_key)}
+                        onChange={() => handleTagToggle(tag.tag_key)}
+                        disabled={!hasManagePermission}
+                      />
+                      {tag.label}
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
