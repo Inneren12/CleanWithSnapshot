@@ -289,6 +289,11 @@ alembic merge -m "merge migration heads" abc123 def456
 # Example (training head merge):
 # alembic merge -m "merge heads b1c2d3e4f5a6 and b7f4d2e9c1a0" b1c2d3e4f5a6 b7f4d2e9c1a0
 
+# If you see more than two heads, merge all heads into one merge revision:
+# alembic merge -m "merge heads a1b2c3d4e5f6 b1c2d3e4f5a6 c9f0a1b2c3d4 cf72c4eb59bc" \
+#   a1b2c3d4e5f6 b1c2d3e4f5a6 c9f0a1b2c3d4 cf72c4eb59bc
+# CI enforces the single-head policy via tests/test_migrations.py.
+
 # Example (no-op merge between two specific heads):
 # alembic merge -m "merge heads 9f2b7c4d1a0e and b8e1c2d3f4a5" 9f2b7c4d1a0e b8e1c2d3f4a5
 # Ensure the generated migration has down_revision = ("9f2b7c4d1a0e", "b8e1c2d3f4a5") and empty upgrade/downgrade.
