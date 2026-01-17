@@ -540,21 +540,25 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `inventory_categories` - Product categories (org-scoped, sortable)
 - `inventory_items` - Inventory items (category FK, SKU, unit, active flag, stock fields)
 - `inventory_suppliers` - Supplier directory (contact info, ordering terms, minimum order)
+- `purchase_orders` - Purchase order headers (status, totals, timestamps)
+- `purchase_order_items` - Purchase order line items (qty, unit cost, totals)
 
 **Key Tables:**
 - `inventory_categories` (category_id UUID pk, org_id, name, sort_order)
 - `inventory_items` (item_id UUID pk, org_id, category_id nullable FK, sku, name, unit, current_qty, min_qty, location_label, active)
 - `inventory_suppliers` (supplier_id UUID pk, org_id, name, email, phone, address, terms, delivery_days, min_order_cents, notes, created_at)
+- `purchase_orders` (po_id UUID pk, org_id, supplier_id, status, ordered_at, received_at, notes, subtotal_cents, tax_cents, shipping_cents, total_cents)
+- `purchase_order_items` (po_item_id UUID pk, po_id, item_id, qty, unit_cost_cents, line_total_cents)
 
 **Indexes:**
 - `(org_id, name)` for search
 - `(org_id, active)` for filtering
 
 **Backend Routers:**
-- `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/*` (Categories, Items, Suppliers CRUD)
+- `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/*` (Categories, Items, Suppliers, Purchase Orders)
 
 **Key Services:**
-- `backend/app/domain/inventory/service.py` - Category and Item CRUD, search, pagination
+- `backend/app/domain/inventory/service.py` - Category/Item CRUD, supplier CRUD, purchase order lifecycle
 
 **Key Schemas:**
 - `backend/app/domain/inventory/schemas.py` - Request/response models
@@ -563,6 +567,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `inventory.view` or `core.view` - List and view categories/items
 - `inventory.manage` or `admin.manage` - Create, update, delete categories/items
 - `inventory.view` - Low stock list endpoint (`/v1/admin/inventory/low_stock`)
+- `inventory.manage` or `admin.manage` - Create, update, mark ordered, and mark received purchase orders
 
 **Expected Status Codes:**
 - `401` - Missing/invalid admin auth
@@ -600,6 +605,11 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - API: `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/suppliers/*`
 - Service: `backend/app/domain/inventory/service.py` - `list_suppliers()`, `create_supplier()`, `update_supplier()`, `delete_supplier()`
 - Models: `backend/app/domain/inventory/db_models.py` - `InventorySupplier`
+
+#### Purchase Orders
+- API: `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/purchase-orders/*`
+- Service: `backend/app/domain/inventory/service.py` - `list_purchase_orders()`, `create_purchase_order()`, `mark_purchase_order_ordered()`, `mark_purchase_order_received()`
+- Models: `backend/app/domain/inventory/db_models.py` - `PurchaseOrder`, `PurchaseOrderItem`
 
 #### Search and Pagination
 - Implement in service layer using SQLAlchemy filters

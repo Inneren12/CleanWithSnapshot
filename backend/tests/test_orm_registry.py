@@ -8,6 +8,8 @@ from app.domain.inventory.db_models import (
     InventoryCategory,
     InventoryItem,
     InventorySupplier,
+    PurchaseOrder,
+    PurchaseOrderItem,
 )
 from app.infra.db import Base
 
@@ -87,6 +89,8 @@ async def test_inventory_tables_exist_in_metadata():
     assert "inventory_categories" in Base.metadata.tables
     assert "inventory_items" in Base.metadata.tables
     assert "inventory_suppliers" in Base.metadata.tables
+    assert "purchase_orders" in Base.metadata.tables
+    assert "purchase_order_items" in Base.metadata.tables
 
     # Verify relationship between InventoryItem and InventoryCategory
     assert any(
@@ -95,5 +99,7 @@ async def test_inventory_tables_exist_in_metadata():
     )
 
     assert InventorySupplier.__tablename__ in Base.metadata.tables
+    assert PurchaseOrder.__tablename__ in Base.metadata.tables
+    assert PurchaseOrderItem.__tablename__ in Base.metadata.tables
 
     await engine.dispose()

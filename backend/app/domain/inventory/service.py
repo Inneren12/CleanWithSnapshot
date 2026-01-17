@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import uuid
 from datetime import datetime
 
 from sqlalchemy import case, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.domain.inventory import db_models, schemas
 from app.domain.notifications_center import service as notifications_service
@@ -533,3 +534,270 @@ async def delete_supplier(
     await session.delete(supplier)
     await session.flush()
     return True
+
+
+# ===== Purchase Order Service Functions =====
+
+
+def _calculate_line_total(qty: Decimal, unit_cost_cents: int) -> int:
+    total = (qty * Decimal(unit_cost_cents)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return int(total)
+
+
+def _calculate_po_totals(
+    items: list[schemas.PurchaseOrderItemCreate],
+    tax_cents: int,
+    shipping_cents: int,
+) -> tuple[int, int]:
+    subtotal = sum(_calculate_line_total(item.qty, item.unit_cost_cents) for item in items)
+    total = subtotal + tax_cents + shipping_cents
+    return subtotal, total
+
+
+async def _load_inventory_items(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    item_ids: set[uuid.UUID],
+) -> dict[uuid.UUID, db_models.InventoryItem]:
+    if not item_ids:
+        return {}
+    stmt = select(db_models.InventoryItem).where(
+        db_models.InventoryItem.org_id == org_id,
+        db_models.InventoryItem.item_id.in_(item_ids),
+    )
+    result = await session.execute(stmt)
+    items = list(result.scalars().all())
+    return {item.item_id: item for item in items}
+
+
+async def list_purchase_orders(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    status: schemas.PurchaseOrderStatus | None = None,
+    supplier_id: uuid.UUID | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[db_models.PurchaseOrder], int]:
+    """List purchase orders with optional status and supplier filters."""
+    stmt = select(db_models.PurchaseOrder).where(db_models.PurchaseOrder.org_id == org_id)
+
+    if status is not None:
+        stmt = stmt.where(db_models.PurchaseOrder.status == status.value)
+    if supplier_id is not None:
+        stmt = stmt.where(db_models.PurchaseOrder.supplier_id == supplier_id)
+
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total_result = await session.execute(count_stmt)
+    total = total_result.scalar_one()
+
+    stmt = stmt.order_by(db_models.PurchaseOrder.po_id.desc())
+    stmt = stmt.limit(page_size).offset((page - 1) * page_size)
+
+    result = await session.execute(stmt)
+    purchase_orders = list(result.scalars().all())
+
+    return purchase_orders, total
+
+
+async def get_purchase_order(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    po_id: uuid.UUID,
+) -> db_models.PurchaseOrder | None:
+    """Get a single purchase order by ID."""
+    stmt = (
+        select(db_models.PurchaseOrder)
+        .where(
+            db_models.PurchaseOrder.org_id == org_id,
+            db_models.PurchaseOrder.po_id == po_id,
+        )
+        .options(selectinload(db_models.PurchaseOrder.items))
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def create_purchase_order(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    data: schemas.PurchaseOrderCreate,
+) -> db_models.PurchaseOrder:
+    """Create a new purchase order with line items."""
+    supplier = await get_supplier(session, org_id, data.supplier_id)
+    if not supplier:
+        raise ValueError(f"Supplier {data.supplier_id} not found")
+
+    item_ids = {item.item_id for item in data.items}
+    item_map = await _load_inventory_items(session, org_id, item_ids)
+    if len(item_map) != len(item_ids):
+        raise ValueError("One or more inventory items not found")
+
+    subtotal_cents, total_cents = _calculate_po_totals(
+        data.items,
+        data.tax_cents,
+        data.shipping_cents,
+    )
+
+    purchase_order = db_models.PurchaseOrder(
+        po_id=uuid.uuid4(),
+        org_id=org_id,
+        supplier_id=data.supplier_id,
+        status=schemas.PurchaseOrderStatus.draft.value,
+        ordered_at=None,
+        received_at=None,
+        notes=data.notes,
+        subtotal_cents=subtotal_cents,
+        tax_cents=data.tax_cents,
+        shipping_cents=data.shipping_cents,
+        total_cents=total_cents,
+    )
+
+    purchase_order.items = [
+        db_models.PurchaseOrderItem(
+            po_item_id=uuid.uuid4(),
+            item_id=item.item_id,
+            qty=item.qty,
+            unit_cost_cents=item.unit_cost_cents,
+            line_total_cents=_calculate_line_total(item.qty, item.unit_cost_cents),
+        )
+        for item in data.items
+    ]
+
+    session.add(purchase_order)
+    await session.flush()
+    return purchase_order
+
+
+async def update_purchase_order(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    po_id: uuid.UUID,
+    data: schemas.PurchaseOrderUpdate,
+) -> db_models.PurchaseOrder | None:
+    """Update a draft purchase order."""
+    stmt = (
+        select(db_models.PurchaseOrder)
+        .where(
+            db_models.PurchaseOrder.org_id == org_id,
+            db_models.PurchaseOrder.po_id == po_id,
+        )
+        .options(selectinload(db_models.PurchaseOrder.items))
+    )
+    result = await session.execute(stmt)
+    purchase_order = result.scalar_one_or_none()
+    if not purchase_order:
+        return None
+
+    if purchase_order.status != schemas.PurchaseOrderStatus.draft.value:
+        raise ValueError("Only draft purchase orders can be updated")
+
+    if data.supplier_id is not None:
+        supplier = await get_supplier(session, org_id, data.supplier_id)
+        if not supplier:
+            raise ValueError(f"Supplier {data.supplier_id} not found")
+        purchase_order.supplier_id = data.supplier_id
+
+    if data.notes is not None:
+        purchase_order.notes = data.notes
+
+    if data.tax_cents is not None:
+        purchase_order.tax_cents = data.tax_cents
+    if data.shipping_cents is not None:
+        purchase_order.shipping_cents = data.shipping_cents
+
+    if data.items is not None:
+        item_ids = {item.item_id for item in data.items}
+        item_map = await _load_inventory_items(session, org_id, item_ids)
+        if len(item_map) != len(item_ids):
+            raise ValueError("One or more inventory items not found")
+        purchase_order.items = [
+            db_models.PurchaseOrderItem(
+                po_item_id=uuid.uuid4(),
+                item_id=item.item_id,
+                qty=item.qty,
+                unit_cost_cents=item.unit_cost_cents,
+                line_total_cents=_calculate_line_total(item.qty, item.unit_cost_cents),
+            )
+            for item in data.items
+        ]
+
+    current_items = (
+        data.items if data.items is not None
+        else [
+            schemas.PurchaseOrderItemCreate(
+                item_id=po_item.item_id,
+                qty=po_item.qty,
+                unit_cost_cents=po_item.unit_cost_cents,
+            )
+            for po_item in purchase_order.items
+        ]
+    )
+    subtotal_cents, total_cents = _calculate_po_totals(
+        current_items,
+        purchase_order.tax_cents,
+        purchase_order.shipping_cents,
+    )
+    purchase_order.subtotal_cents = subtotal_cents
+    purchase_order.total_cents = total_cents
+
+    await session.flush()
+    return purchase_order
+
+
+async def mark_purchase_order_ordered(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    po_id: uuid.UUID,
+) -> db_models.PurchaseOrder | None:
+    """Mark a purchase order as ordered."""
+    purchase_order = await get_purchase_order(session, org_id, po_id)
+    if not purchase_order:
+        return None
+
+    if purchase_order.status != schemas.PurchaseOrderStatus.draft.value:
+        raise ValueError("Only draft purchase orders can be marked as ordered")
+
+    purchase_order.status = schemas.PurchaseOrderStatus.ordered.value
+    purchase_order.ordered_at = datetime.utcnow()
+    await session.flush()
+    return purchase_order
+
+
+async def mark_purchase_order_received(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    po_id: uuid.UUID,
+) -> db_models.PurchaseOrder | None:
+    """Mark a purchase order as received and update inventory stock."""
+    stmt = (
+        select(db_models.PurchaseOrder)
+        .where(
+            db_models.PurchaseOrder.org_id == org_id,
+            db_models.PurchaseOrder.po_id == po_id,
+        )
+        .options(selectinload(db_models.PurchaseOrder.items))
+    )
+    result = await session.execute(stmt)
+    purchase_order = result.scalar_one_or_none()
+    if not purchase_order:
+        return None
+
+    if purchase_order.status == schemas.PurchaseOrderStatus.received.value:
+        raise ValueError("Purchase order already received")
+    if purchase_order.status != schemas.PurchaseOrderStatus.ordered.value:
+        raise ValueError("Only ordered purchase orders can be marked as received")
+
+    item_ids = {item.item_id for item in purchase_order.items}
+    item_map = await _load_inventory_items(session, org_id, item_ids)
+    if len(item_map) != len(item_ids):
+        raise ValueError("One or more inventory items not found")
+
+    for po_item in purchase_order.items:
+        inventory_item = item_map[po_item.item_id]
+        inventory_item.current_qty = inventory_item.current_qty + po_item.qty
+
+    purchase_order.status = schemas.PurchaseOrderStatus.received.value
+    purchase_order.received_at = datetime.utcnow()
+    await session.flush()
+    return purchase_order

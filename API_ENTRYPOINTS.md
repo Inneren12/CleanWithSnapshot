@@ -578,6 +578,12 @@ Schedules: `daily`, `weekly`, `monthly`.
 | POST | `/v1/admin/inventory/suppliers` | `inventory.manage` or `admin.manage` | Create a new inventory supplier |
 | PATCH | `/v1/admin/inventory/suppliers/{supplier_id}` | `inventory.manage` or `admin.manage` | Update an existing supplier |
 | DELETE | `/v1/admin/inventory/suppliers/{supplier_id}` | `inventory.manage` or `admin.manage` | Delete an inventory supplier |
+| GET | `/v1/admin/inventory/purchase-orders` | `inventory.view` or `core.view` | List purchase orders with status and supplier filters |
+| POST | `/v1/admin/inventory/purchase-orders` | `inventory.manage` or `admin.manage` | Create a new purchase order |
+| GET | `/v1/admin/inventory/purchase-orders/{po_id}` | `inventory.view` or `core.view` | Get a purchase order with line items |
+| PATCH | `/v1/admin/inventory/purchase-orders/{po_id}` | `inventory.manage` or `admin.manage` | Update a draft purchase order |
+| POST | `/v1/admin/inventory/purchase-orders/{po_id}/mark_ordered` | `inventory.manage` or `admin.manage` | Mark a purchase order as ordered |
+| POST | `/v1/admin/inventory/purchase-orders/{po_id}/mark_received` | `inventory.manage` or `admin.manage` | Mark a purchase order as received (updates stock) |
 
 **Auth:** Admin HTTP Basic (`ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD`, `VIEWER_BASIC_USERNAME`/`VIEWER_BASIC_PASSWORD`).
 
@@ -612,6 +618,15 @@ Schedules: `daily`, `weekly`, `monthly`.
 | Param | Type | Description |
 |-------|------|-------------|
 | `query` | `string` | Search by supplier name, email, or phone (optional) |
+| `page` | `int` | Page number (default: 1) |
+| `page_size` | `int` | Items per page (default: 50, max: 100) |
+
+**Purchase order query params (`GET /v1/admin/inventory/purchase-orders`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | `string` | Filter by status: `draft`, `ordered`, `received` (optional) |
+| `supplier_id` | `UUID` | Filter by supplier (optional) |
 | `page` | `int` | Page number (default: 1) |
 | `page_size` | `int` | Items per page (default: 50, max: 100) |
 

@@ -1,11 +1,11 @@
-"""Admin API endpoints for inventory management (categories and items)."""
+"""Admin API endpoints for inventory management (categories, items, suppliers, POs)."""
 
 from __future__ import annotations
 
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, get_admin_identity, permission_keys_for_request
@@ -544,3 +544,222 @@ async def delete_inventory_supplier(
 
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===== Purchase Order Endpoints =====
+
+
+@router.get(
+    "/v1/admin/inventory/purchase-orders",
+    response_model=schemas.PurchaseOrderListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_purchase_orders(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    status_filter: schemas.PurchaseOrderStatus | None = Query(None, alias="status"),
+    supplier_id: uuid.UUID | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> schemas.PurchaseOrderListResponse:
+    """
+    List purchase orders with optional status and supplier filters.
+
+    Requires: inventory.view or core.view permission
+    """
+    _require_inventory_view(request, identity)
+
+    if page_size > 100:
+        page_size = 100
+    if page < 1:
+        page = 1
+
+    purchase_orders, total = await service.list_purchase_orders(
+        session,
+        org_id,
+        status=status_filter,
+        supplier_id=supplier_id,
+        page=page,
+        page_size=page_size,
+    )
+
+    return schemas.PurchaseOrderListResponse(
+        items=[schemas.PurchaseOrderSummaryResponse.model_validate(po) for po in purchase_orders],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/v1/admin/inventory/purchase-orders",
+    response_model=schemas.PurchaseOrderDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_purchase_order(
+    request: Request,
+    data: schemas.PurchaseOrderCreate,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.PurchaseOrderDetailResponse:
+    """
+    Create a new purchase order.
+
+    Requires: inventory.manage or admin.manage permission
+    """
+    _require_inventory_manage(request, identity)
+
+    try:
+        purchase_order = await service.create_purchase_order(session, org_id, data)
+        await session.commit()
+        return schemas.PurchaseOrderDetailResponse.model_validate(purchase_order)
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.get(
+    "/v1/admin/inventory/purchase-orders/{po_id}",
+    response_model=schemas.PurchaseOrderDetailResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_purchase_order(
+    po_id: uuid.UUID,
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.PurchaseOrderDetailResponse:
+    """
+    Get a purchase order by ID.
+
+    Requires: inventory.view or core.view permission
+    """
+    _require_inventory_view(request, identity)
+
+    purchase_order = await service.get_purchase_order(session, org_id, po_id)
+    if not purchase_order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Purchase order {po_id} not found",
+        )
+
+    return schemas.PurchaseOrderDetailResponse.model_validate(purchase_order)
+
+
+@router.patch(
+    "/v1/admin/inventory/purchase-orders/{po_id}",
+    response_model=schemas.PurchaseOrderDetailResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_purchase_order(
+    po_id: uuid.UUID,
+    data: schemas.PurchaseOrderUpdate,
+    request: Request = None,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.PurchaseOrderDetailResponse:
+    """
+    Update a draft purchase order.
+
+    Requires: inventory.manage or admin.manage permission
+    """
+    _require_inventory_manage(request, identity)
+
+    try:
+        purchase_order = await service.update_purchase_order(session, org_id, po_id, data)
+        if not purchase_order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Purchase order {po_id} not found",
+            )
+
+        await session.commit()
+        return schemas.PurchaseOrderDetailResponse.model_validate(purchase_order)
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.post(
+    "/v1/admin/inventory/purchase-orders/{po_id}/mark_ordered",
+    response_model=schemas.PurchaseOrderDetailResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def mark_purchase_order_ordered(
+    po_id: uuid.UUID,
+    request: Request = None,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.PurchaseOrderDetailResponse:
+    """
+    Mark a purchase order as ordered.
+
+    Requires: inventory.manage or admin.manage permission
+    """
+    _require_inventory_manage(request, identity)
+
+    try:
+        purchase_order = await service.mark_purchase_order_ordered(session, org_id, po_id)
+        if not purchase_order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Purchase order {po_id} not found",
+            )
+
+        await session.commit()
+        return schemas.PurchaseOrderDetailResponse.model_validate(purchase_order)
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.post(
+    "/v1/admin/inventory/purchase-orders/{po_id}/mark_received",
+    response_model=schemas.PurchaseOrderDetailResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def mark_purchase_order_received(
+    po_id: uuid.UUID,
+    request: Request = None,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.PurchaseOrderDetailResponse:
+    """
+    Mark a purchase order as received and update inventory stock.
+
+    Requires: inventory.manage or admin.manage permission
+    """
+    _require_inventory_manage(request, identity)
+
+    try:
+        purchase_order = await service.mark_purchase_order_received(session, org_id, po_id)
+        if not purchase_order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Purchase order {po_id} not found",
+            )
+
+        await session.commit()
+        return schemas.PurchaseOrderDetailResponse.model_validate(purchase_order)
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )

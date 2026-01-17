@@ -35,7 +35,8 @@ This guide covers database schema management using Alembic in the CleanWithSnaps
 `1b2c3d4e5f6a_quality_issue_tag_position.py` adds tag ordering via `quality_issue_tags.position`,
 `a1b2c3d4e5f6_add_inventory_categories_and_items.py` adds `inventory_categories` and `inventory_items` tables,
 `b1c2d3e4f5a6_merge_heads_inventory_and_marketing.py` merges parallel migration heads, and
-`cf72c4eb59bc_add_inventory_stock_fields.py` adds stock state fields (`current_qty`, `min_qty`, `location_label`) to `inventory_items`.
+`cf72c4eb59bc_add_inventory_stock_fields.py` adds stock state fields (`current_qty`, `min_qty`, `location_label`) to `inventory_items`,
+and `b2f3c4d5e6f7_add_purchase_orders.py` adds `purchase_orders` + `purchase_order_items` for the purchasing lifecycle.
 
 ---
 
