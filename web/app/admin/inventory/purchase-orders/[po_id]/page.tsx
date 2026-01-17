@@ -206,7 +206,8 @@ export default function PurchaseOrderDetailPage() {
 
   const lineTotals = useMemo(() => draft.items.map((line) => lineTotalCents(line)), [draft.items]);
   const subtotalCents = useMemo(() => {
-    return lineTotals.reduce((sum, lineTotal) => sum + (lineTotal ?? 0), 0);
+    // Draft lines can be incomplete; default missing totals to 0 until all inputs are valid.
+    return lineTotals.reduce<number>((sum, lineTotal) => sum + (lineTotal ?? 0), 0);
   }, [lineTotals]);
 
   const taxCents = parseCurrencyInput(draft.tax);
