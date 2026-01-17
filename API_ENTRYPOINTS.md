@@ -561,6 +561,90 @@ Schedules: `daily`, `weekly`, `monthly`.
 - `first_response_at` is set when the first outbound response is logged via `POST /respond` with `response_type="response"`.
 - `resolved_at` is set when status transitions to `resolved` or `closed` (and cleared if re-opened).
 
+### Inventory
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/inventory/categories` | `inventory.view` or `core.view` | List inventory categories with search and pagination |
+| POST | `/v1/admin/inventory/categories` | `inventory.manage` or `admin.manage` | Create a new inventory category |
+| PATCH | `/v1/admin/inventory/categories/{category_id}` | `inventory.manage` or `admin.manage` | Update an existing category |
+| DELETE | `/v1/admin/inventory/categories/{category_id}` | `inventory.manage` or `admin.manage` | Delete a category (items' category_id set to NULL) |
+| GET | `/v1/admin/inventory/items` | `inventory.view` or `core.view` | List inventory items with filters and pagination |
+| POST | `/v1/admin/inventory/items` | `inventory.manage` or `admin.manage` | Create a new inventory item |
+| PATCH | `/v1/admin/inventory/items/{item_id}` | `inventory.manage` or `admin.manage` | Update an existing item |
+| DELETE | `/v1/admin/inventory/items/{item_id}` | `inventory.manage` or `admin.manage` | Delete an inventory item |
+
+**Auth:** Admin HTTP Basic (`ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD`, `VIEWER_BASIC_USERNAME`/`VIEWER_BASIC_PASSWORD`).
+
+**Category query params (`GET /v1/admin/inventory/categories`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `query` | `string` | Search by category name (optional) |
+| `page` | `int` | Page number (default: 1) |
+| `page_size` | `int` | Items per page (default: 50, max: 100) |
+
+**Item query params (`GET /v1/admin/inventory/items`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `query` | `string` | Search by item name or SKU (optional) |
+| `category_id` | `UUID` | Filter by category (optional) |
+| `active` | `bool` | Filter by active status (optional) |
+| `page` | `int` | Page number (default: 1) |
+| `page_size` | `int` | Items per page (default: 50, max: 100) |
+
+**Category list response shape:**
+```json
+{
+  "items": [
+    {
+      "category_id": "c6e4c9c8-9f51-4ce9-a5e8-9b3b6d8b87c1",
+      "org_id": "b7d3ef62-6b4b-4f3b-9f48-6a89a80fb2d5",
+      "name": "Cleaning Supplies",
+      "sort_order": 1,
+      "created_at": "2026-01-15T10:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+**Item list response shape:**
+```json
+{
+  "items": [
+    {
+      "item_id": "d7f5e0d9-0g62-5df0-b6f9-0c4c7e9c98d2",
+      "org_id": "b7d3ef62-6b4b-4f3b-9f48-6a89a80fb2d5",
+      "category_id": "c6e4c9c8-9f51-4ce9-a5e8-9b3b6d8b87c1",
+      "sku": "SKU001",
+      "name": "Glass Cleaner",
+      "unit": "bottles",
+      "current_qty": "10.00",
+      "min_qty": "5.00",
+      "location_label": "Shelf A",
+      "active": true,
+      "created_at": "2026-01-15T10:00:00Z",
+      "category_name": null
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+**Org scoping:** All endpoints are org-scoped. Categories and items from other organizations are not visible or accessible.
+
+**Status codes:** `401` when auth is missing/invalid, `403` when authenticated but lacking permission, `400` for validation errors (ex: unknown category on item create/update), `404` for missing or cross-org resources.
+
+**Cascade behavior:** Deleting a category sets `category_id` to NULL for all items in that category (does not delete items).
+
+---
+
 ### Teams
 
 | Method | Path | Permission | Purpose |
