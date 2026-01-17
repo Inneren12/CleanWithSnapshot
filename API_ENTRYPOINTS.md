@@ -945,6 +945,7 @@ Schedules: `daily`, `weekly`, `monthly`.
 | GET | `/v1/admin/schedule` | `bookings.view` | Schedule view |
 | GET | `/v1/admin/schedule/team_calendar` | `bookings.view` | Team calendar aggregates (org TZ boundaries) |
 | GET | `/v1/admin/schedule/worker_timeline` | `bookings.view` | Worker timeline aggregates (org TZ boundaries) |
+| GET | `/v1/admin/schedule/external_blocks` | `bookings.view` | External calendar blocks (org scoped) |
 | GET | `/v1/admin/ui/bookings` | `bookings.view` | List bookings |
 | GET | `/v1/admin/ui/bookings/{id}` | `bookings.view` | Booking detail |
 | POST | `/v1/admin/ui/bookings/create` | `bookings.edit` | Create booking |
@@ -981,6 +982,13 @@ curl -X POST https://api.panidobro.com/v1/admin/ui/bookings/create \
 **List response fields:** `total`, `limit`, `offset`, `query` (in addition to `from_date`, `to_date`, `bookings`).
 
 **Schedule booking fields:** Each `booking` includes `worker_name`, `team_name`, `client_label`, `address`, `service_label`, `price_cents`, and optional `notes` (client/address notes when present).
+
+**External blocks query params (`GET /v1/admin/schedule/external_blocks`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `from` | `ISO-8601 datetime` | Start of window (UTC) |
+| `to` | `ISO-8601 datetime` | End of window (UTC) |
 
 **Team calendar query params (`GET /v1/admin/schedule/team_calendar`):**
 
@@ -1286,6 +1294,7 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 | POST | `/v1/admin/integrations/google/connect/start` | `settings.manage` (owner) | Start OAuth connect (returns auth URL) |
 | POST | `/v1/admin/integrations/google/connect/callback` | `settings.manage` (owner) | Exchange auth code for refresh token |
 | POST | `/v1/admin/integrations/google/disconnect` | `settings.manage` (owner) | Disconnect account |
+| POST | `/v1/admin/integrations/google/gcal/import_sync` | `settings.manage` (admin) | Import events as external schedule blocks |
 
 ---
 

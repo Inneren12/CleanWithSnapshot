@@ -61,3 +61,7 @@ class GcalConnectCallbackRequest(BaseModel):
 class GcalConnectCallbackResponse(BaseModel):
     connected: bool
     calendar_id: str | None = None
+
+
+class GcalImportSyncResponse(BaseModel):
+    imported: int
