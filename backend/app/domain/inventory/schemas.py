@@ -132,3 +132,60 @@ class InventoryLowStockListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+# ===== Supplier Schemas =====
+
+
+class InventorySupplierResponse(BaseModel):
+    """Response model for inventory supplier."""
+
+    supplier_id: UUID
+    org_id: UUID
+    name: str
+    email: str | None
+    phone: str | None
+    address: str | None
+    terms: str | None
+    delivery_days: str | None
+    min_order_cents: int | None
+    notes: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class InventorySupplierCreate(BaseModel):
+    """Request model for creating an inventory supplier."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    email: str | None = Field(None, max_length=255)
+    phone: str | None = Field(None, max_length=50)
+    address: str | None = None
+    terms: str | None = None
+    delivery_days: str | None = Field(None, max_length=100)
+    min_order_cents: int | None = Field(None, ge=0)
+    notes: str | None = None
+
+
+class InventorySupplierUpdate(BaseModel):
+    """Request model for updating an inventory supplier."""
+
+    name: str | None = Field(None, min_length=1, max_length=255)
+    email: str | None = Field(None, max_length=255)
+    phone: str | None = Field(None, max_length=50)
+    address: str | None = None
+    terms: str | None = None
+    delivery_days: str | None = Field(None, max_length=100)
+    min_order_cents: int | None = Field(None, ge=0)
+    notes: str | None = None
+
+
+class InventorySupplierListResponse(BaseModel):
+    """Paginated list response for inventory suppliers."""
+
+    items: list[InventorySupplierResponse]
+    total: int
+    page: int
+    page_size: int

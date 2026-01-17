@@ -392,3 +392,144 @@ async def delete_item(
     await session.delete(item)
     await session.flush()
     return True
+
+
+# ===== Supplier Service Functions =====
+
+
+async def list_suppliers(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    query: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[db_models.InventorySupplier], int]:
+    """
+    List inventory suppliers with optional search and pagination.
+
+    Args:
+        session: Database session
+        org_id: Organization ID for scoping
+        query: Optional search query for supplier name, email, or phone
+        page: Page number (1-indexed)
+        page_size: Number of items per page
+
+    Returns:
+        Tuple of (list of suppliers, total count)
+    """
+    stmt = select(db_models.InventorySupplier).where(
+        db_models.InventorySupplier.org_id == org_id
+    )
+
+    if query:
+        search_term = f"%{query}%"
+        stmt = stmt.where(
+            or_(
+                db_models.InventorySupplier.name.ilike(search_term),
+                db_models.InventorySupplier.email.ilike(search_term),
+                db_models.InventorySupplier.phone.ilike(search_term),
+            )
+        )
+
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total_result = await session.execute(count_stmt)
+    total = total_result.scalar_one()
+
+    stmt = stmt.order_by(db_models.InventorySupplier.name.asc())
+    stmt = stmt.limit(page_size).offset((page - 1) * page_size)
+
+    result = await session.execute(stmt)
+    suppliers = list(result.scalars().all())
+
+    return suppliers, total
+
+
+async def get_supplier(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    supplier_id: uuid.UUID,
+) -> db_models.InventorySupplier | None:
+    """Get a single inventory supplier by ID."""
+    stmt = select(db_models.InventorySupplier).where(
+        db_models.InventorySupplier.org_id == org_id,
+        db_models.InventorySupplier.supplier_id == supplier_id,
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def create_supplier(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    data: schemas.InventorySupplierCreate,
+) -> db_models.InventorySupplier:
+    """Create a new inventory supplier."""
+    supplier = db_models.InventorySupplier(
+        supplier_id=uuid.uuid4(),
+        org_id=org_id,
+        name=data.name,
+        email=data.email,
+        phone=data.phone,
+        address=data.address,
+        terms=data.terms,
+        delivery_days=data.delivery_days,
+        min_order_cents=data.min_order_cents,
+        notes=data.notes,
+        created_at=datetime.utcnow(),
+    )
+    session.add(supplier)
+    await session.flush()
+    return supplier
+
+
+async def update_supplier(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    supplier_id: uuid.UUID,
+    data: schemas.InventorySupplierUpdate,
+) -> db_models.InventorySupplier | None:
+    """Update an existing inventory supplier."""
+    supplier = await get_supplier(session, org_id, supplier_id)
+    if not supplier:
+        return None
+
+    if data.name is not None:
+        supplier.name = data.name
+    if data.email is not None:
+        supplier.email = data.email
+    if data.phone is not None:
+        supplier.phone = data.phone
+    if data.address is not None:
+        supplier.address = data.address
+    if data.terms is not None:
+        supplier.terms = data.terms
+    if data.delivery_days is not None:
+        supplier.delivery_days = data.delivery_days
+    if data.min_order_cents is not None:
+        supplier.min_order_cents = data.min_order_cents
+    if data.notes is not None:
+        supplier.notes = data.notes
+
+    await session.flush()
+    return supplier
+
+
+async def delete_supplier(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    supplier_id: uuid.UUID,
+) -> bool:
+    """
+    Delete an inventory supplier.
+
+    Returns:
+        True if deleted, False if not found
+    """
+    supplier = await get_supplier(session, org_id, supplier_id)
+    if not supplier:
+        return False
+
+    await session.delete(supplier)
+    await session.flush()
+    return True
