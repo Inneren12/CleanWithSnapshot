@@ -574,6 +574,10 @@ Schedules: `daily`, `weekly`, `monthly`.
 | POST | `/v1/admin/inventory/items` | `inventory.manage` or `admin.manage` | Create a new inventory item |
 | PATCH | `/v1/admin/inventory/items/{item_id}` | `inventory.manage` or `admin.manage` | Update an existing item |
 | DELETE | `/v1/admin/inventory/items/{item_id}` | `inventory.manage` or `admin.manage` | Delete an inventory item |
+| GET | `/v1/admin/inventory/suppliers` | `inventory.view` or `core.view` | List inventory suppliers with search and pagination |
+| POST | `/v1/admin/inventory/suppliers` | `inventory.manage` or `admin.manage` | Create a new inventory supplier |
+| PATCH | `/v1/admin/inventory/suppliers/{supplier_id}` | `inventory.manage` or `admin.manage` | Update an existing supplier |
+| DELETE | `/v1/admin/inventory/suppliers/{supplier_id}` | `inventory.manage` or `admin.manage` | Delete an inventory supplier |
 
 **Auth:** Admin HTTP Basic (`ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD`, `VIEWER_BASIC_USERNAME`/`VIEWER_BASIC_PASSWORD`).
 
@@ -600,6 +604,14 @@ Schedules: `daily`, `weekly`, `monthly`.
 | Param | Type | Description |
 |-------|------|-------------|
 | `only_below_min` | `bool` | When true, return only items with `current_qty < min_qty` (default: true) |
+| `page` | `int` | Page number (default: 1) |
+| `page_size` | `int` | Items per page (default: 50, max: 100) |
+
+**Supplier query params (`GET /v1/admin/inventory/suppliers`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `query` | `string` | Search by supplier name, email, or phone (optional) |
 | `page` | `int` | Page number (default: 1) |
 | `page_size` | `int` | Items per page (default: 50, max: 100) |
 
@@ -664,6 +676,30 @@ Schedules: `daily`, `weekly`, `monthly`.
       "active": true,
       "created_at": "2026-01-15T10:00:00Z",
       "category_name": null
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+**Supplier list response shape:**
+```json
+{
+  "items": [
+    {
+      "supplier_id": "8b7a6c5d-4e3f-2a1b-9c8d-7e6f5a4b3c2d",
+      "org_id": "b7d3ef62-6b4b-4f3b-9f48-6a89a80fb2d5",
+      "name": "Acme Supplies",
+      "email": "orders@acme.test",
+      "phone": "555-0100",
+      "address": "123 Main St",
+      "terms": "Net 30",
+      "delivery_days": "Mon,Wed",
+      "min_order_cents": 2500,
+      "notes": "Primary vendor",
+      "created_at": "2026-01-15T10:00:00Z"
     }
   ],
   "total": 1,

@@ -409,3 +409,138 @@ async def list_low_stock_inventory(
         page=page,
         page_size=page_size,
     )
+
+
+# ===== Supplier Endpoints =====
+
+
+@router.get(
+    "/v1/admin/inventory/suppliers",
+    response_model=schemas.InventorySupplierListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_inventory_suppliers(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    query: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> schemas.InventorySupplierListResponse:
+    """
+    List inventory suppliers with optional search and pagination.
+
+    Query parameters:
+    - query: Search by supplier name, email, or phone (optional)
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 50, max: 100)
+
+    Requires: inventory.view or core.view permission
+    """
+    _require_inventory_view(request, identity)
+
+    if page_size > 100:
+        page_size = 100
+    if page < 1:
+        page = 1
+
+    suppliers, total = await service.list_suppliers(
+        session,
+        org_id,
+        query=query,
+        page=page,
+        page_size=page_size,
+    )
+
+    return schemas.InventorySupplierListResponse(
+        items=[schemas.InventorySupplierResponse.model_validate(s) for s in suppliers],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/v1/admin/inventory/suppliers",
+    response_model=schemas.InventorySupplierResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_inventory_supplier(
+    request: Request,
+    data: schemas.InventorySupplierCreate,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.InventorySupplierResponse:
+    """
+    Create a new inventory supplier.
+
+    Requires: inventory.manage or admin.manage permission
+    """
+    _require_inventory_manage(request, identity)
+
+    supplier = await service.create_supplier(session, org_id, data)
+    await session.commit()
+
+    return schemas.InventorySupplierResponse.model_validate(supplier)
+
+
+@router.patch(
+    "/v1/admin/inventory/suppliers/{supplier_id}",
+    response_model=schemas.InventorySupplierResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_inventory_supplier(
+    supplier_id: uuid.UUID,
+    data: schemas.InventorySupplierUpdate,
+    request: Request = None,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.InventorySupplierResponse:
+    """
+    Update an existing inventory supplier.
+
+    Requires: inventory.manage or admin.manage permission
+    """
+    _require_inventory_manage(request, identity)
+
+    supplier = await service.update_supplier(session, org_id, supplier_id, data)
+    if not supplier:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Supplier {supplier_id} not found",
+        )
+
+    await session.commit()
+    return schemas.InventorySupplierResponse.model_validate(supplier)
+
+
+@router.delete(
+    "/v1/admin/inventory/suppliers/{supplier_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_inventory_supplier(
+    supplier_id: uuid.UUID,
+    request: Request = None,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    """
+    Delete an inventory supplier.
+
+    Requires: inventory.manage or admin.manage permission
+    """
+    _require_inventory_manage(request, identity)
+
+    deleted = await service.delete_supplier(session, org_id, supplier_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Supplier {supplier_id} not found",
+        )
+
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -120,4 +121,38 @@ class InventoryItem(Base):
         Index("ix_inventory_items_org_id", "org_id"),
         Index("ix_inventory_items_org_name", "org_id", "name"),
         Index("ix_inventory_items_org_active", "org_id", "active"),
+    )
+
+
+class InventorySupplier(Base):
+    __tablename__ = "inventory_suppliers"
+
+    supplier_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    terms: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivery_days: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    min_order_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_inventory_suppliers_org_id", "org_id"),
+        Index("ix_inventory_suppliers_org_name", "org_id", "name"),
     )
