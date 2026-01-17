@@ -15,6 +15,7 @@ from app.domain.leads.db_models import (
     ReferralCredit,
     generate_referral_code,
 )
+from app.domain.org_settings import service as org_settings_service
 from app.domain.leads.statuses import (
     QUOTE_STATUS_DRAFT,
     QUOTE_STATUS_EXPIRED,
@@ -23,6 +24,36 @@ from app.domain.leads.statuses import (
 )
 
 logger = logging.getLogger(__name__)
+
+REFERRAL_CREDIT_TRIGGERS = {"deposit_paid", "booking_confirmed", "booking_or_payment"}
+REFERRAL_TRIGGER_BOOKING_OR_PAYMENT = "booking_or_payment"
+
+
+def _matches_referral_trigger(trigger: str, trigger_event: str) -> bool:
+    if trigger == REFERRAL_TRIGGER_BOOKING_OR_PAYMENT:
+        return trigger_event in {"deposit_paid", "booking_confirmed"}
+    return trigger == trigger_event
+
+
+async def apply_referral_conversion(
+    session: AsyncSession, referred_lead: Lead | None, *, trigger_event: str
+) -> None:
+    """Grant referral credit when the trigger matches org configuration."""
+
+    if referred_lead is None:
+        return
+
+    if not referred_lead.referred_by_code:
+        return
+
+    org_settings = await org_settings_service.get_or_create_org_settings(session, referred_lead.org_id)
+    credit_trigger = org_settings_service.resolve_referral_credit_trigger(org_settings)
+    if credit_trigger not in REFERRAL_CREDIT_TRIGGERS:
+        credit_trigger = org_settings_service.DEFAULT_REFERRAL_CREDIT_TRIGGER
+    if not _matches_referral_trigger(credit_trigger, trigger_event):
+        return
+
+    await grant_referral_credit(session, referred_lead)
 
 
 async def ensure_unique_referral_code(

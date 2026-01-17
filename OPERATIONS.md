@@ -149,6 +149,8 @@ python -m app.jobs.run --job notifications-digest-monthly --once
 - Settings are stored in `notifications_digest_settings` (`digest_key`, `enabled`, `schedule`, `recipients`).
 - Only enabled digests matching the job schedule are sent.
 - Digest delivery is gated by `module.notifications_center` feature toggle.
+- Delivery is rate-limited per org/period using `notifications_digest_state` so looping runners do not resend
+  the same daily/weekly/monthly digest within the same period.
 
 ---
 

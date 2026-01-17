@@ -30,7 +30,7 @@ from app.domain.notifications import email_service
 from app.domain.pricing.models import CleaningType
 from app.domain.availability import service as availability_service
 from app.domain.leads.db_models import Lead
-from app.domain.leads.service import grant_referral_credit
+from app.domain.leads.service import apply_referral_conversion
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Payment
 from app.infra.metrics import metrics
@@ -1221,9 +1221,11 @@ async def mark_deposit_paid(
                     }
                 },
             )
-    if lead and not manual_confirmation_required:
+    if lead:
         try:
-            await grant_referral_credit(session, lead)
+            await apply_referral_conversion(session, lead, trigger_event="deposit_paid")
+            if not already_confirmed and not manual_confirmation_required:
+                await apply_referral_conversion(session, lead, trigger_event="booking_confirmed")
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "referral_credit_failed",

@@ -109,7 +109,7 @@ from app.domain.nps.db_models import NpsResponse, SupportTicket
 from app.domain.leads.service import (
     create_quote_followup,
     export_payload_from_lead,
-    grant_referral_credit,
+    apply_referral_conversion,
     list_lead_quotes,
     resolve_quote_status,
 )
@@ -6018,7 +6018,7 @@ async def confirm_booking(
             )
     if lead:
         try:
-            await grant_referral_credit(session, lead)
+            await apply_referral_conversion(session, lead, trigger_event="booking_confirmed")
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "referral_credit_failed",

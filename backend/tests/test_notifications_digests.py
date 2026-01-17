@@ -15,6 +15,15 @@ from app.infra.email import NoopEmailAdapter
 from app.settings import settings
 
 
+class _RecordingEmailAdapter:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str, str]] = []
+
+    async def send_email(self, recipient: str, subject: str, body: str) -> bool:
+        self.sent.append((recipient, subject, body))
+        return True
+
+
 def test_digest_payload_deterministic(async_session_maker):
     now = datetime(2026, 2, 1, 15, 0, 0, tzinfo=timezone.utc)
 
@@ -110,3 +119,43 @@ def test_digest_job_skips_when_email_disabled(async_session_maker):
 
     assert result["sent"] == 0
     assert result["skipped"] == 1
+
+
+def test_digest_job_gates_by_period(async_session_maker):
+    now = datetime(2026, 2, 1, 9, 0, 0, tzinfo=timezone.utc)
+    next_day = now + timedelta(days=1)
+
+    async def _seed() -> None:
+        async with async_session_maker() as session:
+            session.add(
+                NotificationDigestSetting(
+                    digest_key="daily_summary",
+                    enabled=True,
+                    schedule="daily",
+                    recipients=["owner@example.com"],
+                )
+            )
+            await session.commit()
+
+    async def _run(run_at: datetime) -> dict[str, int]:
+        async with async_session_maker() as session:
+            adapter = _RecordingEmailAdapter()
+            result = await notifications_digests.run_notifications_digest(
+                session,
+                adapter,
+                schedule="daily",
+                now=run_at,
+            )
+            result["sent_emails"] = len(adapter.sent)
+            return result
+
+    anyio.run(_seed)
+    first = anyio.run(_run, now)
+    second = anyio.run(_run, now)
+    third = anyio.run(_run, next_day)
+
+    assert first["sent"] == 1
+    assert first["sent_emails"] == 1
+    assert second["sent"] == 0
+    assert second["skipped"] == 1
+    assert third["sent"] == 1

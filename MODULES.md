@@ -482,6 +482,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Key Tables:**
 - `promo_codes` - Promo definitions and restrictions
 - `promo_code_redemptions` - Redemption log for limits and per-customer rules
+- `referral_credits` - Referral credit ledger (triggered by org settings `referral_credit_trigger`)
 
 **Permissions Required:**
 - `settings.manage` - Manage marketing settings and promo codes
@@ -566,6 +567,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `notifications_reads` - Per-user read state
 - `notifications_rules_presets` - Preset rule configuration (enable/recipients/escalation delay)
 - `notifications_digest_settings` - Digest schedules + recipients (daily/weekly/monthly)
+- `notifications_digest_state` - Per-org last-sent period tracking to prevent repeat sends
 - `email_events` - Email delivery tracking
 
 **Permissions Required:**
@@ -579,6 +581,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Preset rules API (Owner-only): `backend/app/api/routes_admin.py`
 - Digest settings API (Owner-only): `backend/app/api/routes_admin.py`
 - Digest job runner: `backend/app/jobs/notifications_digests.py` + `backend/app/jobs/run.py`
+- Digest send gating state: `backend/app/domain/notifications_digests/service.py`
 - Preset keys: `no_show`, `payment_failed`, `negative_review`, `low_stock`, `high_value_lead`
 - Trigger points:
   - `payment_failed` — Stripe webhook payment failure handling (`backend/app/api/routes_payments.py::_handle_invoice_event`)
