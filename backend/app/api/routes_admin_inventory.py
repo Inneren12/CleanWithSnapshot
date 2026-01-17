@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,16 @@ def _require_inventory_view(request: Request, identity: AdminIdentity) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: requires inventory.view or core.view permission",
+        )
+
+
+def _require_inventory_view_only(request: Request, identity: AdminIdentity) -> None:
+    """Require inventory.view permission."""
+    permission_keys = permission_keys_for_request(request, identity)
+    if "inventory.view" not in permission_keys:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: requires inventory.view permission",
         )
 
 
@@ -326,3 +337,75 @@ async def delete_inventory_item(
 
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===== Low Stock Endpoint =====
+
+
+@router.get(
+    "/v1/admin/inventory/low_stock",
+    response_model=schemas.InventoryLowStockListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_low_stock_inventory(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    only_below_min: bool = True,
+    page: int = 1,
+    page_size: int = 50,
+) -> schemas.InventoryLowStockListResponse:
+    """
+    List low stock inventory items with need quantity calculation.
+
+    Query parameters:
+    - only_below_min: When true, only items below minimum stock are returned
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 50, max: 100)
+
+    Requires: inventory.view permission
+    """
+    _require_inventory_view_only(request, identity)
+
+    if page_size > 100:
+        page_size = 100
+    if page < 1:
+        page = 1
+
+    items, total = await service.list_low_stock_items(
+        session,
+        org_id,
+        only_below_min=only_below_min,
+        page=page,
+        page_size=page_size,
+    )
+
+    response_items: list[schemas.InventoryLowStockItemResponse] = []
+    for item, need_qty in items:
+        if not isinstance(need_qty, Decimal):
+            need_qty = Decimal(str(need_qty))
+        response_items.append(
+            schemas.InventoryLowStockItemResponse(
+                item_id=item.item_id,
+                org_id=item.org_id,
+                category_id=item.category_id,
+                sku=item.sku,
+                name=item.name,
+                unit=item.unit,
+                current_qty=item.current_qty,
+                min_qty=item.min_qty,
+                need_qty=need_qty,
+                location_label=item.location_label,
+                active=item.active,
+                created_at=item.created_at,
+                category_name=None,
+            )
+        )
+
+    return schemas.InventoryLowStockListResponse(
+        items=response_items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )

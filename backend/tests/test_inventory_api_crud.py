@@ -683,3 +683,74 @@ async def test_item_search_by_name_and_sku(db_session: AsyncSession, org_a: Orga
     data = response.json()
     skus = [item["sku"] for item in data["items"]]
     assert "CLEAN-002" in skus
+
+
+@pytest.mark.anyio
+async def test_low_stock_endpoint_orders_and_scopes(
+    db_session: AsyncSession, org_a: Organization, org_b: Organization
+):
+    """Test low stock endpoint ordering, need_qty calculation, and org scoping."""
+    headers = {"Authorization": "Basic YWRtaW46YWRtaW4xMjM="}
+
+    items = [
+        InventoryItem(
+            item_id=uuid.uuid4(),
+            org_id=org_a.org_id,
+            name="Alpha Cleaner",
+            unit="bottles",
+            current_qty=Decimal("2"),
+            min_qty=Decimal("5"),
+        ),
+        InventoryItem(
+            item_id=uuid.uuid4(),
+            org_id=org_a.org_id,
+            name="Bravo Soap",
+            unit="bars",
+            current_qty=Decimal("3"),
+            min_qty=Decimal("6"),
+        ),
+        InventoryItem(
+            item_id=uuid.uuid4(),
+            org_id=org_a.org_id,
+            name="Zeta Mop",
+            unit="units",
+            current_qty=Decimal("0"),
+            min_qty=Decimal("10"),
+        ),
+        InventoryItem(
+            item_id=uuid.uuid4(),
+            org_id=org_a.org_id,
+            name="Gamma Gloves",
+            unit="pairs",
+            current_qty=Decimal("5"),
+            min_qty=Decimal("5"),
+        ),
+        InventoryItem(
+            item_id=uuid.uuid4(),
+            org_id=org_b.org_id,
+            name="Other Org Stock",
+            unit="units",
+            current_qty=Decimal("0"),
+            min_qty=Decimal("9"),
+        ),
+    ]
+    db_session.add_all(items)
+    await db_session.commit()
+
+    response = client.get(
+        "/v1/admin/inventory/low_stock?only_below_min=true&page=1&page_size=50",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    names = [item["name"] for item in data["items"]]
+
+    assert names == ["Zeta Mop", "Alpha Cleaner", "Bravo Soap"]
+    assert "Gamma Gloves" not in names
+    assert "Other Org Stock" not in names
+
+    need_qty_by_name = {item["name"]: Decimal(item["need_qty"]) for item in data["items"]}
+    assert need_qty_by_name["Zeta Mop"] == Decimal("10")
+    assert need_qty_by_name["Alpha Cleaner"] == Decimal("3")
+    assert need_qty_by_name["Bravo Soap"] == Decimal("3")
