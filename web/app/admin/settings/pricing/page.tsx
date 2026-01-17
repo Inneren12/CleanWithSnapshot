@@ -141,6 +141,7 @@ export default function ServiceTypesPricingPage() {
         featureKey: "module.notifications_center",
       },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
+      { key: "inventory", label: "Inventory", href: "/admin/inventory", featureKey: "module.inventory" },
       {
         key: "availability-blocks",
         label: "Availability Blocks",

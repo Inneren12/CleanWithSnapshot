@@ -159,6 +159,7 @@ export default function InvoicesPage() {
         featureKey: "module.notifications_center",
       },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
+      { key: "inventory", label: "Inventory", href: "/admin/inventory", featureKey: "module.inventory" },
       { key: "invoices", label: "Invoices", href: "/admin/invoices", featureKey: "module.invoices" },
       {
         key: "org-settings",

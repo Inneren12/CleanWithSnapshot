@@ -463,6 +463,7 @@ export default function DispatcherPage() {
         featureKey: "module.notifications_center",
       },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
+      { key: "inventory", label: "Inventory", href: "/admin/inventory", featureKey: "module.inventory" },
       {
         key: "org-settings",
         label: "Org Settings",

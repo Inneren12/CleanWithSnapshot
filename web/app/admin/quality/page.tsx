@@ -82,6 +82,7 @@ export default function QualityOverviewPage() {
         featureKey: "module.notifications_center",
       },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
+      { key: "inventory", label: "Inventory", href: "/admin/inventory", featureKey: "module.inventory" },
       { key: "invoices", label: "Invoices", href: "/admin/invoices", featureKey: "module.invoices" },
       { key: "quality-reviews", label: "Reviews", href: "/admin/quality/reviews", featureKey: "module.quality" },
       {
