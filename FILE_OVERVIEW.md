@@ -118,6 +118,7 @@ CleanWithSnapshot/
 | `iam/` | 2 files | **Permissions** - Permission catalog, role definitions |
 | `subscriptions/` | 2 files | **SaaS subscriptions** - Billing plans |
 | `saas/` | 5 files | **Multi-tenant** - Org isolation, billing |
+| `inventory/` | 3 files | **Inventory** - Categories, items (stock movements pending) |
 
 **Key files:**
 - `iam/permissions.py` - **Permission catalog** (19 permissions, 7 roles)
@@ -214,6 +215,7 @@ domain_module/
 - `0084_feature_modules_visibility.py` - Feature module toggles
 - `0085_iam_roles_permissions.py` - RBAC roles & permissions
 - `6a2b1c6f3c2b_availability_blocks.py` - Team availability blocking
+- `a1b2c3d4e5f6_add_inventory_categories_and_items.py` - Inventory categories + items tables
 
 ### Tests (`/backend/tests`)
 
