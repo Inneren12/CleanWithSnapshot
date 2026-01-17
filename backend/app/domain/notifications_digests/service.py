@@ -124,6 +124,42 @@ def _start_end_for_date(day: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
+def _period_key_for_schedule(schedule: str, now: datetime, tz: ZoneInfo) -> str:
+    localized = now.astimezone(tz)
+    if schedule == "daily":
+        return localized.strftime("%Y-%m-%d")
+    if schedule == "weekly":
+        iso_year, iso_week, _ = localized.isocalendar()
+        return f"{iso_year}-W{iso_week:02d}"
+    if schedule == "monthly":
+        return localized.strftime("%Y-%m")
+    raise ValueError("unknown_schedule")
+
+
+async def _get_or_create_digest_state(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    digest_key: str,
+) -> db_models.NotificationDigestState:
+    stmt = (
+        sa.select(db_models.NotificationDigestState)
+        .where(
+            db_models.NotificationDigestState.org_id == org_id,
+            db_models.NotificationDigestState.digest_key == digest_key,
+        )
+        .with_for_update()
+    )
+    result = await session.execute(stmt)
+    record = result.scalar_one_or_none()
+    if record is not None:
+        return record
+    record = db_models.NotificationDigestState(org_id=org_id, digest_key=digest_key)
+    session.add(record)
+    await session.flush()
+    return record
+
+
 async def _today_booking_summary(
     session: AsyncSession,
     *,
@@ -272,6 +308,8 @@ async def run_digest_delivery(
     now: datetime | None = None,
 ) -> dict[str, int]:
     now_utc = now or datetime.now(tz=timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
     settings_stmt = sa.select(db_models.NotificationDigestSetting).where(
         db_models.NotificationDigestSetting.enabled.is_(True),
         db_models.NotificationDigestSetting.schedule == schedule,
@@ -283,7 +321,17 @@ async def run_digest_delivery(
 
     sent = 0
     skipped = 0
+    state_updates = 0
     for setting in settings_rows:
+        org_settings = await org_settings_service.get_or_create_org_settings(session, setting.org_id)
+        org_timezone = org_settings_service.resolve_timezone(org_settings)
+        period_key = _period_key_for_schedule(schedule, now_utc, ZoneInfo(org_timezone))
+        state = await _get_or_create_digest_state(
+            session, org_id=setting.org_id, digest_key=setting.digest_key
+        )
+        if state.last_sent_period_key == period_key:
+            skipped += 1
+            continue
         enabled_module = await feature_service.effective_feature_enabled(
             session, setting.org_id, "module.notifications_center"
         )
@@ -304,10 +352,18 @@ async def run_digest_delivery(
             logger.warning("digest_email_adapter_missing", extra={"extra": {"digest": setting.digest_key}})
             skipped += 1
             continue
+        sent_for_digest = 0
         for recipient in payload.recipients:
             delivered = await adapter.send_email(recipient, payload.subject, payload.body)
             if delivered:
                 sent += 1
+                sent_for_digest += 1
             else:
                 skipped += 1
+        if sent_for_digest:
+            state.last_sent_at = now_utc
+            state.last_sent_period_key = period_key
+            state_updates += 1
+    if state_updates:
+        await session.commit()
     return {"sent": sent, "skipped": skipped}

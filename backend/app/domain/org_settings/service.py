@@ -9,6 +9,7 @@ from app.domain.org_settings.db_models import OrganizationSettings
 DEFAULT_TIMEZONE = "America/Edmonton"
 DEFAULT_CURRENCY = "CAD"
 DEFAULT_LANGUAGE = "en"
+DEFAULT_REFERRAL_CREDIT_TRIGGER = "booking_confirmed"
 
 DEFAULT_BUSINESS_HOURS: dict[str, dict[str, str | bool]] = {
     "monday": {"enabled": True, "start": "08:00", "end": "18:00"},
@@ -48,6 +49,7 @@ async def get_or_create_org_settings(
         business_hours=DEFAULT_BUSINESS_HOURS,
         holidays=DEFAULT_HOLIDAYS,
         branding={},
+        referral_credit_trigger=DEFAULT_REFERRAL_CREDIT_TRIGGER,
     )
     session.add(record)
     await session.flush()
@@ -82,6 +84,11 @@ def resolve_branding(record: OrganizationSettings) -> dict:
     if isinstance(record.branding, dict) and record.branding:
         return record.branding
     return {}
+
+
+def resolve_referral_credit_trigger(record: OrganizationSettings) -> str:
+    value = getattr(record, "referral_credit_trigger", None)
+    return value or DEFAULT_REFERRAL_CREDIT_TRIGGER
 
 
 async def apply_org_settings_update(
@@ -120,5 +127,7 @@ async def apply_org_settings_update(
         record.legal_website = payload.legal_website
     if payload.branding is not None:
         record.branding = payload.branding
+    if getattr(payload, "referral_credit_trigger", None) is not None:
+        record.referral_credit_trigger = payload.referral_credit_trigger
     await session.flush()
     return record

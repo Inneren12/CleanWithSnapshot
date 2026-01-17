@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from app.domain.bookings import service as booking_service
 from app.domain.leads.db_models import Lead, ReferralCredit
+from app.domain.org_settings import service as org_settings_service
 from app.domain.saas.db_models import Organization
 from app.settings import settings
 
@@ -146,6 +147,13 @@ def test_invalid_referral_code_rejected(client):
 
 
 def test_referral_credit_created_on_deposit_paid(client, async_session_maker):
+    async def _set_trigger(value: str) -> None:
+        async with async_session_maker() as session:
+            record = await org_settings_service.get_or_create_org_settings(session, settings.default_org_id)
+            record.referral_credit_trigger = value
+            await session.commit()
+
+    asyncio.run(_set_trigger("deposit_paid"))
     estimate = _make_estimate(client)
 
     referrer_response = client.post(
@@ -224,6 +232,96 @@ def test_referral_credit_created_on_deposit_paid(client, async_session_maker):
                 select(func.count()).select_from(ReferralCredit)
             )
             return credit_count
+
+    credit_count_after = asyncio.run(_mark_paid_and_count())
+    assert credit_count_after == 1
+
+
+def test_referral_credit_created_on_auto_confirm_when_trigger_booking_confirmed(
+    client, async_session_maker
+):
+    async def _set_trigger(value: str) -> None:
+        async with async_session_maker() as session:
+            record = await org_settings_service.get_or_create_org_settings(session, settings.default_org_id)
+            record.referral_credit_trigger = value
+            await session.commit()
+
+    asyncio.run(_set_trigger("booking_confirmed"))
+    estimate = _make_estimate(client)
+
+    referrer_response = client.post(
+        "/v1/leads",
+        json={
+            "name": "Confirm Referrer",
+            "phone": "780-555-1212",
+            "address": "8 Referral Road",
+            "preferred_dates": ["Wed morning"],
+            "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
+            "estimate_snapshot": estimate,
+        },
+    )
+    assert referrer_response.status_code == 201
+    referral_code = referrer_response.json()["referral_code"]
+
+    referred_response = client.post(
+        "/v1/leads",
+        json={
+            "name": "Confirm Referred",
+            "phone": "780-555-3434",
+            "address": "9 Referral Road",
+            "preferred_dates": ["Thu morning"],
+            "structured_inputs": {"beds": 2, "baths": 2, "cleaning_type": "deep"},
+            "estimate_snapshot": estimate,
+            "referral_code": referral_code,
+        },
+    )
+    assert referred_response.status_code == 201
+    referred_id = referred_response.json()["lead_id"]
+
+    async def _create_deposit_booking() -> str:
+        async with async_session_maker() as session:
+            starts_at = _next_available_start()
+            lead = await session.get(Lead, referred_id)
+            decision = await booking_service.evaluate_deposit_policy(
+                session=session,
+                lead=lead,
+                starts_at=starts_at,
+                deposit_percent=settings.deposit_percent,
+                deposits_enabled=True,
+                service_type=lead.structured_inputs.get("cleaning_type") if lead and lead.structured_inputs else None,
+                force_deposit=True,
+                extra_reasons=["referral_confirm"],
+            )
+            booking = await booking_service.create_booking(
+                starts_at=starts_at,
+                duration_minutes=180,
+                lead_id=referred_id,
+                session=session,
+                deposit_decision=decision,
+                policy_snapshot=decision.policy_snapshot,
+                manage_transaction=True,
+                lead=lead,
+            )
+            await booking_service.attach_checkout_session(
+                session,
+                booking.booking_id,
+                "cs_confirm",
+                payment_intent_id="pi_confirm",
+                commit=True,
+            )
+            return booking.booking_id
+
+    booking_id = asyncio.run(_create_deposit_booking())
+
+    async def _mark_paid_and_count():
+        async with async_session_maker() as session:
+            await booking_service.mark_deposit_paid(
+                session=session,
+                checkout_session_id="cs_confirm",
+                payment_intent_id="pi_confirm",
+                email_adapter=None,
+            )
+            return await session.scalar(select(func.count()).select_from(ReferralCredit))
 
     credit_count_after = asyncio.run(_mark_paid_and_count())
     assert credit_count_after == 1

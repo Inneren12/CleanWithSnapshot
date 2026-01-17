@@ -133,6 +133,7 @@ async def get_org_settings(
         legal_email=record.legal_email,
         legal_website=record.legal_website,
         branding=org_settings_service.resolve_branding(record),
+        referral_credit_trigger=org_settings_service.resolve_referral_credit_trigger(record),
     )
 
 
@@ -164,6 +165,7 @@ async def update_org_settings(
         legal_email=record.legal_email,
         legal_website=record.legal_website,
         branding=org_settings_service.resolve_branding(record),
+        referral_credit_trigger=org_settings_service.resolve_referral_credit_trigger(record),
     )
 
 

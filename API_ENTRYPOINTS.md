@@ -762,6 +762,12 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 | GET | `/v1/admin/settings/integrations` | `settings.manage` | Integration config |
 | POST | `/v1/admin/settings/integrations` | `settings.manage` | Update integrations |
 
+**Org settings fields (subset):**
+- `referral_credit_trigger` controls when referral credits are awarded:
+  - `deposit_paid` (deposit payment captured)
+  - `booking_confirmed` (booking confirmed)
+  - `booking_or_payment` (either event)
+
 ---
 
 ### IAM (Roles & Permissions)

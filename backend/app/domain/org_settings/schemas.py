@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 AllowedLanguage = Literal["en", "ru"]
 AllowedCurrency = Literal["CAD", "USD"]
+ReferralCreditTrigger = Literal["deposit_paid", "booking_confirmed", "booking_or_payment"]
 
 
 class BusinessHourWindow(BaseModel):
@@ -32,6 +33,7 @@ class OrgSettingsResponse(BaseModel):
     legal_email: str | None = None
     legal_website: str | None = None
     branding: dict[str, str] = Field(default_factory=dict)
+    referral_credit_trigger: ReferralCreditTrigger = "booking_confirmed"
 
 
 class OrgSettingsUpdateRequest(BaseModel):
@@ -48,6 +50,7 @@ class OrgSettingsUpdateRequest(BaseModel):
     legal_email: str | None = None
     legal_website: str | None = None
     branding: dict[str, str] | None = None
+    referral_credit_trigger: ReferralCreditTrigger | None = None
 
     @field_validator("timezone")
     @classmethod
