@@ -600,3 +600,185 @@ async def get_finance_pnl(
         return Response("\n".join(lines), media_type="text/csv")
 
     return payload
+
+
+@router.get(
+    "/v1/admin/finance/cashflow",
+    response_model=schemas.FinanceCashflowResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_finance_cashflow(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+) -> schemas.FinanceCashflowResponse:
+    _require_finance_view(request, identity)
+
+    summary = await service.summarize_cashflow(
+        session,
+        org_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    start_snapshot = await service.get_cash_snapshot_on_or_before(session, org_id, from_date)
+    end_snapshot = await service.get_cash_snapshot_on_or_before(session, org_id, to_date)
+
+    payload = schemas.FinanceCashflowResponse(
+        **summary,
+        from_date=from_date,
+        to_date=to_date,
+        data_sources=schemas.FinanceCashflowDataSources(
+            inflows="invoice_payments (status=SUCCEEDED, received_at/created_at)",
+            outflows="finance_expenses",
+        ),
+        start_cash_snapshot=(
+            schemas.FinanceCashSnapshotResponse.model_validate(start_snapshot)
+            if start_snapshot
+            else None
+        ),
+        end_cash_snapshot=(
+            schemas.FinanceCashSnapshotResponse.model_validate(end_snapshot)
+            if end_snapshot
+            else None
+        ),
+    )
+
+    return payload
+
+
+@router.get(
+    "/v1/admin/finance/cash_snapshots",
+    response_model=schemas.FinanceCashSnapshotListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_finance_cash_snapshots(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    from_date: date | None = Query(None, alias="from"),
+    to_date: date | None = Query(None, alias="to"),
+) -> schemas.FinanceCashSnapshotListResponse:
+    _require_finance_view(request, identity)
+
+    snapshots = await service.list_cash_snapshots(
+        session,
+        org_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    return schemas.FinanceCashSnapshotListResponse(
+        items=[schemas.FinanceCashSnapshotResponse.model_validate(snapshot) for snapshot in snapshots]
+    )
+
+
+@router.post(
+    "/v1/admin/finance/cash_snapshots",
+    response_model=schemas.FinanceCashSnapshotResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_finance_cash_snapshot(
+    request: Request,
+    data: schemas.FinanceCashSnapshotCreate,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    _require_finance_manage(request, identity)
+
+    snapshot = await service.create_cash_snapshot(
+        session,
+        org_id,
+        as_of_date=data.as_of_date,
+        cash_cents=data.cash_cents,
+        note=data.note,
+    )
+    if not snapshot:
+        return problem_details(
+            request=request,
+            status=status.HTTP_409_CONFLICT,
+            title="Snapshot Exists",
+            detail="A cash snapshot already exists for this date",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+
+    await session.commit()
+    return schemas.FinanceCashSnapshotResponse.model_validate(snapshot)
+
+
+@router.patch(
+    "/v1/admin/finance/cash_snapshots/{snapshot_id}",
+    response_model=schemas.FinanceCashSnapshotResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_finance_cash_snapshot(
+    snapshot_id: uuid.UUID,
+    data: schemas.FinanceCashSnapshotUpdate,
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    _require_finance_manage(request, identity)
+
+    existing = await service.get_cash_snapshot(session, org_id, snapshot_id)
+    if not existing:
+        return problem_details(
+            request=request,
+            status=status.HTTP_404_NOT_FOUND,
+            title="Cash Snapshot Not Found",
+            detail=f"Cash snapshot {snapshot_id} not found",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+
+    updated = await service.update_cash_snapshot(
+        session,
+        org_id,
+        snapshot_id,
+        as_of_date=data.as_of_date,
+        cash_cents=data.cash_cents,
+        note=data.note,
+        note_set="note" in data.model_fields_set,
+    )
+    if not updated:
+        return problem_details(
+            request=request,
+            status=status.HTTP_409_CONFLICT,
+            title="Cash Snapshot Conflict",
+            detail="Another cash snapshot already exists for this date",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+
+    await session.commit()
+    return schemas.FinanceCashSnapshotResponse.model_validate(updated)
+
+
+@router.delete(
+    "/v1/admin/finance/cash_snapshots/{snapshot_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_finance_cash_snapshot(
+    snapshot_id: uuid.UUID,
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    _require_finance_manage(request, identity)
+
+    deleted = await service.delete_cash_snapshot(session, org_id, snapshot_id)
+    if not deleted:
+        return problem_details(
+            request=request,
+            status=status.HTTP_404_NOT_FOUND,
+            title="Cash Snapshot Not Found",
+            detail=f"Cash snapshot {snapshot_id} not found",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

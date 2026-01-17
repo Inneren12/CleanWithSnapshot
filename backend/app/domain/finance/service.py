@@ -301,6 +301,103 @@ async def summarize_pnl(
     }
 
 
+async def summarize_cashflow(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: date,
+    to_date: date,
+) -> dict[str, object]:
+    start_dt, end_dt = _date_bounds(from_date, to_date)
+    payment_timestamp = func.coalesce(Payment.received_at, Payment.created_at)
+
+    inflow_stmt = select(func.coalesce(func.sum(Payment.amount_cents), 0)).where(
+        Payment.org_id == org_id,
+        Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+        payment_timestamp >= start_dt,
+        payment_timestamp < end_dt,
+    )
+    inflow_result = await session.execute(inflow_stmt)
+    inflows_cents = int(inflow_result.scalar_one() or 0)
+
+    inflow_breakdown_stmt = (
+        select(
+            Payment.method,
+            func.coalesce(func.sum(Payment.amount_cents), 0).label("total_cents"),
+        )
+        .where(
+            Payment.org_id == org_id,
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            payment_timestamp >= start_dt,
+            payment_timestamp < end_dt,
+        )
+        .group_by(Payment.method)
+        .order_by(func.coalesce(func.sum(Payment.amount_cents), 0).desc())
+    )
+    inflow_breakdown_result = await session.execute(inflow_breakdown_stmt)
+    inflow_breakdown = [
+        {"method": row.method or "unknown", "total_cents": int(row.total_cents or 0)}
+        for row in inflow_breakdown_result.all()
+    ]
+
+    outflow_stmt = select(
+        func.coalesce(func.sum(db_models.FinanceExpense.amount_cents + db_models.FinanceExpense.tax_cents), 0)
+    ).where(
+        db_models.FinanceExpense.org_id == org_id,
+        db_models.FinanceExpense.occurred_on >= from_date,
+        db_models.FinanceExpense.occurred_on <= to_date,
+    )
+    outflow_result = await session.execute(outflow_stmt)
+    outflows_cents = int(outflow_result.scalar_one() or 0)
+
+    outflow_breakdown_stmt = (
+        select(
+            db_models.FinanceExpense.category_id,
+            db_models.FinanceExpenseCategory.name,
+            func.coalesce(
+                func.sum(
+                    db_models.FinanceExpense.amount_cents
+                    + db_models.FinanceExpense.tax_cents
+                ),
+                0,
+            ).label("total_cents"),
+            func.coalesce(func.sum(db_models.FinanceExpense.tax_cents), 0).label("tax_cents"),
+        )
+        .join(
+            db_models.FinanceExpenseCategory,
+            db_models.FinanceExpense.category_id == db_models.FinanceExpenseCategory.category_id,
+        )
+        .where(
+            db_models.FinanceExpense.org_id == org_id,
+            db_models.FinanceExpense.occurred_on >= from_date,
+            db_models.FinanceExpense.occurred_on <= to_date,
+        )
+        .group_by(
+            db_models.FinanceExpense.category_id,
+            db_models.FinanceExpenseCategory.name,
+        )
+        .order_by(func.coalesce(func.sum(db_models.FinanceExpense.amount_cents), 0).desc())
+    )
+    outflow_breakdown_result = await session.execute(outflow_breakdown_stmt)
+    outflow_breakdown = [
+        {
+            "category_id": row.category_id,
+            "category_name": row.name,
+            "total_cents": int(row.total_cents or 0),
+            "tax_cents": int(row.tax_cents or 0),
+        }
+        for row in outflow_breakdown_result.all()
+    ]
+
+    return {
+        "inflows_cents": inflows_cents,
+        "outflows_cents": outflows_cents,
+        "net_movement_cents": inflows_cents - outflows_cents,
+        "inflows_breakdown": inflow_breakdown,
+        "outflows_breakdown_by_category": outflow_breakdown,
+    }
+
+
 async def get_expense(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -312,6 +409,139 @@ async def get_expense(
     )
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def get_cash_snapshot(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+) -> db_models.FinanceCashSnapshot | None:
+    stmt = select(db_models.FinanceCashSnapshot).where(
+        db_models.FinanceCashSnapshot.org_id == org_id,
+        db_models.FinanceCashSnapshot.snapshot_id == snapshot_id,
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_cash_snapshot_on_or_before(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    as_of_date: date,
+) -> db_models.FinanceCashSnapshot | None:
+    stmt = (
+        select(db_models.FinanceCashSnapshot)
+        .where(
+            db_models.FinanceCashSnapshot.org_id == org_id,
+            db_models.FinanceCashSnapshot.as_of_date <= as_of_date,
+        )
+        .order_by(
+            db_models.FinanceCashSnapshot.as_of_date.desc(),
+            db_models.FinanceCashSnapshot.created_at.desc(),
+        )
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def list_cash_snapshots(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> list[db_models.FinanceCashSnapshot]:
+    stmt = select(db_models.FinanceCashSnapshot).where(
+        db_models.FinanceCashSnapshot.org_id == org_id
+    )
+    if from_date:
+        stmt = stmt.where(db_models.FinanceCashSnapshot.as_of_date >= from_date)
+    if to_date:
+        stmt = stmt.where(db_models.FinanceCashSnapshot.as_of_date <= to_date)
+
+    stmt = stmt.order_by(
+        db_models.FinanceCashSnapshot.as_of_date.desc(),
+        db_models.FinanceCashSnapshot.created_at.desc(),
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def create_cash_snapshot(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    as_of_date: date,
+    cash_cents: int,
+    note: str | None,
+) -> db_models.FinanceCashSnapshot | None:
+    existing_stmt = select(db_models.FinanceCashSnapshot.snapshot_id).where(
+        db_models.FinanceCashSnapshot.org_id == org_id,
+        db_models.FinanceCashSnapshot.as_of_date == as_of_date,
+    )
+    existing = await session.execute(existing_stmt)
+    if existing.scalar_one_or_none() is not None:
+        return None
+
+    snapshot = db_models.FinanceCashSnapshot(
+        snapshot_id=uuid.uuid4(),
+        org_id=org_id,
+        as_of_date=as_of_date,
+        cash_cents=cash_cents,
+        note=note,
+        created_at=datetime.utcnow(),
+    )
+    session.add(snapshot)
+    await session.flush()
+    return snapshot
+
+
+async def update_cash_snapshot(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+    *,
+    as_of_date: date | None = None,
+    cash_cents: int | None = None,
+    note: str | None = None,
+    note_set: bool = False,
+) -> db_models.FinanceCashSnapshot | None:
+    snapshot = await get_cash_snapshot(session, org_id, snapshot_id)
+    if not snapshot:
+        return None
+
+    if as_of_date is not None and as_of_date != snapshot.as_of_date:
+        existing_stmt = select(db_models.FinanceCashSnapshot.snapshot_id).where(
+            db_models.FinanceCashSnapshot.org_id == org_id,
+            db_models.FinanceCashSnapshot.as_of_date == as_of_date,
+            db_models.FinanceCashSnapshot.snapshot_id != snapshot_id,
+        )
+        existing = await session.execute(existing_stmt)
+        if existing.scalar_one_or_none() is not None:
+            return None
+        snapshot.as_of_date = as_of_date
+
+    if cash_cents is not None:
+        snapshot.cash_cents = cash_cents
+    if note_set:
+        snapshot.note = note
+
+    await session.flush()
+    return snapshot
+
+
+async def delete_cash_snapshot(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+) -> bool:
+    snapshot = await get_cash_snapshot(session, org_id, snapshot_id)
+    if not snapshot:
+        return False
+    await session.delete(snapshot)
+    await session.flush()
+    return True
 
 
 async def create_expense(

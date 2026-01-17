@@ -14,32 +14,43 @@ const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-type FinancePnlBreakdownItem = {
-  label: string;
+type FinanceCashSnapshot = {
+  snapshot_id: string;
+  org_id: string;
+  as_of_date: string;
+  cash_cents: number;
+  note: string | null;
+  created_at: string;
+};
+
+type FinanceCashflowInflowBreakdown = {
+  method: string;
   total_cents: number;
 };
 
-type FinancePnlExpenseCategoryBreakdown = {
+type FinanceCashflowOutflowBreakdown = {
   category_id: string;
   category_name: string;
   total_cents: number;
   tax_cents: number;
 };
 
-type FinancePnlDataSources = {
-  revenue: string;
-  expenses: string;
+type FinanceCashflowDataSources = {
+  inflows: string;
+  outflows: string;
 };
 
-type FinancePnlResponse = {
+type FinanceCashflowResponse = {
   from: string;
   to: string;
-  revenue_cents: number;
-  expense_cents: number;
-  net_cents: number;
-  revenue_breakdown: FinancePnlBreakdownItem[];
-  expense_breakdown_by_category: FinancePnlExpenseCategoryBreakdown[];
-  data_sources: FinancePnlDataSources;
+  inflows_cents: number;
+  outflows_cents: number;
+  net_movement_cents: number;
+  inflows_breakdown: FinanceCashflowInflowBreakdown[];
+  outflows_breakdown_by_category: FinanceCashflowOutflowBreakdown[];
+  data_sources: FinanceCashflowDataSources;
+  start_cash_snapshot: FinanceCashSnapshot | null;
+  end_cash_snapshot: FinanceCashSnapshot | null;
 };
 
 function formatCurrency(cents: number) {
@@ -59,7 +70,7 @@ function defaultFromDate() {
   return formatDateInput(date);
 }
 
-export default function FinancePnlPage() {
+export default function FinanceCashflowPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [profile, setProfile] = useState<AdminProfile | null>(null);
@@ -67,7 +78,7 @@ export default function FinancePnlPage() {
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
   const [fromDate, setFromDate] = useState(defaultFromDate);
   const [toDate, setToDate] = useState(() => formatDateInput(new Date()));
-  const [pnl, setPnl] = useState<FinancePnlResponse | null>(null);
+  const [cashflow, setCashflow] = useState<FinanceCashflowResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -170,21 +181,21 @@ export default function FinancePnlPage() {
     }
   }, [authHeaders, password, username]);
 
-  const loadPnl = useCallback(async () => {
+  const loadCashflow = useCallback(async () => {
     if (!username || !password) return;
     setErrorMessage(null);
     setStatusMessage(null);
     setIsLoading(true);
     const params = new URLSearchParams({ from: fromDate, to: toDate });
-    const response = await fetch(`${API_BASE}/v1/admin/finance/pnl?${params.toString()}`, {
+    const response = await fetch(`${API_BASE}/v1/admin/finance/cashflow?${params.toString()}`, {
       headers: authHeaders,
       cache: "no-store",
     });
     if (response.ok) {
-      const data = (await response.json()) as FinancePnlResponse;
-      setPnl(data);
+      const data = (await response.json()) as FinanceCashflowResponse;
+      setCashflow(data);
     } else {
-      setErrorMessage("Unable to load profit & loss data.");
+      setErrorMessage("Unable to load cashflow data.");
     }
     setIsLoading(false);
   }, [authHeaders, fromDate, password, toDate, username]);
@@ -203,31 +214,9 @@ export default function FinancePnlPage() {
     setProfile(null);
     setFeatureConfig(null);
     setUiPrefs(null);
-    setPnl(null);
+    setCashflow(null);
     setStatusMessage("Cleared admin credentials.");
   }, []);
-
-  const exportCsv = useCallback(async () => {
-    if (!username || !password) return;
-    const params = new URLSearchParams({ from: fromDate, to: toDate, format: "csv" });
-    const response = await fetch(`${API_BASE}/v1/admin/finance/pnl?${params.toString()}`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      setErrorMessage("Unable to export CSV.");
-      return;
-    }
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `pnl_${fromDate}_${toDate}.csv`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.URL.revokeObjectURL(url);
-  }, [authHeaders, fromDate, password, toDate, username]);
 
   useEffect(() => {
     const storedUsername = localStorage.getItem(STORAGE_USERNAME_KEY) ?? "";
@@ -245,18 +234,18 @@ export default function FinancePnlPage() {
 
   useEffect(() => {
     if (!username || !password || !canViewFinance) return;
-    loadPnl();
-  }, [canViewFinance, loadPnl, password, username]);
+    loadCashflow();
+  }, [canViewFinance, loadCashflow, password, username]);
 
   if (!pageVisible) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100">
-        <AdminNav links={navLinks} activeKey="finance-pnl" />
+        <AdminNav links={navLinks} activeKey="finance-cashflow" />
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-16">
           <div className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center">
             <h1 className="text-2xl font-semibold">Finance module hidden</h1>
             <p className="mt-2 text-sm text-slate-300">
-              Enable the finance module or update your visibility settings to access P&L reports.
+              Enable the finance module or update your visibility settings to access cashflow reports.
             </p>
           </div>
         </div>
@@ -266,12 +255,12 @@ export default function FinancePnlPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
-      <AdminNav links={navLinks} activeKey="finance-pnl" />
+      <AdminNav links={navLinks} activeKey="finance-cashflow" />
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
         <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-          <h1 className="text-2xl font-semibold">Profit &amp; Loss</h1>
+          <h1 className="text-2xl font-semibold">Cashflow</h1>
           <p className="mt-2 text-sm text-slate-300">
-            Review realized revenue (payments) against logged expenses for a selected period.
+            Track net cash movement from payments received and logged expenses in a selected period.
           </p>
           <div className="mt-4 grid gap-3 md:grid-cols-5">
             <input
@@ -329,24 +318,14 @@ export default function FinancePnlPage() {
                 />
               </label>
             </div>
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                className="rounded-lg border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold"
-                onClick={loadPnl}
-                disabled={isLoading || !canViewFinance}
-              >
-                {isLoading ? "Loading..." : "Refresh"}
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-white/10 bg-transparent px-4 py-2 text-sm font-semibold text-slate-300"
-                onClick={exportCsv}
-                disabled={!pnl}
-              >
-                Export CSV
-              </button>
-            </div>
+            <button
+              type="button"
+              className="rounded-lg border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold"
+              onClick={loadCashflow}
+              disabled={isLoading || !canViewFinance}
+            >
+              {isLoading ? "Loading..." : "Refresh"}
+            </button>
           </div>
           {!canViewFinance ? (
             <p className="mt-4 text-sm text-rose-300">You need finance.view to access this report.</p>
@@ -355,44 +334,90 @@ export default function FinancePnlPage() {
 
         <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
           <h2 className="text-lg font-semibold">Summary</h2>
-          {pnl ? (
+          {cashflow ? (
             <div className="mt-4 grid gap-4 md:grid-cols-3">
               <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
-                <p className="text-sm text-slate-400">Revenue</p>
+                <p className="text-sm text-slate-400">Inflows</p>
                 <p className="mt-2 text-2xl font-semibold text-emerald-300">
-                  {formatCurrency(pnl.revenue_cents)}
+                  {formatCurrency(cashflow.inflows_cents)}
                 </p>
               </div>
               <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
-                <p className="text-sm text-slate-400">Expenses</p>
+                <p className="text-sm text-slate-400">Outflows</p>
                 <p className="mt-2 text-2xl font-semibold text-rose-300">
-                  {formatCurrency(pnl.expense_cents)}
+                  {formatCurrency(cashflow.outflows_cents)}
                 </p>
               </div>
               <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
-                <p className="text-sm text-slate-400">Net</p>
+                <p className="text-sm text-slate-400">Net movement</p>
                 <p className="mt-2 text-2xl font-semibold text-slate-100">
-                  {formatCurrency(pnl.net_cents)}
+                  {formatCurrency(cashflow.net_movement_cents)}
                 </p>
               </div>
             </div>
           ) : (
             <p className="mt-3 text-sm text-slate-400">Select a date range to load totals.</p>
           )}
-          {pnl?.data_sources ? (
+          {cashflow?.data_sources ? (
             <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/60 p-4 text-sm text-slate-300">
               <p className="font-semibold text-slate-200">Data sources</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
-                <li>Revenue: {pnl.data_sources.revenue}</li>
-                <li>Expenses: {pnl.data_sources.expenses}</li>
+                <li>Inflows: {cashflow.data_sources.inflows}</li>
+                <li>Outflows: {cashflow.data_sources.outflows}</li>
               </ul>
             </div>
           ) : null}
         </section>
 
+        {cashflow?.start_cash_snapshot || cashflow?.end_cash_snapshot ? (
+          <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <h2 className="text-lg font-semibold">Cash snapshots</h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Snapshots are optional manual balances. They are shown when recorded on or before the
+              selected dates.
+            </p>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                <p className="text-sm text-slate-400">Starting cash</p>
+                {cashflow?.start_cash_snapshot ? (
+                  <>
+                    <p className="mt-2 text-2xl font-semibold text-slate-100">
+                      {formatCurrency(cashflow.start_cash_snapshot.cash_cents)}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      As of {cashflow.start_cash_snapshot.as_of_date}
+                      {cashflow.start_cash_snapshot.note
+                        ? ` • ${cashflow.start_cash_snapshot.note}`
+                        : ""}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-2 text-sm text-slate-400">No snapshot on or before start date.</p>
+                )}
+              </div>
+              <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                <p className="text-sm text-slate-400">Ending cash</p>
+                {cashflow?.end_cash_snapshot ? (
+                  <>
+                    <p className="mt-2 text-2xl font-semibold text-slate-100">
+                      {formatCurrency(cashflow.end_cash_snapshot.cash_cents)}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      As of {cashflow.end_cash_snapshot.as_of_date}
+                      {cashflow.end_cash_snapshot.note ? ` • ${cashflow.end_cash_snapshot.note}` : ""}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-2 text-sm text-slate-400">No snapshot on or before end date.</p>
+                )}
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         <div className="grid gap-6 lg:grid-cols-2">
           <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-            <h2 className="text-lg font-semibold">Revenue breakdown</h2>
+            <h2 className="text-lg font-semibold">Inflows breakdown</h2>
             <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
               <table className="min-w-full text-sm">
                 <thead className="bg-white/5 text-slate-300">
@@ -402,10 +427,10 @@ export default function FinancePnlPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pnl?.revenue_breakdown?.length ? (
-                    pnl.revenue_breakdown.map((item) => (
-                      <tr key={item.label} className="border-t border-white/10">
-                        <td className="px-4 py-2 text-slate-100">{item.label}</td>
+                  {cashflow?.inflows_breakdown?.length ? (
+                    cashflow.inflows_breakdown.map((item) => (
+                      <tr key={item.method} className="border-t border-white/10">
+                        <td className="px-4 py-2 text-slate-100">{item.method}</td>
                         <td className="px-4 py-2 text-right text-slate-100">
                           {formatCurrency(item.total_cents)}
                         </td>
@@ -414,7 +439,7 @@ export default function FinancePnlPage() {
                   ) : (
                     <tr className="border-t border-white/10">
                       <td className="px-4 py-3 text-sm text-slate-400" colSpan={2}>
-                        No revenue recorded for this period.
+                        No inflows recorded for this period.
                       </td>
                     </tr>
                   )}
@@ -424,7 +449,7 @@ export default function FinancePnlPage() {
           </section>
 
           <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-            <h2 className="text-lg font-semibold">Expense breakdown</h2>
+            <h2 className="text-lg font-semibold">Outflows breakdown</h2>
             <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
               <table className="min-w-full text-sm">
                 <thead className="bg-white/5 text-slate-300">
@@ -435,8 +460,8 @@ export default function FinancePnlPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pnl?.expense_breakdown_by_category?.length ? (
-                    pnl.expense_breakdown_by_category.map((item) => (
+                  {cashflow?.outflows_breakdown_by_category?.length ? (
+                    cashflow.outflows_breakdown_by_category.map((item) => (
                       <tr key={item.category_id} className="border-t border-white/10">
                         <td className="px-4 py-2 text-slate-100">{item.category_name}</td>
                         <td className="px-4 py-2 text-right text-slate-100">
@@ -450,7 +475,7 @@ export default function FinancePnlPage() {
                   ) : (
                     <tr className="border-t border-white/10">
                       <td className="px-4 py-3 text-sm text-slate-400" colSpan={3}>
-                        No expenses recorded for this period.
+                        No outflows recorded for this period.
                       </td>
                     </tr>
                   )}

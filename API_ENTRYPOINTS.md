@@ -944,6 +944,11 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
 | DELETE | `/v1/admin/finance/budgets/{budget_id}` | `finance.manage` | Delete budget |
 | GET | `/v1/admin/finance/expenses/summary` | `finance.view` | Totals by category with budget utilization |
 | GET | `/v1/admin/finance/pnl` | `finance.view` | Profit & Loss report (revenue vs expenses) |
+| GET | `/v1/admin/finance/cashflow` | `finance.view` | Cashflow report (payments vs expenses) |
+| GET | `/v1/admin/finance/cash_snapshots` | `finance.view` | List cash snapshots |
+| POST | `/v1/admin/finance/cash_snapshots` | `finance.manage` | Create cash snapshot |
+| PATCH | `/v1/admin/finance/cash_snapshots/{snapshot_id}` | `finance.manage` | Update cash snapshot |
+| DELETE | `/v1/admin/finance/cash_snapshots/{snapshot_id}` | `finance.manage` | Delete cash snapshot |
 
 **Expense list query params:** `from`, `to`, `category_id`, `query`, `page`, `page_size`.
 
@@ -973,6 +978,10 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
 
 **P&L query params:** `from`, `to` (required), optional `format=csv`.
 
+**Cashflow query params:** `from`, `to` (required).
+
+**Cash snapshot query params:** `from`, `to` (optional).
+
 **P&L response shape (example):**
 ```json
 {
@@ -991,6 +1000,36 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
     "revenue": "invoice_payments (status=SUCCEEDED, received_at/created_at)",
     "expenses": "finance_expenses"
   }
+}
+```
+
+**Cashflow response shape (example):**
+```json
+{
+  "from": "2026-03-01",
+  "to": "2026-03-31",
+  "inflows_cents": 16000,
+  "outflows_cents": 4800,
+  "net_movement_cents": 11200,
+  "inflows_breakdown": [
+    { "method": "cash", "total_cents": 12000 }
+  ],
+  "outflows_breakdown_by_category": [
+    { "category_id": "9f36...", "category_name": "Supplies", "total_cents": 3300, "tax_cents": 300 }
+  ],
+  "data_sources": {
+    "inflows": "invoice_payments (status=SUCCEEDED, received_at/created_at)",
+    "outflows": "finance_expenses"
+  },
+  "start_cash_snapshot": {
+    "snapshot_id": "c0f1...",
+    "org_id": "a1b2...",
+    "as_of_date": "2026-02-28",
+    "cash_cents": 45000,
+    "note": "Month end",
+    "created_at": "2026-02-28T09:00:00Z"
+  },
+  "end_cash_snapshot": null
 }
 ```
 
