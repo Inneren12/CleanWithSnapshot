@@ -390,6 +390,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Purpose:** Reports, KPIs, operational dashboards
 
 **Key Pages:**
+- `web/app/admin/analytics/page.tsx` - Financial summary (`/admin/analytics`)
 - `web/app/admin/analytics/funnel/page.tsx` - Booking funnel (`/admin/analytics/funnel`)
 - `web/app/admin/analytics/geo/page.tsx` - Geo heatmap by area (`/admin/analytics/geo`)
 - `web/app/admin/analytics/clients/page.tsx` - Client CLV + retention cohorts (`/admin/analytics/clients`)

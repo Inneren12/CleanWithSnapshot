@@ -32,6 +32,9 @@ class OrganizationSettings(Base):
     referral_credit_trigger: Mapped[str] = mapped_column(
         sa.String(32), nullable=False, server_default="booking_confirmed"
     )
+    finance_ready: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

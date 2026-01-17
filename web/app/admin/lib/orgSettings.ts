@@ -19,6 +19,7 @@ export type OrgSettingsResponse = {
   legal_email?: string | null;
   legal_website?: string | null;
   branding: Record<string, string>;
+  finance_ready?: boolean;
 };
 
 export const DEFAULT_ORG_TIMEZONE = "America/Edmonton";

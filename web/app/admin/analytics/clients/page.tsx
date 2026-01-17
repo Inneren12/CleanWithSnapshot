@@ -109,6 +109,12 @@ export default function ClientAnalyticsPage() {
       },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
       {
+        key: "analytics-summary",
+        label: "Financial Summary",
+        href: "/admin/analytics",
+        featureKey: "module.analytics",
+      },
+      {
         key: "analytics-clients",
         label: "Client Analytics",
         href: "/admin/analytics/clients",

@@ -200,6 +200,26 @@ async def list_expenses(
     return rows, total
 
 
+async def expenses_exist(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: date,
+    to_date: date,
+) -> bool:
+    stmt = (
+        select(db_models.FinanceExpense.expense_id)
+        .where(
+            db_models.FinanceExpense.org_id == org_id,
+            db_models.FinanceExpense.occurred_on >= from_date,
+            db_models.FinanceExpense.occurred_on <= to_date,
+        )
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none() is not None
+
+
 def _date_bounds(from_date: date, to_date: date) -> tuple[datetime, datetime]:
     start_dt = datetime.combine(from_date, time.min, tzinfo=timezone.utc)
     end_dt = datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=timezone.utc)

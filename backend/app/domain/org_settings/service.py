@@ -50,6 +50,7 @@ async def get_or_create_org_settings(
         holidays=DEFAULT_HOLIDAYS,
         branding={},
         referral_credit_trigger=DEFAULT_REFERRAL_CREDIT_TRIGGER,
+        finance_ready=False,
     )
     session.add(record)
     await session.flush()
@@ -91,6 +92,10 @@ def resolve_referral_credit_trigger(record: OrganizationSettings) -> str:
     return value or DEFAULT_REFERRAL_CREDIT_TRIGGER
 
 
+def resolve_finance_ready(record: OrganizationSettings) -> bool:
+    return bool(getattr(record, "finance_ready", False))
+
+
 async def apply_org_settings_update(
     session: AsyncSession, org_id: uuid.UUID, *, payload
 ) -> OrganizationSettings:
@@ -129,5 +134,7 @@ async def apply_org_settings_update(
         record.branding = payload.branding
     if getattr(payload, "referral_credit_trigger", None) is not None:
         record.referral_credit_trigger = payload.referral_credit_trigger
+    if getattr(payload, "finance_ready", None) is not None:
+        record.finance_ready = payload.finance_ready
     await session.flush()
     return record

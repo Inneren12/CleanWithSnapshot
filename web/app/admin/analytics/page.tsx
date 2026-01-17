@@ -2,72 +2,67 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import AdminNav from "../../components/AdminNav";
+import AdminNav from "../components/AdminNav";
 import {
   type AdminProfile,
   type FeatureConfigResponse,
   type UiPrefsResponse,
   isVisible,
-} from "../../lib/featureVisibility";
+} from "../lib/featureVisibility";
 
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-type FunnelLossReason = {
-  reason: string;
-  count: number;
+type FinancialSummaryResponse = {
+  ready: boolean;
+  reason?: string | null;
+  revenue_cents?: number;
+  expenses_cents?: number;
+  profit_cents?: number;
+  margin_pp?: number;
+  gst_owed_cents?: number;
 };
 
-type FunnelCounts = {
-  inquiries: number;
-  quotes: number;
-  bookings_created: number;
-  bookings_completed: number;
-  reviews: number;
-};
-
-type FunnelConversionRates = {
-  inquiry_to_quote: number;
-  quote_to_booking: number;
-  booking_to_completed: number;
-  completed_to_review: number;
-};
-
-type FunnelAnalyticsResponse = {
-  range_start: string;
-  range_end: string;
-  counts: FunnelCounts;
-  conversion_rates: FunnelConversionRates;
-  loss_reasons: FunnelLossReason[];
-};
+function formatCurrency(cents: number) {
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: "CAD",
+  }).format(cents / 100);
+}
 
 function formatPercent(value: number) {
-  return `${(value * 100).toFixed(0)}%`;
+  return `${value.toFixed(1)}%`;
 }
 
-function toIsoDate(value: string, endOfDay = false) {
-  if (!value) return null;
-  return endOfDay ? `${value}T23:59:59Z` : `${value}T00:00:00Z`;
+function formatDateInput(value: Date) {
+  return value.toISOString().slice(0, 10);
 }
 
-export default function FunnelAnalyticsPage() {
+function defaultFromDate() {
+  const date = new Date();
+  date.setDate(date.getDate() - 30);
+  return formatDateInput(date);
+}
+
+export default function AnalyticsFinancialSummaryPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [profile, setProfile] = useState<AdminProfile | null>(null);
   const [featureConfig, setFeatureConfig] = useState<FeatureConfigResponse | null>(null);
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
-  const [analytics, setAnalytics] = useState<FunnelAnalyticsResponse | null>(null);
+  const [fromDate, setFromDate] = useState(defaultFromDate);
+  const [toDate, setToDate] = useState(() => formatDateInput(new Date()));
+  const [summary, setSummary] = useState<FinancialSummaryResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
     const encoded = btoa(`${username}:${password}`);
     return { Authorization: `Basic ${encoded}` };
-  }, [username, password]);
+  }, [password, username]);
 
   const permissionKeys = profile?.permissions ?? [];
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
@@ -174,25 +169,24 @@ export default function FunnelAnalyticsPage() {
     }
   }, [authHeaders, password, username]);
 
-  const loadAnalytics = useCallback(async () => {
+  const loadSummary = useCallback(async () => {
     if (!username || !password) return;
     setErrorMessage(null);
-    const params = new URLSearchParams();
-    const fromIso = toIsoDate(fromDate);
-    const toIso = toIsoDate(toDate, true);
-    if (fromIso) params.set("from", fromIso);
-    if (toIso) params.set("to", toIso);
-    const response = await fetch(`${API_BASE}/v1/admin/analytics/funnel?${params.toString()}`, {
+    setStatusMessage(null);
+    setIsLoading(true);
+    const params = new URLSearchParams({ from: fromDate, to: toDate });
+    const response = await fetch(`${API_BASE}/v1/admin/analytics/financial_summary?${params.toString()}`, {
       headers: authHeaders,
       cache: "no-store",
     });
     if (response.ok) {
-      const data = (await response.json()) as FunnelAnalyticsResponse;
-      setAnalytics(data);
-      setStatusMessage(null);
+      const data = (await response.json()) as FinancialSummaryResponse;
+      setSummary(data);
     } else {
-      setErrorMessage("Failed to load funnel analytics");
+      setErrorMessage("Unable to load financial summary.");
+      setSummary(null);
     }
+    setIsLoading(false);
   }, [authHeaders, fromDate, password, toDate, username]);
 
   useEffect(() => {
@@ -212,52 +206,19 @@ export default function FunnelAnalyticsPage() {
   useEffect(() => {
     if (!username || !password) return;
     if (!pageVisible) return;
-    void loadAnalytics();
-  }, [loadAnalytics, pageVisible, password, username]);
+    void loadSummary();
+  }, [loadSummary, pageVisible, password, username]);
 
-  const counts = analytics?.counts;
-  const lossReasons = analytics?.loss_reasons ?? [];
-  const stageEntries = counts
-    ? [
-        { key: "inquiries", label: "Inquiries", value: counts.inquiries },
-        { key: "quotes", label: "Quotes", value: counts.quotes },
-        { key: "bookings_created", label: "Bookings Created", value: counts.bookings_created },
-        { key: "bookings_completed", label: "Bookings Completed", value: counts.bookings_completed },
-        { key: "reviews", label: "Reviews", value: counts.reviews },
-      ]
-    : [];
-  const maxStageValue = stageEntries.reduce((max, stage) => Math.max(max, stage.value), 0);
-  const conversions = analytics?.conversion_rates
-    ? [
-        {
-          label: "Inquiry → Quote",
-          value: analytics.conversion_rates.inquiry_to_quote,
-        },
-        {
-          label: "Quote → Booking",
-          value: analytics.conversion_rates.quote_to_booking,
-        },
-        {
-          label: "Booking → Completed",
-          value: analytics.conversion_rates.booking_to_completed,
-        },
-        {
-          label: "Completed → Review",
-          value: analytics.conversion_rates.completed_to_review,
-        },
-      ]
-    : [];
+  const ready = summary?.ready ?? false;
 
   return (
     <div className="admin-page">
-      {navLinks.length > 0 ? <AdminNav links={navLinks} activeKey="analytics-funnel" /> : null}
+      {navLinks.length > 0 ? <AdminNav links={navLinks} activeKey="analytics-summary" /> : null}
       <div className="admin-content">
         <div className="page-header">
           <div>
-            <h1>Booking Funnel</h1>
-            <p className="muted">
-              Funnel performance based on real inquiries (leads), quotes, bookings, and reviews.
-            </p>
+            <h1>Analytics · Financial Summary</h1>
+            <p className="muted">Quick profitability snapshot based on payments and tracked expenses.</p>
           </div>
         </div>
 
@@ -268,16 +229,18 @@ export default function FunnelAnalyticsPage() {
         ) : (
           <>
             <div className="card">
-              <div className="filters">
-                <label>
-                  From
-                  <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
-                </label>
-                <label>
-                  To
-                  <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
-                </label>
-                <button type="button" className="btn" onClick={() => void loadAnalytics()}>
+              <div className="kpi-controls">
+                <div className="kpi-date-range">
+                  <label>
+                    From
+                    <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+                  </label>
+                  <label>
+                    To
+                    <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+                  </label>
+                </div>
+                <button type="button" className="btn" onClick={() => void loadSummary()}>
                   Refresh
                 </button>
               </div>
@@ -285,69 +248,48 @@ export default function FunnelAnalyticsPage() {
               {errorMessage ? <p className="error">{errorMessage}</p> : null}
             </div>
 
-            <div className="card">
-              <h2>Stage Counts</h2>
-              {stageEntries.length === 0 ? (
-                <p className="muted">No funnel activity in the selected range.</p>
-              ) : (
-                <div className="funnel-stages">
-                  {stageEntries.map((stage) => {
-                    const width = maxStageValue > 0 ? (stage.value / maxStageValue) * 100 : 0;
-                    return (
-                      <div key={stage.key} className="funnel-stage">
-                        <div className="funnel-stage-header">
-                          <span>{stage.label}</span>
-                          <strong>{stage.value}</strong>
-                        </div>
-                        <div className="funnel-bar">
-                          <div className="funnel-bar-fill" style={{ width: `${width}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
+            {isLoading ? <p className="muted">Loading summary…</p> : null}
+
+            {!isLoading && summary && !ready ? (
+              <div className="card">
+                <p className="alert alert-warning">
+                  {summary.reason ?? "Finance data not ready — enable expense tracking."}
+                </p>
+              </div>
+            ) : null}
+
+            {!isLoading && summary && ready ? (
+              <div className="card">
+                <div className="kpi-grid">
+                  <div className="kpi-card">
+                    <span className="kpi-label">Revenue</span>
+                    <span className="kpi-value">{formatCurrency(summary.revenue_cents ?? 0)}</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Expenses</span>
+                    <span className="kpi-value">{formatCurrency(summary.expenses_cents ?? 0)}</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Profit</span>
+                    <span className="kpi-value">{formatCurrency(summary.profit_cents ?? 0)}</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Margin</span>
+                    <span className="kpi-value">
+                      {summary.margin_pp !== undefined && summary.margin_pp !== null
+                        ? formatPercent(summary.margin_pp)
+                        : "—"}
+                    </span>
+                  </div>
+                  {summary.gst_owed_cents !== undefined ? (
+                    <div className="kpi-card">
+                      <span className="kpi-label">GST owed</span>
+                      <span className="kpi-value">{formatCurrency(summary.gst_owed_cents ?? 0)}</span>
+                    </div>
+                  ) : null}
                 </div>
-              )}
-            </div>
-
-            <div className="card">
-              <h2>Conversion Rates</h2>
-              {conversions.length === 0 ? (
-                <p className="muted">No conversions to display yet.</p>
-              ) : (
-                <ul className="conversion-list">
-                  {conversions.map((conversion) => (
-                    <li key={conversion.label}>
-                      <span>{conversion.label}</span>
-                      <strong>{formatPercent(conversion.value)}</strong>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="card">
-              <h2>Lost Reasons</h2>
-              {lossReasons.length === 0 ? (
-                <p className="muted">No loss reasons recorded in this range.</p>
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Reason</th>
-                      <th>Count</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lossReasons.map((reason) => (
-                      <tr key={reason.reason}>
-                        <td>{reason.reason}</td>
-                        <td>{reason.count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+              </div>
+            ) : null}
           </>
         )}
       </div>

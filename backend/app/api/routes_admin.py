@@ -153,8 +153,10 @@ from app.domain.outbox.service import replay_outbox_event
 from app.domain.queues.schemas import DLQBatchReplayResponse
 from app.domain.nps import schemas as nps_schemas, service as nps_service
 from app.domain.feature_modules import service as feature_service
+from app.domain.finance import service as finance_service
 from app.domain.pricing.config_loader import load_pricing_config
 from app.domain.pricing_settings.db_models import ServiceType
+from app.domain.pricing_settings import service as pricing_settings_service
 from app.domain.notifications.db_models import EmailFailure
 from app.domain.org_settings import service as org_settings_service
 from app.domain.policy_overrides.db_models import PolicyOverrideAudit
@@ -6083,6 +6085,61 @@ async def get_geo_analytics(
     return analytics_schemas.GeoAnalyticsResponse(
         by_area=[analytics_schemas.GeoAreaSummary(**row) for row in by_area],
         points=[analytics_schemas.GeoPointSummary(**row) for row in points] if points else None,
+    )
+
+
+@router.get(
+    "/v1/admin/analytics/financial_summary",
+    response_model=analytics_schemas.FinancialSummaryResponse,
+    response_model_exclude_none=True,
+)
+async def get_financial_summary(
+    request: Request,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_finance),
+) -> analytics_schemas.FinancialSummaryResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    start, end = _normalize_date_range(from_date, to_date)
+    expenses_ready = await finance_service.expenses_exist(
+        session, org_id, from_date=start, to_date=end
+    )
+    finance_enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "module.finance"
+    )
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    finance_ready = org_settings_service.resolve_finance_ready(org_settings)
+
+    if not (expenses_ready or finance_enabled or finance_ready):
+        return analytics_schemas.FinancialSummaryResponse(
+            ready=False,
+            reason="Finance data not ready — enable expense tracking.",
+        )
+
+    summary = await finance_service.summarize_pnl(
+        session, org_id, from_date=start, to_date=end
+    )
+    revenue_cents = int(summary["revenue_cents"])
+    expenses_cents = int(summary["expense_cents"])
+    profit_cents = revenue_cents - expenses_cents
+    margin_pp = round((profit_cents / revenue_cents) * 100, 2) if revenue_cents else 0.0
+
+    gst_owed_cents = None
+    pricing_settings = await pricing_settings_service.get_pricing_settings(session, org_id)
+    if pricing_settings.gst_rate > 0:
+        gst_summary = await finance_service.summarize_gst(
+            session, org_id, from_date=start, to_date=end
+        )
+        gst_owed_cents = int(gst_summary["tax_owed_cents"])
+
+    return analytics_schemas.FinancialSummaryResponse(
+        ready=True,
+        revenue_cents=revenue_cents,
+        expenses_cents=expenses_cents,
+        profit_cents=profit_cents,
+        margin_pp=margin_pp,
+        gst_owed_cents=gst_owed_cents,
     )
 
 
