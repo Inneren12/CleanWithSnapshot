@@ -340,6 +340,9 @@ export default function TrainingCourseDetailPage() {
             <Link className="btn btn-ghost" href="/admin/training/courses">
               Back to courses
             </Link>
+            <Link className="btn btn-ghost" href="/admin/training/calendar">
+              Training calendar
+            </Link>
             {canManage ? (
               <button className="btn btn-primary" type="button" onClick={openAssignModal}>
                 Assign workers

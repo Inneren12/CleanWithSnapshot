@@ -636,6 +636,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `web/app/admin/workers/[id]/page.tsx` - Worker profile training status card
 - `web/app/admin/training/courses/page.tsx` - Training course list + create/edit
 - `web/app/admin/training/courses/[course_id]/page.tsx` - Course detail + assignments
+- `web/app/admin/training/calendar/page.tsx` - Training calendar sessions + attendee blocking
 
 **Backend Routes:**
 - `backend/app/api/routes_admin.py::/v1/admin/training/workers/{worker_id}/status`
@@ -646,6 +647,10 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/api/routes_admin.py::/v1/admin/training/courses/{course_id}/assign`
 - `backend/app/api/routes_admin.py::/v1/admin/training/workers/{worker_id}/assignments`
 - `backend/app/api/routes_admin.py::/v1/admin/training/assignments/{assignment_id}`
+- `backend/app/api/routes_admin.py::/v1/admin/training/sessions`
+- `backend/app/api/routes_admin.py::/v1/admin/training/sessions/{session_id}`
+- `backend/app/api/routes_admin.py::/v1/admin/training/sessions/{session_id}/attendees`
+- `backend/app/api/routes_admin.py::/v1/admin/training/workers`
 
 **Key Services:**
 - `backend/app/domain/training/service.py` - Training requirement status logic
@@ -656,6 +661,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `worker_training_records` (worker completions + expiry)
 - `training_courses` (course catalog)
 - `training_assignments` (worker assignments + status)
+- `training_sessions` (calendar sessions, org TZ → UTC storage)
+- `training_session_attendees` (session attendees + attendance status)
 - `worker_onboarding` (migration 0072)
 - `worker_certificates` (migration 0072)
 
@@ -667,6 +674,11 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - API + service logic: `backend/app/api/routes_admin.py` and `backend/app/domain/training/service.py`
 - Course list UI: `web/app/admin/training/courses/page.tsx`
 - Course detail + assignments UI: `web/app/admin/training/courses/[course_id]/page.tsx`
+
+**Training Calendar Sessions & Schedule Blocking:**
+- Sessions are managed in `backend/app/domain/training/service.py` and create `availability_blocks` (`block_type=training`)
+  for each attendee so schedule/dispatch respects training time.
+- Calendar UI: `web/app/admin/training/calendar/page.tsx` (create/update/cancel sessions, manage attendees).
 
 **Training Date/Status Rules:**
 - Admin training form uses **local time** inputs and converts them to UTC ISO for storage.

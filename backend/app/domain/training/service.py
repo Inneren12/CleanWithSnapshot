@@ -3,15 +3,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.training.db_models import (
     TrainingAssignment,
     TrainingCourse,
     TrainingRequirement,
+    TrainingSession,
+    TrainingSessionAttendee,
     WorkerTrainingRecord,
 )
+from app.domain.bookings.db_models import AvailabilityBlock
 from app.domain.workers.db_models import Worker
 
 
@@ -218,6 +221,316 @@ def build_training_status_payload(
 
 
 UNSET = object()
+
+
+def _normalize_session_title(title: str) -> str:
+    normalized = title.strip()
+    if not normalized:
+        raise ValueError("title_required")
+    return normalized
+
+
+def _normalize_training_window(starts_at: datetime, ends_at: datetime) -> tuple[datetime, datetime]:
+    normalized_start = _ensure_utc(starts_at)
+    normalized_end = _ensure_utc(ends_at)
+    if normalized_start is None or normalized_end is None:
+        raise ValueError("invalid_window")
+    if normalized_end <= normalized_start:
+        raise ValueError("invalid_window")
+    return normalized_start, normalized_end
+
+
+def _build_training_reason(title: str) -> str:
+    base = f"Training: {title.strip()}"
+    return base[:255]
+
+
+async def _resolve_workers(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    worker_ids: list[int],
+) -> list[Worker]:
+    if not worker_ids:
+        return []
+    unique_ids = sorted(set(worker_ids))
+    workers = (
+        await session.execute(
+            select(Worker).where(Worker.org_id == org_id, Worker.worker_id.in_(unique_ids))
+        )
+    ).scalars().all()
+    found_ids = {worker.worker_id for worker in workers}
+    missing = [worker_id for worker_id in unique_ids if worker_id not in found_ids]
+    if missing:
+        raise ValueError("workers_not_found")
+    return workers
+
+
+async def list_training_sessions(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+) -> list[TrainingSession]:
+    stmt = select(TrainingSession).where(TrainingSession.org_id == org_id)
+    if starts_at:
+        stmt = stmt.where(TrainingSession.ends_at > starts_at)
+    if ends_at:
+        stmt = stmt.where(TrainingSession.starts_at < ends_at)
+    return (await session.execute(stmt.order_by(TrainingSession.starts_at.asc()))).scalars().all()
+
+
+async def get_training_session(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    session_id: uuid.UUID,
+) -> TrainingSession | None:
+    return (
+        await session.execute(
+            select(TrainingSession).where(
+                TrainingSession.org_id == org_id, TrainingSession.session_id == session_id
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def list_training_session_attendees(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    session_ids: list[uuid.UUID],
+) -> list[tuple[TrainingSessionAttendee, str]]:
+    if not session_ids:
+        return []
+    stmt = (
+        select(TrainingSessionAttendee, Worker.name)
+        .join(TrainingSession, TrainingSession.session_id == TrainingSessionAttendee.session_id)
+        .join(Worker, Worker.worker_id == TrainingSessionAttendee.worker_id)
+        .where(
+            TrainingSession.org_id == org_id,
+            TrainingSessionAttendee.session_id.in_(session_ids),
+        )
+        .order_by(TrainingSessionAttendee.session_id, Worker.name.asc())
+    )
+    return (await session.execute(stmt)).all()
+
+
+async def create_training_session(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    title: str,
+    starts_at: datetime,
+    ends_at: datetime,
+    location: str | None,
+    instructor_user_id: uuid.UUID | None,
+    notes: str | None,
+    worker_ids: list[int],
+    created_by: str | None,
+) -> TrainingSession:
+    normalized_title = _normalize_session_title(title)
+    normalized_start, normalized_end = _normalize_training_window(starts_at, ends_at)
+    workers = await _resolve_workers(session, org_id=org_id, worker_ids=worker_ids)
+
+    session_row = TrainingSession(
+        org_id=org_id,
+        title=normalized_title,
+        starts_at=normalized_start,
+        ends_at=normalized_end,
+        location=location,
+        instructor_user_id=instructor_user_id,
+        notes=notes,
+    )
+    session.add(session_row)
+    await session.flush()
+
+    reason = _build_training_reason(normalized_title)
+    for worker in workers:
+        block = AvailabilityBlock(
+            org_id=org_id,
+            scope_type="worker",
+            scope_id=worker.worker_id,
+            block_type="training",
+            starts_at=normalized_start,
+            ends_at=normalized_end,
+            reason=reason,
+            created_by=created_by,
+        )
+        session.add(block)
+        await session.flush()
+        session.add(
+            TrainingSessionAttendee(
+                session_id=session_row.session_id,
+                worker_id=worker.worker_id,
+                status="enrolled",
+                block_id=block.id,
+            )
+        )
+    await session.flush()
+    return session_row
+
+
+async def update_training_session(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    session_id: uuid.UUID,
+    title: str | None | object = UNSET,
+    starts_at: datetime | None | object = UNSET,
+    ends_at: datetime | None | object = UNSET,
+    location: str | None | object = UNSET,
+    instructor_user_id: uuid.UUID | None | object = UNSET,
+    notes: str | None | object = UNSET,
+) -> TrainingSession | None:
+    session_row = await get_training_session(session, org_id=org_id, session_id=session_id)
+    if not session_row:
+        return None
+
+    previous_title = session_row.title
+    previous_start = session_row.starts_at
+    previous_end = session_row.ends_at
+    new_title = previous_title
+    if title is not UNSET and isinstance(title, str):
+        new_title = _normalize_session_title(title)
+        session_row.title = new_title
+    if location is not UNSET:
+        session_row.location = location if isinstance(location, str) else None
+    if instructor_user_id is not UNSET:
+        session_row.instructor_user_id = (
+            instructor_user_id if isinstance(instructor_user_id, uuid.UUID) else None
+        )
+    if notes is not UNSET:
+        session_row.notes = notes if isinstance(notes, str) else None
+
+    new_start = session_row.starts_at
+    new_end = session_row.ends_at
+    if starts_at is not UNSET and starts_at is not None:
+        new_start = _ensure_utc(starts_at) or session_row.starts_at
+    if ends_at is not UNSET and ends_at is not None:
+        new_end = _ensure_utc(ends_at) or session_row.ends_at
+    if new_start != session_row.starts_at or new_end != session_row.ends_at:
+        new_start, new_end = _normalize_training_window(new_start, new_end)
+        session_row.starts_at = new_start
+        session_row.ends_at = new_end
+
+    title_changed = new_title != previous_title
+    window_changed = new_start != previous_start or new_end != previous_end
+    if title_changed or window_changed:
+        reason = _build_training_reason(new_title)
+        attendees = (
+            await session.execute(
+                select(TrainingSessionAttendee).where(
+                    TrainingSessionAttendee.session_id == session_row.session_id
+                )
+            )
+        ).scalars().all()
+        for attendee in attendees:
+            if attendee.block_id is None:
+                continue
+            block = await session.get(AvailabilityBlock, attendee.block_id)
+            if block is None or block.org_id != org_id:
+                continue
+            block.starts_at = new_start
+            block.ends_at = new_end
+            block.reason = reason
+
+    await session.flush()
+    return session_row
+
+
+async def sync_training_session_attendees(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    session_id: uuid.UUID,
+    worker_ids: list[int],
+    created_by: str | None,
+) -> TrainingSession | None:
+    session_row = await get_training_session(session, org_id=org_id, session_id=session_id)
+    if not session_row:
+        return None
+    workers = await _resolve_workers(session, org_id=org_id, worker_ids=worker_ids)
+    target_ids = {worker.worker_id for worker in workers}
+    existing = (
+        await session.execute(
+            select(TrainingSessionAttendee).where(
+                TrainingSessionAttendee.session_id == session_row.session_id
+            )
+        )
+    ).scalars().all()
+    existing_ids = {attendee.worker_id for attendee in existing}
+
+    reason = _build_training_reason(session_row.title)
+    normalized_start = _ensure_utc(session_row.starts_at) or session_row.starts_at
+    normalized_end = _ensure_utc(session_row.ends_at) or session_row.ends_at
+
+    for attendee in existing:
+        if attendee.worker_id not in target_ids:
+            if attendee.block_id is not None:
+                block = await session.get(AvailabilityBlock, attendee.block_id)
+                if block is not None and block.org_id == org_id:
+                    await session.delete(block)
+            await session.delete(attendee)
+
+    for worker in workers:
+        if worker.worker_id in existing_ids:
+            continue
+        block = AvailabilityBlock(
+            org_id=org_id,
+            scope_type="worker",
+            scope_id=worker.worker_id,
+            block_type="training",
+            starts_at=normalized_start,
+            ends_at=normalized_end,
+            reason=reason,
+            created_by=created_by,
+        )
+        session.add(block)
+        await session.flush()
+        session.add(
+            TrainingSessionAttendee(
+                session_id=session_row.session_id,
+                worker_id=worker.worker_id,
+                status="enrolled",
+                block_id=block.id,
+            )
+        )
+
+    await session.flush()
+    return session_row
+
+
+async def delete_training_session(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    session_id: uuid.UUID,
+) -> bool:
+    session_row = await get_training_session(session, org_id=org_id, session_id=session_id)
+    if not session_row:
+        return False
+    attendees = (
+        await session.execute(
+            select(TrainingSessionAttendee).where(
+                TrainingSessionAttendee.session_id == session_row.session_id
+            )
+        )
+    ).scalars().all()
+    for attendee in attendees:
+        if attendee.block_id is not None:
+            block = await session.get(AvailabilityBlock, attendee.block_id)
+            if block is not None and block.org_id == org_id:
+                await session.delete(block)
+    await session.execute(
+        delete(TrainingSessionAttendee).where(
+            TrainingSessionAttendee.session_id == session_row.session_id
+        )
+    )
+    await session.delete(session_row)
+    await session.flush()
+    return True
 
 ASSIGNMENT_STATUS_ORDER = {
     "assigned": {"assigned", "in_progress", "completed", "overdue"},

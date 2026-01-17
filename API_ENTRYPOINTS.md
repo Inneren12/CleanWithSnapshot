@@ -967,6 +967,13 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 | POST | `/v1/admin/training/courses/{course_id}/assign` | `training.manage` | Assign workers to a course |
 | GET | `/v1/admin/training/workers/{worker_id}/assignments` | `training.view` | List assignments for a worker |
 | PATCH | `/v1/admin/training/assignments/{assignment_id}` | `training.manage` | Update assignment status/score |
+| GET | `/v1/admin/training/sessions` | `training.view` | List training sessions (org timezone range) |
+| POST | `/v1/admin/training/sessions` | `training.manage` | Create a training session + attendee blocks |
+| GET | `/v1/admin/training/sessions/{session_id}` | `training.view` | Training session detail + attendees |
+| PATCH | `/v1/admin/training/sessions/{session_id}` | `training.manage` | Update training session details |
+| DELETE | `/v1/admin/training/sessions/{session_id}` | `training.manage` | Cancel a training session |
+| POST | `/v1/admin/training/sessions/{session_id}/attendees` | `training.manage` | Replace attendee list for a session |
+| GET | `/v1/admin/training/workers` | `training.view` | List workers for session attendance |
 
 **Status response fields:** `requirements` entries include `key`, `title`, `required`, `completed_at`, `expires_at`, `next_due_at`, and `status` (`ok`, `due`, `overdue`).
 
@@ -981,6 +988,9 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
   "note": "Completed refresher course."
 }
 ```
+
+**Training sessions list query params:**
+- `from` / `to`: `YYYY-MM-DD` in org timezone (defaults to current month in org TZ).
 
 ---
 
