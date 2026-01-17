@@ -33,7 +33,7 @@ async def test_quality_issue_tagging_persists(async_session_maker, client):
         headers={"Authorization": f"Bearer {token}"},
         json={"tag_keys": ["lateness", "communication"]},
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.json()
     payload = response.json()
     assert payload["issue_id"] == str(issue.id)
     assert [tag["tag_key"] for tag in payload["tags"]] == ["lateness", "communication"]
@@ -92,7 +92,15 @@ async def test_quality_common_issue_tags_analytics(async_session_maker, client):
             worker_id=worker_b.worker_id,
             created_at=datetime(2024, 1, 20, tzinfo=timezone.utc),
         )
-        session.add_all([issue_a, issue_b, issue_c])
+        issue_outside = QualityIssue(
+            id=uuid.uuid4(),
+            org_id=org.org_id,
+            status="open",
+            summary="Outside range",
+            worker_id=worker_b.worker_id,
+            created_at=datetime(2023, 12, 15, tzinfo=timezone.utc),
+        )
+        session.add_all([issue_a, issue_b, issue_c, issue_outside])
         await session.flush()
 
         session.add_all(
@@ -100,6 +108,7 @@ async def test_quality_common_issue_tags_analytics(async_session_maker, client):
                 QualityIssueTag(org_id=org.org_id, issue_id=issue_a.id, tag_key="lateness"),
                 QualityIssueTag(org_id=org.org_id, issue_id=issue_b.id, tag_key="lateness"),
                 QualityIssueTag(org_id=org.org_id, issue_id=issue_c.id, tag_key="missed_spots"),
+                QualityIssueTag(org_id=org.org_id, issue_id=issue_outside.id, tag_key="communication"),
             ]
         )
         await session.commit()
@@ -109,7 +118,7 @@ async def test_quality_common_issue_tags_analytics(async_session_maker, client):
         "/v1/admin/quality/issues/common?from=2024-01-01&to=2024-01-31",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.json()
     payload = response.json()
 
     tags_by_key = {tag["tag_key"]: tag for tag in payload["tags"]}
@@ -121,3 +130,4 @@ async def test_quality_common_issue_tags_analytics(async_session_maker, client):
     assert tags_by_key["missed_spots"]["issue_count"] == 1
     assert tags_by_key["missed_spots"]["worker_count"] == 1
     assert tags_by_key["missed_spots"]["workers"][0]["worker_name"] == "Worker B"
+    assert "communication" not in tags_by_key

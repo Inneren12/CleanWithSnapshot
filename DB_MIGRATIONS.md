@@ -26,8 +26,9 @@ This guide covers database schema management using Alembic in the CleanWithSnaps
 **Policy:** Forward-only (no downgrades in production)
 **Validation:** Health endpoint checks migration status
 
-**Recent migrations:** `6ddda2f1b93a_quality_issue_responses.py` adds `quality_issue_responses`, and
-`9b7c1d2e3f4a_quality_issue_tags.py` adds `quality_issue_tags` + `quality_tag_catalog` to support issue tagging.
+**Recent migrations:** `6ddda2f1b93a_quality_issue_responses.py` adds `quality_issue_responses`,
+`9b7c1d2e3f4a_quality_issue_tags.py` adds `quality_issue_tags` + `quality_tag_catalog`, and
+`1b2c3d4e5f6a_quality_issue_tag_position.py` adds tag ordering via `quality_issue_tags.position`.
 
 ---
 

@@ -219,13 +219,17 @@ async def list_issue_tags(
     org_id,
     issue_id,
 ) -> list[dict[str, str]]:
+    position_order = sa.case(
+        (QualityIssueTag.position.is_(None), 1),
+        else_=0,
+    )
     stmt = (
         sa.select(QualityIssueTag.tag_key)
         .where(
             QualityIssueTag.org_id == org_id,
             QualityIssueTag.issue_id == issue_id,
         )
-        .order_by(QualityIssueTag.tag_key.asc())
+        .order_by(position_order, QualityIssueTag.position.asc(), QualityIssueTag.tag_key.asc())
     )
     tag_keys = [row[0] for row in (await session.execute(stmt)).all()]
     return [
@@ -250,8 +254,15 @@ async def replace_issue_tags(
             QualityIssueTag.issue_id == issue_id,
         )
     )
-    for tag_key in deduped:
-        session.add(QualityIssueTag(org_id=org_id, issue_id=issue_id, tag_key=tag_key))
+    for index, tag_key in enumerate(deduped):
+        session.add(
+            QualityIssueTag(
+                org_id=org_id,
+                issue_id=issue_id,
+                tag_key=tag_key,
+                position=index,
+            )
+        )
     await session.commit()
     return [
         {"tag_key": key, "label": QUALITY_TAG_CATALOG.get(key, key)}

@@ -2718,6 +2718,34 @@ async def quality_issue_triage(
 
 
 @router.get(
+    "/v1/admin/quality/issues/common",
+    response_model=quality_schemas.CommonIssueTagsResponse,
+)
+async def get_common_quality_issue_tags(
+    request: Request,
+    from_date: date | None = Query(None, alias="from"),
+    to_date: date | None = Query(None, alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.CommonIssueTagsResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    resolved_to = to_date or date.today()
+    resolved_from = from_date or (resolved_to - timedelta(days=30))
+    tags = await quality_service.list_common_issue_tags(
+        session,
+        org_id=org_id,
+        from_date=resolved_from,
+        to_date=resolved_to,
+    )
+    return quality_schemas.CommonIssueTagsResponse(
+        from_date=resolved_from,
+        to_date=resolved_to,
+        as_of=datetime.now(timezone.utc),
+        tags=[quality_schemas.CommonIssueTagEntry(**entry) for entry in tags],
+    )
+
+
+@router.get(
     "/v1/admin/quality/issues/{issue_id}",
     response_model=quality_schemas.QualityIssueDetailResponse,
 )
@@ -2842,34 +2870,6 @@ async def update_quality_issue(
     await session.commit()
     await session.refresh(issue)
     return _serialize_quality_issue(issue)
-
-
-@router.get(
-    "/v1/admin/quality/issues/common",
-    response_model=quality_schemas.CommonIssueTagsResponse,
-)
-async def get_common_quality_issue_tags(
-    request: Request,
-    from_date: date | None = None,
-    to_date: date | None = None,
-    session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
-) -> quality_schemas.CommonIssueTagsResponse:
-    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    resolved_to = to_date or date.today()
-    resolved_from = from_date or (resolved_to - timedelta(days=30))
-    tags = await quality_service.list_common_issue_tags(
-        session,
-        org_id=org_id,
-        from_date=resolved_from,
-        to_date=resolved_to,
-    )
-    return quality_schemas.CommonIssueTagsResponse(
-        from_date=resolved_from,
-        to_date=resolved_to,
-        as_of=datetime.now(timezone.utc),
-        tags=[quality_schemas.CommonIssueTagEntry(**entry) for entry in tags],
-    )
 
 
 @router.post(

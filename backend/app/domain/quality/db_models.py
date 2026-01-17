@@ -162,6 +162,7 @@ class QualityIssueTag(Base):
         UniqueConstraint("issue_id", "tag_key", name="uq_quality_issue_tags_issue_id_tag_key"),
         Index("ix_quality_issue_tags_org_id", "org_id"),
         Index("ix_quality_issue_tags_issue_id", "issue_id"),
+        Index("ix_quality_issue_tags_issue_id_position", "issue_id", "position"),
         Index("ix_quality_issue_tags_tag_key", "tag_key"),
     )
 
@@ -181,6 +182,7 @@ class QualityIssueTag(Base):
         nullable=False,
         default=lambda: settings.default_org_id,
     )
+    position: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

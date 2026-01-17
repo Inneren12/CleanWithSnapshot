@@ -360,6 +360,10 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Review templates:** Stored in `backend/app/domain/quality/service.py` as `REVIEW_REPLY_TEMPLATES` (returned via the reviews list endpoint).
 
+**Common issues analytics:** `/v1/admin/quality/issues/common` supports `from`/`to` query params to scope the date range (defaults to the last 30 days).
+
+**Tag ordering:** Tag assignment order is stored in `quality_issue_tags.position` and returned in that position order.
+
 **Permissions Required:**
 - `quality.view` - View issue triage + issue details
 - `quality.manage` - Resolve/manage issues (future mutations)

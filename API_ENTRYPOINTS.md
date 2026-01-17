@@ -339,7 +339,7 @@ Query parameters:
 | PATCH | `/v1/admin/quality/issues/{id}` | `quality.manage` | Update status, resolution, or assignee (updates `resolved_at` on close/resolution) |
 | PATCH | `/v1/admin/quality/issues/{id}/tags` | `quality.manage` | Replace issue tag assignments (controlled vocabulary keys) |
 | POST | `/v1/admin/quality/issues/{id}/respond` | `quality.manage` | Log outbound response or note (sets `first_response_at` on first response) |
-| GET | `/v1/admin/quality/issues/common` | `quality.view` | Common issue tags analytics with affected workers (`from`, `to`, defaults to last 30 days) |
+| GET | `/v1/admin/quality/issues/common` | `quality.view` | Common issue tags analytics with affected workers (`from`/`to` date range, defaults to last 30 days) |
 | GET | `/v1/admin/quality/reviews` | `quality.view` | List client reviews with filters (`stars`, `from`, `to`, `worker_id`, `client_id`, `has_issue`, `page`) |
 | GET | `/v1/admin/quality/ratings/distribution` | `quality.view` | Rating distribution for a period (`from`, `to`, defaults to current month) |
 | GET | `/v1/admin/quality/workers/leaderboard` | `quality.view` | Worker quality leaderboard (`from`, `to`, `include_trend`) |
