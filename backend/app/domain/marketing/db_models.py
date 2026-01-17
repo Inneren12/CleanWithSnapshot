@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 import sqlalchemy as sa
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import JSON
 
 from app.infra.db import Base, UUID_TYPE
 from app.settings import settings
@@ -96,3 +108,102 @@ class PromoCodeRedemption(Base):
     )
 
     promo_code: Mapped[PromoCode] = relationship("PromoCode", back_populates="redemptions")
+
+
+class MarketingSpend(Base):
+    __tablename__ = "marketing_spend"
+    __table_args__ = (
+        UniqueConstraint("org_id", "source", "period", name="uq_marketing_spend_org_source_period"),
+        Index("ix_marketing_spend_org_period", "org_id", "period"),
+    )
+
+    spend_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE, primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    source: Mapped[str] = mapped_column(String(120), nullable=False)
+    period: Mapped[date] = mapped_column(Date, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class EmailSegment(Base):
+    __tablename__ = "email_segments"
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_email_segments_org_name"),
+        Index("ix_email_segments_org_id", "org_id"),
+    )
+
+    segment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE, primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    name: Mapped[str] = mapped_column(String(140), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text())
+    definition: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    campaigns: Mapped[list["EmailCampaign"]] = relationship(
+        "EmailCampaign",
+        back_populates="segment",
+        cascade="all, delete-orphan",
+    )
+
+
+class EmailCampaign(Base):
+    __tablename__ = "email_campaigns"
+    __table_args__ = (
+        Index("ix_email_campaigns_org_status", "org_id", "status"),
+        Index("ix_email_campaigns_org_scheduled", "org_id", "scheduled_for"),
+    )
+
+    campaign_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE, primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    segment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("email_segments.segment_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text(), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT")
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    segment: Mapped[EmailSegment | None] = relationship("EmailSegment", back_populates="campaigns")

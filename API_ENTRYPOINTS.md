@@ -189,6 +189,24 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 
 **Quote status values:** `DRAFT`, `SENT`, `EXPIRED`, `ACCEPTED`, `DECLINED` (amounts are stored in cents).
 
+### Marketing
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/marketing/analytics/lead-sources` | `settings.manage` | Lead source analytics for a month (leads, bookings, revenue, spend) |
+| GET | `/v1/admin/marketing/spend` | `settings.manage` | List manual spend entries for a month |
+| PUT | `/v1/admin/marketing/spend` | `settings.manage` | Upsert manual spend for a source + month |
+| GET | `/v1/admin/marketing/email-segments` | `settings.manage` | List email segments |
+| POST | `/v1/admin/marketing/email-segments` | `settings.manage` | Create email segment |
+| GET | `/v1/admin/marketing/email-segments/{segment_id}` | `settings.manage` | Get email segment |
+| PATCH | `/v1/admin/marketing/email-segments/{segment_id}` | `settings.manage` | Update email segment |
+| DELETE | `/v1/admin/marketing/email-segments/{segment_id}` | `settings.manage` | Delete email segment |
+| GET | `/v1/admin/marketing/email-campaigns` | `settings.manage` | List email campaigns |
+| POST | `/v1/admin/marketing/email-campaigns` | `settings.manage` | Create email campaign |
+| GET | `/v1/admin/marketing/email-campaigns/{campaign_id}` | `settings.manage` | Get email campaign |
+| PATCH | `/v1/admin/marketing/email-campaigns/{campaign_id}` | `settings.manage` | Update email campaign |
+| DELETE | `/v1/admin/marketing/email-campaigns/{campaign_id}` | `settings.manage` | Delete email campaign |
+
 ```json
 {
   "items": [

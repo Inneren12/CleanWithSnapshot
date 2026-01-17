@@ -35,6 +35,9 @@ SUBFEATURE_KEYS = [
     "finance.cash_flow",
     "pricing.service_types",
     "pricing.booking_policies",
+    "marketing.analytics",
+    "marketing.email_campaigns",
+    "marketing.email_segments",
     "api.settings",
 ]
 
@@ -49,7 +52,7 @@ MODULE_PERMISSIONS: dict[str, str] = {
     "analytics": "finance.view",
     "finance": "finance.view",
     "pricing": "settings.manage",
-    "marketing": "core.view",
+    "marketing": "settings.manage",
     "leads": "contacts.view",
     "inventory": "core.view",
     "training": "core.view",
