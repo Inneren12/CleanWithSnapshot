@@ -254,11 +254,24 @@ The Inventory page now includes a Low Stock panel to surface items at or below t
 
 **How it works:**
 - Items are flagged as low stock when current quantity is less than or equal to the minimum quantity.
-- Use the “Mark as ordered” action to add a client-only ordered tag while the purchase order module is in development.
-- The “Generate purchase order” button is intentionally disabled until the purchasing module is available.
+- Use the “Mark as ordered” action to quickly tag items that are already on order.
+- Jump to Purchase Orders to build supplier-ready orders with line totals and taxes.
 
 **Tips:**
 - Use the “Low stock only” checkbox to filter the main inventory table to items that need reordering.
+
+## Inventory Purchase Orders
+
+Purchase orders help you plan replenishment, confirm totals, and receive items back into stock.
+
+**How it works:**
+- Create a draft by selecting a supplier, adding line items, and confirming tax/shipping totals.
+- Use “Mark ordered” when the PO is submitted to the supplier, then “Mark received” once goods arrive.
+- Drafts can be edited until they are marked ordered.
+
+**Tips:**
+- Review the totals card before submitting to ensure tax and shipping are correct.
+- Use the Purchase Orders list filters to track open orders by supplier and status.
 
 ## Inventory Suppliers
 
