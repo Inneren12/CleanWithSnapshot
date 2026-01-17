@@ -175,12 +175,19 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 |--------|------|------------|---------|
 | GET | `/v1/admin/leads` | `contacts.view` (or `leads.view`) | Lead pipeline list (status/query/date filters + pagination) |
 | GET | `/v1/admin/leads/{lead_id}` | `contacts.view` (or `leads.view`) | Lead detail with contact info, requested service snapshot, notes, and timeline |
-| PATCH | `/v1/admin/leads/{lead_id}` | `contacts.edit` (or `leads.edit`) | Update lead status or notes |
+| PATCH | `/v1/admin/leads/{lead_id}` | `contacts.edit` (or `leads.edit`) | Update lead status, notes, or loss reason |
 | POST | `/v1/admin/leads/{lead_id}/timeline` | `contacts.edit` (or `leads.edit`) | Add a lead timeline entry (quote sent, contacted, etc.) |
+| GET | `/v1/admin/leads/{lead_id}/quotes` | `contacts.view` (or `leads.view`) | List quotes for a lead (includes follow-ups + expiry state) |
+| POST | `/v1/admin/leads/{lead_id}/quotes` | `contacts.edit` (or `leads.edit`) | Create a lead quote (amount, service type, expiry, sent_at) |
+| POST | `/v1/admin/leads/{lead_id}/quotes/{quote_id}/followups` | `contacts.edit` (or `leads.edit`) | Log a manual quote follow-up note |
 
 **Query params:** `status`, `query`, `from`, `to`, `page`
 
 **Status values:** `NEW`, `CONTACTED`, `QUOTED`, `WON`, `LOST`
+
+**Loss reason:** Required when marking a lead as `LOST` via PATCH `/v1/admin/leads/{lead_id}`.
+
+**Quote status values:** `DRAFT`, `SENT`, `EXPIRED`, `ACCEPTED`, `DECLINED` (amounts are stored in cents).
 
 ```json
 {

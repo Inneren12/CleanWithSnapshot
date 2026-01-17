@@ -7,7 +7,7 @@ from datetime import datetime
 
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -64,6 +64,7 @@ class Lead(Base):
     pets: Mapped[str | None] = mapped_column(String(255))
     allergies: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(String(500))
+    loss_reason: Mapped[str | None] = mapped_column(String(255))
     structured_inputs: Mapped[dict] = mapped_column(JSON, nullable=False)
     estimate_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     pricing_config_version: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -113,6 +114,11 @@ class Lead(Base):
         foreign_keys="ReferralCredit.referred_lead_id",
         uselist=False,
     )
+    quotes: Mapped[list["LeadQuote"]] = relationship(
+        "LeadQuote",
+        back_populates="lead",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("ix_leads_org_id", "org_id"),
@@ -152,4 +158,88 @@ class ReferralCredit(Base):
     )
     referred: Mapped[Lead] = relationship(
         Lead, back_populates="referred_credit", foreign_keys=[referred_lead_id]
+    )
+
+
+class LeadQuote(Base):
+    __tablename__ = "lead_quotes"
+
+    quote_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    lead_id: Mapped[str] = mapped_column(
+        ForeignKey("leads.lead_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="CAD")
+    service_type: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    lead: Mapped[Lead] = relationship("Lead", back_populates="quotes")
+    followups: Mapped[list["LeadQuoteFollowUp"]] = relationship(
+        "LeadQuoteFollowUp",
+        back_populates="quote",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_lead_quotes_org_id", "org_id"),
+        Index("ix_lead_quotes_lead_id", "lead_id"),
+    )
+
+
+class LeadQuoteFollowUp(Base):
+    __tablename__ = "lead_quote_followups"
+
+    followup_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    quote_id: Mapped[str] = mapped_column(
+        ForeignKey("lead_quotes.quote_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    note: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    quote: Mapped[LeadQuote] = relationship("LeadQuote", back_populates="followups")
+
+    __table_args__ = (
+        Index("ix_lead_quote_followups_org_id", "org_id"),
+        Index("ix_lead_quote_followups_quote_id", "quote_id"),
     )

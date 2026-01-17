@@ -16,6 +16,20 @@ LEAD_STATUSES: Final[tuple[str, ...]] = (
     LEAD_STATUS_LOST,
 )
 
+QUOTE_STATUS_DRAFT: Final[str] = "DRAFT"
+QUOTE_STATUS_SENT: Final[str] = "SENT"
+QUOTE_STATUS_EXPIRED: Final[str] = "EXPIRED"
+QUOTE_STATUS_ACCEPTED: Final[str] = "ACCEPTED"
+QUOTE_STATUS_DECLINED: Final[str] = "DECLINED"
+
+QUOTE_STATUSES: Final[tuple[str, ...]] = (
+    QUOTE_STATUS_DRAFT,
+    QUOTE_STATUS_SENT,
+    QUOTE_STATUS_EXPIRED,
+    QUOTE_STATUS_ACCEPTED,
+    QUOTE_STATUS_DECLINED,
+)
+
 _ALLOWED_TRANSITIONS: Final[dict[str, set[str]]] = {
     LEAD_STATUS_NEW: {LEAD_STATUS_CONTACTED, LEAD_STATUS_QUOTED, LEAD_STATUS_LOST},
     LEAD_STATUS_CONTACTED: {LEAD_STATUS_QUOTED, LEAD_STATUS_WON, LEAD_STATUS_LOST},
@@ -47,6 +61,10 @@ def assert_valid_transition(current: str, target: str) -> None:
 
 def default_lead_status() -> str:
     return LEAD_STATUS_NEW
+
+
+def is_valid_quote_status(value: str) -> bool:
+    return value in QUOTE_STATUSES
 
 
 def statuses_for_filter() -> Iterable[str]:

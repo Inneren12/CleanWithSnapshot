@@ -1,12 +1,26 @@
 import logging
+from datetime import datetime, timezone
 
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.leads.db_models import Lead, ReferralCredit, generate_referral_code
+from app.domain.leads.db_models import (
+    Lead,
+    LeadQuote,
+    LeadQuoteFollowUp,
+    ReferralCredit,
+    generate_referral_code,
+)
+from app.domain.leads.statuses import (
+    QUOTE_STATUS_DRAFT,
+    QUOTE_STATUS_EXPIRED,
+    QUOTE_STATUS_SENT,
+    QUOTE_STATUSES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +114,7 @@ def export_payload_from_lead(lead: Lead) -> dict[str, Any]:
         "pets": lead.pets,
         "allergies": lead.allergies,
         "notes": lead.notes,
+        "loss_reason": getattr(lead, "loss_reason", None),
         "structured_inputs": lead.structured_inputs,
         "estimate_snapshot": lead.estimate_snapshot,
         "pricing_config_version": lead.pricing_config_version,
@@ -120,3 +135,45 @@ def export_payload_from_lead(lead: Lead) -> dict[str, Any]:
         "created_at": lead.created_at.isoformat() if lead.created_at else None,
         "org_id": str(getattr(lead, "org_id", "")),
     }
+
+
+def resolve_quote_status(status: str, expires_at: datetime | None) -> str:
+    if status not in QUOTE_STATUSES:
+        raise ValueError(f"Unknown quote status: {status}")
+    if expires_at and status in {QUOTE_STATUS_SENT, QUOTE_STATUS_DRAFT}:
+        normalized_expires_at = expires_at
+        if normalized_expires_at.tzinfo is None:
+            normalized_expires_at = normalized_expires_at.replace(tzinfo=timezone.utc)
+        if normalized_expires_at <= datetime.now(tz=timezone.utc):
+            return QUOTE_STATUS_EXPIRED
+    return status
+
+
+async def create_quote_followup(
+    session: AsyncSession,
+    *,
+    quote: LeadQuote,
+    note: str,
+    created_by: str | None = None,
+) -> LeadQuoteFollowUp:
+    now = datetime.now(tz=timezone.utc)
+    followup = LeadQuoteFollowUp(
+        quote_id=quote.quote_id,
+        org_id=quote.org_id,
+        note=note,
+        created_by=created_by,
+        created_at=now,
+    )
+    session.add(followup)
+    await session.flush()
+    return followup
+
+
+async def list_lead_quotes(session: AsyncSession, *, org_id, lead_id: str) -> list[LeadQuote]:
+    result = await session.execute(
+        select(LeadQuote)
+        .options(selectinload(LeadQuote.followups))
+        .where(LeadQuote.org_id == org_id, LeadQuote.lead_id == lead_id)
+        .order_by(LeadQuote.created_at.desc())
+    )
+    return list(result.scalars().all())

@@ -104,20 +104,36 @@ from app.domain.disputes.db_models import Dispute, FinancialAdjustmentEvent
 from app.domain.documents import service as document_service
 from app.domain.invoices.db_models import Invoice, InvoiceItem, InvoicePublicToken, Payment
 from app.domain.leads import statuses as lead_statuses
-from app.domain.leads.db_models import Lead, ReferralCredit
+from app.domain.leads.db_models import Lead, LeadQuote, LeadQuoteFollowUp, ReferralCredit
 from app.domain.nps.db_models import NpsResponse, SupportTicket
-from app.domain.leads.service import grant_referral_credit, export_payload_from_lead
+from app.domain.leads.service import (
+    create_quote_followup,
+    export_payload_from_lead,
+    grant_referral_credit,
+    list_lead_quotes,
+    resolve_quote_status,
+)
 from app.domain.leads.schemas import (
     AdminLeadDetailResponse,
     AdminLeadListResponse,
     AdminLeadResponse,
+    AdminLeadQuoteCreateRequest,
+    AdminLeadQuoteFollowUpCreateRequest,
+    AdminLeadQuoteFollowUpResponse,
+    AdminLeadQuoteListResponse,
+    AdminLeadQuoteResponse,
     AdminLeadStatusUpdateRequest,
     AdminLeadTimelineCreateRequest,
     AdminLeadUpdateRequest,
     admin_lead_detail_from_model,
     admin_lead_from_model,
 )
-from app.domain.leads.statuses import assert_valid_transition, is_valid_status
+from app.domain.leads.statuses import (
+    LEAD_STATUS_LOST,
+    assert_valid_transition,
+    is_valid_quote_status,
+    is_valid_status,
+)
 from app.domain.config import schemas as config_schemas
 from app.domain.notifications import email_service
 from app.domain.notifications_center import schemas as notifications_schemas
@@ -2121,6 +2137,34 @@ def _render_leads(leads: Iterable[Lead], active_filters: set[str], lang: str | N
     return "".join(cards)
 
 
+def _quote_followup_response(followup: LeadQuoteFollowUp) -> AdminLeadQuoteFollowUpResponse:
+    return AdminLeadQuoteFollowUpResponse(
+        followup_id=followup.followup_id,
+        note=followup.note,
+        created_at=followup.created_at,
+        created_by=followup.created_by,
+    )
+
+
+def _quote_response(quote: LeadQuote) -> AdminLeadQuoteResponse:
+    resolved_status = resolve_quote_status(quote.status, quote.expires_at)
+    followups_attr = getattr(quote, "__dict__", {}).get("followups")
+    return AdminLeadQuoteResponse(
+        quote_id=quote.quote_id,
+        lead_id=quote.lead_id,
+        amount=quote.amount,
+        currency=quote.currency,
+        service_type=quote.service_type,
+        status=resolved_status,
+        expires_at=quote.expires_at,
+        sent_at=quote.sent_at,
+        metadata=quote.metadata_json or {},
+        created_at=quote.created_at,
+        updated_at=quote.updated_at,
+        followups=[_quote_followup_response(item) for item in followups_attr or []],
+    )
+
+
 def _render_cases(cases: Iterable[object], active_filters: set[str], lang: str | None) -> str:
     cards: list[str] = []
     for case in cases:
@@ -2454,6 +2498,118 @@ async def get_lead_detail(
     )
 
 
+@router.get("/v1/admin/leads/{lead_id}/quotes", response_model=AdminLeadQuoteListResponse)
+async def list_lead_quotes_endpoint(
+    http_request: Request,
+    lead_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_any_permission_keys("contacts.view", "leads.view")),
+) -> AdminLeadQuoteListResponse:
+    org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
+    lead_result = await session.execute(
+        select(Lead).where(Lead.lead_id == lead_id, Lead.org_id == org_id)
+    )
+    if lead_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    quotes = await list_lead_quotes(session, org_id=org_id, lead_id=lead_id)
+    return AdminLeadQuoteListResponse(items=[_quote_response(quote) for quote in quotes])
+
+
+@router.post("/v1/admin/leads/{lead_id}/quotes", response_model=AdminLeadQuoteResponse)
+async def create_lead_quote(
+    http_request: Request,
+    lead_id: str,
+    payload: AdminLeadQuoteCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_any_permission_keys("contacts.edit", "leads.edit")),
+) -> AdminLeadQuoteResponse:
+    org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
+    lead_result = await session.execute(
+        select(Lead).where(Lead.lead_id == lead_id, Lead.org_id == org_id)
+    )
+    lead = lead_result.scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    if not is_valid_quote_status(payload.status):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid quote status")
+
+    now = datetime.now(tz=timezone.utc)
+    quote = LeadQuote(
+        lead_id=lead.lead_id,
+        org_id=lead.org_id,
+        amount=payload.amount,
+        currency=payload.currency,
+        service_type=payload.service_type,
+        status=payload.status,
+        expires_at=payload.expires_at,
+        sent_at=payload.sent_at,
+        metadata_json=payload.metadata or {},
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(quote)
+    await session.flush()
+
+    response_body = _quote_response(quote)
+
+    http_request.state.explicit_admin_audit = True
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="lead_quote_create",
+        resource_type="lead",
+        resource_id=lead.lead_id,
+        before=None,
+        after=response_body.model_dump(mode="json"),
+    )
+    await session.commit()
+    return response_body
+
+
+@router.post("/v1/admin/leads/{lead_id}/quotes/{quote_id}/followups", response_model=AdminLeadQuoteFollowUpResponse)
+async def create_lead_quote_followup_endpoint(
+    http_request: Request,
+    lead_id: str,
+    quote_id: str,
+    payload: AdminLeadQuoteFollowUpCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_any_permission_keys("contacts.edit", "leads.edit")),
+) -> AdminLeadQuoteFollowUpResponse:
+    org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
+    quote_result = await session.execute(
+        select(LeadQuote).where(
+            LeadQuote.quote_id == quote_id,
+            LeadQuote.lead_id == lead_id,
+            LeadQuote.org_id == org_id,
+        )
+    )
+    quote = quote_result.scalar_one_or_none()
+    if quote is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+
+    followup = await create_quote_followup(
+        session,
+        quote=quote,
+        note=payload.note,
+        created_by=identity.username,
+    )
+
+    response_body = _quote_followup_response(followup)
+    http_request.state.explicit_admin_audit = True
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="lead_quote_followup",
+        resource_type="lead",
+        resource_id=lead_id,
+        before=None,
+        after=response_body.model_dump(mode="json"),
+    )
+    await session.commit()
+    return response_body
+
+
 @router.patch("/v1/admin/leads/{lead_id}", response_model=AdminLeadResponse)
 async def update_lead(
     http_request: Request,
@@ -2479,10 +2635,23 @@ async def update_lead(
             assert_valid_transition(lead.status, payload.status)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if payload.status == LEAD_STATUS_LOST and not (payload.loss_reason or lead.loss_reason):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Loss reason is required when marking a lead as LOST",
+            )
         lead.status = payload.status
 
     if "notes" in payload.model_fields_set:
         lead.notes = payload.notes
+
+    if "loss_reason" in payload.model_fields_set:
+        if payload.loss_reason and (payload.status or lead.status) != LEAD_STATUS_LOST:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Loss reason can only be set when lead status is LOST",
+            )
+        lead.loss_reason = payload.loss_reason
 
     await session.flush()
     await session.refresh(lead)
@@ -2569,6 +2738,11 @@ async def update_lead_status(
         assert_valid_transition(lead.status, payload.status)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if payload.status == LEAD_STATUS_LOST and not lead.loss_reason:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Loss reason is required when marking a lead as LOST",
+        )
 
     lead.status = payload.status
     await session.flush()
