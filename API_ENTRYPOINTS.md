@@ -584,6 +584,8 @@ Schedules: `daily`, `weekly`, `monthly`.
 | PATCH | `/v1/admin/inventory/purchase-orders/{po_id}` | `inventory.manage` or `admin.manage` | Update a draft purchase order |
 | POST | `/v1/admin/inventory/purchase-orders/{po_id}/mark_ordered` | `inventory.manage` or `admin.manage` | Mark a purchase order as ordered |
 | POST | `/v1/admin/inventory/purchase-orders/{po_id}/mark_received` | `inventory.manage` or `admin.manage` | Mark a purchase order as received (updates stock) |
+| POST | `/v1/admin/inventory/consumption` | `inventory.manage` or `admin.manage` | Record inventory consumption (gated by `inventory.usage_analytics`) |
+| GET | `/v1/admin/inventory/usage_analytics` | `inventory.view` or `core.view` | Usage analytics summary (gated by `inventory.usage_analytics`) |
 
 **Auth:** Admin HTTP Basic (`ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD`, `VIEWER_BASIC_USERNAME`/`VIEWER_BASIC_PASSWORD`).
 
@@ -629,6 +631,36 @@ Schedules: `daily`, `weekly`, `monthly`.
 | `supplier_id` | `UUID` | Filter by supplier (optional) |
 | `page` | `int` | Page number (default: 1) |
 | `page_size` | `int` | Items per page (default: 50, max: 100) |
+
+**Usage analytics query params (`GET /v1/admin/inventory/usage_analytics`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `from` | `datetime` | Start of consumption window (optional) |
+| `to` | `datetime` | End of consumption window (optional) |
+
+**Usage analytics response shape:**
+```json
+{
+  "total_consumption_cents": 12000,
+  "cost_per_booking_avg_cents": 4000,
+  "by_service_type": [
+    {
+      "service_type_id": 1,
+      "bookings": 3,
+      "consumption_cents": 9000,
+      "cost_per_booking_cents": 3000
+    }
+  ],
+  "top_items": [
+    {
+      "item_id": "1b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e",
+      "consumption_cents": 5000,
+      "qty": "6.00"
+    }
+  ]
+}
+```
 
 **Category list response shape:**
 ```json

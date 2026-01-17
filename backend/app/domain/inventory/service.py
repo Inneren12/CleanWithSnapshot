@@ -6,11 +6,13 @@ from decimal import Decimal, ROUND_HALF_UP
 import uuid
 from datetime import datetime
 
-from sqlalchemy import case, func, select, or_
+from sqlalchemy import case, func, select, or_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.domain.inventory import db_models, schemas
+from app.domain.bookings.db_models import Booking
+from app.domain.pricing_settings.db_models import ServiceType
 from app.domain.notifications_center import service as notifications_service
 
 
@@ -801,3 +803,149 @@ async def mark_purchase_order_received(
     purchase_order.received_at = datetime.utcnow()
     await session.flush()
     return purchase_order
+
+
+# ===== Consumption & Usage Analytics =====
+
+
+def _calculate_cost_per_booking(total_cents: int, bookings: int) -> int:
+    if bookings <= 0:
+        return 0
+    average = (Decimal(total_cents) / Decimal(bookings)).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    )
+    return int(average)
+
+
+async def record_consumption(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    data: schemas.InventoryConsumptionCreate,
+    *,
+    recorded_by: str,
+) -> db_models.InventoryConsumption:
+    """Record a consumption entry for a booking."""
+    item_map = await _load_inventory_items(session, org_id, {data.item_id})
+    if data.item_id not in item_map:
+        raise ValueError("Inventory item not found")
+
+    booking = await session.scalar(
+        select(Booking).where(
+            Booking.org_id == org_id,
+            Booking.booking_id == data.booking_id,
+        )
+    )
+    if not booking:
+        raise ValueError("Booking not found")
+
+    service_type = await session.scalar(
+        select(ServiceType).where(
+            ServiceType.org_id == org_id,
+            ServiceType.service_type_id == data.service_type_id,
+        )
+    )
+    if not service_type:
+        raise ValueError("Service type not found")
+
+    total_cost_cents = _calculate_line_total(data.qty, data.unit_cost_cents)
+    consumption = db_models.InventoryConsumption(
+        consumption_id=uuid.uuid4(),
+        org_id=org_id,
+        booking_id=data.booking_id,
+        service_type_id=data.service_type_id,
+        item_id=data.item_id,
+        qty=data.qty,
+        unit_cost_cents=data.unit_cost_cents,
+        total_cost_cents=total_cost_cents,
+        consumed_at=data.consumed_at or datetime.utcnow(),
+        recorded_by=recorded_by,
+    )
+    session.add(consumption)
+    await session.flush()
+    return consumption
+
+
+async def get_usage_analytics(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
+) -> schemas.InventoryUsageAnalyticsResponse:
+    filters: list = [db_models.InventoryConsumption.org_id == org_id]
+    if from_dt is not None:
+        filters.append(db_models.InventoryConsumption.consumed_at >= from_dt)
+    if to_dt is not None:
+        filters.append(db_models.InventoryConsumption.consumed_at <= to_dt)
+
+    totals_stmt = select(
+        func.coalesce(func.sum(db_models.InventoryConsumption.total_cost_cents), 0).label(
+            "total_consumption"
+        ),
+        func.count(func.distinct(db_models.InventoryConsumption.booking_id)).label("bookings"),
+    ).where(*filters)
+    totals_row = (await session.execute(totals_stmt)).one()
+    total_consumption_cents = int(totals_row.total_consumption or 0)
+    booking_count = int(totals_row.bookings or 0)
+    cost_per_booking_avg_cents = _calculate_cost_per_booking(
+        total_consumption_cents, booking_count
+    )
+
+    service_stmt = (
+        select(
+            db_models.InventoryConsumption.service_type_id,
+            func.count(func.distinct(db_models.InventoryConsumption.booking_id)).label("bookings"),
+            func.coalesce(func.sum(db_models.InventoryConsumption.total_cost_cents), 0).label(
+                "consumption_cents"
+            ),
+        )
+        .where(*filters)
+        .group_by(db_models.InventoryConsumption.service_type_id)
+        .order_by(db_models.InventoryConsumption.service_type_id)
+    )
+    service_rows = (await session.execute(service_stmt)).all()
+    by_service_type: list[schemas.InventoryUsageServiceTypeMetric] = []
+    for row in service_rows:
+        consumption_cents = int(row.consumption_cents or 0)
+        bookings = int(row.bookings or 0)
+        by_service_type.append(
+            schemas.InventoryUsageServiceTypeMetric(
+                service_type_id=row.service_type_id,
+                bookings=bookings,
+                consumption_cents=consumption_cents,
+                cost_per_booking_cents=_calculate_cost_per_booking(consumption_cents, bookings),
+            )
+        )
+
+    top_items_stmt = (
+        select(
+            db_models.InventoryConsumption.item_id,
+            func.coalesce(func.sum(db_models.InventoryConsumption.total_cost_cents), 0).label(
+                "consumption_cents"
+            ),
+            func.coalesce(func.sum(db_models.InventoryConsumption.qty), 0).label("qty"),
+        )
+        .where(*filters)
+        .group_by(db_models.InventoryConsumption.item_id)
+        .order_by(desc("consumption_cents"))
+    )
+    top_items_rows = (await session.execute(top_items_stmt)).all()
+    top_items: list[schemas.InventoryUsageTopItemMetric] = []
+    for row in top_items_rows:
+        qty_value = row.qty if row.qty is not None else Decimal("0")
+        if not isinstance(qty_value, Decimal):
+            qty_value = Decimal(str(qty_value))
+        top_items.append(
+            schemas.InventoryUsageTopItemMetric(
+                item_id=row.item_id,
+                consumption_cents=int(row.consumption_cents or 0),
+                qty=qty_value,
+            )
+        )
+
+    return schemas.InventoryUsageAnalyticsResponse(
+        total_consumption_cents=total_consumption_cents,
+        cost_per_booking_avg_cents=cost_per_booking_avg_cents,
+        by_service_type=by_service_type,
+        top_items=top_items,
+    )

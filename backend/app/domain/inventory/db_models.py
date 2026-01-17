@@ -124,6 +124,59 @@ class InventoryItem(Base):
     )
 
 
+class InventoryConsumption(Base):
+    __tablename__ = "inventory_consumption"
+
+    consumption_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    booking_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("bookings.booking_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    service_type_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("service_types.service_type_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("inventory_items.item_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    qty: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2),
+        nullable=False,
+    )
+    unit_cost_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_cost_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    consumed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    recorded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    item: Mapped["InventoryItem"] = relationship("InventoryItem", foreign_keys=[item_id])
+
+    __table_args__ = (
+        Index("ix_inventory_consumption_org_id", "org_id"),
+        Index("ix_inventory_consumption_booking", "org_id", "booking_id"),
+        Index("ix_inventory_consumption_service_type", "org_id", "service_type_id"),
+        Index("ix_inventory_consumption_item", "org_id", "item_id"),
+        Index("ix_inventory_consumption_consumed_at", "org_id", "consumed_at"),
+    )
+
+
 class InventorySupplier(Base):
     __tablename__ = "inventory_suppliers"
 

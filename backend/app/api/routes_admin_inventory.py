@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, get_admin_identity, permission_keys_for_request
+from app.api.problem_details import problem_details
 from app.api.org_context import require_org_context
+from app.domain.feature_modules import service as feature_service
 from app.domain.inventory import schemas, service
 from app.infra.db import get_db_session
 
@@ -44,6 +47,27 @@ def _require_inventory_manage(request: Request, identity: AdminIdentity) -> None
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: requires inventory.manage or admin.manage permission",
         )
+
+
+async def _require_usage_analytics_enabled(
+    request: Request,
+    session: AsyncSession,
+    org_id: uuid.UUID,
+) -> Response | None:
+    module_enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "module.inventory"
+    )
+    analytics_enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "inventory.usage_analytics"
+    )
+    if not module_enabled or not analytics_enabled:
+        return problem_details(
+            request=request,
+            status=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail="Disabled by org settings",
+        )
+    return None
 
 
 # ===== Category Endpoints =====
@@ -763,3 +787,82 @@ async def mark_purchase_order_received(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+# ===== Consumption & Usage Analytics =====
+
+
+@router.post(
+    "/v1/admin/inventory/consumption",
+    response_model=schemas.InventoryConsumptionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_inventory_consumption(
+    data: schemas.InventoryConsumptionCreate,
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.InventoryConsumptionResponse:
+    """
+    Record inventory consumption for a booking.
+
+    Requires: inventory.manage or admin.manage permission
+    """
+    _require_inventory_manage(request, identity)
+    feature_gate = await _require_usage_analytics_enabled(request, session, org_id)
+    if isinstance(feature_gate, Response):
+        return feature_gate
+
+    try:
+        consumption = await service.record_consumption(
+            session,
+            org_id,
+            data,
+            recorded_by=identity.username,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    await session.commit()
+    return schemas.InventoryConsumptionResponse.model_validate(consumption)
+
+
+@router.get(
+    "/v1/admin/inventory/usage_analytics",
+    response_model=schemas.InventoryUsageAnalyticsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_inventory_usage_analytics(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    from_dt: datetime | None = Query(None, alias="from"),
+    to_dt: datetime | None = Query(None, alias="to"),
+) -> schemas.InventoryUsageAnalyticsResponse:
+    """
+    Fetch inventory usage analytics for a date range.
+
+    Requires: inventory.view or core.view permission
+    """
+    _require_inventory_view(request, identity)
+    feature_gate = await _require_usage_analytics_enabled(request, session, org_id)
+    if isinstance(feature_gate, Response):
+        return feature_gate
+
+    if from_dt and to_dt and from_dt > to_dt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date range: from must be before to",
+        )
+
+    return await service.get_usage_analytics(
+        session,
+        org_id,
+        from_dt=from_dt,
+        to_dt=to_dt,
+    )

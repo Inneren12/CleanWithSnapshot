@@ -49,6 +49,26 @@ type InventoryItemListResponse = {
   page_size: number;
 };
 
+type UsageAnalyticsServiceTypeMetric = {
+  service_type_id: number;
+  bookings: number;
+  consumption_cents: number;
+  cost_per_booking_cents: number;
+};
+
+type UsageAnalyticsTopItemMetric = {
+  item_id: string;
+  consumption_cents: number;
+  qty: number | string;
+};
+
+type UsageAnalyticsResponse = {
+  total_consumption_cents: number;
+  cost_per_booking_avg_cents: number;
+  by_service_type: UsageAnalyticsServiceTypeMetric[];
+  top_items: UsageAnalyticsTopItemMetric[];
+};
+
 type ItemDraft = {
   category_id: string;
   sku: string;
@@ -76,6 +96,20 @@ function formatQuantity(value: number | string | null | undefined) {
   const numeric = typeof value === "number" ? value : Number(value);
   if (Number.isNaN(numeric)) return String(value);
   return numeric.toLocaleString("en-CA", { maximumFractionDigits: 2 });
+}
+
+function formatCents(value: number) {
+  return `$${(value / 100).toFixed(2)}`;
+}
+
+function formatDateInput(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function defaultFromDate() {
+  const date = new Date();
+  date.setDate(date.getDate() - 30);
+  return formatDateInput(date);
 }
 
 function parseQuantity(value: number | string | null | undefined) {
@@ -112,6 +146,11 @@ export default function InventoryItemsPage() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [activeFilter, setActiveFilter] = useState("active");
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [analyticsFrom, setAnalyticsFrom] = useState(defaultFromDate);
+  const [analyticsTo, setAnalyticsTo] = useState(() => formatDateInput(new Date()));
+  const [usageAnalytics, setUsageAnalytics] = useState<UsageAnalyticsResponse | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -136,6 +175,9 @@ export default function InventoryItemsPage() {
   const pageVisible = visibilityReady
     ? isVisible("module.inventory", permissionKeys, featureOverrides, hiddenKeys)
     : true;
+  const analyticsVisible = visibilityReady
+    ? isVisible("inventory.usage_analytics", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
 
   const canViewInventory = permissionKeys.includes("inventory.view");
   const canManageInventory = permissionKeys.includes("inventory.manage");
@@ -154,6 +196,11 @@ export default function InventoryItemsPage() {
     : lowStockOnly
       ? `${filteredItems.length} low stock items on this page`
       : `${total} items`;
+  const analyticsEmpty =
+    usageAnalytics &&
+    usageAnalytics.total_consumption_cents === 0 &&
+    usageAnalytics.by_service_type.length === 0 &&
+    usageAnalytics.top_items.length === 0;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -286,6 +333,35 @@ export default function InventoryItemsPage() {
       setItemsLoading(false);
     }
   }, [activeFilter, authHeaders, categoryFilter, page, pageSize, password, query, username]);
+
+  const loadUsageAnalytics = useCallback(async () => {
+    if (!username || !password || !analyticsVisible) return;
+    setAnalyticsLoading(true);
+    setAnalyticsError(null);
+    const params = new URLSearchParams();
+    if (analyticsFrom) params.set("from", `${analyticsFrom}T00:00:00Z`);
+    if (analyticsTo) params.set("to", `${analyticsTo}T23:59:59Z`);
+    try {
+      const response = await fetch(
+        `${API_BASE}/v1/admin/inventory/usage_analytics?${params.toString()}`,
+        {
+          headers: authHeaders,
+          cache: "no-store",
+        }
+      );
+      if (!response.ok) {
+        throw new Error("Unable to load usage analytics");
+      }
+      const data = (await response.json()) as UsageAnalyticsResponse;
+      setUsageAnalytics(data);
+    } catch (error) {
+      console.error("Failed to load usage analytics", error);
+      setAnalyticsError("Unable to load usage analytics.");
+      setUsageAnalytics(null);
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, [analyticsFrom, analyticsTo, analyticsVisible, authHeaders, password, username]);
 
   const saveCredentials = () => {
     if (!username || !password) return;
@@ -494,6 +570,12 @@ export default function InventoryItemsPage() {
     }
   }, [loadItems, password, username]);
 
+  useEffect(() => {
+    if (username && password && analyticsVisible) {
+      void loadUsageAnalytics();
+    }
+  }, [analyticsVisible, loadUsageAnalytics, password, username]);
+
   if (!pageVisible) {
     return (
       <div className="admin-page">
@@ -554,14 +636,129 @@ export default function InventoryItemsPage() {
             </button>
           </div>
         </div>
-        {statusMessage ? <p className="alert">{statusMessage}</p> : null}
-        {settingsError ? <p className="alert alert-error">{settingsError}</p> : null}
-      </section>
+      {statusMessage ? <p className="alert">{statusMessage}</p> : null}
+      {settingsError ? <p className="alert alert-error">{settingsError}</p> : null}
+    </section>
 
+    {analyticsVisible ? (
       <section className="admin-card admin-section">
         <div className="section-heading" style={{ alignItems: "flex-start" }}>
           <div>
-            <h2>Low stock</h2>
+            <h2>Usage analytics</h2>
+            <p className="muted">Track consumption spend per booking and by service type.</p>
+          </div>
+          <div className="admin-actions" style={{ flexWrap: "wrap" }}>
+            <label>
+              <span className="label">From</span>
+              <input
+                type="date"
+                value={analyticsFrom}
+                onChange={(event) => setAnalyticsFrom(event.target.value)}
+              />
+            </label>
+            <label>
+              <span className="label">To</span>
+              <input
+                type="date"
+                value={analyticsTo}
+                onChange={(event) => setAnalyticsTo(event.target.value)}
+              />
+            </label>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={loadUsageAnalytics}
+              disabled={analyticsLoading}
+            >
+              {analyticsLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+        </div>
+
+        {analyticsError ? <p className="alert alert-error">{analyticsError}</p> : null}
+        {analyticsLoading ? <p className="muted">Loading analytics…</p> : null}
+
+        {usageAnalytics && !analyticsLoading ? (
+          analyticsEmpty ? (
+            <div className="card-body">
+              No consumption entries were recorded for this date range.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: "16px" }}>
+              <div
+                style={{
+                  display: "grid",
+                  gap: "12px",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                }}
+              >
+                <div className="card">
+                  <div className="card-body">
+                    <p className="muted">Total consumption</p>
+                    <h3>{formatCents(usageAnalytics.total_consumption_cents)}</h3>
+                  </div>
+                </div>
+                <div className="card">
+                  <div className="card-body">
+                    <p className="muted">Avg cost per booking</p>
+                    <h3>{formatCents(usageAnalytics.cost_per_booking_avg_cents)}</h3>
+                  </div>
+                </div>
+              </div>
+
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Service type</th>
+                      <th>Bookings</th>
+                      <th>Consumption</th>
+                      <th>Cost per booking</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usageAnalytics.by_service_type.map((entry) => (
+                      <tr key={entry.service_type_id}>
+                        <td>{entry.service_type_id}</td>
+                        <td>{entry.bookings}</td>
+                        <td>{formatCents(entry.consumption_cents)}</td>
+                        <td>{formatCents(entry.cost_per_booking_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Top item</th>
+                      <th>Quantity</th>
+                      <th>Consumption</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usageAnalytics.top_items.map((entry) => (
+                      <tr key={entry.item_id}>
+                        <td>{entry.item_id}</td>
+                        <td>{formatQuantity(entry.qty)}</td>
+                        <td>{formatCents(entry.consumption_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        ) : null}
+      </section>
+    ) : null}
+
+    <section className="admin-card admin-section">
+      <div className="section-heading" style={{ alignItems: "flex-start" }}>
+        <div>
+          <h2>Low stock</h2>
             <p className="muted">
               {lowStockItems.length
                 ? `${lowStockItems.length} item${lowStockItems.length === 1 ? "" : "s"} below minimum on this page.`
