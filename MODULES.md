@@ -391,17 +391,21 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Key Pages:**
 - `web/app/admin/analytics/geo/page.tsx` - Geo heatmap by area (`/admin/analytics/geo`)
+- `web/app/admin/analytics/clients/page.tsx` - Client CLV + retention cohorts (`/admin/analytics/clients`)
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - Analytics endpoints (`/v1/admin/analytics/*`)
 
 **Key Services:**
-- `backend/app/domain/analytics/service.py` - Event aggregation, KPI calculation, geo heatmap aggregates
+- `backend/app/domain/analytics/service.py` - Event aggregation, KPI calculation, geo heatmap aggregates,
+  client CLV summaries, retention cohorts
 
 **Key Tables:**
 - `events` - Analytics events
 - `bookings` - Job data
 - `invoices` - Financial data
+- `invoice_payments` - Paid revenue signals
+- `client_users` - Client identities for CLV/retention
 - `client_addresses` - Area labels + coordinates
 - `teams` - Zone metadata
 

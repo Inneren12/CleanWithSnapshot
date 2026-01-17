@@ -245,9 +245,51 @@ entries sorted by newest first. Each timeline entry includes `action`, `timestam
 
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
+| GET | `/v1/admin/analytics/clients/clv` | `finance.view` | Client lifetime value stats and top clients (paid payments only) |
+| GET | `/v1/admin/analytics/clients/retention` | `finance.view` | Client retention cohorts (monthly, paid payments only) |
 | GET | `/v1/admin/analytics/geo` | `finance.view` | Geographic heatmap aggregates by area (optional coordinate points) |
 
 **Query params:** `from`, `to` (ISO 8601 timestamps, optional)
+
+**CLV query params:** `from`, `to` (ISO 8601 timestamps, optional), `top` (1-100, default 10)
+
+**CLV response (example):**
+```json
+{
+  "range_start": "2025-01-01T00:00:00Z",
+  "range_end": "2025-12-31T23:59:59Z",
+  "average_clv_cents": 24500,
+  "median_clv_cents": 21000,
+  "top_clients": [
+    {
+      "client_id": "client-123",
+      "name": "Amelia Hart",
+      "email": "amelia@example.com",
+      "total_paid_cents": 82000,
+      "payments_count": 6,
+      "first_payment_at": "2025-02-01T12:00:00Z",
+      "last_payment_at": "2025-08-30T10:15:00Z"
+    }
+  ]
+}
+```
+
+**Retention query params:** `cohort` (`monthly`), `months` (1-36, default 12)
+
+**Retention response (example):**
+```json
+{
+  "cohort": "monthly",
+  "months": 3,
+  "cohorts": [
+    {
+      "cohort_month": "2025-01-01T00:00:00Z",
+      "customers": 12,
+      "retention": [1.0, 0.58, 0.33]
+    }
+  ]
+}
+```
 
 **Geo analytics response (example):**
 ```json

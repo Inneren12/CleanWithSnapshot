@@ -117,6 +117,36 @@ class GeoAnalyticsResponse(BaseModel):
     points: list[GeoPointSummary] | None = None
 
 
+class ClientClvEntry(BaseModel):
+    client_id: str
+    name: str | None
+    email: str | None
+    total_paid_cents: int
+    payments_count: int
+    first_payment_at: datetime | None
+    last_payment_at: datetime | None
+
+
+class ClientClvResponse(BaseModel):
+    range_start: datetime
+    range_end: datetime
+    average_clv_cents: float | None
+    median_clv_cents: float | None
+    top_clients: list[ClientClvEntry]
+
+
+class ClientRetentionCohort(BaseModel):
+    cohort_month: datetime
+    customers: int
+    retention: list[float | None]
+
+
+class ClientRetentionResponse(BaseModel):
+    cohort: str
+    months: int
+    cohorts: list[ClientRetentionCohort]
+
+
 class AdminMetricsResponse(BaseModel):
     range_start: datetime
     range_end: datetime
