@@ -113,6 +113,12 @@ PERMISSION_CATALOG: list[PermissionDefinition] = [
         group="finance",
     ),
     PermissionDefinition(
+        key="finance.manage",
+        label="Manage finance",
+        description="Create and manage finance expenses and budgets.",
+        group="finance",
+    ),
+    PermissionDefinition(
         key="pricing.manage",
         label="Manage pricing",
         description="Manage pricing configurations and reload pricing.",
@@ -221,6 +227,7 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
             "invoices.send",
             "payments.record",
             "finance.view",
+            "finance.manage",
             "exports.run",
         },
     ),
@@ -236,6 +243,7 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
             "invoices.send",
             "payments.record",
             "finance.view",
+            "finance.manage",
             "exports.run",
         },
     ),

@@ -26,7 +26,7 @@ Complete reference for CleanWithSnapshot API endpoints, authentication, and usag
 **Response Format:** JSON
 **Error Format:** RFC 7807 Problem Details
 
-### Router Registration (29 routers)
+### Router Registration (30 routers)
 
 | Priority | Router | Path Prefix | Auth | File |
 |----------|--------|-------------|------|------|
@@ -54,11 +54,12 @@ Complete reference for CleanWithSnapshot API endpoints, authentication, and usag
 | 22 | admin_settings | `/v1/admin/settings` | Admin | `routes_admin_settings.py` |
 | 23 | admin_iam | `/v1/admin/iam` | Admin | `routes_admin_iam.py` |
 | 24 | admin_pricing | `/v1/admin/pricing` | Admin | `routes_admin_pricing.py` |
-| 25 | queues | `/v1/admin/queue` | Admin | `routes_queues.py` |
-| 26 | timeline | `/v1/timeline` | Admin | `routes_timeline.py` |
-| 27 | health_backup | `/health` | None | `health_backup.py` |
-| 28 | metrics | `/metrics` | Token | `routes_metrics.py` |
-| 29 | style_guide | `/style-guide` | Dev Only | `routes_style_guide.py` |
+| 25 | admin_finance | `/v1/admin/finance` | Admin | `routes_admin_finance.py` |
+| 26 | queues | `/v1/admin/queue` | Admin | `routes_queues.py` |
+| 27 | timeline | `/v1/timeline` | Admin | `routes_timeline.py` |
+| 28 | health_backup | `/health` | None | `health_backup.py` |
+| 29 | metrics | `/metrics` | Token | `routes_metrics.py` |
+| 30 | style_guide | `/style-guide` | Dev Only | `routes_style_guide.py` |
 
 **Entrypoint:** `backend/app/main.py::create_app()` → `app = create_app(settings)`
 
@@ -925,7 +926,51 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
   -u "admin:password"
 ```
 
----
+### Finance (Expenses & Budgets)
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/finance/expense-categories` | `finance.view` | List expense categories (search + pagination) |
+| POST | `/v1/admin/finance/expense-categories` | `finance.manage` | Create expense category |
+| PATCH | `/v1/admin/finance/expense-categories/{category_id}` | `finance.manage` | Update expense category |
+| DELETE | `/v1/admin/finance/expense-categories/{category_id}` | `finance.manage` | Delete expense category |
+| GET | `/v1/admin/finance/expenses` | `finance.view` | List expenses (filters + pagination) |
+| POST | `/v1/admin/finance/expenses` | `finance.manage` | Create expense |
+| PATCH | `/v1/admin/finance/expenses/{expense_id}` | `finance.manage` | Update expense |
+| DELETE | `/v1/admin/finance/expenses/{expense_id}` | `finance.manage` | Delete expense |
+| GET | `/v1/admin/finance/budgets` | `finance.view` | List budgets for a month/category |
+| POST | `/v1/admin/finance/budgets` | `finance.manage` | Create budget |
+| PATCH | `/v1/admin/finance/budgets/{budget_id}` | `finance.manage` | Update budget |
+| DELETE | `/v1/admin/finance/budgets/{budget_id}` | `finance.manage` | Delete budget |
+| GET | `/v1/admin/finance/expenses/summary` | `finance.view` | Totals by category with budget utilization |
+
+**Expense list query params:** `from`, `to`, `category_id`, `query`, `page`, `page_size`.
+
+**Budget list query params:** `month` (`YYYY-MM`), `category_id`.
+
+**Summary response shape (example):**
+```json
+{
+  "from_date": "2026-01-01",
+  "to_date": "2026-01-31",
+  "total_cents": 15000,
+  "total_tax_cents": 1500,
+  "total_budget_cents": 30000,
+  "percent_of_budget": 0.5,
+  "categories": [
+    {
+      "category_id": "9f36...",
+      "category_name": "Supplies",
+      "total_cents": 5000,
+      "tax_cents": 500,
+      "budget_cents": 10000,
+      "percent_of_budget": 0.5
+    }
+  ]
+}
+```
+
+--- 
 
 ### Workers
 

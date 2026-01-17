@@ -37,7 +37,8 @@ This guide covers database schema management using Alembic in the CleanWithSnaps
 `b1c2d3e4f5a6_merge_heads_inventory_and_marketing.py` merges parallel migration heads, and
 `cf72c4eb59bc_add_inventory_stock_fields.py` adds stock state fields (`current_qty`, `min_qty`, `location_label`) to `inventory_items`,
 and `b2f3c4d5e6f7_add_purchase_orders.py` adds `purchase_orders` + `purchase_order_items` for the purchasing lifecycle,
-and `c6f2b8d1a4e7_add_training_sessions.py` adds `training_sessions` and `training_session_attendees` for calendar sessions.
+and `c6f2b8d1a4e7_add_training_sessions.py` adds `training_sessions` and `training_session_attendees` for calendar sessions,
+and `f2a4b7c8d9e0_add_finance_expenses_budgets.py` adds `finance_expense_categories`, `finance_expenses`, and `finance_budgets`.
 
 ---
 

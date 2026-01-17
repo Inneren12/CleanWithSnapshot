@@ -42,7 +42,7 @@ CleanWithSnapshot/
 
 ### API Layer (`/backend/app/api`)
 
-**Main route files (29 routers total):**
+**Main route files (30 routers total):**
 
 | File | Path Prefix | Purpose | Size |
 |------|-------------|---------|------|
@@ -51,6 +51,7 @@ CleanWithSnapshot/
 | `routes_admin_iam.py` | `/v1/admin/iam` | Role & permission management | Small |
 | `routes_admin_pricing.py` | `/v1/admin/pricing` | Pricing configuration | Small |
 | `routes_admin_inventory.py` | `/v1/admin/inventory` | Inventory categories and items CRUD with RBAC | Small |
+| `routes_admin_finance.py` | `/v1/admin/finance` | Finance expenses, budgets, and categories | Small |
 | `routes_dispatcher.py` | `/v1/dispatcher` | Dispatch board, route optimization, AI suggestions | 23KB |
 | `routes_worker.py` | `/v1/worker` | Worker portal - job assignments, status updates | 82KB |
 | `routes_client.py` | `/v1/client` | Client portal - bookings, invoices | 31KB |
@@ -120,6 +121,7 @@ CleanWithSnapshot/
 | `subscriptions/` | 2 files | **SaaS subscriptions** - Billing plans |
 | `saas/` | 5 files | **Multi-tenant** - Org isolation, billing |
 | `inventory/` | 3 files | **Inventory** - Categories, items (stock movements pending) |
+| `finance/` | 3 files | **Finance** - Expense categories, expenses, budgets |
 
 **Key files:**
 - `iam/permissions.py` - **Permission catalog** (19 permissions, 7 roles)
@@ -399,6 +401,7 @@ web/app/
 | `backend/app/main.py` | **App entrypoint** - Creates FastAPI app, registers routers |
 | `backend/app/settings.py` | **Configuration** - Environment variables, defaults |
 | `backend/app/api/routes_admin.py` | **Largest router** - Admin UI (600KB+) |
+| `backend/app/api/routes_admin_finance.py` | **Finance expenses and budgets CRUD** |
 | `backend/app/api/admin_auth.py` | **Auth guards** - `@require_permission_keys()` |
 | `backend/app/domain/iam/permissions.py` | **Permission catalog** - 19 permissions, 7 roles |
 | `backend/app/domain/bookings/service.py` | **Booking logic** - CRUD, conflicts, slot availability |
@@ -413,7 +416,7 @@ web/app/
 | `backend/alembic/versions/0085_*.py` | **RBAC** - Roles & permissions tables |
 | `backend/alembic/versions/6a2b_*.py` | **Availability blocks** - Team blackout |
 
-### Frontend (19 files)
+### Frontend (21 files)
 
 | File | Why Important |
 |------|---------------|
@@ -426,6 +429,8 @@ web/app/
 | `web/app/admin/invoices/[id]/page.tsx` | **Invoice detail** |
 | `web/app/admin/inventory/page.tsx` | **Inventory items list** |
 | `web/app/admin/inventory/suppliers/page.tsx` | **Inventory suppliers list** |
+| `web/app/admin/finance/expenses/page.tsx` | **Finance expenses list + filters** |
+| `web/app/admin/finance/budgets/page.tsx` | **Finance budgets by month** |
 | `web/app/admin/training/courses/page.tsx` | **Training courses list** |
 | `web/app/admin/training/courses/[course_id]/page.tsx` | **Training course detail** |
 | `web/app/admin/training/library/page.tsx` | **Training library placeholder** |
