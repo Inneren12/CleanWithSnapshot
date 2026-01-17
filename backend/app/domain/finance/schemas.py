@@ -219,6 +219,64 @@ class FinanceCashSnapshotUpdate(BaseModel):
     note: str | None = Field(None, max_length=1000)
 
 
+class FinanceGstSummaryResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_date: date = Field(..., alias="from")
+    to_date: date = Field(..., alias="to")
+    tax_collected_cents: int
+    tax_paid_cents: int
+    tax_owed_cents: int
+    currency_code: str
+
+
+class FinanceTaxInstalmentResponse(BaseModel):
+    instalment_id: UUID
+    org_id: UUID
+    tax_type: str
+    due_on: date
+    amount_cents: int
+    paid_on: date | None
+    note: str | None
+    created_at: datetime
+    created_by_user_id: UUID | None
+
+    class Config:
+        from_attributes = True
+
+
+class FinanceTaxInstalmentCreate(BaseModel):
+    tax_type: str = Field(default="GST", max_length=50)
+    due_on: date
+    amount_cents: int = Field(..., ge=0)
+    paid_on: date | None = None
+    note: str | None = Field(None, max_length=1000)
+
+
+class FinanceTaxInstalmentUpdate(BaseModel):
+    tax_type: str | None = Field(None, max_length=50)
+    due_on: date | None = None
+    amount_cents: int | None = Field(None, ge=0)
+    paid_on: date | None = None
+    note: str | None = Field(None, max_length=1000)
+
+
+class FinanceTaxInstalmentListResponse(BaseModel):
+    items: list[FinanceTaxInstalmentResponse]
+
+
+class FinanceTaxCalendarEntry(BaseModel):
+    tax_type: str
+    label: str
+    period_start: date
+    period_end: date
+    due_on: date
+
+
+class FinanceTaxCalendarResponse(BaseModel):
+    items: list[FinanceTaxCalendarEntry]
+
+
 class FinanceCashSnapshotListResponse(BaseModel):
     items: list[FinanceCashSnapshotResponse]
 

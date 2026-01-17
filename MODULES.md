@@ -421,6 +421,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `web/app/admin/finance/pnl/page.tsx` - Profit & Loss report (`/admin/finance/pnl`)
 - `web/app/admin/finance/cashflow/page.tsx` - Cashflow report (`/admin/finance/cashflow`)
 - `web/app/admin/finance/balance-sheet/page.tsx` - Balance sheet (simplified) (`/admin/finance/balance-sheet`)
+- `web/app/admin/finance/taxes/page.tsx` - GST summary, instalments, calendar, exports (`/admin/finance/taxes`)
 
 **Backend Routers:**
 - `backend/app/api/routes_admin_finance.py` - Expense categories, expenses, budgets, P&L, cashflow, snapshots, summary
@@ -436,6 +437,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `finance_expenses` - Expense ledger (by day)
 - `finance_budgets` - Monthly category budgets
 - `finance_cash_snapshots` - Optional cash balance snapshots
+- `finance_tax_instalments` - Manual GST instalment tracking
+- `finance_tax_exports` - GST export audit log
 - `invoices` - Invoice records
 - `payments` - Payment records
 - `stripe_events` - Stripe webhooks

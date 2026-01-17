@@ -199,3 +199,61 @@ class FinanceCashSnapshot(Base):
         Index("ix_finance_cash_snapshots_org_id", "org_id"),
         Index("ix_finance_cash_snapshots_org_date", "org_id", "as_of_date"),
     )
+
+
+class FinanceTaxInstalment(Base):
+    __tablename__ = "finance_tax_instalments"
+
+    instalment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    tax_type: Mapped[str] = mapped_column(String(50), nullable=False, default="GST")
+    due_on: Mapped[date] = mapped_column(Date, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    paid_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID_TYPE, nullable=True)
+
+    __table_args__ = (
+        Index("ix_finance_tax_instalments_org_id", "org_id"),
+        Index("ix_finance_tax_instalments_org_due", "org_id", "due_on"),
+    )
+
+
+class FinanceTaxExport(Base):
+    __tablename__ = "finance_tax_exports"
+
+    export_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    from_date: Mapped[date] = mapped_column(Date, nullable=False)
+    to_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID_TYPE, nullable=True)
+
+    __table_args__ = (Index("ix_finance_tax_exports_org_id", "org_id"),)

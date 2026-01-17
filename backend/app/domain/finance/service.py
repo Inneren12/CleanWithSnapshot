@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import calendar
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -895,3 +897,284 @@ async def summarize_expenses(
     }
 
     return summary_rows, totals_summary
+
+
+def _quarter_bounds(year: int, quarter: int) -> tuple[date, date]:
+    if quarter == 1:
+        start = date(year, 1, 1)
+        end = date(year, 3, 31)
+    elif quarter == 2:
+        start = date(year, 4, 1)
+        end = date(year, 6, 30)
+    elif quarter == 3:
+        start = date(year, 7, 1)
+        end = date(year, 9, 30)
+    else:
+        start = date(year, 10, 1)
+        end = date(year, 12, 31)
+    return start, end
+
+
+def _gst_due_date(period_end: date) -> date:
+    next_month = period_end.month + 1
+    year = period_end.year
+    if next_month > 12:
+        next_month = 1
+        year += 1
+    last_day = calendar.monthrange(year, next_month)[1]
+    return date(year, next_month, last_day)
+
+
+def build_gst_calendar(from_date: date, to_date: date) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for year in range(from_date.year, to_date.year + 1):
+        for quarter in range(1, 5):
+            period_start, period_end = _quarter_bounds(year, quarter)
+            due_on = _gst_due_date(period_end)
+            if due_on < from_date or due_on > to_date:
+                continue
+            entries.append(
+                {
+                    "tax_type": "GST",
+                    "label": f"GST Q{quarter} {year}",
+                    "period_start": period_start,
+                    "period_end": period_end,
+                    "due_on": due_on,
+                }
+            )
+    return entries
+
+
+async def summarize_gst(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: date,
+    to_date: date,
+) -> dict[str, object]:
+    start_dt, end_dt = _date_bounds(from_date, to_date)
+    payment_timestamp = func.coalesce(Payment.received_at, Payment.created_at)
+
+    payment_stmt = (
+        select(
+            Payment.amount_cents,
+            Payment.currency,
+            Invoice.tax_cents,
+            Invoice.total_cents,
+        )
+        .join(Invoice, Payment.invoice_id == Invoice.invoice_id)
+        .where(
+            Payment.org_id == org_id,
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            payment_timestamp >= start_dt,
+            payment_timestamp < end_dt,
+        )
+    )
+    payment_result = await session.execute(payment_stmt)
+    payment_rows = payment_result.all()
+
+    tax_collected_cents = 0
+    currency_code = "CAD"
+    if payment_rows:
+        currency_code = payment_rows[0].currency or "CAD"
+    for row in payment_rows:
+        if row.total_cents and row.total_cents > 0:
+            ratio = Decimal(row.tax_cents) / Decimal(row.total_cents)
+            allocated = Decimal(row.amount_cents) * ratio
+            tax_collected_cents += int(allocated.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    expense_tax_stmt = select(func.coalesce(func.sum(db_models.FinanceExpense.tax_cents), 0)).where(
+        db_models.FinanceExpense.org_id == org_id,
+        db_models.FinanceExpense.occurred_on >= from_date,
+        db_models.FinanceExpense.occurred_on <= to_date,
+    )
+    expense_tax_result = await session.execute(expense_tax_stmt)
+    tax_paid_cents = int(expense_tax_result.scalar_one() or 0)
+
+    tax_owed_cents = tax_collected_cents - tax_paid_cents
+    return {
+        "from": from_date,
+        "to": to_date,
+        "tax_collected_cents": tax_collected_cents,
+        "tax_paid_cents": tax_paid_cents,
+        "tax_owed_cents": tax_owed_cents,
+        "currency_code": currency_code,
+    }
+
+
+async def list_tax_instalments(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> list[db_models.FinanceTaxInstalment]:
+    stmt = select(db_models.FinanceTaxInstalment).where(db_models.FinanceTaxInstalment.org_id == org_id)
+    if from_date:
+        stmt = stmt.where(db_models.FinanceTaxInstalment.due_on >= from_date)
+    if to_date:
+        stmt = stmt.where(db_models.FinanceTaxInstalment.due_on <= to_date)
+    stmt = stmt.order_by(db_models.FinanceTaxInstalment.due_on.asc())
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_tax_instalment(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    instalment_id: uuid.UUID,
+) -> db_models.FinanceTaxInstalment | None:
+    stmt = select(db_models.FinanceTaxInstalment).where(
+        db_models.FinanceTaxInstalment.org_id == org_id,
+        db_models.FinanceTaxInstalment.instalment_id == instalment_id,
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def create_tax_instalment(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    tax_type: str,
+    due_on: date,
+    amount_cents: int,
+    paid_on: date | None,
+    note: str | None,
+    created_by_user_id: uuid.UUID | None,
+) -> db_models.FinanceTaxInstalment:
+    instalment = db_models.FinanceTaxInstalment(
+        instalment_id=uuid.uuid4(),
+        org_id=org_id,
+        tax_type=tax_type,
+        due_on=due_on,
+        amount_cents=amount_cents,
+        paid_on=paid_on,
+        note=note,
+        created_at=datetime.utcnow(),
+        created_by_user_id=created_by_user_id,
+    )
+    session.add(instalment)
+    await session.flush()
+    return instalment
+
+
+async def update_tax_instalment(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    instalment_id: uuid.UUID,
+    *,
+    tax_type: str | None = None,
+    due_on: date | None = None,
+    amount_cents: int | None = None,
+    paid_on: date | None = None,
+    paid_on_set: bool = False,
+    note: str | None = None,
+    note_set: bool = False,
+) -> db_models.FinanceTaxInstalment | None:
+    instalment = await get_tax_instalment(session, org_id, instalment_id)
+    if not instalment:
+        return None
+    if tax_type is not None:
+        instalment.tax_type = tax_type
+    if due_on is not None:
+        instalment.due_on = due_on
+    if amount_cents is not None:
+        instalment.amount_cents = amount_cents
+    if paid_on_set:
+        instalment.paid_on = paid_on
+    if note_set:
+        instalment.note = note
+    await session.flush()
+    return instalment
+
+
+async def create_tax_export_log(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: date,
+    to_date: date,
+    created_by_user_id: uuid.UUID | None,
+) -> db_models.FinanceTaxExport:
+    export_log = db_models.FinanceTaxExport(
+        export_id=uuid.uuid4(),
+        org_id=org_id,
+        from_date=from_date,
+        to_date=to_date,
+        created_at=datetime.utcnow(),
+        created_by_user_id=created_by_user_id,
+    )
+    session.add(export_log)
+    await session.flush()
+    return export_log
+
+
+async def list_tax_payments(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: date,
+    to_date: date,
+) -> list[dict[str, object]]:
+    start_dt, end_dt = _date_bounds(from_date, to_date)
+    payment_timestamp = func.coalesce(Payment.received_at, Payment.created_at)
+    stmt = (
+        select(
+            Payment.payment_id,
+            Payment.invoice_id,
+            Payment.amount_cents,
+            Payment.currency,
+            payment_timestamp.label("paid_at"),
+            Invoice.invoice_number,
+            Invoice.tax_cents,
+            Invoice.total_cents,
+        )
+        .join(Invoice, Payment.invoice_id == Invoice.invoice_id)
+        .where(
+            Payment.org_id == org_id,
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            payment_timestamp >= start_dt,
+            payment_timestamp < end_dt,
+        )
+        .order_by(payment_timestamp.asc())
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    entries: list[dict[str, object]] = []
+    for row in rows:
+        allocated_tax = 0
+        if row.total_cents and row.total_cents > 0:
+            ratio = Decimal(row.tax_cents) / Decimal(row.total_cents)
+            allocated_tax = int(
+                (Decimal(row.amount_cents) * ratio).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            )
+        entries.append(
+            {
+                "payment_id": row.payment_id,
+                "invoice_id": row.invoice_id,
+                "invoice_number": row.invoice_number,
+                "paid_at": row.paid_at,
+                "amount_cents": row.amount_cents,
+                "currency": row.currency,
+                "allocated_tax_cents": allocated_tax,
+            }
+        )
+    return entries
+
+
+async def list_tax_expenses(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: date,
+    to_date: date,
+) -> list[db_models.FinanceExpense]:
+    stmt = select(db_models.FinanceExpense).where(
+        db_models.FinanceExpense.org_id == org_id,
+        db_models.FinanceExpense.occurred_on >= from_date,
+        db_models.FinanceExpense.occurred_on <= to_date,
+    )
+    stmt = stmt.order_by(db_models.FinanceExpense.occurred_on.asc())
+    result = await session.execute(stmt)
+    return list(result.scalars().all())

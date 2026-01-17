@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
+import zipfile
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -854,3 +857,283 @@ async def delete_finance_cash_snapshot(
 
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/v1/admin/finance/taxes/gst_summary",
+    response_model=schemas.FinanceGstSummaryResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_finance_gst_summary(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+) -> schemas.FinanceGstSummaryResponse:
+    _require_finance_view(request, identity)
+
+    summary = await service.summarize_gst(session, org_id, from_date=from_date, to_date=to_date)
+    return schemas.FinanceGstSummaryResponse.model_validate(summary)
+
+
+@router.get(
+    "/v1/admin/finance/taxes/instalments",
+    response_model=schemas.FinanceTaxInstalmentListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_finance_tax_instalments(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    from_date: date | None = Query(None, alias="from"),
+    to_date: date | None = Query(None, alias="to"),
+) -> schemas.FinanceTaxInstalmentListResponse:
+    _require_finance_view(request, identity)
+
+    instalments = await service.list_tax_instalments(
+        session,
+        org_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    return schemas.FinanceTaxInstalmentListResponse(
+        items=[schemas.FinanceTaxInstalmentResponse.model_validate(item) for item in instalments]
+    )
+
+
+@router.post(
+    "/v1/admin/finance/taxes/instalments",
+    response_model=schemas.FinanceTaxInstalmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_finance_tax_instalment(
+    request: Request,
+    data: schemas.FinanceTaxInstalmentCreate,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> schemas.FinanceTaxInstalmentResponse:
+    _require_finance_manage(request, identity)
+
+    instalment = await service.create_tax_instalment(
+        session,
+        org_id,
+        tax_type=data.tax_type,
+        due_on=data.due_on,
+        amount_cents=data.amount_cents,
+        paid_on=data.paid_on,
+        note=data.note,
+        created_by_user_id=None,
+    )
+    await session.commit()
+    return schemas.FinanceTaxInstalmentResponse.model_validate(instalment)
+
+
+@router.patch(
+    "/v1/admin/finance/taxes/instalments/{instalment_id}",
+    response_model=schemas.FinanceTaxInstalmentResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_finance_tax_instalment(
+    instalment_id: uuid.UUID,
+    request: Request,
+    data: schemas.FinanceTaxInstalmentUpdate,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    _require_finance_manage(request, identity)
+
+    updated = await service.update_tax_instalment(
+        session,
+        org_id,
+        instalment_id,
+        tax_type=data.tax_type,
+        due_on=data.due_on,
+        amount_cents=data.amount_cents,
+        paid_on=data.paid_on,
+        paid_on_set="paid_on" in data.model_fields_set,
+        note=data.note,
+        note_set="note" in data.model_fields_set,
+    )
+    if not updated:
+        return problem_details(
+            request=request,
+            status=status.HTTP_404_NOT_FOUND,
+            title="Tax Instalment Not Found",
+            detail=f"Tax instalment {instalment_id} not found",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+
+    await session.commit()
+    return schemas.FinanceTaxInstalmentResponse.model_validate(updated)
+
+
+@router.get(
+    "/v1/admin/finance/taxes/calendar",
+    response_model=schemas.FinanceTaxCalendarResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_finance_tax_calendar(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    from_date: date | None = Query(None, alias="from"),
+    to_date: date | None = Query(None, alias="to"),
+) -> schemas.FinanceTaxCalendarResponse:
+    _require_finance_view(request, identity)
+
+    today = date.today()
+    effective_from = from_date or date(today.year, 1, 1)
+    effective_to = to_date or date(today.year, 12, 31)
+    entries = service.build_gst_calendar(effective_from, effective_to)
+    return schemas.FinanceTaxCalendarResponse(items=entries)
+
+
+@router.get(
+    "/v1/admin/finance/taxes/export",
+    status_code=status.HTTP_200_OK,
+)
+async def export_finance_taxes(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+) -> Response:
+    _require_finance_view(request, identity)
+
+    summary = await service.summarize_gst(session, org_id, from_date=from_date, to_date=to_date)
+    payments = await service.list_tax_payments(session, org_id, from_date=from_date, to_date=to_date)
+    expenses = await service.list_tax_expenses(session, org_id, from_date=from_date, to_date=to_date)
+    instalments = await service.list_tax_instalments(
+        session,
+        org_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    await service.create_tax_export_log(
+        session,
+        org_id,
+        from_date=from_date,
+        to_date=to_date,
+        created_by_user_id=None,
+    )
+    await session.commit()
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        summary_csv = io.StringIO()
+        summary_writer = csv.writer(summary_csv)
+        summary_writer.writerow(
+            [
+                "from_date",
+                "to_date",
+                "tax_collected_cents",
+                "tax_paid_cents",
+                "tax_owed_cents",
+                "currency_code",
+            ]
+        )
+        summary_writer.writerow(
+            [
+                summary["from"],
+                summary["to"],
+                summary["tax_collected_cents"],
+                summary["tax_paid_cents"],
+                summary["tax_owed_cents"],
+                summary["currency_code"],
+            ]
+        )
+        zip_file.writestr("gst_summary.csv", summary_csv.getvalue())
+
+        payments_csv = io.StringIO()
+        payments_writer = csv.writer(payments_csv)
+        payments_writer.writerow(
+            [
+                "payment_id",
+                "invoice_id",
+                "invoice_number",
+                "paid_at",
+                "amount_cents",
+                "currency",
+                "allocated_tax_cents",
+            ]
+        )
+        for row in payments:
+            payments_writer.writerow(
+                [
+                    row["payment_id"],
+                    row["invoice_id"],
+                    row["invoice_number"],
+                    row["paid_at"],
+                    row["amount_cents"],
+                    row["currency"],
+                    row["allocated_tax_cents"],
+                ]
+            )
+        zip_file.writestr("gst_payments.csv", payments_csv.getvalue())
+
+        expenses_csv = io.StringIO()
+        expenses_writer = csv.writer(expenses_csv)
+        expenses_writer.writerow(
+            [
+                "expense_id",
+                "occurred_on",
+                "vendor",
+                "description",
+                "amount_cents",
+                "tax_cents",
+                "payment_method",
+            ]
+        )
+        for expense in expenses:
+            expenses_writer.writerow(
+                [
+                    expense.expense_id,
+                    expense.occurred_on,
+                    expense.vendor or "",
+                    expense.description,
+                    expense.amount_cents,
+                    expense.tax_cents,
+                    expense.payment_method or "",
+                ]
+            )
+        zip_file.writestr("gst_expenses.csv", expenses_csv.getvalue())
+
+        instalments_csv = io.StringIO()
+        instalments_writer = csv.writer(instalments_csv)
+        instalments_writer.writerow(
+            [
+                "instalment_id",
+                "tax_type",
+                "due_on",
+                "amount_cents",
+                "paid_on",
+                "note",
+            ]
+        )
+        for instalment in instalments:
+            instalments_writer.writerow(
+                [
+                    instalment.instalment_id,
+                    instalment.tax_type,
+                    instalment.due_on,
+                    instalment.amount_cents,
+                    instalment.paid_on,
+                    instalment.note or "",
+                ]
+            )
+        zip_file.writestr("tax_instalments.csv", instalments_csv.getvalue())
+
+    filename = f"gst_export_{from_date.isoformat()}_{to_date.isoformat()}.zip"
+    return Response(
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

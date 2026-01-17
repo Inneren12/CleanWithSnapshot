@@ -223,6 +223,12 @@ export default function FinanceExpensesPage() {
         featureKey: "module.finance",
       },
       {
+        key: "finance-taxes",
+        label: "Taxes",
+        href: "/admin/finance/taxes",
+        featureKey: "module.finance",
+      },
+      {
         key: "finance-budgets",
         label: "Budgets",
         href: "/admin/finance/budgets",
