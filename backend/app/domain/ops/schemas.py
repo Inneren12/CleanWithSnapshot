@@ -135,6 +135,7 @@ class OpsDashboardAlert(BaseModel):
     severity: str
     title: str
     description: str
+    notification_id: str | None = None
     entity_ref: dict[str, object] | None = None
     actions: list[OpsDashboardAlertAction] = Field(default_factory=list)
     created_at: datetime | None = None

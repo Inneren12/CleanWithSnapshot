@@ -1,17 +1,16 @@
 import uuid
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.domain.feature_modules import service as feature_service
 from app.domain.org_settings import service as org_settings_service
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import MembershipRole
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.clients.db_models import ClientFeedback, ClientUser
-from app.domain.invoices import service as invoice_service
-from app.domain.invoices import statuses as invoice_statuses
-from app.domain.invoices.schemas import InvoiceItemCreate
+from app.domain.notifications_center.db_models import NotificationEvent, NotificationRead
 from app.domain.leads.db_models import Lead
 from app.domain.quality.db_models import QualityIssue
 
@@ -119,114 +118,44 @@ async def test_ops_dashboard_upcoming_unassigned_booking(async_session_maker, cl
 
 
 @pytest.mark.anyio
-async def test_ops_dashboard_overdue_alert_respects_permissions(async_session_maker, client):
-    as_of = date.today()
+async def test_ops_dashboard_critical_alerts_reflect_notifications(async_session_maker, client):
     async with async_session_maker() as session:
         org = await saas_service.create_organization(session, "Ops Alert Org")
         owner = await saas_service.create_user(session, "ops-owner@org.com", "secret")
-        viewer = await saas_service.create_user(session, "ops-viewer@org.com", "secret")
-        owner_membership = await saas_service.create_membership(
-            session, org, owner, MembershipRole.OWNER
-        )
-        viewer_membership = await saas_service.create_membership(
-            session, org, viewer, MembershipRole.VIEWER
-        )
-
-        team = Team(name="Ops Team", org_id=org.org_id)
-        session.add(team)
-        await session.flush()
-
-        lead = Lead(org_id=org.org_id, **_lead_payload())
-        session.add(lead)
-        await session.flush()
-
-        booking = Booking(
-            booking_id=str(uuid.uuid4()),
-            org_id=org.org_id,
-            team_id=team.team_id,
-            lead_id=lead.lead_id,
-            starts_at=datetime.now(tz=timezone.utc),
-            duration_minutes=60,
-            status="PENDING",
-            deposit_cents=0,
-            base_charge_cents=0,
-            refund_total_cents=0,
-            credit_note_total_cents=0,
-        )
-        session.add(booking)
-        await session.flush()
-
-        invoice = await invoice_service.create_invoice_from_order(
-            session=session,
-            order=booking,
-            items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000)],
-            issue_date=as_of - timedelta(days=20),
-            due_date=as_of - timedelta(days=8),
-            currency="CAD",
-        )
-        invoice.status = invoice_statuses.INVOICE_STATUS_SENT
-        await session.commit()
-
-    owner_token = saas_service.build_access_token(owner, owner_membership)
-    owner_response = client.get(
-        "/v1/admin/dashboard/ops",
-        headers={"Authorization": f"Bearer {owner_token}"},
-    )
-    assert owner_response.status_code == 200
-    owner_alerts = owner_response.json()["critical_alerts"]
-    assert any(alert["type"] == "overdue_invoices" for alert in owner_alerts)
-
-    viewer_token = saas_service.build_access_token(viewer, viewer_membership)
-    viewer_response = client.get(
-        "/v1/admin/dashboard/ops",
-        headers={"Authorization": f"Bearer {viewer_token}"},
-    )
-    assert viewer_response.status_code == 200
-    viewer_alerts = viewer_response.json()["critical_alerts"]
-    assert not any(alert["type"] == "overdue_invoices" for alert in viewer_alerts)
-
-
-@pytest.mark.anyio
-async def test_ops_dashboard_overdue_alert_ignores_draft_invoices(async_session_maker, client):
-    as_of = date.today()
-    async with async_session_maker() as session:
-        org = await saas_service.create_organization(session, "Ops Draft Org")
-        owner = await saas_service.create_user(session, "ops-draft@org.com", "secret")
         membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
 
-        team = Team(name="Draft Team", org_id=org.org_id)
-        session.add(team)
-        await session.flush()
-
-        lead = Lead(org_id=org.org_id, **_lead_payload())
-        session.add(lead)
-        await session.flush()
-
-        booking = Booking(
-            booking_id=str(uuid.uuid4()),
+        alert_event = NotificationEvent(
             org_id=org.org_id,
-            team_id=team.team_id,
-            lead_id=lead.lead_id,
-            starts_at=datetime.now(tz=timezone.utc),
-            duration_minutes=60,
-            status="PENDING",
-            deposit_cents=0,
-            base_charge_cents=0,
-            refund_total_cents=0,
-            credit_note_total_cents=0,
+            priority="CRITICAL",
+            type="dispatch_risk",
+            title="Dispatch risk",
+            body="Dispatch coverage is below threshold.",
+            action_href="/admin/dispatcher",
+            action_kind="open_booking",
         )
-        session.add(booking)
+        secondary_event = NotificationEvent(
+            org_id=org.org_id,
+            priority="HIGH",
+            type="billing_attention",
+            title="Billing attention",
+            body="High value invoice needs review.",
+        )
+        low_event = NotificationEvent(
+            org_id=org.org_id,
+            priority="LOW",
+            type="info_only",
+            title="Info",
+            body="FYI alert.",
+        )
+        session.add_all([alert_event, secondary_event, low_event])
         await session.flush()
 
-        invoice = await invoice_service.create_invoice_from_order(
-            session=session,
-            order=booking,
-            items=[InvoiceItemCreate(description="Service", qty=1, unit_price_cents=10000)],
-            issue_date=as_of - timedelta(days=20),
-            due_date=as_of - timedelta(days=8),
-            currency="CAD",
+        read_record = NotificationRead(
+            org_id=org.org_id,
+            user_id=f"saas:{owner.user_id}",
+            event_id=secondary_event.id,
         )
-        invoice.status = invoice_statuses.INVOICE_STATUS_DRAFT
+        session.add(read_record)
         await session.commit()
 
     token = saas_service.build_access_token(owner, membership)
@@ -236,7 +165,41 @@ async def test_ops_dashboard_overdue_alert_ignores_draft_invoices(async_session_
     )
     assert response.status_code == 200
     alerts = response.json()["critical_alerts"]
-    assert not any(alert["type"] == "overdue_invoices" for alert in alerts)
+    assert any(alert["notification_id"] == str(alert_event.id) for alert in alerts)
+    assert all(alert["notification_id"] != str(secondary_event.id) for alert in alerts)
+    assert all(alert["notification_id"] != str(low_event.id) for alert in alerts)
+
+
+@pytest.mark.anyio
+async def test_ops_dashboard_critical_alerts_respect_notifications_module(async_session_maker, client):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Ops Notifications Module Org")
+        owner = await saas_service.create_user(session, "ops-module@org.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await feature_service.upsert_org_feature_overrides(
+            session,
+            org.org_id,
+            {"module.notifications_center": False},
+        )
+        session.add(
+            NotificationEvent(
+                org_id=org.org_id,
+                priority="CRITICAL",
+                type="dispatch_risk",
+                title="Dispatch risk",
+                body="Dispatch coverage is below threshold.",
+            )
+        )
+        await session.commit()
+
+    token = saas_service.build_access_token(owner, membership)
+    response = client.get(
+        "/v1/admin/dashboard/ops",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    alerts = response.json()["critical_alerts"]
+    assert alerts == []
 
 
 @pytest.mark.anyio
@@ -341,7 +304,6 @@ async def test_ops_dashboard_quality_today_respects_org_timezone_and_alerts(
     assert quality_today["reviews_count"] == 1
     assert quality_today["avg_rating"] == 1.0
     assert quality_today["open_critical_issues"] == 1
-    assert any(alert["type"] == "quality_risk" for alert in payload["critical_alerts"])
 
 
 @pytest.mark.anyio
@@ -421,4 +383,3 @@ async def test_ops_dashboard_quality_today_requires_permission(async_session_mak
     assert viewer_response.status_code == 200
     viewer_payload = viewer_response.json()
     assert "quality_today" not in viewer_payload
-    assert not any(alert["type"] == "quality_risk" for alert in viewer_payload["critical_alerts"])

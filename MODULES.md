@@ -69,9 +69,10 @@ module.api                    # API access
 - Band definitions: `backend/app/domain/ops/service.py::BOOKING_STATUS_BANDS` (edit here to change ranges).
 
 **Ops dashboard data sources:**
-- `critical_alerts` draws from invoices and bookings in `backend/app/api/routes_admin.py::_build_ops_critical_alerts()`.
-- `quality_today` and quality-driven critical alerts draw from client feedback and quality issues in
-  `backend/app/api/routes_admin.py::_build_ops_quality_today()` and `_build_ops_critical_alerts()`.
+- `critical_alerts` is a projection of unread CRITICAL/HIGH notifications from the notifications center
+  (`backend/app/api/routes_admin.py::_build_ops_critical_alerts()`), gated by `module.notifications_center`.
+- `quality_today` draws from client feedback and quality issues in
+  `backend/app/api/routes_admin.py::_build_ops_quality_today()`.
 - `upcoming_events` aggregates next-24h critical items from bookings, invoices, and availability blocks in
   `backend/app/api/routes_admin.py::_build_ops_upcoming_events()` (unassigned bookings, first booking tomorrow,
   invoices due today, training blocks).
