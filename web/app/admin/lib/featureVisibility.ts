@@ -36,7 +36,7 @@ const MODULE_PERMISSIONS: Record<string, string> = {
   leads: "contacts.view",
   inventory: "core.view",
   training: "core.view",
-  notifications_center: "admin.manage",
+  notifications_center: "core.view",
   settings: "settings.manage",
   integrations: "settings.manage",
   api: "settings.manage",

@@ -130,6 +130,7 @@ CleanWithSnapshot/
 |--------|-------|---------|
 | `analytics/` | 2 files | Event logging, KPI aggregation |
 | `notifications/` | 2 files | Email service (notifications) |
+| `notifications_center/` | 3 files | Notification inbox events + reads |
 | `time_tracking/` | 2 files | Worker time tracking |
 | `checklists/` | 2 files | Job checklists |
 | `nps/` | 2 files | Net Promoter Score collection |
@@ -260,6 +261,9 @@ web/app/
     ├── SchedulePageClient.tsx  # Schedule calendar component
     │
     ├── dispatcher/             # Dispatch board
+    │   └── page.tsx
+    │
+    ├── notifications/          # Notification center inbox
     │   └── page.tsx
     │
     ├── schedule/               # Team scheduling

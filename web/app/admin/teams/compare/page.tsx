@@ -96,6 +96,12 @@ export default function TeamsComparisonPage() {
       { key: "dashboard", label: "Dashboard", href: "/admin", featureKey: "module.dashboard" },
       { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
+      {
+        key: "notifications",
+        label: "Notifications",
+        href: "/admin/notifications",
+        featureKey: "module.notifications_center",
+      },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
       { key: "org-settings", label: "Org Settings", href: "/admin/settings/org", featureKey: "module.settings" },
       { key: "modules", label: "Modules & Visibility", href: "/admin/settings/modules", featureKey: "api.settings" },

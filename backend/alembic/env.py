@@ -21,6 +21,7 @@ from app.domain.nps import db_models as nps_db_models  # noqa: F401
 from app.domain.clients import db_models as client_db_models  # noqa: F401
 from app.domain.quality import db_models as quality_db_models  # noqa: F401
 from app.domain.subscriptions import db_models as subscription_db_models  # noqa: F401
+from app.domain.notifications_center import db_models as notifications_center_db_models  # noqa: F401
 from app.infra.db import Base
 from app.settings import settings
 

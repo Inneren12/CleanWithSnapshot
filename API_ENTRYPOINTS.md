@@ -329,6 +329,42 @@ Query parameters:
 }
 ```
 
+#### Notifications Center Feed
+
+`GET /v1/admin/notifications` returns the inbox feed with filters and cursor pagination.
+Query parameters:
+- `filter` (`all`, `urgent`, `unread`) controls feed mode (default: `all`).
+- `limit` (default 50, max 200) limits returned items.
+- `cursor` (opaque) paginates older items.
+- `from` / `to` (optional ISO 8601 timestamps) apply date range filters.
+
+```json
+{
+  "items": [
+    {
+      "id": "5d4f9a6a-3d2d-4d62-a9ff-2b2e01c7c012",
+      "created_at": "2026-01-30T09:15:00Z",
+      "priority": "HIGH",
+      "type": "payment_failed",
+      "title": "Payment failed",
+      "body": "Invoice INV-001 payment failed.",
+      "entity_type": "invoice",
+      "entity_id": "INV-001",
+      "action_href": "/admin/invoices/INV-001",
+      "action_kind": "open_invoice",
+      "is_read": false,
+      "read_at": null
+    }
+  ],
+  "next_cursor": "MjAyNi0wMS0zMFQwOToxNTowMFp8NWQ0ZjlhNmEtM2QyZC00ZDYyLWE5ZmYtMmIyZTAxYzdjMDEy",
+  "limit": 50
+}
+```
+
+**Mark read endpoints:**
+- `POST /v1/admin/notifications/{id}/read` marks a single event as read.
+- `POST /v1/admin/notifications/read_all` marks all events read for the current user.
+
 ### Quality
 
 | Method | Path | Permission | Purpose |

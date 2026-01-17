@@ -537,27 +537,33 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 ### 14. Notifications
 
-**Purpose:** Notification center, email digests, alert rules
+**Purpose:** Notification center inbox, email digests, alert rules
 
 **Key Pages:**
-- `web/app/admin/notifications/` (if exists)
+- `web/app/admin/notifications/page.tsx` - Admin notification inbox UI
 
 **Backend Routers:**
-- `backend/app/api/routes_admin.py` - Notification endpoints (if exists)
+- `backend/app/api/routes_admin.py` - `/v1/admin/notifications*` feed + read endpoints
 
 **Key Services:**
+- `backend/app/domain/notifications_center/service.py` - Inbox feed + read tracking
 - `backend/app/domain/notifications/service.py` - Email notifications
 
 **Key Tables:**
+- `notifications_events` - Inbox events
+- `notifications_reads` - Per-user read state
 - `email_events` - Email delivery tracking
-- `notification_rules` (if exists)
 
 **Permissions Required:**
 - `core.view` - View notifications
 
 **Feature Key:** `module.notifications_center`
 
-**Note:** Partially implemented (email notifications exist, full notification center pending)
+**Where to change:**
+- Feed filtering, cursor logic, and read tracking: `backend/app/domain/notifications_center/service.py`
+- API endpoints and RBAC: `backend/app/api/routes_admin.py`
+- Event/read schema: `backend/app/domain/notifications_center/db_models.py` + Alembic migration
+- Admin UI, CTA link mapping, and filters: `web/app/admin/notifications/page.tsx`
 
 ---
 
