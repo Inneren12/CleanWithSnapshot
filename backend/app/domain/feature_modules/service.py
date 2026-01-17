@@ -39,10 +39,19 @@ SUBFEATURE_KEYS = [
     "marketing.email_campaigns",
     "marketing.email_segments",
     "inventory.usage_analytics",
+    "training.library",
+    "training.quizzes",
+    "training.certs",
     "api.settings",
 ]
 
 FEATURE_KEYS = MODULE_KEYS + SUBFEATURE_KEYS
+
+DEFAULT_DISABLED_KEYS = {
+    "training.library",
+    "training.quizzes",
+    "training.certs",
+}
 
 MODULE_PERMISSIONS: dict[str, str] = {
     "dashboard": "core.view",
@@ -99,8 +108,12 @@ def normalize_hidden_keys(keys: Iterable[str]) -> list[str]:
     return normalized
 
 
+def default_feature_value(key: str) -> bool:
+    return key not in DEFAULT_DISABLED_KEYS
+
+
 def default_feature_map(keys: Iterable[str] | None = None) -> dict[str, bool]:
-    return {key: True for key in (keys or FEATURE_KEYS)}
+    return {key: default_feature_value(key) for key in (keys or FEATURE_KEYS)}
 
 
 def effective_feature_enabled_from_overrides(overrides: dict[str, bool], key: str) -> bool:
@@ -108,13 +121,14 @@ def effective_feature_enabled_from_overrides(overrides: dict[str, bool], key: st
     base = module_base_for_key(normalized_key)
     module_key = module_key_for_base(base)
     module_override = overrides.get(module_key)
+    default_value = default_feature_value(normalized_key)
     if module_override is False:
         return False
     if normalized_key in overrides:
         return bool(overrides[normalized_key])
     if module_override is True:
-        return True
-    return True
+        return default_value
+    return default_value
 
 
 def resolve_effective_features(

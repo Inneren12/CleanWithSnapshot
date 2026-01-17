@@ -92,7 +92,15 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
     label: "Inventory",
     children: [{ key: "inventory.usage_analytics", label: "Usage analytics" }],
   },
-  { key: "module.training", label: "Training" },
+  {
+    key: "module.training",
+    label: "Training",
+    children: [
+      { key: "training.library", label: "Training library" },
+      { key: "training.quizzes", label: "Quizzes" },
+      { key: "training.certs", label: "Certificate templates" },
+    ],
+  },
   { key: "module.notifications_center", label: "Notifications center" },
   {
     key: "module.settings",
@@ -116,6 +124,12 @@ export const FEATURE_KEYS: string[] = FEATURE_MODULE_TREE.flatMap((item) => [
   ...(item.children?.map((child) => child.key) ?? []),
 ]);
 
+const DEFAULT_DISABLED_KEYS = new Set<string>([
+  "training.library",
+  "training.quizzes",
+  "training.certs",
+]);
+
 export function moduleBaseForKey(key: string): string {
   const trimmed = key.trim();
   if (trimmed.startsWith("module.")) {
@@ -133,12 +147,13 @@ export function effectiveFeatureEnabled(overrides: Record<string, boolean>, key:
   const base = moduleBaseForKey(trimmed);
   const moduleKey = moduleKeyForBase(base);
   const moduleOverride = overrides[moduleKey];
+  const defaultValue = !DEFAULT_DISABLED_KEYS.has(trimmed);
   if (moduleOverride === false) return false;
   if (Object.prototype.hasOwnProperty.call(overrides, trimmed)) {
     return Boolean(overrides[trimmed]);
   }
-  if (moduleOverride === true) return true;
-  return true;
+  if (moduleOverride === true) return defaultValue;
+  return defaultValue;
 }
 
 export function isHidden(hiddenKeys: string[], key: string): boolean {
