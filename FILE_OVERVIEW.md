@@ -50,6 +50,7 @@ CleanWithSnapshot/
 | `routes_admin_settings.py` | `/v1/admin/settings` | Organization settings, policies, integrations | Medium |
 | `routes_admin_iam.py` | `/v1/admin/iam` | Role & permission management | Small |
 | `routes_admin_pricing.py` | `/v1/admin/pricing` | Pricing configuration | Small |
+| `routes_admin_inventory.py` | `/v1/admin/inventory` | Inventory categories and items CRUD with RBAC | Small |
 | `routes_dispatcher.py` | `/v1/dispatcher` | Dispatch board, route optimization, AI suggestions | 23KB |
 | `routes_worker.py` | `/v1/worker` | Worker portal - job assignments, status updates | 82KB |
 | `routes_client.py` | `/v1/client` | Client portal - bookings, invoices | 31KB |

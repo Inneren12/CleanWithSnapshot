@@ -154,6 +154,18 @@ PERMISSION_CATALOG: list[PermissionDefinition] = [
         description="Access high-risk admin endpoints.",
         group="admin",
     ),
+    PermissionDefinition(
+        key="inventory.view",
+        label="View inventory",
+        description="Read access to inventory categories and items.",
+        group="inventory",
+    ),
+    PermissionDefinition(
+        key="inventory.manage",
+        label="Manage inventory",
+        description="Create, update, and delete inventory categories and items.",
+        group="inventory",
+    ),
 ]
 
 PERMISSION_KEYS: set[str] = {entry.key for entry in PERMISSION_CATALOG}
