@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, get_admin_identity, permission_keys_for_request
@@ -152,7 +152,7 @@ async def delete_inventory_category(
     org_id: uuid.UUID = Depends(require_org_context),
     identity: AdminIdentity = Depends(get_admin_identity),
     session: AsyncSession = Depends(get_db_session),
-) -> None:
+) -> Response:
     """
     Delete an inventory category.
 
@@ -170,6 +170,7 @@ async def delete_inventory_category(
         )
 
     await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ===== Item Endpoints =====
@@ -308,7 +309,7 @@ async def delete_inventory_item(
     org_id: uuid.UUID = Depends(require_org_context),
     identity: AdminIdentity = Depends(get_admin_identity),
     session: AsyncSession = Depends(get_db_session),
-) -> None:
+) -> Response:
     """
     Delete an inventory item.
 
@@ -324,3 +325,4 @@ async def delete_inventory_item(
         )
 
     await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
