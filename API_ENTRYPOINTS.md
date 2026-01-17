@@ -943,6 +943,7 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
 | PATCH | `/v1/admin/finance/budgets/{budget_id}` | `finance.manage` | Update budget |
 | DELETE | `/v1/admin/finance/budgets/{budget_id}` | `finance.manage` | Delete budget |
 | GET | `/v1/admin/finance/expenses/summary` | `finance.view` | Totals by category with budget utilization |
+| GET | `/v1/admin/finance/pnl` | `finance.view` | Profit & Loss report (revenue vs expenses) |
 
 **Expense list query params:** `from`, `to`, `category_id`, `query`, `page`, `page_size`.
 
@@ -967,6 +968,29 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
       "percent_of_budget": 0.5
     }
   ]
+}
+```
+
+**P&L query params:** `from`, `to` (required), optional `format=csv`.
+
+**P&L response shape (example):**
+```json
+{
+  "from": "2026-01-01",
+  "to": "2026-01-31",
+  "revenue_cents": 15000,
+  "expense_cents": 5300,
+  "net_cents": 9700,
+  "revenue_breakdown": [
+    { "label": "card", "total_cents": 5000 }
+  ],
+  "expense_breakdown_by_category": [
+    { "category_id": "9f36...", "category_name": "Supplies", "total_cents": 3300, "tax_cents": 300 }
+  ],
+  "data_sources": {
+    "revenue": "invoice_payments (status=SUCCEEDED, received_at/created_at)",
+    "expenses": "finance_expenses"
+  }
 }
 ```
 

@@ -547,3 +547,56 @@ async def get_finance_expense_summary(
         percent_of_budget=percent_of_budget,
         categories=[schemas.FinanceExpenseSummaryCategory(**item) for item in categories],
     )
+
+
+@router.get(
+    "/v1/admin/finance/pnl",
+    response_model=schemas.FinancePnlResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_finance_pnl(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    identity: AdminIdentity = Depends(get_admin_identity),
+    session: AsyncSession = Depends(get_db_session),
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    format: str | None = Query(default=None, pattern="^(json|csv)$"),
+) -> Response:
+    _require_finance_view(request, identity)
+
+    summary = await service.summarize_pnl(
+        session,
+        org_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    payload = schemas.FinancePnlResponse(
+        **summary,
+        from_date=from_date,
+        to_date=to_date,
+        data_sources=schemas.FinancePnlDataSources(
+            revenue="invoice_payments (status=SUCCEEDED, received_at/created_at)",
+            expenses="finance_expenses",
+        ),
+    )
+
+    if format == "csv":
+        lines = [
+            "section,label,total_cents,tax_cents",
+            f"summary,revenue,{payload.revenue_cents},",
+            f"summary,expenses,{payload.expense_cents},",
+            f"summary,net,{payload.net_cents},",
+        ]
+        lines.extend(
+            f"revenue_breakdown,{item.label},{item.total_cents},"
+            for item in payload.revenue_breakdown
+        )
+        lines.extend(
+            f"expense_category,{item.category_name},{item.total_cents},{item.tax_cents}"
+            for item in payload.expense_breakdown_by_category
+        )
+        return Response("\n".join(lines), media_type="text/csv")
+
+    return payload

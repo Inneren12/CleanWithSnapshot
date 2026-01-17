@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.finance import db_models
+from app.domain.invoices import statuses as invoice_statuses
+from app.domain.invoices.db_models import Payment
 
 
 def _month_range(start: date, end: date) -> list[str]:
@@ -194,6 +196,109 @@ async def list_expenses(
     rows = list(result.all())
 
     return rows, total
+
+
+def _date_bounds(from_date: date, to_date: date) -> tuple[datetime, datetime]:
+    start_dt = datetime.combine(from_date, time.min, tzinfo=timezone.utc)
+    end_dt = datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    return start_dt, end_dt
+
+
+async def summarize_pnl(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    from_date: date,
+    to_date: date,
+) -> dict[str, object]:
+    start_dt, end_dt = _date_bounds(from_date, to_date)
+    payment_timestamp = func.coalesce(Payment.received_at, Payment.created_at)
+
+    revenue_stmt = select(func.coalesce(func.sum(Payment.amount_cents), 0)).where(
+        Payment.org_id == org_id,
+        Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+        payment_timestamp >= start_dt,
+        payment_timestamp < end_dt,
+    )
+    revenue_result = await session.execute(revenue_stmt)
+    revenue_cents = int(revenue_result.scalar_one() or 0)
+
+    revenue_breakdown_stmt = (
+        select(
+            Payment.method,
+            func.coalesce(func.sum(Payment.amount_cents), 0).label("total_cents"),
+        )
+        .where(
+            Payment.org_id == org_id,
+            Payment.status == invoice_statuses.PAYMENT_STATUS_SUCCEEDED,
+            payment_timestamp >= start_dt,
+            payment_timestamp < end_dt,
+        )
+        .group_by(Payment.method)
+        .order_by(func.coalesce(func.sum(Payment.amount_cents), 0).desc())
+    )
+    revenue_breakdown_result = await session.execute(revenue_breakdown_stmt)
+    revenue_breakdown = [
+        {"label": row.method or "unknown", "total_cents": int(row.total_cents or 0)}
+        for row in revenue_breakdown_result.all()
+    ]
+
+    expense_total_stmt = select(
+        func.coalesce(func.sum(db_models.FinanceExpense.amount_cents + db_models.FinanceExpense.tax_cents), 0)
+    ).where(
+        db_models.FinanceExpense.org_id == org_id,
+        db_models.FinanceExpense.occurred_on >= from_date,
+        db_models.FinanceExpense.occurred_on <= to_date,
+    )
+    expense_total_result = await session.execute(expense_total_stmt)
+    expense_cents = int(expense_total_result.scalar_one() or 0)
+
+    expense_breakdown_stmt = (
+        select(
+            db_models.FinanceExpense.category_id,
+            db_models.FinanceExpenseCategory.name,
+            func.coalesce(
+                func.sum(
+                    db_models.FinanceExpense.amount_cents
+                    + db_models.FinanceExpense.tax_cents
+                ),
+                0,
+            ).label("total_cents"),
+            func.coalesce(func.sum(db_models.FinanceExpense.tax_cents), 0).label("tax_cents"),
+        )
+        .join(
+            db_models.FinanceExpenseCategory,
+            db_models.FinanceExpense.category_id == db_models.FinanceExpenseCategory.category_id,
+        )
+        .where(
+            db_models.FinanceExpense.org_id == org_id,
+            db_models.FinanceExpense.occurred_on >= from_date,
+            db_models.FinanceExpense.occurred_on <= to_date,
+        )
+        .group_by(
+            db_models.FinanceExpense.category_id,
+            db_models.FinanceExpenseCategory.name,
+        )
+        .order_by(func.coalesce(func.sum(db_models.FinanceExpense.amount_cents), 0).desc())
+    )
+    expense_breakdown_result = await session.execute(expense_breakdown_stmt)
+    expense_breakdown = [
+        {
+            "category_id": row.category_id,
+            "category_name": row.name,
+            "total_cents": int(row.total_cents or 0),
+            "tax_cents": int(row.tax_cents or 0),
+        }
+        for row in expense_breakdown_result.all()
+    ]
+
+    return {
+        "revenue_cents": revenue_cents,
+        "expense_cents": expense_cents,
+        "net_cents": revenue_cents - expense_cents,
+        "revenue_breakdown": revenue_breakdown,
+        "expense_breakdown_by_category": expense_breakdown,
+    }
 
 
 async def get_expense(
