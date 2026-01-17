@@ -12,6 +12,13 @@ from app.domain.inventory.db_models import (
     PurchaseOrder,
     PurchaseOrderItem,
 )
+from app.domain.integrations.db_models import (
+    IntegrationsGcalCalendar,
+    IntegrationsGcalEventMap,
+    IntegrationsGcalSyncState,
+    IntegrationsGoogleAccount,
+    ScheduleExternalBlock,
+)
 from app.infra.db import Base
 
 
@@ -103,5 +110,22 @@ async def test_inventory_tables_exist_in_metadata():
     assert InventorySupplier.__tablename__ in Base.metadata.tables
     assert PurchaseOrder.__tablename__ in Base.metadata.tables
     assert PurchaseOrderItem.__tablename__ in Base.metadata.tables
+
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_integrations_tables_exist_in_metadata():
+    configure_mappers()
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    assert IntegrationsGoogleAccount.__tablename__ in Base.metadata.tables
+    assert IntegrationsGcalCalendar.__tablename__ in Base.metadata.tables
+    assert IntegrationsGcalSyncState.__tablename__ in Base.metadata.tables
+    assert ScheduleExternalBlock.__tablename__ in Base.metadata.tables
+    assert IntegrationsGcalEventMap.__tablename__ in Base.metadata.tables
 
     await engine.dispose()
