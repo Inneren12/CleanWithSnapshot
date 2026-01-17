@@ -389,6 +389,28 @@ Requires Owner basic auth (role check).
 }
 ```
 
+#### Notification Digests (Owner-only)
+
+`GET /v1/admin/notifications/digests` returns digest settings (daily/weekly/monthly).
+`PATCH /v1/admin/notifications/digests` updates digest schedules, enablement, and recipients.
+
+Digest keys: `daily_summary`, `weekly_analytics`, `monthly_report`.
+Schedules: `daily`, `weekly`, `monthly`.
+
+```json
+{
+  "org_id": "b7d3ef62-6b4b-4f3b-9f48-6a89a80fb2d5",
+  "digests": [
+    {
+      "digest_key": "daily_summary",
+      "enabled": true,
+      "schedule": "daily",
+      "recipients": ["owner@example.com"]
+    }
+  ]
+}
+```
+
 ### Quality
 
 | Method | Path | Permission | Purpose |

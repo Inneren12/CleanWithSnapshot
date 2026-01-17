@@ -549,11 +549,13 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Key Services:**
 - `backend/app/domain/notifications_center/service.py` - Inbox feed + read tracking
 - `backend/app/domain/notifications/service.py` - Email notifications
+- `backend/app/domain/notifications_digests/service.py` - Digest settings + payload generation
 
 **Key Tables:**
 - `notifications_events` - Inbox events
 - `notifications_reads` - Per-user read state
 - `notifications_rules_presets` - Preset rule configuration (enable/recipients/escalation delay)
+- `notifications_digest_settings` - Digest schedules + recipients (daily/weekly/monthly)
 - `email_events` - Email delivery tracking
 
 **Permissions Required:**
@@ -565,6 +567,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Feed filtering, cursor logic, and read tracking: `backend/app/domain/notifications_center/service.py`
 - Preset rules configuration + emission: `backend/app/domain/notifications_center/service.py`
 - Preset rules API (Owner-only): `backend/app/api/routes_admin.py`
+- Digest settings API (Owner-only): `backend/app/api/routes_admin.py`
+- Digest job runner: `backend/app/jobs/notifications_digests.py` + `backend/app/jobs/run.py`
 - Preset keys: `no_show`, `payment_failed`, `negative_review`, `low_stock`, `high_value_lead`
 - Trigger points:
   - `payment_failed` — Stripe webhook payment failure handling (`backend/app/api/routes_payments.py::_handle_invoice_event`)
