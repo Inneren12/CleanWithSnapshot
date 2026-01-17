@@ -557,6 +557,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Deleting a category **preserves** items (category_id set to NULL)
 - FK constraint: `ondelete="SET NULL"`
 - ORM relationship: `passive_deletes=True`, no `delete-orphan`
+- Deleting categories retains items (category_id becomes NULL; FK ondelete=SET NULL).
+- SQLite tests require PRAGMA foreign_keys=ON; use shared fixtures.
 
 **Status:** Database schema complete, API/UI pending
 
