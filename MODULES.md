@@ -560,6 +560,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Permissions Required:**
 - `inventory.view` or `core.view` - List and view categories/items
 - `inventory.manage` or `admin.manage` - Create, update, delete categories/items
+- `inventory.view` - Low stock list endpoint (`/v1/admin/inventory/low_stock`)
 
 **Expected Status Codes:**
 - `401` - Missing/invalid admin auth
@@ -586,6 +587,12 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - API: `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/items/*`
 - Service: `backend/app/domain/inventory/service.py` - `list_items()`, `create_item()`, `update_item()`, `delete_item()`
 - Models: `backend/app/domain/inventory/db_models.py` - `InventoryItem`
+
+#### Low Stock Monitoring
+- API: `backend/app/api/routes_admin_inventory.py` - `/v1/admin/inventory/low_stock`
+- Service: `backend/app/domain/inventory/service.py` - `list_low_stock_items()`
+- Semantics: `need_qty = max(0, min_qty - current_qty)` with ordering by `need_qty` desc, then `name` asc
+- Default filter: `only_below_min=true` returns items where `current_qty < min_qty`
 
 #### Search and Pagination
 - Implement in service layer using SQLAlchemy filters
