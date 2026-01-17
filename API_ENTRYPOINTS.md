@@ -945,6 +945,7 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
 | GET | `/v1/admin/finance/expenses/summary` | `finance.view` | Totals by category with budget utilization |
 | GET | `/v1/admin/finance/pnl` | `finance.view` | Profit & Loss report (revenue vs expenses) |
 | GET | `/v1/admin/finance/cashflow` | `finance.view` | Cashflow report (payments vs expenses) |
+| GET | `/v1/admin/finance/balance_sheet` | `finance.view` | Balance sheet (simplified, as-of date) |
 | GET | `/v1/admin/finance/cash_snapshots` | `finance.view` | List cash snapshots |
 | POST | `/v1/admin/finance/cash_snapshots` | `finance.manage` | Create cash snapshot |
 | PATCH | `/v1/admin/finance/cash_snapshots/{snapshot_id}` | `finance.manage` | Update cash snapshot |
@@ -979,6 +980,8 @@ curl https://api.panidobro.com/v1/admin/ui/invoices/abc-123 \
 **P&L query params:** `from`, `to` (required), optional `format=csv`.
 
 **Cashflow query params:** `from`, `to` (required).
+
+**Balance sheet query params:** `as_of` (required, `YYYY-MM-DD`).
 
 **Cash snapshot query params:** `from`, `to` (optional).
 

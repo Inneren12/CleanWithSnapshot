@@ -420,6 +420,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `web/app/admin/finance/budgets/page.tsx` - Monthly budgets (`/admin/finance/budgets`)
 - `web/app/admin/finance/pnl/page.tsx` - Profit & Loss report (`/admin/finance/pnl`)
 - `web/app/admin/finance/cashflow/page.tsx` - Cashflow report (`/admin/finance/cashflow`)
+- `web/app/admin/finance/balance-sheet/page.tsx` - Balance sheet (simplified) (`/admin/finance/balance-sheet`)
 
 **Backend Routers:**
 - `backend/app/api/routes_admin_finance.py` - Expense categories, expenses, budgets, P&L, cashflow, snapshots, summary
