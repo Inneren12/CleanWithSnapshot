@@ -224,3 +224,67 @@ async def test_signed_photo_urls_are_org_scoped(client, async_session_maker, org
     assert stored_files, "file should be stored under the org namespace"
 
     settings.default_org_id = original_default_org
+
+
+@pytest.mark.anyio
+async def test_admin_photo_signed_url_scoped(client, async_session_maker, orgs, admin_credentials, upload_root):
+    org_a, org_b = orgs
+    original_default_org = settings.default_org_id
+    settings.default_org_id = org_a
+
+    async with async_session_maker() as session:
+        lead = Lead(
+            org_id=org_a,
+            name="Admin Photo Lead",
+            phone="780-555-3333",
+            email="admin-photo@example.com",
+            postal_code="T5A",
+            address="11 Lens Ave",
+            preferred_dates=["Thu"],
+            structured_inputs={"beds": 1, "baths": 1, "cleaning_type": "standard"},
+            estimate_snapshot={
+                "price_cents": 4500,
+                "subtotal_cents": 4500,
+                "tax_cents": 0,
+                "pricing_config_version": "v1",
+                "config_hash": "hash",
+                "line_items": [],
+            },
+            pricing_config_version="v1",
+            config_hash="hash",
+        )
+        booking = Booking(
+            org_id=org_a,
+            team_id=1,
+            lead_id=lead.lead_id,
+            starts_at=datetime.now(tz=timezone.utc) + timedelta(hours=3),
+            duration_minutes=90,
+            status="CONFIRMED",
+            consent_photos=True,
+        )
+        session.add_all([lead, booking])
+        await session.commit()
+        booking_id = booking.booking_id
+
+    upload = client.post(
+        f"/v1/orders/{booking_id}/photos",
+        data={"phase": "AFTER"},
+        files={"file": ("after.jpg", b"hello-image", "image/jpeg")},
+        headers=_auth_headers("admin", "secret", org_a),
+    )
+    assert upload.status_code == 201
+    photo_id = upload.json()["photo_id"]
+
+    cross_org = client.get(
+        f"/v1/admin/photos/{photo_id}/signed_url",
+        headers=_auth_headers("admin", "secret", org_b),
+    )
+    assert cross_org.status_code == 404
+
+    allowed = client.get(
+        f"/v1/admin/photos/{photo_id}/signed_url",
+        headers=_auth_headers("admin", "secret", org_a),
+    )
+    assert allowed.status_code == 200
+
+    settings.default_org_id = original_default_org

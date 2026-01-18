@@ -2,19 +2,25 @@ from __future__ import annotations
 
 from html import escape
 import logging
+import time
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.photo_tokens import verify_photo_download_token
+from app.domain.bookings import photos_service
 from app.domain.bookings.db_models import Booking
 from app.domain.clients.db_models import ClientUser
 from app.domain.documents import service as document_service
+from app.domain.feature_modules import service as feature_service
 from app.domain.invoices import schemas as invoice_schemas, service as invoice_service, statuses as invoice_statuses
 from app.domain.nps import service as nps_service
 from app.domain.notifications import email_service
+from app.domain.quality import service as quality_service
 from app.infra.db import get_db_session
 from app.infra.email import resolve_app_email_adapter
+from app.infra.storage import resolve_storage_backend
 from app.infra import stripe as stripe_infra
 from app.settings import settings
 
@@ -32,6 +38,64 @@ async def public_root() -> JSONResponse:
             "admin": "/v1/admin",
         }
     )
+
+
+@router.get("/photos/{token}", name="public_photo_download", include_in_schema=False)
+async def public_photo_download(
+    token: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    claims = await verify_photo_download_token(token, user_agent=request.headers.get("user-agent"))
+    storage = resolve_storage_backend(request.app.state)
+    ttl = min(settings.photo_url_ttl_seconds, max(claims.exp - int(time.time()), 1))
+
+    if claims.resource_type == "booking_photo":
+        enabled = await feature_service.effective_feature_enabled(
+            session, claims.org_id, "quality.photo_evidence"
+        )
+        if not enabled:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+        booking_photo = await quality_service.get_booking_photo(
+            session, org_id=claims.org_id, photo_id=claims.photo_id
+        )
+        if booking_photo.booking_id != claims.order_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+        if not booking_photo.consent:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Photo consent not granted")
+        key = booking_photo.storage_key
+        content_type = booking_photo.mime
+        filename = booking_photo.photo_id
+    else:
+        photo = await photos_service.get_photo(session, claims.order_id, claims.photo_id, claims.org_id)
+        order = await photos_service.fetch_order(session, claims.order_id, claims.org_id)
+        if not order.consent_photos:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Photo consent not granted")
+        key = photos_service.storage_key_for_photo(photo, claims.org_id)
+        content_type = photo.content_type
+        filename = photo.original_filename or photo.filename
+
+    if storage.supports_direct_io():
+        file_path = storage.path_for(key) if hasattr(storage, "path_for") else None
+        if not file_path or not file_path.exists():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File missing")
+        response = FileResponse(path=file_path, media_type=content_type, filename=filename)
+    else:
+        signed_url = await storage.generate_signed_get_url(
+            key=key,
+            expires_in=ttl,
+            resource_url=str(request.url),
+            variant=claims.variant,
+        )
+        response = RedirectResponse(
+            url=signed_url, status_code=settings.photo_download_redirect_status
+        )
+
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 def _stripe_client(request: Request):

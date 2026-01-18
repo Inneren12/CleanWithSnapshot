@@ -219,6 +219,18 @@ async def get_photo(
     return photo
 
 
+async def find_photo_by_id(
+    session: AsyncSession, photo_id: str, org_id: uuid.UUID | None = None
+) -> OrderPhoto | None:
+    target_org = org_id or settings.default_org_id
+    stmt = select(OrderPhoto).where(
+        OrderPhoto.photo_id == photo_id,
+        OrderPhoto.org_id == target_org,
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def delete_photo(
     session: AsyncSession,
     order_id: str,
@@ -343,5 +355,4 @@ async def _mark_tombstone_processed(
     tombstone.processed_at = datetime.now(timezone.utc)
     tombstone.last_error = None
     await session.commit()
-
 

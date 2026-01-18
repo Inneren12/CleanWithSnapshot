@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.api import entitlements
 from app.api.idempotency import enforce_org_action_rate_limit, require_idempotency
 from app.api.problem_details import problem_details
+from app.api.photo_tokens import build_public_photo_response, build_signed_photo_response, normalize_variant
 from app.api.admin_auth import (
     AdminIdentity,
     AdminPermission,
@@ -67,6 +68,7 @@ from app.domain.analytics.service import (
 )
 from app.dependencies import get_db_session
 from app.infra.db import get_session_factory
+from app.infra.storage import resolve_storage_backend
 from app.infra.org_context import org_id_context
 from app.domain.bookings.db_models import (
     AvailabilityBlock,
@@ -110,6 +112,7 @@ from app.domain.chat_threads import service as chat_service
 from app.domain.chat_threads.service import PARTICIPANT_ADMIN
 from app.domain.dashboard import schemas as dashboard_schemas
 from app.domain.dashboard import weather_traffic as dashboard_weather_traffic
+from app.domain.feature_modules import service as feature_service
 from app.domain.message_templates import service as message_template_service
 from app.domain.disputes.db_models import Dispute, FinancialAdjustmentEvent
 from app.domain.documents import service as document_service
@@ -3726,6 +3729,56 @@ async def list_quality_photo_evidence(
         for photo, assigned_worker_id, has_issue_flag in rows
     ]
     return quality_schemas.QualityPhotoEvidenceListResponse(items=items, total=len(items))
+
+
+@router.get(
+    "/v1/admin/photos/{photo_id}/signed_url",
+    response_model=booking_schemas.SignedUrlResponse,
+)
+async def admin_photo_signed_url(
+    photo_id: str,
+    request: Request,
+    variant: str | None = Query(None),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> booking_schemas.SignedUrlResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    normalized_variant = normalize_variant(variant)
+    storage = resolve_storage_backend(request.app.state)
+
+    photo = await photos_service.find_photo_by_id(session, photo_id, org_id)
+    if photo is not None:
+        order = await photos_service.fetch_order(session, photo.order_id, org_id)
+        if not order.consent_photos:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Photo consent not granted")
+        return await build_signed_photo_response(
+            photo, request, storage, org_id, variant=normalized_variant
+        )
+
+    enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "quality.photo_evidence"
+    )
+    if not enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    permission_keys = permission_keys_for_request(request, identity)
+    if "quality.view" not in permission_keys:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    booking_photo = await quality_service.get_booking_photo(
+        session, org_id=org_id, photo_id=photo_id
+    )
+    if not booking_photo.consent:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Photo consent not granted")
+
+    return build_public_photo_response(
+        request=request,
+        org_id=org_id,
+        order_id=booking_photo.booking_id,
+        photo_id=booking_photo.photo_id,
+        variant=normalized_variant,
+        resource_type="booking_photo",
+    )
 
 
 @router.get(

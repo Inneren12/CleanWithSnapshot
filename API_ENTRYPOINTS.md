@@ -681,6 +681,7 @@ Schedules: `daily`, `weekly`, `monthly`.
 | GET | `/v1/admin/quality/issues/common` | `quality.view` | Common issue tags analytics with affected workers (`from`/`to` date range, defaults to last 30 days) |
 | GET | `/v1/admin/quality/reviews` | `quality.view` | List client reviews with filters (`stars`, `from`, `to`, `worker_id`, `client_id`, `has_issue`, `page`) |
 | GET | `/v1/admin/quality/photos` | `quality.view` + `quality.photo_evidence` | List booking photo evidence metadata (`from`, `to`, `worker_id`, `has_issue`) |
+| GET | `/v1/admin/photos/{photo_id}/signed_url` | `dispatch` (order photos) or `quality.view` (booking evidence) | Issue a short-lived signed URL for an order/booking photo (org-scoped, consent required; booking evidence requires `quality.photo_evidence`) |
 | GET | `/v1/admin/quality/ratings/distribution` | `quality.view` | Rating distribution for a period (`from`, `to`, defaults to current month) |
 | GET | `/v1/admin/quality/services/breakdown` | `quality.view` | Service-type quality breakdown (`from`, `to` date range, defaults to current month) |
 | GET | `/v1/admin/quality/workers/leaderboard` | `quality.view` | Worker quality leaderboard (`from`, `to`, `include_trend`) |
@@ -1589,6 +1590,7 @@ curl https://api.panidobro.com/v1/worker/jobs \
 | POST | `/v1/public/leads` | Submit lead |
 | GET | `/v1/public/settings` | Public configuration |
 | GET | `/v1/public/invoices/{token}` | View invoice (public link) |
+| GET | `/v1/public/photos/{token}` | Fetch signed photo download (time-limited, org-scoped, consent required) |
 
 **Example:**
 
