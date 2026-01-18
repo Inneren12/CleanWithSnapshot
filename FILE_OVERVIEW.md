@@ -427,6 +427,8 @@ web/app/
 | `web/app/admin/dashboard/ops/page.tsx` | **Ops dashboard** |
 | `web/app/admin/schedule/page.tsx` | **Schedule view** |
 | `web/app/admin/leads/page.tsx` | **Lead pipeline list** |
+| `web/app/admin/leads/nurture/page.tsx` | **Lead nurture campaigns list** |
+| `web/app/admin/leads/nurture/[campaign_id]/page.tsx` | **Lead nurture campaign steps editor** |
 | `web/app/admin/invoices/page.tsx` | **Invoice list + overdue alerts** |
 | `web/app/admin/invoices/[id]/page.tsx` | **Invoice detail** |
 | `web/app/admin/inventory/page.tsx` | **Inventory items list** |
