@@ -844,6 +844,11 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Export sync updates existing events when the booking hash changes; unchanged bookings are skipped.
 - Export sync never deletes remote events (manual sync is create/update only).
 
+**QuickBooks Invoice Push Idempotency Rules:**
+- `accounting_invoice_map` stores `local_invoice_id` → `remote_invoice_id` plus `last_pushed_hash`.
+- Invoice push only includes `SENT`, `PARTIAL`, and `OVERDUE` invoices; drafts are skipped.
+- Push updates existing remote invoices when the payload hash changes; unchanged invoices are skipped.
+
 **GCal Job Gating Rules:**
 - `gcal-sync` uses `integrations_gcal_sync_state` to track `sync_cursor` + `last_sync_at`.
 - Each run is gated: skip when `now - last_sync_at < GCAL_SYNC_INTERVAL_SECONDS`.

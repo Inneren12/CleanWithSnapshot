@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -119,3 +119,20 @@ class QboConnectCallbackRequest(BaseModel):
 class QboConnectCallbackResponse(BaseModel):
     connected: bool
     realm_id: str | None = None
+
+
+class QboInvoicePushResponse(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    from_utc: date = Field(alias="from")
+    to_utc: date = Field(alias="to")
+    created: int
+    updated: int
+    skipped: int
+    total: int
+
+
+class QboInvoicePushItemResponse(BaseModel):
+    invoice_id: str
+    remote_invoice_id: str | None = None
+    action: str

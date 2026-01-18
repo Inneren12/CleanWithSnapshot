@@ -157,6 +157,105 @@ async def disconnect_quickbooks(
     return integrations_schemas.QboConnectCallbackResponse(connected=False, realm_id=None)
 
 
+@router.post(
+    "/v1/admin/integrations/accounting/quickbooks/push",
+    response_model=integrations_schemas.QboInvoicePushResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def push_quickbooks_invoices(
+    request: Request,
+    from_date: datetime = Query(..., alias="from"),
+    to_date: datetime = Query(..., alias="to"),
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.FINANCE)),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.QboInvoicePushResponse:
+    await _require_quickbooks_enabled(session, org_id)
+    if not qbo_service.oauth_configured():
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks OAuth Not Configured",
+            detail="Missing QuickBooks OAuth configuration.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    if from_date.tzinfo is None:
+        from_date = from_date.replace(tzinfo=timezone.utc)
+    if to_date.tzinfo is None:
+        to_date = to_date.replace(tzinfo=timezone.utc)
+    try:
+        result = await qbo_service.push_invoices_to_qbo(
+            session,
+            org_id,
+            from_date=from_date.date(),
+            to_date=to_date.date(),
+        )
+    except ValueError as exc:
+        await qbo_service.record_sync_error(session, org_id, str(exc))
+        await session.commit()
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks Invoice Push Failed",
+            detail=str(exc),
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    await session.commit()
+    return integrations_schemas.QboInvoicePushResponse(
+        from_utc=result.from_date,
+        to_utc=result.to_date,
+        created=result.created,
+        updated=result.updated,
+        skipped=result.skipped,
+        total=result.total,
+    )
+
+
+@router.post(
+    "/v1/admin/integrations/accounting/quickbooks/push/{invoice_id}",
+    response_model=integrations_schemas.QboInvoicePushItemResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def push_quickbooks_invoice(
+    invoice_id: str,
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.FINANCE)),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.QboInvoicePushItemResponse:
+    await _require_quickbooks_enabled(session, org_id)
+    if not qbo_service.oauth_configured():
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks OAuth Not Configured",
+            detail="Missing QuickBooks OAuth configuration.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    try:
+        result = await qbo_service.push_invoice_to_qbo(
+            session,
+            org_id,
+            invoice_id=invoice_id,
+        )
+    except ValueError as exc:
+        await qbo_service.record_sync_error(session, org_id, str(exc))
+        await session.commit()
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks Invoice Push Failed",
+            detail=str(exc),
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    await session.commit()
+    return integrations_schemas.QboInvoicePushItemResponse(
+        invoice_id=result.invoice_id,
+        remote_invoice_id=result.remote_invoice_id,
+        action=result.action,
+    )
+
+
 @router.get(
     "/v1/admin/integrations/google/status",
     response_model=integrations_schemas.GcalIntegrationStatus,
