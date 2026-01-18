@@ -156,13 +156,23 @@ jobs:
         run: python -m pip install bandit==1.7.9 --no-cache-dir
 
       - name: Run Bandit (high severity)
-        run: bandit -r backend/app -ll --severity-level high -f json -o bandit-report.json
+        run: |
+          set -o pipefail
+          bandit -r backend/app --severity-level high -f json -o bandit-report.json 2>&1 | tee bandit.log
+          status=${PIPESTATUS[0]}
+          if [ ! -f bandit-report.json ]; then
+            echo '{"error":"bandit failed. See bandit.log"}' > bandit-report.json
+          fi
+          exit "$status"
 
       - name: Upload Bandit report
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: bandit-report
-          path: bandit-report.json
+          path: |
+            bandit-report.json
+            bandit.log
 
   infra:
     name: Infrastructure - Validation
