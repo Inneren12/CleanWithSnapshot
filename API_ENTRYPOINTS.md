@@ -1303,6 +1303,8 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 | POST | `/v1/admin/integrations/accounting/quickbooks/connect/start` | `settings.manage` (owner) | Start OAuth connect (returns auth URL) |
 | POST | `/v1/admin/integrations/accounting/quickbooks/connect/callback` | `settings.manage` (owner) | Exchange auth code for refresh token |
 | POST | `/v1/admin/integrations/accounting/quickbooks/disconnect` | `settings.manage` (owner) | Disconnect account |
+| POST | `/v1/admin/integrations/accounting/quickbooks/push?from=&to=` | `finance` (finance/admin/owner) | Push invoice updates to QuickBooks |
+| POST | `/v1/admin/integrations/accounting/quickbooks/push/{invoice_id}` | `finance` (finance/admin/owner) | Push a single invoice to QuickBooks |
 
 **Export Sync**
 - **Endpoint:** `POST /v1/admin/integrations/google/gcal/export_sync`
@@ -1320,6 +1322,24 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
   "updated": 1,
   "skipped": 5,
   "total": 9
+}
+```
+
+**QuickBooks Invoice Push**
+- **Endpoint:** `POST /v1/admin/integrations/accounting/quickbooks/push`
+- **Query Params:** `from` and `to` (ISO-8601 datetimes; date portion used to filter invoice issue dates)
+- **Behavior:** Pushes `SENT`, `PARTIAL`, and `OVERDUE` invoices to QuickBooks Online.
+- **Idempotency:** Uses `accounting_invoice_map.last_pushed_hash` to skip unchanged invoices.
+- **Response payload:**
+
+```json
+{
+  "from": "2024-08-01",
+  "to": "2024-08-08",
+  "created": 1,
+  "updated": 2,
+  "skipped": 4,
+  "total": 7
 }
 ```
 
