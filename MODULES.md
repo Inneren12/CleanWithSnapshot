@@ -566,6 +566,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Key Services:**
 - `backend/app/domain/leads/service.py` - Lead CRUD, status management, quote helpers
+- `backend/app/domain/leads_nurture/runner.py` - Nurture runner gating (quiet hours, opt-out, provider checks)
+- `backend/app/jobs/leads_nurture_runner.py` - Scheduled job wrapper for due step logs
 
 **Key Tables:**
 - `leads` - Lead records (status, loss reason, attribution fields, notes)

@@ -200,6 +200,37 @@ python -m app.jobs.run --job qbo-sync --once
 
 ---
 
+### Lead nurture runner (leads-nurture-runner)
+
+Processes due nurture step logs (planned/scheduled lead follow-ups) with strict gating.
+
+**Run locally (one-shot):**
+
+```bash
+cd backend
+python -m app.jobs.run --job leads-nurture-runner --once
+```
+
+**Environment variables:**
+- `LEADS_NURTURE_RUNNER_BATCH_SIZE` (max due logs per run, default 50)
+- `LEADS_NURTURE_RUNNER_LOOKBACK_HOURS` (planned_at lookback window, default 168)
+
+**Feature gating:**
+- Requires org feature overrides: `module.leads` + `leads.nurture` (both disabled by default).
+
+**Quiet hours:**
+- Uses org settings timezone + `business_hours` windows.
+- Steps are deferred to the next business-hour start when quiet hours are active.
+
+**Provider safety:**
+- If email/SMS providers are disabled or unconfigured, the runner logs the step as `skipped`
+  instead of crashing.
+
+**Safe cadence:**
+- Can run every minute; selection is windowed on `planned_at <= now` and the lookback window.
+
+---
+
 ## Finance tax exports
 
 Finance tax exports are generated on-demand as ZIP bundles of CSV files for GST reporting (summary, payments,
