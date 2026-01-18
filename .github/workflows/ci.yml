@@ -44,20 +44,18 @@ jobs:
         continue-on-error: true
         run: |
           python -m pip install pip-audit==2.7.3 --no-cache-dir
-          set +e
           set -o pipefail
           pushd backend >/dev/null
           pip-audit -r requirements.txt -f json -o ../pip-audit.json 2>&1 | tee ../pip-audit.log
-          EC=${PIPESTATUS[0]}
-          set -e
+          RC=${PIPESTATUS[0]}
           popd >/dev/null
           if [ ! -f pip-audit.json ]; then
-            printf '{"error":"pip-audit failed before producing json. See pip-audit.log","exit_code":%s}\n' "${EC}" > pip-audit.json
+            echo '{"error":"pip-audit failed before producing json. See pip-audit.log"}' > pip-audit.json
             echo "exit_code=2" >> "$GITHUB_OUTPUT"
             exit 2
           fi
-          echo "exit_code=$EC" >> "$GITHUB_OUTPUT"
-          exit "${EC}"
+          echo "exit_code=$RC" >> "$GITHUB_OUTPUT"
+          exit "$RC"
 
       - name: Upload pip-audit report
         if: always()
