@@ -10,7 +10,7 @@ from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, requir
 from app.api.org_context import require_org_context
 from app.api.problem_details import PROBLEM_TYPE_DOMAIN, problem_details
 from app.domain.feature_modules import service as feature_service
-from app.domain.integrations import gcal_service, schemas as integrations_schemas
+from app.domain.integrations import gcal_service, qbo_service, schemas as integrations_schemas
 from app.infra.db import get_db_session
 
 router = APIRouter(tags=["admin-integrations"])
@@ -34,6 +34,127 @@ async def _require_google_calendar_enabled(
     )
     if not (module_enabled and gcal_enabled):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Disabled by org settings")
+
+
+async def _require_quickbooks_enabled(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+) -> None:
+    module_enabled = await feature_service.effective_feature_enabled(session, org_id, "module.integrations")
+    qbo_enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "integrations.accounting.quickbooks"
+    )
+    if not (module_enabled and qbo_enabled):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Disabled by org settings")
+
+
+@router.get(
+    "/v1/admin/integrations/accounting/quickbooks/status",
+    response_model=integrations_schemas.QboIntegrationStatus,
+    status_code=status.HTTP_200_OK,
+)
+async def get_quickbooks_status(
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_viewer),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.QboIntegrationStatus:
+    await _require_quickbooks_enabled(session, org_id)
+    account = await qbo_service.get_account(session, org_id)
+    sync_state = await qbo_service.get_sync_state(session, org_id)
+    return integrations_schemas.QboIntegrationStatus(
+        connected=bool(account),
+        realm_id=account.realm_id if account else None,
+        oauth_configured=qbo_service.oauth_configured(),
+        last_sync_at=sync_state.last_sync_at if sync_state else None,
+        last_error=sync_state.last_error if sync_state else None,
+    )
+
+
+@router.post(
+    "/v1/admin/integrations/accounting/quickbooks/connect/start",
+    response_model=integrations_schemas.QboConnectStartResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def start_quickbooks_connect(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.QboConnectStartResponse:
+    await _require_quickbooks_enabled(session, org_id)
+    if not qbo_service.oauth_configured():
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks OAuth Not Configured",
+            detail="Missing QuickBooks OAuth configuration.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    auth_url = qbo_service.build_auth_url(state=str(org_id))
+    return integrations_schemas.QboConnectStartResponse(authorization_url=auth_url)
+
+
+@router.post(
+    "/v1/admin/integrations/accounting/quickbooks/connect/callback",
+    response_model=integrations_schemas.QboConnectCallbackResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def finish_quickbooks_connect(
+    payload: integrations_schemas.QboConnectCallbackRequest,
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.QboConnectCallbackResponse:
+    await _require_quickbooks_enabled(session, org_id)
+    if not qbo_service.oauth_configured():
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks OAuth Not Configured",
+            detail="Missing QuickBooks OAuth configuration.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    if payload.state and payload.state != str(org_id):
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks OAuth State Mismatch",
+            detail="OAuth state does not match organization.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    try:
+        refresh_token = await qbo_service.exchange_code_for_refresh_token(payload.code)
+    except ValueError:
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks OAuth Exchange Failed",
+            detail="Unable to exchange authorization code.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    await qbo_service.upsert_account(session, org_id, refresh_token, payload.realm_id)
+    await session.commit()
+    return integrations_schemas.QboConnectCallbackResponse(
+        connected=True,
+        realm_id=payload.realm_id,
+    )
+
+
+@router.post(
+    "/v1/admin/integrations/accounting/quickbooks/disconnect",
+    response_model=integrations_schemas.QboConnectCallbackResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def disconnect_quickbooks(
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.QboConnectCallbackResponse:
+    await _require_quickbooks_enabled(session, org_id)
+    await qbo_service.disconnect_quickbooks(session, org_id)
+    await session.commit()
+    return integrations_schemas.QboConnectCallbackResponse(connected=False, realm_id=None)
 
 
 @router.get(

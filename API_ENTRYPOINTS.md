@@ -1290,6 +1290,20 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 | POST | `/v1/admin/integrations/google/gcal/export_sync?from=&to=` | `dispatch` (dispatcher/admin/owner) | Manual export of bookings to Google Calendar |
 | POST | `/v1/admin/integrations/google/gcal/import_sync?from=&to=` | `dispatch` (dispatcher/admin/owner) | Import Google Calendar events into external blocks |
 
+---
+
+### Integrations (QuickBooks)
+
+**Path:** `/v1/admin/integrations/accounting/quickbooks/*`
+**File:** `backend/app/api/routes_admin_integrations.py`
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/integrations/accounting/quickbooks/status` | `settings.manage` (viewer) | Connection status |
+| POST | `/v1/admin/integrations/accounting/quickbooks/connect/start` | `settings.manage` (owner) | Start OAuth connect (returns auth URL) |
+| POST | `/v1/admin/integrations/accounting/quickbooks/connect/callback` | `settings.manage` (owner) | Exchange auth code for refresh token |
+| POST | `/v1/admin/integrations/accounting/quickbooks/disconnect` | `settings.manage` (owner) | Disconnect account |
+
 **Export Sync**
 - **Endpoint:** `POST /v1/admin/integrations/google/gcal/export_sync`
 - **Query Params:** `from` and `to` (ISO-8601 datetimes, inclusive range)

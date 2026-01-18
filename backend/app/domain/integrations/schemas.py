@@ -96,3 +96,26 @@ class ExternalBlockResponse(BaseModel):
     starts_at: datetime
     ends_at: datetime
     summary: str | None = None
+
+
+class QboIntegrationStatus(BaseModel):
+    connected: bool
+    realm_id: str | None = None
+    oauth_configured: bool
+    last_sync_at: datetime | None = None
+    last_error: str | None = None
+
+
+class QboConnectStartResponse(BaseModel):
+    authorization_url: str
+
+
+class QboConnectCallbackRequest(BaseModel):
+    code: str
+    realm_id: str
+    state: str | None = None
+
+
+class QboConnectCallbackResponse(BaseModel):
+    connected: bool
+    realm_id: str | None = None
