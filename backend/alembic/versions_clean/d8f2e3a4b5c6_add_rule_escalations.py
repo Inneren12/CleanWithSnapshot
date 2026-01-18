@@ -1,7 +1,7 @@
 """add rule escalation policies and cooldown tracking
 
 Revision ID: d8f2e3a4b5c6
-Revises: 46874b82319f
+Revises: e3f4a5b6c7d8
 Create Date: 2026-02-20 10:15:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 UUID_TYPE = sa.Uuid(as_uuid=True)
 
 revision = "d8f2e3a4b5c6"
-down_revision = "46874b82319f"
+down_revision = "e3f4a5b6c7d8"
 branch_labels = None
 depends_on = None
 
