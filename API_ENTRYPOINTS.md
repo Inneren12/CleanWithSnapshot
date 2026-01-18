@@ -576,6 +576,27 @@ Requires Owner basic auth (role check).
 }
 ```
 
+#### Rules Builder (Owner-only)
+
+`GET /v1/admin/rules` lists rules for the current org.
+`POST /v1/admin/rules` creates a rule (defaults `dry_run=true`).
+`GET /v1/admin/rules/{rule_id}` fetches a rule.
+`PATCH /v1/admin/rules/{rule_id}` updates a rule.
+`DELETE /v1/admin/rules/{rule_id}` deletes a rule.
+`GET /v1/admin/rules/runs?rule_id={rule_id}` lists evaluation runs for a rule.
+`POST /v1/admin/rules/test` evaluates a rule against a sample payload (no side effects; dry-run by default).
+
+Feature gates: `module.notifications_center` + `notifications.rules_builder`.
+
+```json
+{
+  "rule_id": "b34f6dd1-4cb6-4af9-a18a-900bd3d5d7d0",
+  "matched": true,
+  "dry_run": true,
+  "actions_json": []
+}
+```
+
 #### Notification Digests (Owner-only)
 
 `GET /v1/admin/notifications/digests` returns digest settings (daily/weekly/monthly).
