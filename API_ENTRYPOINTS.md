@@ -172,6 +172,7 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | GET | `/v1/admin/ui/dashboard` | `core.view` | Dashboard KPIs |
 | GET | `/v1/admin/dashboard/ops` | `core.view` + `module.dashboard` | Ops dashboard aggregates (org TZ windows) |
 | GET | `/v1/admin/activity` | `core.view` + `module.dashboard` | Live activity feed (polling) |
+| GET | `/v1/admin/context/weather_traffic` | `core.view` + `module.dashboard` + `dashboard.weather_traffic` | Weather + traffic widget payload (org TZ, cached) |
 
 ### Leads
 

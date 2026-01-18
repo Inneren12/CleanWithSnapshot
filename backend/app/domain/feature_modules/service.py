@@ -30,6 +30,7 @@ MODULE_KEYS = [
 
 SUBFEATURE_KEYS = [
     "dashboard.weather",
+    "dashboard.weather_traffic",
     "schedule.optimization_ai",
     "schedule.optimization",
     "finance.reports",
@@ -56,6 +57,7 @@ SUBFEATURE_KEYS = [
 FEATURE_KEYS = MODULE_KEYS + SUBFEATURE_KEYS
 
 DEFAULT_DISABLED_KEYS = {
+    "dashboard.weather_traffic",
     "training.library",
     "training.quizzes",
     "training.certs",

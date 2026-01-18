@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     google_maps_api_key: str | None = Field(None)
     maps_monthly_quota_limit: int = Field(10000)
     maps_requests_per_minute: int = Field(30)
+    weather_traffic_mode: Literal["off", "open_meteo"] = Field("off")
     google_oauth_client_id: str | None = Field(None)
     google_oauth_client_secret: str | None = Field(None)
     google_oauth_redirect_uri: str | None = Field(None)

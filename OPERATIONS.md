@@ -322,6 +322,18 @@ MAPS_REQUESTS_PER_MINUTE="30"     # per-org rate limit
 - Track usage via `GET /v1/admin/maps/quota` (owner/admin), and validate the key via
   `POST /v1/admin/maps/test_key` (owner only).
 
+### Weather + Traffic Widget (Open-Meteo)
+
+Controls the ops dashboard weather/traffic widget provider:
+
+```bash
+WEATHER_TRAFFIC_MODE="off"  # off | open_meteo
+```
+
+**Runbook:**
+- When set to `off`, `/v1/admin/context/weather_traffic` returns empty payloads with a warning flag.
+- When set to `open_meteo`, weather data is fetched from Open-Meteo and cached in memory for 15 minutes.
+
 **Optional variables:**
 
 ```bash
