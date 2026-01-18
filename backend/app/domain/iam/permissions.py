@@ -71,6 +71,18 @@ PERMISSION_CATALOG: list[PermissionDefinition] = [
         group="contacts",
     ),
     PermissionDefinition(
+        key="leads.view",
+        label="View leads",
+        description="Read access to lead nurture data.",
+        group="leads",
+    ),
+    PermissionDefinition(
+        key="leads.manage",
+        label="Manage leads",
+        description="Manage lead nurture campaigns and enrollments.",
+        group="leads",
+    ),
+    PermissionDefinition(
         key="quality.view",
         label="View quality issues",
         description="Read quality issue triage and issue details.",

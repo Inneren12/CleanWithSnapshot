@@ -47,6 +47,7 @@ SUBFEATURE_KEYS = [
     "integrations.accounting.quickbooks",
     "integrations.maps",
     "notifications.rules_builder",
+    "leads.nurture",
 ]
 
 FEATURE_KEYS = MODULE_KEYS + SUBFEATURE_KEYS
@@ -56,10 +57,12 @@ DEFAULT_DISABLED_KEYS = {
     "training.quizzes",
     "training.certs",
     "module.integrations",
+    "module.leads",
     "integrations.google_calendar",
     "integrations.accounting.quickbooks",
     "integrations.maps",
     "notifications.rules_builder",
+    "leads.nurture",
 }
 
 MODULE_PERMISSIONS: dict[str, str] = {

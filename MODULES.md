@@ -53,6 +53,12 @@ integrations.maps  # Google Maps distance matrix + quota dashboard (feature gate
 notifications_center.rules_builder   # Rules builder + rule evaluation (feature gated)
 ```
 
+**Leads subfeatures:**
+
+```
+leads.nurture   # Lead nurture campaigns, steps, enrollments, and logs (feature gated)
+```
+
 **Configuration:**
 - Backend: `backend/app/domain/feature_modules/service.py`
 - Frontend: `web/app/admin/lib/featureVisibility.ts`
@@ -556,6 +562,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/api/routes_leads.py` - `/v1/leads/*`
 - `backend/app/api/routes_public.py` - `/v1/public/leads` (public submission)
 - `backend/app/api/routes_admin.py` - `/v1/admin/leads` (list, detail, update, timeline, quotes)
+- `backend/app/api/routes_admin_leads_nurture.py` - `/v1/admin/leads/nurture` (campaigns, steps, enrollments, planning)
 
 **Key Services:**
 - `backend/app/domain/leads/service.py` - Lead CRUD, status management, quote helpers
@@ -564,12 +571,19 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `leads` - Lead records (status, loss reason, attribution fields, notes)
 - `lead_quotes` - Lead quote log (amount, currency, service type, status, expiry, sent timestamp)
 - `lead_quote_followups` - Manual quote follow-up notes
+- `nurture_campaigns` - Lead nurture campaigns (org + key, enabled flag)
+- `nurture_steps` - Ordered nurture steps (delay_hours, channel, payload)
+- `nurture_enrollments` - Lead enrollments per campaign
+- `nurture_step_log` - Planned/queued nurture step log entries (idempotent)
 
 **Permissions Required:**
 - `contacts.view` - View leads
 - `contacts.edit` - Update leads
+- `leads.view` - View nurture campaigns, steps, and enrollments (optional)
+- `leads.manage` - Manage nurture campaigns, steps, enrollments, and planning (optional)
 
-**Feature Key:** `module.leads`
+**Feature Key:** `module.leads` (disabled by default)
+**Subfeature Key:** `leads.nurture` (disabled by default)
 
 ---
 
