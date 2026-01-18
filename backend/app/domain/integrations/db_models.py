@@ -154,3 +154,74 @@ class IntegrationsGcalEventMap(Base):
     )
 
     __table_args__ = (Index("ix_integrations_gcal_event_map_org_id", "org_id"),)
+
+
+class IntegrationsAccountingAccount(Base):
+    __tablename__ = "integrations_accounting_accounts"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        primary_key=True,
+        default=lambda: settings.default_org_id,
+    )
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    encrypted_refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
+    realm_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sa.func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (Index("ix_integrations_accounting_accounts_org_id", "org_id"),)
+
+
+class AccountingSyncState(Base):
+    __tablename__ = "accounting_sync_state"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        primary_key=True,
+        default=lambda: settings.default_org_id,
+    )
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    cursor: Mapped[str | None] = mapped_column(Text)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_accounting_sync_state_org_id", "org_id"),)
+
+
+class AccountingInvoiceMap(Base):
+    __tablename__ = "accounting_invoice_map"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        primary_key=True,
+        default=lambda: settings.default_org_id,
+    )
+    local_invoice_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("invoices.invoice_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    remote_invoice_id: Mapped[str] = mapped_column(Text, nullable=False)
+    last_pushed_hash: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_accounting_invoice_map_org_id", "org_id"),
+        sa.UniqueConstraint(
+            "org_id",
+            "remote_invoice_id",
+            name="uq_accounting_invoice_map_org_remote",
+        ),
+    )
