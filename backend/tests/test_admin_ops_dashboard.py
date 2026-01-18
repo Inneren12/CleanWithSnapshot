@@ -123,6 +123,11 @@ async def test_ops_dashboard_critical_alerts_reflect_notifications(async_session
         org = await saas_service.create_organization(session, "Ops Alert Org")
         owner = await saas_service.create_user(session, "ops-owner@org.com", "secret")
         membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await feature_service.upsert_org_feature_overrides(
+            session,
+            org.org_id,
+            {"module.notifications_center": True},
+        )
 
         alert_event = NotificationEvent(
             org_id=org.org_id,

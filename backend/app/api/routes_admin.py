@@ -220,6 +220,8 @@ from app.domain.subscriptions import service as subscription_service
 from app.domain.subscriptions.db_models import Subscription
 from app.domain.time_tracking.db_models import WorkTimeEntry
 from app.domain.admin_audit import service as audit_service
+from app.domain.rules import schemas as rules_schemas
+from app.domain.rules import service as rules_service
 from app.domain.workers.compliance import (
     CertificateSnapshot,
     ONBOARDING_CHECKLIST_FIELDS,
@@ -1322,6 +1324,189 @@ async def update_notification_rules(
     )
 
 
+def _rule_response(rule) -> rules_schemas.RuleResponse:
+    return rules_schemas.RuleResponse(
+        rule_id=rule.rule_id,
+        org_id=rule.org_id,
+        name=rule.name,
+        enabled=rule.enabled,
+        dry_run=rule.dry_run,
+        trigger_type=rule.trigger_type,
+        conditions_json=rule.conditions_json or {},
+        actions_json=rule.actions_json or [],
+        created_at=rule.created_at,
+    )
+
+
+def _rule_run_response(run) -> rules_schemas.RuleRunResponse:
+    return rules_schemas.RuleRunResponse(
+        run_id=run.run_id,
+        org_id=run.org_id,
+        rule_id=run.rule_id,
+        occurred_at=run.occurred_at,
+        entity_type=run.entity_type,
+        entity_id=run.entity_id,
+        matched=run.matched,
+        actions_json=run.actions_json or [],
+        idempotency_key=run.idempotency_key,
+        created_at=run.created_at,
+    )
+
+
+@router.get("/v1/admin/rules", response_model=list[rules_schemas.RuleResponse])
+async def list_rules(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> list[rules_schemas.RuleResponse] | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_rules_enabled(request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    rules = await rules_service.list_rules(session, org_id)
+    return [_rule_response(rule) for rule in rules]
+
+
+@router.post(
+    "/v1/admin/rules",
+    status_code=status.HTTP_201_CREATED,
+    response_model=rules_schemas.RuleResponse,
+)
+async def create_rule(
+    payload: rules_schemas.RuleCreate,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> rules_schemas.RuleResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_rules_enabled(request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    rule = await rules_service.create_rule(session, org_id, payload.model_dump())
+    await session.commit()
+    return _rule_response(rule)
+
+
+@router.get("/v1/admin/rules/{rule_id}", response_model=rules_schemas.RuleResponse)
+async def get_rule(
+    rule_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> rules_schemas.RuleResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_rules_enabled(request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    rule = await rules_service.get_rule(session, org_id, rule_id)
+    if not rule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    return _rule_response(rule)
+
+
+@router.patch("/v1/admin/rules/{rule_id}", response_model=rules_schemas.RuleResponse)
+async def update_rule(
+    rule_id: uuid.UUID,
+    payload: rules_schemas.RuleUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> rules_schemas.RuleResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_rules_enabled(request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    rule = await rules_service.get_rule(session, org_id, rule_id)
+    if not rule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    updated = await rules_service.update_rule(session, rule, payload.model_dump(exclude_unset=True))
+    await session.commit()
+    return _rule_response(updated)
+
+
+@router.delete("/v1/admin/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_rule(
+    rule_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_rules_enabled(request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    rule = await rules_service.get_rule(session, org_id, rule_id)
+    if not rule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    await rules_service.delete_rule(session, rule)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/v1/admin/rules/runs", response_model=list[rules_schemas.RuleRunResponse])
+async def list_rule_runs(
+    request: Request,
+    rule_id: uuid.UUID = Query(...),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(_require_owner),
+) -> list[rules_schemas.RuleRunResponse] | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_rules_enabled(request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    runs = await rules_service.list_rule_runs(session, org_id, rule_id)
+    return [_rule_run_response(run) for run in runs]
+
+
+@router.post("/v1/admin/rules/test", response_model=rules_schemas.RuleTestResponse)
+async def test_rule(
+    payload: rules_schemas.RuleTestRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(_require_owner),
+) -> rules_schemas.RuleTestResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_rules_enabled(request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    rule = await rules_service.get_rule(session, org_id, payload.rule_id)
+    if not rule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    run = await rules_service.evaluate_rule(
+        session,
+        org_id=org_id,
+        rule=rule,
+        payload=payload.payload,
+        trigger_type=payload.trigger_type,
+        occurred_at=payload.occurred_at,
+        entity_type=payload.entity_type,
+        entity_id=payload.entity_id,
+        idempotency_key=payload.idempotency_key,
+    )
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        org_id=org_id,
+        action="rules.evaluate",
+        resource_type="rule",
+        resource_id=str(rule.rule_id),
+        before={"payload": payload.payload, "trigger_type": payload.trigger_type},
+        after={
+            "run_id": str(run.run_id),
+            "matched": run.matched,
+            "dry_run": rule.dry_run,
+            "actions_json": run.actions_json,
+        },
+    )
+    await session.commit()
+    return rules_schemas.RuleTestResponse(
+        rule_id=rule.rule_id,
+        matched=run.matched,
+        dry_run=rule.dry_run,
+        actions_json=run.actions_json or [],
+    )
+
+
 @router.get(
     "/v1/admin/notifications/digests",
     response_model=notifications_digest_schemas.NotificationDigestSettingsResponse,
@@ -1582,6 +1767,23 @@ async def _require_dashboard_enabled(
 async def _require_teams_enabled(request: Request, session: AsyncSession, org_id: uuid.UUID):
     enabled = await feature_service.effective_feature_enabled(session, org_id, "module.teams")
     if not enabled:
+        return problem_details(
+            request=request,
+            status=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail="Disabled by org settings",
+        )
+    return None
+
+
+async def _require_rules_enabled(request: Request, session: AsyncSession, org_id: uuid.UUID):
+    module_enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "module.notifications_center"
+    )
+    rules_enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "notifications.rules_builder"
+    )
+    if not module_enabled or not rules_enabled:
         return problem_details(
             request=request,
             status=status.HTTP_403_FORBIDDEN,

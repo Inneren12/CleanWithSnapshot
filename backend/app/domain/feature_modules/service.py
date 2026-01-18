@@ -45,6 +45,7 @@ SUBFEATURE_KEYS = [
     "api.settings",
     "integrations.google_calendar",
     "integrations.accounting.quickbooks",
+    "notifications.rules_builder",
 ]
 
 FEATURE_KEYS = MODULE_KEYS + SUBFEATURE_KEYS
@@ -56,6 +57,7 @@ DEFAULT_DISABLED_KEYS = {
     "module.integrations",
     "integrations.google_calendar",
     "integrations.accounting.quickbooks",
+    "notifications.rules_builder",
 }
 
 MODULE_PERMISSIONS: dict[str, str] = {

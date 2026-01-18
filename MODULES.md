@@ -46,6 +46,12 @@ integrations.google_calendar  # Google Calendar OAuth + sync (feature gated)
 integrations.accounting.quickbooks  # QuickBooks Online sync (feature gated)
 ```
 
+**Notifications subfeatures:**
+
+```
+notifications.rules_builder   # Rules builder + rule evaluation (feature gated)
+```
+
 **Configuration:**
 - Backend: `backend/app/domain/feature_modules/service.py`
 - Frontend: `web/app/admin/lib/featureVisibility.ts`
@@ -756,6 +762,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Feature Key:** `module.notifications_center`
 
+**Feature Subkey:** `notifications.rules_builder`
+
 **Where to change:**
 - Feed filtering, cursor logic, and read tracking: `backend/app/domain/notifications_center/service.py`
 - Preset rules configuration + emission: `backend/app/domain/notifications_center/service.py`
@@ -763,7 +771,12 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Digest settings API (Owner-only): `backend/app/api/routes_admin.py`
 - Digest job runner: `backend/app/jobs/notifications_digests.py` + `backend/app/jobs/run.py`
 - Digest send gating state: `backend/app/domain/notifications_digests/service.py`
+- Rules builder CRUD + evaluations: `backend/app/api/routes_admin.py` + `backend/app/domain/rules/service.py`
 - Preset keys: `no_show`, `payment_failed`, `negative_review`, `low_stock`, `high_value_lead`
+- Notification triggers:
+   - `negative_review` — Admin client feedback with rating ≤ 2 emits one event per feedback.
+   - `low_stock` — Inventory item transitions from ok → low emits once; stays low does not re-emit until recovery.
+   - `payment_failed` — Stripe payment failure emits event alongside dunning outbox enqueue.
 - Trigger points:
   - `payment_failed` — Stripe webhook payment failure handling (`backend/app/api/routes_payments.py::_handle_invoice_event`)
   - `negative_review` — Admin-created feedback with rating <= 2 (`backend/app/api/routes_admin.py::admin_clients_add_feedback`)

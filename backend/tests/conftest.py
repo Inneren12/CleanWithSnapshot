@@ -74,6 +74,7 @@ from app.domain.ops import db_models as ops_db_models  # noqa: F401
 from app.domain.pricing_settings import db_models as pricing_settings_db_models  # noqa: F401
 from app.domain.marketing import db_models as marketing_db_models  # noqa: F401
 from app.domain.finance import db_models as finance_db_models  # noqa: F401
+from app.domain.rules import db_models as rules_db_models  # noqa: F401
 from app.infra.bot_store import InMemoryBotStore
 from app.infra.db import Base, get_db_session
 from app.infra.org_context import set_current_org_id

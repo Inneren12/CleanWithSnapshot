@@ -28,6 +28,7 @@ from app.domain.training import db_models as training_db_models  # noqa: F401
 from app.domain.inventory import db_models as inventory_db_models  # noqa: F401
 from app.domain.finance import db_models as finance_db_models  # noqa: F401
 from app.domain.integrations import db_models as integrations_db_models  # noqa: F401
+from app.domain.rules import db_models as rules_db_models  # noqa: F401
 from app.infra.db import Base
 from app.settings import settings
 
