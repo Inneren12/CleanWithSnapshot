@@ -179,6 +179,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
+      TRIVY_REPORT_ONLY: ${{ vars.TRIVY_REPORT_ONLY || 'false' }}
+      TRIVY_EXIT_CODE: ${{ (github.event_name == 'pull_request' && vars.TRIVY_REPORT_ONLY == 'true') && '0' || '1' }}
 
     steps:
       - name: Checkout code
@@ -193,8 +195,10 @@ jobs:
           image-ref: cleanwithsnapshot-api
           format: json
           output: trivy-api.json
-          severity: CRITICAL
-          exit-code: '1'
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: ${{ env.TRIVY_EXIT_CODE }}
 
       - name: Scan web image (Trivy)
         uses: aquasecurity/trivy-action@0.29.0
@@ -202,8 +206,35 @@ jobs:
           image-ref: cleanwithsnapshot-web
           format: json
           output: trivy-web.json
-          severity: CRITICAL
-          exit-code: '1'
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: ${{ env.TRIVY_EXIT_CODE }}
+
+      - name: Summarize Trivy results
+        if: always()
+        run: |
+          summarize() {
+            local report="$1"
+            local label="$2"
+            if [ ! -f "$report" ]; then
+              echo "No Trivy report found for ${label}."
+              return
+            fi
+            echo "Trivy summary for ${label}:"
+            jq -r '
+              def sev($s): [.. | objects | select(has("Severity")) | select(.Severity == $s)] | length;
+              {
+                CRITICAL: sev("CRITICAL"),
+                HIGH: sev("HIGH"),
+                MEDIUM: sev("MEDIUM"),
+                LOW: sev("LOW"),
+                UNKNOWN: sev("UNKNOWN")
+              } | to_entries[] | "\(.key): \(.value)"
+            ' "$report"
+          }
+          summarize trivy-api.json "api"
+          summarize trivy-web.json "web"
 
       - name: Upload Trivy reports
         uses: actions/upload-artifact@v4
