@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -147,3 +148,48 @@ class QboInvoicePullResponse(BaseModel):
     payments_recorded: int
     payments_skipped: int
     total: int
+
+
+class MapsCoordinate(BaseModel):
+    lat: float
+    lng: float
+
+
+class MapsDistanceMatrixRequest(BaseModel):
+    origins: list[MapsCoordinate]
+    destinations: list[MapsCoordinate]
+    depart_at: datetime | None = None
+    mode: Literal["driving", "walking", "bicycling", "transit"] = "driving"
+
+
+class MapsDistanceMatrixElement(BaseModel):
+    distance_km: float
+    duration_min: int
+    duration_in_traffic_min: int | None = None
+    provider: Literal["google", "heuristic"]
+
+
+class MapsDistanceMatrixResponse(BaseModel):
+    origins: list[MapsCoordinate]
+    destinations: list[MapsCoordinate]
+    matrix: list[list[MapsDistanceMatrixElement]]
+    provider: Literal["google", "heuristic"]
+    warning: str | None = None
+    cache_hit: bool
+    quota_applied: bool
+    elements_count: int
+
+
+class MapsQuotaResponse(BaseModel):
+    used: int
+    limit: int
+    remaining: int
+    month: str
+    key_configured: bool
+    percent_used: float | None = None
+
+
+class MapsKeyTestResponse(BaseModel):
+    key_configured: bool
+    valid: bool
+    message: str

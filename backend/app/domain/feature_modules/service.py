@@ -45,6 +45,7 @@ SUBFEATURE_KEYS = [
     "api.settings",
     "integrations.google_calendar",
     "integrations.accounting.quickbooks",
+    "integrations.maps",
     "notifications.rules_builder",
 ]
 
@@ -57,6 +58,7 @@ DEFAULT_DISABLED_KEYS = {
     "module.integrations",
     "integrations.google_calendar",
     "integrations.accounting.quickbooks",
+    "integrations.maps",
     "notifications.rules_builder",
 }
 

@@ -67,6 +67,21 @@ type QboConnectStartResponse = {
   authorization_url: string;
 };
 
+type MapsQuotaResponse = {
+  used: number;
+  limit: number;
+  remaining: number;
+  month: string;
+  key_configured: boolean;
+  percent_used?: number | null;
+};
+
+type MapsKeyTestResponse = {
+  key_configured: boolean;
+  valid: boolean;
+  message: string;
+};
+
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -100,9 +115,14 @@ export default function IntegrationsPage() {
   const [gcalError, setGcalError] = useState<string | null>(null);
   const [qboStatus, setQboStatus] = useState<QboIntegrationStatus | null>(null);
   const [qboError, setQboError] = useState<string | null>(null);
+  const [mapsQuota, setMapsQuota] = useState<MapsQuotaResponse | null>(null);
+  const [mapsError, setMapsError] = useState<string | null>(null);
+  const [mapsTestResult, setMapsTestResult] = useState<MapsKeyTestResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [gcalLoading, setGcalLoading] = useState(false);
   const [qboLoading, setQboLoading] = useState(false);
+  const [mapsLoading, setMapsLoading] = useState(false);
+  const [mapsTesting, setMapsTesting] = useState(false);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -124,6 +144,7 @@ export default function IntegrationsPage() {
   const qboVisible = visibilityReady
     ? isVisible("integrations.accounting.quickbooks", permissionKeys, featureOverrides, hiddenKeys)
     : true;
+  const mapsVisible = visibilityReady ? isVisible("integrations.maps", permissionKeys, featureOverrides, hiddenKeys) : true;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -274,6 +295,52 @@ export default function IntegrationsPage() {
     setQboLoading(false);
   }, [authHeaders, password, username]);
 
+  const loadMapsQuota = useCallback(async () => {
+    if (!username || !password) return;
+    setMapsError(null);
+    setMapsLoading(true);
+    const response = await fetch(`${API_BASE}/v1/admin/maps/quota`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as MapsQuotaResponse;
+      setMapsQuota(data);
+    } else if (response.status === 403) {
+      setMapsQuota(null);
+      setMapsError("Maps integration is disabled.");
+    } else {
+      setMapsQuota(null);
+      setMapsError("Failed to load Maps quota.");
+    }
+    setMapsLoading(false);
+  }, [authHeaders, password, username]);
+
+  const testMapsKey = useCallback(async () => {
+    if (!username || !password) return;
+    setMapsError(null);
+    setMapsTesting(true);
+    const response = await fetch(`${API_BASE}/v1/admin/maps/test_key`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+    if (response.ok) {
+      const data = (await response.json()) as MapsKeyTestResponse;
+      setMapsTestResult(data);
+      if (!data.valid) {
+        setMapsError(data.message === "missing_key" ? "Google Maps API key is missing." : "Key validation failed.");
+      } else {
+        setMapsError(null);
+      }
+      await loadMapsQuota();
+    } else if (response.status === 403) {
+      setMapsError("Owner access required to test the API key.");
+    } else {
+      setMapsError("Failed to test Maps API key.");
+    }
+    setMapsTesting(false);
+  }, [authHeaders, loadMapsQuota, password, username]);
+
   const startGcalConnect = useCallback(async () => {
     if (!username || !password) return;
     setGcalError(null);
@@ -376,6 +443,11 @@ export default function IntegrationsPage() {
   }, [loadQboStatus, qboVisible]);
 
   useEffect(() => {
+    if (!mapsVisible) return;
+    void loadMapsQuota();
+  }, [loadMapsQuota, mapsVisible]);
+
+  useEffect(() => {
     if (!username || !password) return;
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
@@ -440,6 +512,7 @@ export default function IntegrationsPage() {
   const email = integrations?.email;
   const gcal = gcalStatus;
   const qbo = qboStatus;
+  const maps = mapsQuota;
 
   const stripeBadge = stripe
     ? stripe.connected
@@ -466,6 +539,17 @@ export default function IntegrationsPage() {
       ? statusBadge("Connected", "confirmed")
       : statusBadge("Not connected", "cancelled")
     : statusBadge("Unknown", "pending");
+  const mapsBadge = maps
+    ? maps.key_configured
+      ? statusBadge("Configured", "confirmed")
+      : statusBadge("Not configured", "cancelled")
+    : statusBadge("Unknown", "pending");
+
+  const mapsUsageLabel = maps
+    ? maps.limit
+      ? `${maps.used} / ${maps.limit} elements`
+      : `${maps.used} elements (unlimited)`
+    : "—";
 
   return (
     <div className="admin-page">
@@ -484,14 +568,16 @@ export default function IntegrationsPage() {
           <p className="muted">Load admin credentials to view integration status.</p>
         ) : (
           <>
-            {!gcalVisible && !qboVisible ? (
+            {!gcalVisible && !qboVisible && !mapsVisible ? (
               <p className="alert alert-warning">Integrations are disabled for this organization.</p>
             ) : (
               <>
                 {gcalError ? <p className="alert alert-warning">{gcalError}</p> : null}
                 {qboError ? <p className="alert alert-warning">{qboError}</p> : null}
+                {mapsError ? <p className="alert alert-warning">{mapsError}</p> : null}
                 {gcalLoading ? <p className="muted">Loading Google Calendar status…</p> : null}
                 {qboLoading ? <p className="muted">Loading QuickBooks status…</p> : null}
+                {mapsLoading ? <p className="muted">Loading Maps quota…</p> : null}
                 <div className="settings-grid">
                   {gcalVisible ? (
                     <div className="settings-card">
@@ -617,6 +703,63 @@ export default function IntegrationsPage() {
                         <div className="muted small">
                           Required: <code>QUICKBOOKS_OAUTH_CLIENT_ID</code>,{" "}
                           <code>QUICKBOOKS_OAUTH_CLIENT_SECRET</code>, <code>QUICKBOOKS_OAUTH_REDIRECT_URI</code>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  {mapsVisible ? (
+                    <div className="settings-card">
+                      <div className="settings-card-header">
+                        <div>
+                          <strong>Maps</strong>
+                          <div className="muted small">Distance matrix estimates and quota</div>
+                        </div>
+                        {mapsBadge}
+                      </div>
+                      <div className="settings-card-body">
+                        <div className="settings-meta">
+                          <div>
+                            <div className="muted small">Key configured</div>
+                            <strong>{maps?.key_configured ? "Yes" : "No"}</strong>
+                          </div>
+                          <div>
+                            <div className="muted small">Quota usage</div>
+                            <strong>{mapsUsageLabel}</strong>
+                          </div>
+                        </div>
+                        <div className="settings-meta">
+                          <div>
+                            <div className="muted small">Remaining</div>
+                            <strong>{maps?.limit ? maps.remaining : "Unlimited"}</strong>
+                          </div>
+                          <div>
+                            <div className="muted small">Month</div>
+                            <strong>{maps?.month ?? "—"}</strong>
+                          </div>
+                        </div>
+                        <div className="settings-meta">
+                          <div>
+                            <div className="muted small">Percent used</div>
+                            <strong>{maps?.percent_used !== null && maps?.percent_used !== undefined ? `${maps.percent_used}%` : "—"}</strong>
+                          </div>
+                          <div>
+                            <div className="muted small">Last test</div>
+                            <strong>{mapsTestResult ? (mapsTestResult.valid ? "Valid" : "Invalid") : "—"}</strong>
+                          </div>
+                        </div>
+                        <div className="settings-actions">
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            onClick={testMapsKey}
+                            disabled={!isOwner || mapsTesting}
+                            title={!isOwner ? "Owner access required" : undefined}
+                          >
+                            {mapsTesting ? "Testing…" : "Test key"}
+                          </button>
+                        </div>
+                        <div className="muted small">
+                          Required: <code>GOOGLE_MAPS_API_KEY</code>
                         </div>
                       </div>
                     </div>

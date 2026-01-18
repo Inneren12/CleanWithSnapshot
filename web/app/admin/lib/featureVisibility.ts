@@ -115,7 +115,10 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
     key: "module.integrations",
     label: "Integrations",
     description: "Payments, messaging, and email providers.",
-    children: [{ key: "integrations.google_calendar", label: "Google Calendar" }],
+    children: [
+      { key: "integrations.google_calendar", label: "Google Calendar" },
+      { key: "integrations.maps", label: "Maps" },
+    ],
   },
   {
     key: "module.api",
@@ -135,6 +138,7 @@ const DEFAULT_DISABLED_KEYS = new Set<string>([
   "training.certs",
   "module.integrations",
   "integrations.google_calendar",
+  "integrations.maps",
   "notifications_center.rules_builder",
 ]);
 

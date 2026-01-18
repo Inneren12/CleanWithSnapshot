@@ -8,10 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, require_permissions, require_viewer
 from app.api.org_context import require_org_context
-from app.api.problem_details import PROBLEM_TYPE_DOMAIN, problem_details
+from app.api.problem_details import PROBLEM_TYPE_DOMAIN, PROBLEM_TYPE_RATE_LIMIT, problem_details
 from app.domain.feature_modules import service as feature_service
-from app.domain.integrations import gcal_service, qbo_service, schemas as integrations_schemas
+from app.domain.integrations import gcal_service, maps_service, qbo_service, schemas as integrations_schemas
 from app.infra.db import get_db_session
+from app.settings import settings
 
 router = APIRouter(tags=["admin-integrations"])
 
@@ -45,6 +46,16 @@ async def _require_quickbooks_enabled(
         session, org_id, "integrations.accounting.quickbooks"
     )
     if not (module_enabled and qbo_enabled):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Disabled by org settings")
+
+
+async def _require_maps_enabled(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+) -> None:
+    module_enabled = await feature_service.effective_feature_enabled(session, org_id, "module.integrations")
+    maps_enabled = await feature_service.effective_feature_enabled(session, org_id, "integrations.maps")
+    if not (module_enabled and maps_enabled):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Disabled by org settings")
 
 
@@ -155,6 +166,107 @@ async def disconnect_quickbooks(
     await qbo_service.disconnect_quickbooks(session, org_id)
     await session.commit()
     return integrations_schemas.QboConnectCallbackResponse(connected=False, realm_id=None)
+
+
+@router.post(
+    "/v1/admin/maps/distance_matrix",
+    response_model=integrations_schemas.MapsDistanceMatrixResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_maps_distance_matrix(
+    payload: integrations_schemas.MapsDistanceMatrixRequest,
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.DISPATCH)),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.MapsDistanceMatrixResponse:
+    await _require_maps_enabled(session, org_id)
+    if not payload.origins or not payload.destinations:
+        return problem_details(
+            request=request,
+            status=400,
+            title="Invalid Distance Matrix Request",
+            detail="Origins and destinations are required.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    allowed = await maps_service.allow_maps_request(org_id)
+    if not allowed:
+        return problem_details(
+            request=request,
+            status=429,
+            title="Maps Rate Limit Exceeded",
+            detail="Map request limit exceeded for this organization.",
+            type_=PROBLEM_TYPE_RATE_LIMIT,
+        )
+    origins = [(origin.lat, origin.lng) for origin in payload.origins]
+    destinations = [(dest.lat, dest.lng) for dest in payload.destinations]
+    result, cache_hit, quota_applied = await maps_service.fetch_distance_matrix(
+        session=session,
+        org_id=org_id,
+        origins=origins,
+        destinations=destinations,
+        depart_at=payload.depart_at,
+        mode=payload.mode,
+    )
+    if quota_applied:
+        await session.commit()
+    return integrations_schemas.MapsDistanceMatrixResponse(
+        origins=payload.origins,
+        destinations=payload.destinations,
+        matrix=[
+            [integrations_schemas.MapsDistanceMatrixElement(**entry.as_payload()) for entry in row]
+            for row in result.matrix
+        ],
+        provider=result.provider,
+        warning=result.warning,
+        cache_hit=cache_hit,
+        quota_applied=quota_applied,
+        elements_count=len(origins) * len(destinations),
+    )
+
+
+@router.get(
+    "/v1/admin/maps/quota",
+    response_model=integrations_schemas.MapsQuotaResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_maps_quota(
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_viewer),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.MapsQuotaResponse:
+    await _require_maps_enabled(session, org_id)
+    used = await maps_service.get_month_usage(session, org_id)
+    limit = maps_service.get_month_limit()
+    remaining = max(limit - used, 0) if limit else 0
+    percent_used = round((used / limit) * 100, 2) if limit else None
+    return integrations_schemas.MapsQuotaResponse(
+        used=used,
+        limit=limit,
+        remaining=remaining,
+        month=maps_service.get_month_label(),
+        key_configured=bool(settings.google_maps_api_key),
+        percent_used=percent_used,
+    )
+
+
+@router.post(
+    "/v1/admin/maps/test_key",
+    response_model=integrations_schemas.MapsKeyTestResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def test_maps_key(
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.MapsKeyTestResponse:
+    await _require_maps_enabled(session, org_id)
+    valid, message = await maps_service.test_api_key()
+    return integrations_schemas.MapsKeyTestResponse(
+        key_configured=bool(settings.google_maps_api_key),
+        valid=valid,
+        message=message,
+    )
 
 
 @router.post(
