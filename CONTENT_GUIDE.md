@@ -655,6 +655,21 @@ is_valid = verify_password("user_password", password_hash)
 | **Components** | Dependency scanning (Dependabot) |
 | **Logging/Monitoring** | Structured logs, audit trails |
 
+### Dependency Vulnerability Policy
+
+**CI enforcement:** automated audits run in CI for both backend and web dependencies.
+
+- **Backend:** `pip-audit -r backend/requirements.txt -c backend/constraints.txt --fail-on high`
+- **Web:** `npm audit --omit=dev --audit-level=high`
+
+**Failing criteria:** CI fails on **high** or **critical** vulnerabilities. Low/medium findings are reported
+in the audit output but do not fail the build.
+
+**Remediation workflow:**
+1. Confirm the finding is applicable to runtime usage.
+2. If a fix is available, patch in a dedicated PR (respecting the package-manifest policy).
+3. If no fix exists, document a risk acceptance and add monitoring/mitigations as needed.
+
 **Security headers (enforced by middleware):**
 
 ```python
