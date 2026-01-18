@@ -299,6 +299,16 @@ entries sorted by newest first. Each timeline entry includes `action`, `timestam
 | GET | `/v1/admin/analytics/clients/retention` | `finance.view` | Client retention cohorts (monthly, paid payments only) |
 | GET | `/v1/admin/analytics/geo` | `finance.view` | Geographic heatmap aggregates by area (optional coordinate points) |
 | GET | `/v1/admin/analytics/financial_summary` | `finance.view` | Revenue/expense/profit summary (returns `ready=false` until finance data is trustworthy) |
+| GET | `/v1/admin/analytics/competitors` | `finance.view` + `analytics.competitors` | List competitor profiles (manual benchmarking inputs) |
+| POST | `/v1/admin/analytics/competitors` | `finance.view` + `analytics.competitors` | Create a competitor profile |
+| GET | `/v1/admin/analytics/competitors/{competitor_id}` | `finance.view` + `analytics.competitors` | Fetch a competitor profile |
+| PATCH | `/v1/admin/analytics/competitors/{competitor_id}` | `finance.view` + `analytics.competitors` | Update a competitor profile |
+| DELETE | `/v1/admin/analytics/competitors/{competitor_id}` | `finance.view` + `analytics.competitors` | Delete a competitor profile |
+| GET | `/v1/admin/analytics/competitors/{competitor_id}/metrics` | `finance.view` + `analytics.competitors` | List competitor metrics snapshots |
+| POST | `/v1/admin/analytics/competitors/{competitor_id}/metrics` | `finance.view` + `analytics.competitors` | Create a competitor metrics snapshot |
+| PATCH | `/v1/admin/analytics/competitors/{competitor_id}/metrics/{metric_id}` | `finance.view` + `analytics.competitors` | Update a competitor metrics snapshot |
+| DELETE | `/v1/admin/analytics/competitors/{competitor_id}/metrics/{metric_id}` | `finance.view` + `analytics.competitors` | Delete a competitor metrics snapshot |
+| GET | `/v1/admin/analytics/competitors/benchmark` | `finance.view` + `analytics.competitors` | Benchmark competitors by date range (avg rating/response, max review count) |
 
 **Query params:** `from`, `to` (ISO 8601 timestamps, optional)
 

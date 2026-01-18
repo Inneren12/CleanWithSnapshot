@@ -103,6 +103,12 @@ export default function FunnelAnalyticsPage() {
         featureKey: "analytics.attribution_multitouch",
       },
       {
+        key: "analytics-competitors",
+        label: "Competitors",
+        href: "/admin/analytics/competitors",
+        featureKey: "analytics.competitors",
+      },
+      {
         key: "analytics-funnel",
         label: "Booking Funnel",
         href: "/admin/analytics/funnel",

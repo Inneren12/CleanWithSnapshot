@@ -121,6 +121,12 @@ export default function ClientAnalyticsPage() {
         featureKey: "analytics.attribution_multitouch",
       },
       {
+        key: "analytics-competitors",
+        label: "Competitors",
+        href: "/admin/analytics/competitors",
+        featureKey: "analytics.competitors",
+      },
+      {
         key: "analytics-clients",
         label: "Client Analytics",
         href: "/admin/analytics/clients",
