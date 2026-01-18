@@ -25,6 +25,7 @@ class PhotoTokenClaims:
     exp: int
     ua_hash: str | None = None
     variant: str | None = None
+    resource_type: str = "order_photo"
 
 
 _redis_client: redis.Redis | None = None
@@ -91,10 +92,13 @@ def _parse_claims(payload: dict[str, Any]) -> PhotoTokenClaims:
         exp = int(payload["exp"])
         ua_hash = payload.get("ua")
         variant = payload.get("variant")
+        resource_type = payload.get("resource", "order_photo")
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
 
     if not order_id or not photo_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    if resource_type not in {"order_photo", "booking_photo"}:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
     return PhotoTokenClaims(
@@ -104,6 +108,7 @@ def _parse_claims(payload: dict[str, Any]) -> PhotoTokenClaims:
         exp=exp,
         ua_hash=ua_hash,
         variant=variant,
+        resource_type=resource_type,
     )
 
 
@@ -123,7 +128,10 @@ def build_photo_download_token(
     user_agent: str | None = None,
     ttl_seconds: int | None = None,
     variant: str | None = None,
+    resource_type: str = "order_photo",
 ) -> str:
+    if resource_type not in {"order_photo", "booking_photo"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid photo resource")
     now = _now()
     ttl = ttl_seconds or settings.photo_url_ttl_seconds
     normalized_variant = normalize_variant(variant)
@@ -135,6 +143,7 @@ def build_photo_download_token(
         "exp": exp,
         "typ": "photo_download",
         "jti": secrets.token_hex(8),
+        "resource": resource_type,
     }
     if normalized_variant:
         payload["variant"] = normalized_variant
@@ -219,4 +228,30 @@ async def build_signed_photo_response(
 
     return SignedUrlResponse(
         url=download_url_with_token, expires_at=expires_at, expires_in=ttl, variant=variant
+    )
+
+
+def build_public_photo_response(
+    *,
+    request: Request,
+    org_id: uuid.UUID,
+    order_id: str,
+    photo_id: str,
+    variant: str | None = None,
+    resource_type: str = "order_photo",
+) -> SignedUrlResponse:
+    ttl = settings.photo_url_ttl_seconds
+    expires_at = _now() + timedelta(seconds=ttl)
+    token = build_photo_download_token(
+        org_id=org_id,
+        order_id=order_id,
+        photo_id=photo_id,
+        user_agent=request.headers.get("user-agent"),
+        ttl_seconds=ttl,
+        variant=variant,
+        resource_type=resource_type,
+    )
+    public_url = str(request.url_for("public_photo_download", token=token))
+    return SignedUrlResponse(
+        url=public_url, expires_at=expires_at, expires_in=ttl, variant=variant
     )

@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime, time, timezone, timedelta
 
 import sqlalchemy as sa
+from fastapi import HTTPException, status
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -219,6 +220,23 @@ async def list_quality_photo_evidence(
     )
     result = await session.execute(stmt)
     return list(result.all())
+
+
+async def get_booking_photo(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    photo_id: str,
+) -> BookingPhoto:
+    stmt = sa.select(BookingPhoto).where(
+        BookingPhoto.org_id == org_id,
+        BookingPhoto.photo_id == photo_id,
+    )
+    result = await session.execute(stmt)
+    photo = result.scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    return photo
 
 
 async def list_active_issues(

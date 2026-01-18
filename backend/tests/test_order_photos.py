@@ -218,6 +218,36 @@ def test_upload_with_consent_and_download_auth(client, async_session_maker, uplo
     assert stored_files, "uploaded file should be written to disk"
 
 
+def test_signed_url_requires_consent(client, async_session_maker, upload_root, owner_headers):
+    booking_id = asyncio.run(_create_booking(async_session_maker, consent=False))
+    upload = client.post(
+        f"/v1/orders/{booking_id}/photos",
+        data={"phase": "AFTER", "admin_override": "true"},
+        files={"file": ("after.jpg", b"no-consent", "image/jpeg")},
+        headers=owner_headers,
+    )
+    assert upload.status_code == 201
+    photo_id = upload.json()["photo_id"]
+
+    signed = client.get(
+        f"/v1/orders/{booking_id}/photos/{photo_id}/signed_url", headers=owner_headers
+    )
+    assert signed.status_code == 403
+
+    original_bind = settings.photo_token_bind_ua
+    settings.photo_token_bind_ua = False
+    token = build_photo_download_token(
+        org_id=settings.default_org_id,
+        order_id=booking_id,
+        photo_id=photo_id,
+    )
+    settings.photo_token_bind_ua = original_bind
+    download = client.get(
+        f"/v1/orders/{booking_id}/photos/{photo_id}/signed-download?token={token}"
+    )
+    assert download.status_code == 403
+
+
 def test_local_storage_writes_under_orders_prefix(client, async_session_maker, tmp_path, admin_headers):
     original_backend = settings.order_storage_backend
     original_root = settings.order_upload_root

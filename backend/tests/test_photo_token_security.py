@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 import uuid
 
 import pytest
@@ -47,6 +48,24 @@ def test_expired_token_rejected(monkeypatch):
         ttl_seconds=-60,
     )
 
+    with pytest.raises(HTTPException):
+        asyncio.run(verify_photo_download_token(token, user_agent=None))
+
+
+def test_token_expires_after_ttl(monkeypatch):
+    monkeypatch.setattr(settings, "photo_token_bind_ua", False)
+    fixed = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(photo_tokens, "_now", lambda: fixed)
+    monkeypatch.setattr(photo_tokens.time, "time", lambda: int(fixed.timestamp()))
+
+    token = build_photo_download_token(
+        org_id=settings.default_org_id,
+        order_id="order-2",
+        photo_id="photo-2",
+        ttl_seconds=5,
+    )
+
+    monkeypatch.setattr(photo_tokens.time, "time", lambda: int(fixed.timestamp()) + 10)
     with pytest.raises(HTTPException):
         asyncio.run(verify_photo_download_token(token, user_agent=None))
 

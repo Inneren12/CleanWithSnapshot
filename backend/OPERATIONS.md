@@ -195,7 +195,8 @@ The script performs:
 ## Client portal v1 usage
 - Magic links are issued from `/client/login/request` and verified via `/client/login/callback`. Links are HMAC-signed with `CLIENT_PORTAL_SECRET`, embed the `org_id`, and respect `CLIENT_PORTAL_TOKEN_TTL_MINUTES`; tokens must be sent as `client_session` cookies or `Authorization: Bearer` headers.
 - Client requests are org-scoped from the token: `/v1/client/portal/bookings*` (upcoming list + detail), `/v1/client/portal/invoices*`, and photo signed URLs require the same org. Cross-org identifiers return 404/403 even when the booking ID is guessed.
-- Photo access uses signed download redirects only (`/v1/orders/{order_id}/photos/{photo_id}/signed-download`); do not serve raw bucket URLs. Ensure storage signing keys and `PHOTO_URL_TTL_SECONDS` are configured and rotate tokens if a leak is suspected.
+- Photo access uses signed download redirects only (`/v1/orders/{order_id}/photos/{photo_id}/signed-download` or `/v1/public/photos/{token}`); do not serve raw bucket URLs. Ensure storage signing keys and `PHOTO_URL_TTL_SECONDS` are configured and rotate tokens if a leak is suspected.
+- Admin-issued photo links (`GET /v1/admin/photos/{photo_id}/signed_url`) remain org-scoped, short-lived, and require active photo consent before signing.
 - Rate limits apply to client portal endpoints using the shared rate limiter; keep Redis available in production to avoid abuse and monitor `429` spikes for scraping attempts.
 
 ## Backups and restores

@@ -314,6 +314,9 @@ async def signed_order_photo_url(
     _ = identity
     org_id = _order_org_id(identity, request)
     photo = await photos_service.get_photo(session, order_id, photo_id, org_id)
+    order = await photos_service.fetch_order(session, order_id, org_id)
+    if not order.consent_photos:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Photo consent not granted")
     storage = _storage_backend(request)
     normalized_variant = normalize_variant(variant)
     return await build_signed_photo_response(
@@ -399,6 +402,9 @@ async def signed_download_order_photo(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
     photo = await photos_service.get_photo(session, order_id, photo_id, claims.org_id)
+    order = await photos_service.fetch_order(session, order_id, claims.org_id)
+    if not order.consent_photos:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Photo consent not granted")
     if photo.order_id != claims.order_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
