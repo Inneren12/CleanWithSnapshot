@@ -179,7 +179,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
 
     steps:
       - name: Checkout code
@@ -187,33 +187,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set Gitleaks log options
-        id: gitleaks-log-opts
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "log_opts=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "log_opts=--all" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
-        with:
-          args: >-
-            --config=.gitleaks.toml
-            --redact
-            --no-banner
-            --report-format sarif
-            --report-path gitleaks.sarif
-            --log-opts=${{ steps.gitleaks-log-opts.outputs.log_opts }}
-            --exit-code 1
-
-      - name: Upload Gitleaks report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gitleaks-report
-          path: gitleaks.sarif
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   infra:
     name: Infrastructure - Validation
