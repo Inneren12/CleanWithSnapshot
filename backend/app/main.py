@@ -14,6 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.admin_auth import AdminAccessMiddleware, AdminAuditMiddleware
 from app.api.routes_admin import router as admin_router
+from app.api.routes_admin_analytics_competitors import router as admin_analytics_competitors_router
 from app.api.routes_admin_finance import router as admin_finance_router
 from app.api.routes_admin_iam import router as admin_iam_router
 from app.api.routes_admin_integrations import router as admin_integrations_router
@@ -429,6 +430,7 @@ def create_app(app_settings) -> FastAPI:
     app.include_router(admin_pricing_router)
     app.include_router(admin_marketing_router)
     app.include_router(admin_inventory_router)
+    app.include_router(admin_analytics_competitors_router)
     app.include_router(admin_finance_router)
     app.include_router(admin_leads_nurture_router)
     app.include_router(admin_leads_scoring_router)

@@ -93,6 +93,12 @@ export default function GeoAnalyticsPage() {
         featureKey: "analytics.attribution_multitouch",
       },
       {
+        key: "analytics-competitors",
+        label: "Competitors",
+        href: "/admin/analytics/competitors",
+        featureKey: "analytics.competitors",
+      },
+      {
         key: "analytics-geo",
         label: "Geo Heatmap",
         href: "/admin/analytics/geo",

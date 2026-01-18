@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import date, datetime
+import uuid
 
 from pydantic import BaseModel
 
@@ -183,3 +184,66 @@ class AttributionPathsResponse(BaseModel):
     range_start: datetime
     range_end: datetime
     items: list[AttributionPathSummary]
+
+
+class CompetitorBase(BaseModel):
+    name: str
+    platform: str | None = None
+    profile_url: str | None = None
+
+
+class CompetitorCreate(CompetitorBase):
+    pass
+
+
+class CompetitorUpdate(BaseModel):
+    name: str | None = None
+    platform: str | None = None
+    profile_url: str | None = None
+
+
+class CompetitorResponse(CompetitorBase):
+    competitor_id: uuid.UUID
+    created_at: datetime
+
+
+class CompetitorMetricBase(BaseModel):
+    as_of_date: date
+    rating: float | None = None
+    review_count: int | None = None
+    avg_response_hours: float | None = None
+
+
+class CompetitorMetricCreate(CompetitorMetricBase):
+    pass
+
+
+class CompetitorMetricUpdate(BaseModel):
+    as_of_date: date | None = None
+    rating: float | None = None
+    review_count: int | None = None
+    avg_response_hours: float | None = None
+
+
+class CompetitorMetricResponse(CompetitorMetricBase):
+    metric_id: uuid.UUID
+    competitor_id: uuid.UUID
+    created_at: datetime
+
+
+class CompetitorBenchmarkEntry(BaseModel):
+    competitor_id: uuid.UUID
+    name: str
+    platform: str | None = None
+    profile_url: str | None = None
+    sample_count: int
+    avg_rating: float | None
+    max_review_count: int | None
+    avg_response_hours: float | None
+    latest_metric_date: date | None
+
+
+class CompetitorBenchmarkResponse(BaseModel):
+    range_start: date
+    range_end: date
+    items: list[CompetitorBenchmarkEntry]

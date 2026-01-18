@@ -64,6 +64,7 @@ notifications_center.rules_builder   # Rules builder + rule evaluation (feature 
 
 ```
 analytics.attribution_multitouch   # Multi-touch attribution paths + splits (feature gated)
+analytics.competitors   # Competitor benchmarking (manual inputs, feature gated)
 ```
 
 **Leads subfeatures:**

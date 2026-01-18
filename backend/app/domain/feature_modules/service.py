@@ -38,6 +38,7 @@ SUBFEATURE_KEYS = [
     "finance.reports",
     "finance.cash_flow",
     "analytics.attribution_multitouch",
+    "analytics.competitors",
     "pricing.service_types",
     "pricing.booking_policies",
     "marketing.analytics",
@@ -74,6 +75,7 @@ DEFAULT_DISABLED_KEYS = {
     "leads.nurture",
     "leads.scoring",
     "analytics.attribution_multitouch",
+    "analytics.competitors",
     "schedule.optimization",
 }
 

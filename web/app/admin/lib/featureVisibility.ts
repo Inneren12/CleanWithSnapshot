@@ -74,7 +74,10 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
   {
     key: "module.analytics",
     label: "Analytics",
-    children: [{ key: "analytics.attribution_multitouch", label: "Attribution paths" }],
+    children: [
+      { key: "analytics.attribution_multitouch", label: "Attribution paths" },
+      { key: "analytics.competitors", label: "Competitor benchmarks" },
+    ],
   },
   {
     key: "module.finance",
@@ -168,6 +171,7 @@ const DEFAULT_DISABLED_KEYS = new Set<string>([
   "leads.nurture",
   "leads.scoring",
   "analytics.attribution_multitouch",
+  "analytics.competitors",
   "schedule.optimization",
   "quality.nps",
   "quality.photo_evidence",
