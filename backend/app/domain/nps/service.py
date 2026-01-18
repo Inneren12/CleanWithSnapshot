@@ -1,8 +1,5 @@
-import base64
-import hashlib
-import hmac
-import json
 import logging
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -13,81 +10,114 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Booking
 from app.domain.clients.db_models import ClientUser
-from app.domain.nps.db_models import NpsResponse, SupportTicket
+from app.domain.nps.db_models import NpsResponse, NpsToken, SupportTicket
 
 logger = logging.getLogger(__name__)
 
 TICKET_STATUSES = {"OPEN", "IN_PROGRESS", "RESOLVED"}
+NPS_SEGMENTS = {"promoter", "passive", "detractor"}
 
 
 @dataclass
 class NpsTokenResult:
-    order_id: str
+    booking_id: str
     client_id: str | None
     email: str | None
     issued_at: datetime
     expires_at: datetime
 
 
-def _b64_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+def _token_expired(expires_at: datetime) -> bool:
+    if expires_at.tzinfo is None:
+        normalized = expires_at.replace(tzinfo=timezone.utc)
+    else:
+        normalized = expires_at.astimezone(timezone.utc)
+    return normalized < datetime.now(timezone.utc)
 
 
-def _b64_decode(data: str) -> bytes:
-    padding = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + padding)
-
-
-def issue_nps_token(
-    order_id: str,
+async def issue_nps_token(
+    session: AsyncSession,
     *,
-    client_id: str | None,
-    email: str | None,
-    secret: str,
+    booking: Booking,
     ttl_days: int = 30,
-    issued_at: datetime | None = None,
-) -> str:
-    now = issued_at or datetime.now(timezone.utc)
-    payload = {
-        "order_id": order_id,
-        "client_id": client_id,
-        "email": (email or "").lower(),
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(days=ttl_days)).timestamp()),
-    }
-    body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-    signature = hmac.new(secret.encode(), body, hashlib.sha256).digest()
-    return f"{_b64_encode(body)}.{_b64_encode(signature)}"
+) -> NpsToken:
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=ttl_days)
+    for _ in range(5):
+        token_value = secrets.token_urlsafe(32)
+        token = NpsToken(
+            token=token_value,
+            org_id=booking.org_id,
+            booking_id=booking.booking_id,
+            client_id=booking.client_id,
+            created_at=now,
+            expires_at=expires_at,
+        )
+        session.add(token)
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            continue
+        return token
+    raise ValueError("token_generation_failed")
 
 
-def verify_nps_token(token: str, *, secret: str) -> NpsTokenResult:
-    try:
-        body_b64, sig_b64 = token.split(".", 1)
-    except ValueError as exc:  # noqa: B904
-        raise ValueError("invalid_token_format") from exc
+async def fetch_token(
+    session: AsyncSession, *, token: str, booking_id: str | None = None
+) -> NpsToken | None:
+    stmt = select(NpsToken).where(NpsToken.token == token)
+    if booking_id:
+        stmt = stmt.where(NpsToken.booking_id == booking_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
-    body = _b64_decode(body_b64)
-    expected_sig = _b64_encode(hmac.new(secret.encode(), body, hashlib.sha256).digest())
-    if not hmac.compare_digest(expected_sig, sig_b64):
-        raise ValueError("invalid_token_signature")
 
-    payload = json.loads(body.decode())
-    issued_at = datetime.fromtimestamp(payload.get("iat", 0), tz=timezone.utc)
-    expires_at = datetime.fromtimestamp(payload.get("exp", 0), tz=timezone.utc)
-    if expires_at < datetime.now(timezone.utc):
+async def fetch_token_with_booking(
+    session: AsyncSession, *, token: str, booking_id: str | None = None
+) -> tuple[NpsToken, Booking] | None:
+    stmt = (
+        select(NpsToken, Booking)
+        .join(Booking, Booking.booking_id == NpsToken.booking_id)
+        .where(NpsToken.token == token, Booking.org_id == NpsToken.org_id)
+    )
+    if booking_id:
+        stmt = stmt.where(NpsToken.booking_id == booking_id)
+    result = await session.execute(stmt)
+    return result.first()
+
+
+def verify_nps_token(token_record: NpsToken) -> NpsTokenResult:
+    if _token_expired(token_record.expires_at):
         raise ValueError("token_expired")
-
     return NpsTokenResult(
-        order_id=payload["order_id"],
-        client_id=payload.get("client_id") or None,
-        email=(payload.get("email") or None),
-        issued_at=issued_at,
-        expires_at=expires_at,
+        booking_id=token_record.booking_id,
+        client_id=token_record.client_id,
+        email=None,
+        issued_at=token_record.created_at,
+        expires_at=token_record.expires_at,
     )
 
 
-async def get_existing_response(session: AsyncSession, order_id: str) -> NpsResponse | None:
-    stmt = select(NpsResponse).where(NpsResponse.order_id == order_id).limit(1)
+async def get_existing_response_by_token(
+    session: AsyncSession, token: str
+) -> NpsResponse | None:
+    stmt = select(NpsResponse).where(NpsResponse.token == token).limit(1)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_existing_response(
+    session: AsyncSession, order_id: str, *, org_id: uuid.UUID | None = None
+) -> NpsResponse | None:
+    stmt = (
+        select(NpsResponse)
+        .where(NpsResponse.order_id == order_id)
+        .order_by(NpsResponse.created_at.desc())
+        .limit(1)
+    )
+    if org_id:
+        stmt = stmt.where(NpsResponse.org_id == org_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -95,26 +125,32 @@ async def get_existing_response(session: AsyncSession, order_id: str) -> NpsResp
 async def record_response(
     session: AsyncSession,
     *,
+    token_record: NpsToken,
     booking: Booking,
     score: int,
     comment: str | None,
 ) -> NpsResponse:
-    existing = await get_existing_response(session, booking.booking_id)
+    existing = await get_existing_response_by_token(session, token_record.token)
     if existing:
+        if token_record.used_at is None:
+            token_record.used_at = datetime.now(timezone.utc)
         return existing
 
     response = NpsResponse(
+        org_id=token_record.org_id,
+        token=token_record.token,
         order_id=booking.booking_id,
         client_id=booking.client_id,
         score=score,
         comment=comment,
     )
     session.add(response)
+    token_record.used_at = datetime.now(timezone.utc)
     try:
         await session.flush()
     except IntegrityError:
         await session.rollback()
-        existing = await get_existing_response(session, booking.booking_id)
+        existing = await get_existing_response_by_token(session, token_record.token)
         if existing:
             return existing
         raise
@@ -213,6 +249,37 @@ async def list_tickets(
         stmt = stmt.where(SupportTicket.priority == priority_filter)
     if order_id:
         stmt = stmt.where(SupportTicket.order_id == order_id)
+
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def list_responses(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    start: datetime,
+    end: datetime,
+    segment: str | None = None,
+) -> list[NpsResponse]:
+    stmt = (
+        select(NpsResponse)
+        .where(
+            NpsResponse.org_id == org_id,
+            NpsResponse.created_at >= start,
+            NpsResponse.created_at <= end,
+        )
+        .order_by(NpsResponse.created_at.desc())
+    )
+    if segment:
+        if segment not in NPS_SEGMENTS:
+            raise ValueError("invalid_segment")
+        if segment == "promoter":
+            stmt = stmt.where(NpsResponse.score >= 9)
+        elif segment == "passive":
+            stmt = stmt.where(NpsResponse.score.between(7, 8))
+        else:
+            stmt = stmt.where(NpsResponse.score <= 6)
 
     result = await session.execute(stmt)
     return list(result.scalars().all())

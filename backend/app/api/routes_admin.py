@@ -8193,21 +8193,24 @@ async def complete_booking(
         lead = await session.get(Lead, booking.lead_id) if booking.lead_id else None
         adapter = _email_adapter(http_request)
         if lead and lead.email:
-            token = nps_service.issue_nps_token(
-                booking.booking_id,
-                client_id=booking.client_id,
-                email=lead.email,
-                secret=settings.client_portal_secret,
+            nps_enabled = await feature_service.effective_feature_enabled(
+                session, booking.org_id, "quality.nps"
             )
-            base_url = settings.public_base_url.rstrip("/") if settings.public_base_url else str(http_request.base_url).rstrip("/")
-            survey_link = f"{base_url}/nps/{booking.booking_id}?token={token}"
-            await email_service.send_nps_survey_email(
-                session=session,
-                adapter=adapter,
-                booking=booking,
-                lead=lead,
-                survey_link=survey_link,
-            )
+            if nps_enabled:
+                token_record = await nps_service.issue_nps_token(session, booking=booking)
+                base_url = (
+                    settings.public_base_url.rstrip("/")
+                    if settings.public_base_url
+                    else str(http_request.base_url).rstrip("/")
+                )
+                survey_link = f"{base_url}/nps/{booking.booking_id}?token={token_record.token}"
+                await email_service.send_nps_survey_email(
+                    session=session,
+                    adapter=adapter,
+                    booking=booking,
+                    lead=lead,
+                    survey_link=survey_link,
+                )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "nps_email_failed",
@@ -10113,6 +10116,44 @@ async def update_support_ticket(
     await session.commit()
     await session.refresh(ticket)
     return _ticket_response(ticket)
+
+
+@router.get(
+    "/v1/admin/nps/responses",
+    response_model=nps_schemas.NpsResponseListResponse,
+)
+async def list_nps_responses(
+    request: Request,
+    from_ts: datetime | None = Query(default=None, alias="from"),
+    to_ts: datetime | None = Query(default=None, alias="to"),
+    segment: nps_schemas.NpsSegment | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> nps_schemas.NpsResponseListResponse:
+    org_id = entitlements.resolve_org_id(request)
+    enabled = await feature_service.effective_feature_enabled(session, org_id, "quality.nps")
+    if not enabled:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Feature disabled")
+    start, end = _normalize_range(from_ts, to_ts)
+    try:
+        responses = await nps_service.list_responses(
+            session, org_id=org_id, start=start, end=end, segment=segment
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return nps_schemas.NpsResponseListResponse(
+        responses=[
+            nps_schemas.NpsResponseItem(
+                token=response.token,
+                booking_id=response.order_id,
+                client_id=response.client_id,
+                score=response.score,
+                comment=response.comment,
+                created_at=response.created_at,
+            )
+            for response in responses
+        ]
+    )
 
 
 def _render_team_form(

@@ -9,6 +9,7 @@ from app.domain.bookings.db_models import Booking, EmailEvent
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.leads.db_models import Lead
+from app.domain.feature_modules import service as feature_service
 from app.domain.nps.db_models import NpsResponse
 from app.infra.email import EmailAdapter
 from app.jobs import email_jobs
@@ -188,6 +189,9 @@ def test_nps_job_skips_after_first_send(async_session_maker):
             session.add(lead)
             await session.commit()
             await session.refresh(lead)
+            await feature_service.upsert_org_feature_overrides(
+                session, settings.default_org_id, {"quality.nps": True}
+            )
             booking = Booking(
                 team_id=1,
                 lead_id=lead.lead_id,

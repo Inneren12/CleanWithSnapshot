@@ -15,7 +15,8 @@ from app.domain.clients.db_models import ClientUser
 from app.domain.documents import service as document_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.invoices import schemas as invoice_schemas, service as invoice_service, statuses as invoice_statuses
-from app.domain.nps import service as nps_service
+from app.domain.nps import schemas as nps_schemas, service as nps_service
+from app.domain.nps.db_models import NpsToken
 from app.domain.notifications import email_service
 from app.domain.quality import service as quality_service
 from app.infra.db import get_db_session
@@ -224,6 +225,56 @@ def _render_nps_form(order_id: str, token: str) -> str:
     """
 
 
+async def _load_nps_token(
+    session: AsyncSession, *, token: str, booking_id: str | None = None
+) -> tuple[NpsToken, Booking]:
+    token_pair = await nps_service.fetch_token_with_booking(
+        session, token=token, booking_id=booking_id
+    )
+    if not token_pair:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
+    token_record, booking = token_pair
+    try:
+        nps_service.verify_nps_token(token_record)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    enabled = await feature_service.effective_feature_enabled(
+        session, token_record.org_id, "quality.nps"
+    )
+    if not enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return token_record, booking
+
+
+async def _notify_admin_on_low_score(
+    request: Request | None,
+    *,
+    booking: Booking,
+    score: int,
+    comment: str | None,
+    client: ClientUser | None,
+) -> None:
+    adapter = resolve_app_email_adapter(request) if request else None
+    recipient = settings.admin_notification_email
+    if adapter and recipient:
+        subject = f"Support ticket created for order {booking.booking_id}"
+        body_lines = [
+            f"Order: {booking.booking_id}",
+            f"Score: {score}",
+        ]
+        if client and client.email:
+            body_lines.append(f"Client: {client.email}")
+        if comment:
+            body_lines.append("Comment: " + comment)
+        try:
+            await adapter.send_email(recipient=recipient, subject=subject, body="\n".join(body_lines))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "nps_admin_notification_failed",
+                extra={"extra": {"order_id": booking.booking_id, "reason": type(exc).__name__}},
+            )
+
+
 def _render_message(title: str, body: str, status_text: str | None = None) -> str:
     status_section = f"<p class=\"muted\">{escape(status_text)}</p>" if status_text else ""
     return f"""
@@ -247,18 +298,9 @@ def _render_message(title: str, body: str, status_text: str | None = None) -> st
 
 @router.get("/nps/{order_id}", response_class=HTMLResponse, name="nps_form")
 async def nps_form(order_id: str, token: str, session: AsyncSession = Depends(get_db_session)) -> HTMLResponse:
-    try:
-        token_result = nps_service.verify_nps_token(token, secret=settings.client_portal_secret)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
-    if token_result.order_id != order_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token does not match order")
+    token_record, booking = await _load_nps_token(session, token=token, booking_id=order_id)
 
-    booking = await session.get(Booking, order_id)
-    if booking is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-
-    existing = await nps_service.get_existing_response(session, order_id)
+    existing = await nps_service.get_existing_response_by_token(session, token_record.token)
     if existing:
         return HTMLResponse(_render_message("Thanks for the feedback!", "We've already received your rating."))
 
@@ -274,25 +316,22 @@ async def submit_nps(
     comment: str | None = Form(None),
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
-    try:
-        token_result = nps_service.verify_nps_token(token, secret=settings.client_portal_secret)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
-    if token_result.order_id != order_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token does not match order")
+    token_record, booking = await _load_nps_token(session, token=token, booking_id=order_id)
 
     if score < 0 or score > 10:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Score must be between 0 and 10")
 
-    booking = await session.get(Booking, order_id)
-    if booking is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-
-    existing = await nps_service.get_existing_response(session, order_id)
+    existing = await nps_service.get_existing_response_by_token(session, token_record.token)
     if existing:
         return HTMLResponse(_render_message("Thanks for the feedback!", "We've already received your rating."))
 
-    await nps_service.record_response(session, booking=booking, score=score, comment=comment)
+    await nps_service.record_response(
+        session,
+        token_record=token_record,
+        booking=booking,
+        score=score,
+        comment=comment,
+    )
 
     ticket = None
     client = await session.get(ClientUser, booking.client_id) if booking.client_id else None
@@ -304,25 +343,13 @@ async def submit_nps(
             comment=comment,
             client=client,
         )
-        adapter = resolve_app_email_adapter(request) if request else None
-        recipient = settings.admin_notification_email
-        if adapter and recipient:
-            subject = f"Support ticket created for order {booking.booking_id}"
-            body_lines = [
-                f"Order: {booking.booking_id}",
-                f"Score: {score}",
-            ]
-            if client and client.email:
-                body_lines.append(f"Client: {client.email}")
-            if comment:
-                body_lines.append("Comment: " + comment)
-            try:
-                await adapter.send_email(recipient=recipient, subject=subject, body="\n".join(body_lines))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "nps_admin_notification_failed",
-                    extra={"extra": {"order_id": booking.booking_id, "reason": type(exc).__name__}},
-                )
+        await _notify_admin_on_low_score(
+            request,
+            booking=booking,
+            score=score,
+            comment=comment,
+            client=client,
+        )
 
     await session.commit()
 
@@ -331,6 +358,60 @@ async def submit_nps(
     else:
         message = "Thanks for your feedback! If you loved the service, feel free to share a Google review."
     return HTMLResponse(_render_message("Thanks!", message))
+
+
+@router.post(
+    "/v1/public/nps/{token}",
+    response_model=nps_schemas.PublicNpsSubmitResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def submit_nps_public(
+    token: str,
+    payload: nps_schemas.PublicNpsSubmitRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> nps_schemas.PublicNpsSubmitResponse:
+    token_record, booking = await _load_nps_token(session, token=token)
+    existing = await nps_service.get_existing_response_by_token(session, token_record.token)
+    if existing:
+        return nps_schemas.PublicNpsSubmitResponse(
+            status="already_submitted",
+            token=existing.token,
+            created_at=existing.created_at,
+        )
+
+    response = await nps_service.record_response(
+        session,
+        token_record=token_record,
+        booking=booking,
+        score=payload.score,
+        comment=payload.comment,
+    )
+
+    client = await session.get(ClientUser, booking.client_id) if booking.client_id else None
+    if payload.score <= 3:
+        ticket = await nps_service.ensure_ticket_for_low_score(
+            session,
+            booking=booking,
+            score=payload.score,
+            comment=payload.comment,
+            client=client,
+        )
+        if ticket:
+            await _notify_admin_on_low_score(
+                request,
+                booking=booking,
+                score=payload.score,
+                comment=payload.comment,
+                client=client,
+            )
+
+    await session.commit()
+    return nps_schemas.PublicNpsSubmitResponse(
+        status="submitted",
+        token=response.token,
+        created_at=response.created_at,
+    )
 
 
 @router.get("/unsubscribe", response_class=HTMLResponse)

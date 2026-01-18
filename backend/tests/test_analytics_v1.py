@@ -7,7 +7,7 @@ from app.settings import settings
 from app.domain.saas.db_models import Organization
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.leads.db_models import Lead
-from app.domain.nps.db_models import NpsResponse
+from app.domain.nps.db_models import NpsResponse, NpsToken
 from app.domain.clients.db_models import ClientUser
 from app.domain.leads.db_models import LeadQuote
 
@@ -119,10 +119,44 @@ def test_funnel_analytics_counts_conversion_and_loss_reasons(client, async_sessi
             session.add_all([booking_a, booking_b])
             await session.flush()
 
+            token_a = f"token-{uuid.uuid4()}"
+            token_b = f"token-{uuid.uuid4()}"
             session.add_all(
                 [
-                    NpsResponse(order_id=booking_a.booking_id, score=9, created_at=now - timedelta(days=1)),
-                    NpsResponse(order_id=booking_b.booking_id, score=3, created_at=now - timedelta(days=1)),
+                    NpsToken(
+                        token=token_a,
+                        org_id=org_a,
+                        booking_id=booking_a.booking_id,
+                        client_id=None,
+                        created_at=now - timedelta(days=2),
+                        expires_at=now + timedelta(days=30),
+                    ),
+                    NpsToken(
+                        token=token_b,
+                        org_id=org_b,
+                        booking_id=booking_b.booking_id,
+                        client_id=None,
+                        created_at=now - timedelta(days=2),
+                        expires_at=now + timedelta(days=30),
+                    ),
+                ]
+            )
+            session.add_all(
+                [
+                    NpsResponse(
+                        org_id=org_a,
+                        token=token_a,
+                        order_id=booking_a.booking_id,
+                        score=9,
+                        created_at=now - timedelta(days=1),
+                    ),
+                    NpsResponse(
+                        org_id=org_b,
+                        token=token_b,
+                        order_id=booking_b.booking_id,
+                        score=3,
+                        created_at=now - timedelta(days=1),
+                    ),
                 ]
             )
             await session.commit()
@@ -217,7 +251,7 @@ def test_nps_analytics_distribution_and_trends(client, async_session_maker):
             )
             other_org = uuid.uuid4()
             other_team = Team(org_id=other_org, name="Other")
-            session.add_all([other_team, booking_recent, booking_previous])
+            session.add_all([Organization(org_id=other_org, name="Other Org"), other_team, booking_recent, booking_previous])
             await session.flush()
             other_booking = Booking(
                 org_id=other_org,
@@ -231,11 +265,60 @@ def test_nps_analytics_distribution_and_trends(client, async_session_maker):
             session.add(other_booking)
             await session.flush()
 
+            token_recent = f"token-{uuid.uuid4()}"
+            token_previous = f"token-{uuid.uuid4()}"
+            token_other = f"token-{uuid.uuid4()}"
             session.add_all(
                 [
-                    NpsResponse(order_id=booking_recent.booking_id, score=10, created_at=now),
-                    NpsResponse(order_id=booking_previous.booking_id, score=5, created_at=past_month),
-                    NpsResponse(order_id=other_booking.booking_id, score=1, created_at=now),
+                    NpsToken(
+                        token=token_recent,
+                        org_id=org_id,
+                        booking_id=booking_recent.booking_id,
+                        client_id=None,
+                        created_at=now,
+                        expires_at=now + timedelta(days=30),
+                    ),
+                    NpsToken(
+                        token=token_previous,
+                        org_id=org_id,
+                        booking_id=booking_previous.booking_id,
+                        client_id=None,
+                        created_at=past_month,
+                        expires_at=now + timedelta(days=30),
+                    ),
+                    NpsToken(
+                        token=token_other,
+                        org_id=other_org,
+                        booking_id=other_booking.booking_id,
+                        client_id=None,
+                        created_at=now,
+                        expires_at=now + timedelta(days=30),
+                    ),
+                ]
+            )
+            session.add_all(
+                [
+                    NpsResponse(
+                        org_id=org_id,
+                        token=token_recent,
+                        order_id=booking_recent.booking_id,
+                        score=10,
+                        created_at=now,
+                    ),
+                    NpsResponse(
+                        org_id=org_id,
+                        token=token_previous,
+                        order_id=booking_previous.booking_id,
+                        score=5,
+                        created_at=past_month,
+                    ),
+                    NpsResponse(
+                        org_id=other_org,
+                        token=token_other,
+                        order_id=other_booking.booking_id,
+                        score=1,
+                        created_at=now,
+                    ),
                 ]
             )
             await session.commit()

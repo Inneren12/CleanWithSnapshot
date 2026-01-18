@@ -165,8 +165,6 @@ async def get_booking_timeline(
             )
 
     # Fetch NPS responses for this booking
-    # NpsResponse doesn't have org_id, but order_id is unique and FK to bookings
-    # Verify booking belongs to org before querying NPS
     booking_check = (
         select(Booking.booking_id)
         .where(Booking.booking_id == booking_id, Booking.org_id == org_id)
@@ -177,7 +175,10 @@ async def get_booking_timeline(
     if booking_exists:
         nps_stmt = (
             select(NpsResponse)
-            .where(NpsResponse.order_id == booking_id)
+            .where(
+                NpsResponse.order_id == booking_id,
+                NpsResponse.org_id == org_id,
+            )
             .order_by(NpsResponse.created_at.desc())
             .limit(10)  # Cap NPS responses (should be max 1 per booking anyway)
         )
