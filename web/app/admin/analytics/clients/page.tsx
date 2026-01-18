@@ -115,6 +115,12 @@ export default function ClientAnalyticsPage() {
         featureKey: "module.analytics",
       },
       {
+        key: "analytics-attribution",
+        label: "Attribution",
+        href: "/admin/analytics/attribution",
+        featureKey: "analytics.attribution_multitouch",
+      },
+      {
         key: "analytics-clients",
         label: "Client Analytics",
         href: "/admin/analytics/clients",

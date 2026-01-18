@@ -26,7 +26,8 @@ This guide covers database schema management using Alembic in the CleanWithSnaps
 **Policy:** Forward-only (no downgrades in production)
 **Validation:** Health endpoint checks migration status
 
-**Recent migrations:** `aa12b3cd45ef_add_marketing_spend_and_email_manual.py` adds `marketing_spend`,
+**Recent migrations:** `c2a1b3d4e5f6_add_lead_touchpoints.py` adds `lead_touchpoints` for multi-touch attribution,
+`aa12b3cd45ef_add_marketing_spend_and_email_manual.py` adds `marketing_spend`,
 `email_segments`, and `email_campaigns` for marketing analytics and manual campaigns,
 `e6b1c2d3f4a5_add_promo_codes.py` adds `promo_codes` + `promo_code_redemptions`,
 `d3b7c1a4f8e2_add_lead_quotes_and_loss_reason.py` adds lead quotes + loss reason tracking,

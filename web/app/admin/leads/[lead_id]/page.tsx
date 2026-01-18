@@ -133,6 +133,37 @@ type ScoreSnapshot = {
   rules_version: number;
 };
 
+type AttributionTouchpoint = {
+  touchpoint_id: string;
+  occurred_at: string;
+  channel?: string | null;
+  source?: string | null;
+  campaign?: string | null;
+  medium?: string | null;
+  keyword?: string | null;
+  landing_page?: string | null;
+  metadata: Record<string, unknown>;
+};
+
+type AttributionSplitEntry = {
+  touchpoint_id: string;
+  label: string;
+  weight: number;
+  bucket: string;
+};
+
+type AttributionResponse = {
+  lead_id: string;
+  path: string;
+  touchpoints: AttributionTouchpoint[];
+  split: AttributionSplitEntry[];
+  policy: {
+    first_weight: number;
+    middle_weight: number;
+    last_weight: number;
+  };
+};
+
 const ACTIVITY_OPTIONS = [
   { value: "Contacted", label: "Contacted" },
   { value: "Quote sent", label: "Quote sent" },
@@ -164,6 +195,10 @@ function formatCurrency(value: number, currency: string): string {
     style: "currency",
     currency,
   }).format(value);
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 function pickEstimateTotal(snapshot: Record<string, unknown>): number | null {
@@ -228,6 +263,9 @@ export default function LeadDetailPage() {
   const [scoreSnapshot, setScoreSnapshot] = useState<ScoreSnapshot | null>(null);
   const [scoreLoading, setScoreLoading] = useState(false);
   const [scoreError, setScoreError] = useState<string | null>(null);
+  const [attribution, setAttribution] = useState<AttributionResponse | null>(null);
+  const [attributionLoading, setAttributionLoading] = useState(false);
+  const [attributionError, setAttributionError] = useState<string | null>(null);
   const [activity, setActivity] = useState(ACTIVITY_OPTIONS[0]?.value ?? "Contacted");
   const [activityNote, setActivityNote] = useState("");
   const [activityStatus, setActivityStatus] = useState<string | null>(null);
@@ -263,6 +301,12 @@ export default function LeadDetailPage() {
     ? effectiveFeatureEnabled(featureOverrides, "module.leads") &&
       effectiveFeatureEnabled(featureOverrides, "leads.scoring")
     : true;
+  const attributionVisible = visibilityReady
+    ? isVisible("analytics.attribution_multitouch", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
+  const attributionEnabled = featureConfig
+    ? effectiveFeatureEnabled(featureOverrides, "analytics.attribution_multitouch")
+    : false;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -480,6 +524,30 @@ export default function LeadDetailPage() {
     setScoreLoading(false);
   }, [authHeaders, leadId, password, scoringEnabled, username]);
 
+  const loadAttribution = useCallback(async () => {
+    if (!username || !password) return;
+    if (!attributionEnabled || !attributionVisible) return;
+    setAttributionLoading(true);
+    setAttributionError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}/attribution`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as AttributionResponse;
+      setAttribution(data);
+    } else if (response.status === 404) {
+      setAttribution(null);
+    } else if (response.status === 403) {
+      setAttributionError("You do not have permission to view attribution.");
+      setAttribution(null);
+    } else {
+      setAttributionError("Failed to load attribution.");
+      setAttribution(null);
+    }
+    setAttributionLoading(false);
+  }, [attributionEnabled, attributionVisible, authHeaders, leadId, password, username]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
@@ -514,6 +582,10 @@ export default function LeadDetailPage() {
   useEffect(() => {
     void loadScoreSnapshot();
   }, [loadScoreSnapshot]);
+
+  useEffect(() => {
+    void loadAttribution();
+  }, [loadAttribution]);
 
   const handleActivitySubmit = async () => {
     if (!canEditLeads) {
@@ -641,6 +713,8 @@ export default function LeadDetailPage() {
   const estimateTotal = lead ? pickEstimateTotal(estimateSnapshot) : null;
   const estimateCurrency = "CAD";
   const topScoreReasons = scoreSnapshot?.reasons.slice(0, 3) ?? [];
+  const attributionTouchpoints = attribution?.touchpoints ?? [];
+  const attributionSplits = attribution?.split ?? [];
 
   return (
     <div className="page">
@@ -724,6 +798,70 @@ export default function LeadDetailPage() {
                       {topScoreReasons.map((reason) => (
                         <li key={`${reason.rule_key}-${reason.label}`}>
                           <strong>{formatScore(reason.points)}</strong> {reason.label}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="admin-card admin-section">
+            <div className="section-heading">
+              <h2>Attribution path</h2>
+              <p className="muted">Touchpoints captured for this lead and the deterministic split.</p>
+            </div>
+            {!attributionVisible ? (
+              <p className="alert alert-warning">Attribution is hidden for your profile.</p>
+            ) : null}
+            {!attributionEnabled ? (
+              <p className="alert alert-warning">
+                Multi-touch attribution is disabled. Enable analytics attribution in Modules &amp; Visibility.
+              </p>
+            ) : null}
+            {attributionLoading ? <p className="muted">Loading attribution...</p> : null}
+            {attributionError ? <p className="alert alert-error">{attributionError}</p> : null}
+            {attributionEnabled ? (
+              <div className="admin-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span className="label">Path</span>
+                  <div>{attribution?.path || "—"}</div>
+                </div>
+                <div>
+                  <span className="label">Split policy</span>
+                  <div>
+                    {attribution
+                      ? `${formatPercent(attribution.policy.first_weight)} / ${formatPercent(
+                          attribution.policy.middle_weight
+                        )} / ${formatPercent(attribution.policy.last_weight)}`
+                      : "—"}
+                  </div>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span className="label">Touchpoints</span>
+                  {attributionTouchpoints.length === 0 ? (
+                    <p className="muted">No touchpoints recorded yet.</p>
+                  ) : (
+                    <ul className="clean-list" style={{ marginTop: "8px" }}>
+                      {attributionTouchpoints.map((touchpoint) => (
+                        <li key={touchpoint.touchpoint_id}>
+                          <strong>{touchpoint.channel ?? touchpoint.source ?? "Unknown"}</strong>{" "}
+                          <span className="muted">{formatDateTime(touchpoint.occurred_at)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span className="label">Split</span>
+                  {attributionSplits.length === 0 ? (
+                    <p className="muted">Split will appear once touchpoints are logged.</p>
+                  ) : (
+                    <ul className="clean-list" style={{ marginTop: "8px" }}>
+                      {attributionSplits.map((entry) => (
+                        <li key={`${entry.touchpoint_id}-${entry.bucket}`}>
+                          <strong>{formatPercent(entry.weight)}</strong> {entry.label} ({entry.bucket})
                         </li>
                       ))}
                     </ul>

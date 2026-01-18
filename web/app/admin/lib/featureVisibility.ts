@@ -58,7 +58,11 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
   { key: "module.invoices", label: "Invoices" },
   { key: "module.quality", label: "Quality" },
   { key: "module.teams", label: "Teams" },
-  { key: "module.analytics", label: "Analytics" },
+  {
+    key: "module.analytics",
+    label: "Analytics",
+    children: [{ key: "analytics.attribution_multitouch", label: "Attribution paths" }],
+  },
   {
     key: "module.finance",
     label: "Finance",
@@ -149,6 +153,7 @@ const DEFAULT_DISABLED_KEYS = new Set<string>([
   "notifications_center.rules_builder",
   "leads.nurture",
   "leads.scoring",
+  "analytics.attribution_multitouch",
 ]);
 
 export function moduleBaseForKey(key: string): string {

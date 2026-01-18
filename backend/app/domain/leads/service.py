@@ -12,6 +12,7 @@ from app.domain.leads.db_models import (
     Lead,
     LeadQuote,
     LeadQuoteFollowUp,
+    LeadTouchpoint,
     ReferralCredit,
     generate_referral_code,
 )
@@ -22,6 +23,7 @@ from app.domain.leads.statuses import (
     QUOTE_STATUS_SENT,
     QUOTE_STATUSES,
 )
+from app.domain.leads.attribution import normalize_occurred_at
 
 logger = logging.getLogger(__name__)
 
@@ -206,5 +208,53 @@ async def list_lead_quotes(session: AsyncSession, *, org_id, lead_id: str) -> li
         .options(selectinload(LeadQuote.followups))
         .where(LeadQuote.org_id == org_id, LeadQuote.lead_id == lead_id)
         .order_by(LeadQuote.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def create_lead_touchpoint(
+    session: AsyncSession,
+    *,
+    org_id,
+    lead_id: str,
+    occurred_at: datetime | None,
+    channel: str | None,
+    source: str | None,
+    campaign: str | None,
+    medium: str | None,
+    keyword: str | None,
+    landing_page: str | None,
+    metadata: dict,
+) -> LeadTouchpoint:
+    touchpoint = LeadTouchpoint(
+        org_id=org_id,
+        lead_id=lead_id,
+        occurred_at=normalize_occurred_at(occurred_at),
+        channel=channel,
+        source=source,
+        campaign=campaign,
+        medium=medium,
+        keyword=keyword,
+        landing_page=landing_page,
+        metadata_json=metadata or {},
+    )
+    session.add(touchpoint)
+    await session.flush()
+    return touchpoint
+
+
+async def list_lead_touchpoints(
+    session: AsyncSession,
+    *,
+    org_id,
+    lead_id: str,
+) -> list[LeadTouchpoint]:
+    result = await session.execute(
+        select(LeadTouchpoint)
+        .where(LeadTouchpoint.org_id == org_id, LeadTouchpoint.lead_id == lead_id)
+        .order_by(
+            LeadTouchpoint.occurred_at.asc(),
+            LeadTouchpoint.touchpoint_id.asc(),
+        )
     )
     return list(result.scalars().all())

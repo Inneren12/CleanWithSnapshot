@@ -53,6 +53,12 @@ integrations.maps  # Google Maps distance matrix + quota dashboard (feature gate
 notifications_center.rules_builder   # Rules builder + rule evaluation (feature gated)
 ```
 
+**Analytics subfeatures:**
+
+```
+analytics.attribution_multitouch   # Multi-touch attribution paths + splits (feature gated)
+```
+
 **Leads subfeatures:**
 
 ```

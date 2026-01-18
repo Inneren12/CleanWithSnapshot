@@ -33,6 +33,7 @@ SUBFEATURE_KEYS = [
     "schedule.optimization_ai",
     "finance.reports",
     "finance.cash_flow",
+    "analytics.attribution_multitouch",
     "pricing.service_types",
     "pricing.booking_policies",
     "marketing.analytics",
@@ -65,6 +66,7 @@ DEFAULT_DISABLED_KEYS = {
     "notifications.rules_builder",
     "leads.nurture",
     "leads.scoring",
+    "analytics.attribution_multitouch",
 }
 
 MODULE_PERMISSIONS: dict[str, str] = {

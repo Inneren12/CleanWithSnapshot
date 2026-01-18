@@ -2,38 +2,28 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import AdminNav from "../components/AdminNav";
+import AdminNav from "../../components/AdminNav";
 import {
   type AdminProfile,
   type FeatureConfigResponse,
   type UiPrefsResponse,
   isVisible,
-} from "../lib/featureVisibility";
+} from "../../lib/featureVisibility";
 
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-type FinancialSummaryResponse = {
-  ready: boolean;
-  reason?: string | null;
-  revenue_cents?: number;
-  expenses_cents?: number;
-  profit_cents?: number;
-  margin_pp?: number;
-  gst_owed_cents?: number;
+type AttributionPathSummary = {
+  path: string;
+  lead_count: number;
 };
 
-function formatCurrency(cents: number) {
-  return new Intl.NumberFormat("en-CA", {
-    style: "currency",
-    currency: "CAD",
-  }).format(cents / 100);
-}
-
-function formatPercent(value: number) {
-  return `${value.toFixed(1)}%`;
-}
+type AttributionPathsResponse = {
+  range_start: string;
+  range_end: string;
+  items: AttributionPathSummary[];
+};
 
 function formatDateInput(value: Date) {
   return value.toISOString().slice(0, 10);
@@ -45,7 +35,12 @@ function defaultFromDate() {
   return formatDateInput(date);
 }
 
-export default function AnalyticsFinancialSummaryPage() {
+function toIsoDate(value: string, endOfDay = false) {
+  if (!value) return null;
+  return endOfDay ? `${value}T23:59:59Z` : `${value}T00:00:00Z`;
+}
+
+export default function AttributionPathsPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [profile, setProfile] = useState<AdminProfile | null>(null);
@@ -53,7 +48,8 @@ export default function AnalyticsFinancialSummaryPage() {
   const [uiPrefs, setUiPrefs] = useState<UiPrefsResponse | null>(null);
   const [fromDate, setFromDate] = useState(defaultFromDate);
   const [toDate, setToDate] = useState(() => formatDateInput(new Date()));
-  const [summary, setSummary] = useState<FinancialSummaryResponse | null>(null);
+  const [limit, setLimit] = useState("10");
+  const [paths, setPaths] = useState<AttributionPathsResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -69,7 +65,7 @@ export default function AnalyticsFinancialSummaryPage() {
   const featureOverrides = featureConfig?.overrides ?? {};
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
   const pageVisible = visibilityReady
-    ? isVisible("module.analytics", permissionKeys, featureOverrides, hiddenKeys)
+    ? isVisible("analytics.attribution_multitouch", permissionKeys, featureOverrides, hiddenKeys)
     : true;
 
   const navLinks = useMemo(() => {
@@ -175,25 +171,37 @@ export default function AnalyticsFinancialSummaryPage() {
     }
   }, [authHeaders, password, username]);
 
-  const loadSummary = useCallback(async () => {
+  const loadPaths = useCallback(async () => {
     if (!username || !password) return;
-    setErrorMessage(null);
     setStatusMessage(null);
+    setErrorMessage(null);
     setIsLoading(true);
-    const params = new URLSearchParams({ from: fromDate, to: toDate });
-    const response = await fetch(`${API_BASE}/v1/admin/analytics/financial_summary?${params.toString()}`, {
+    const params = new URLSearchParams();
+    const fromValue = toIsoDate(fromDate);
+    const toValue = toIsoDate(toDate, true);
+    const parsedLimit = Number(limit);
+    if (fromValue) params.set("from", fromValue);
+    if (toValue) params.set("to", toValue);
+    if (!Number.isNaN(parsedLimit) && parsedLimit > 0) {
+      params.set("limit", String(parsedLimit));
+    }
+    const response = await fetch(`${API_BASE}/v1/admin/analytics/attribution/paths?${params.toString()}`, {
       headers: authHeaders,
       cache: "no-store",
     });
     if (response.ok) {
-      const data = (await response.json()) as FinancialSummaryResponse;
-      setSummary(data);
+      const data = (await response.json()) as AttributionPathsResponse;
+      setPaths(data);
+      setStatusMessage(`Loaded ${data.items.length} paths.`);
+    } else if (response.status === 403) {
+      setErrorMessage("You do not have permission to view attribution paths.");
+      setPaths(null);
     } else {
-      setErrorMessage("Unable to load financial summary.");
-      setSummary(null);
+      setErrorMessage("Unable to load attribution paths.");
+      setPaths(null);
     }
     setIsLoading(false);
-  }, [authHeaders, fromDate, password, toDate, username]);
+  }, [authHeaders, fromDate, limit, password, toDate, username]);
 
   useEffect(() => {
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
@@ -203,102 +211,86 @@ export default function AnalyticsFinancialSummaryPage() {
   }, []);
 
   useEffect(() => {
-    if (!username || !password) return;
     void loadProfile();
-    void loadFeatureConfig();
-    void loadUiPrefs();
-  }, [loadFeatureConfig, loadProfile, loadUiPrefs, password, username]);
+  }, [loadProfile]);
 
   useEffect(() => {
-    if (!username || !password) return;
-    if (!pageVisible) return;
-    void loadSummary();
-  }, [loadSummary, pageVisible, password, username]);
+    void loadFeatureConfig();
+    void loadUiPrefs();
+  }, [loadFeatureConfig, loadUiPrefs]);
 
-  const ready = summary?.ready ?? false;
+  useEffect(() => {
+    void loadPaths();
+  }, [loadPaths]);
 
   return (
-    <div className="admin-page">
-      {navLinks.length > 0 ? <AdminNav links={navLinks} activeKey="analytics-summary" /> : null}
-      <div className="admin-content">
-        <div className="page-header">
-          <div>
-            <h1>Analytics · Financial Summary</h1>
-            <p className="muted">Quick profitability snapshot based on payments and tracked expenses.</p>
+    <div className="page">
+      <AdminNav links={navLinks} activeKey="analytics-attribution" />
+      <section className="admin-card admin-section">
+        <div className="section-heading">
+          <h1>Attribution Paths</h1>
+          <p className="muted">Top lead touchpoint paths within a date range.</p>
+        </div>
+        {!pageVisible ? <p className="alert alert-warning">Attribution analytics are hidden for your profile.</p> : null}
+        <div className="admin-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+          <label>
+            <span className="label">From</span>
+            <input className="input" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+          </label>
+          <label>
+            <span className="label">To</span>
+            <input className="input" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+          </label>
+          <label>
+            <span className="label">Limit</span>
+            <input className="input" type="number" min={1} max={100} value={limit} onChange={(event) => setLimit(event.target.value)} />
+          </label>
+          <div style={{ display: "flex", alignItems: "flex-end" }}>
+            <button className="btn btn-primary" type="button" onClick={() => void loadPaths()} disabled={isLoading}>
+              {isLoading ? "Loading..." : "Refresh"}
+            </button>
           </div>
         </div>
+        {statusMessage ? (
+          <p className="alert alert-success" style={{ marginTop: "12px" }}>
+            {statusMessage}
+          </p>
+        ) : null}
+        {errorMessage ? (
+          <p className="alert alert-error" style={{ marginTop: "12px" }}>
+            {errorMessage}
+          </p>
+        ) : null}
+      </section>
 
-        {!pageVisible ? (
-          <div className="card">
-            <p>You do not have access to analytics for this organization.</p>
+      <section className="admin-card admin-section">
+        <div className="section-heading">
+          <h2>Top Paths</h2>
+          <p className="muted">Most common touchpoint sequences for leads in the selected range.</p>
+        </div>
+        {paths && paths.items.length > 0 ? (
+          <div className="table-wrapper">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  <th>Leads</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paths.items.map((item) => (
+                  <tr key={item.path}>
+                    <td>{item.path}</td>
+                    <td>{item.lead_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
-          <>
-            <div className="card">
-              <div className="kpi-controls">
-                <div className="kpi-date-range">
-                  <label>
-                    From
-                    <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
-                  </label>
-                  <label>
-                    To
-                    <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
-                  </label>
-                </div>
-                <button type="button" className="btn" onClick={() => void loadSummary()}>
-                  Refresh
-                </button>
-              </div>
-              {statusMessage ? <p className="muted">{statusMessage}</p> : null}
-              {errorMessage ? <p className="error">{errorMessage}</p> : null}
-            </div>
-
-            {isLoading ? <p className="muted">Loading summary…</p> : null}
-
-            {!isLoading && summary && !ready ? (
-              <div className="card">
-                <p className="alert alert-warning">
-                  {summary.reason ?? "Finance data not ready — enable expense tracking."}
-                </p>
-              </div>
-            ) : null}
-
-            {!isLoading && summary && ready ? (
-              <div className="card">
-                <div className="kpi-grid">
-                  <div className="kpi-card">
-                    <span className="kpi-label">Revenue</span>
-                    <span className="kpi-value">{formatCurrency(summary.revenue_cents ?? 0)}</span>
-                  </div>
-                  <div className="kpi-card">
-                    <span className="kpi-label">Expenses</span>
-                    <span className="kpi-value">{formatCurrency(summary.expenses_cents ?? 0)}</span>
-                  </div>
-                  <div className="kpi-card">
-                    <span className="kpi-label">Profit</span>
-                    <span className="kpi-value">{formatCurrency(summary.profit_cents ?? 0)}</span>
-                  </div>
-                  <div className="kpi-card">
-                    <span className="kpi-label">Margin</span>
-                    <span className="kpi-value">
-                      {summary.margin_pp !== undefined && summary.margin_pp !== null
-                        ? formatPercent(summary.margin_pp)
-                        : "—"}
-                    </span>
-                  </div>
-                  {summary.gst_owed_cents !== undefined ? (
-                    <div className="kpi-card">
-                      <span className="kpi-label">GST owed</span>
-                      <span className="kpi-value">{formatCurrency(summary.gst_owed_cents ?? 0)}</span>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-          </>
+          <p className="muted">No attribution paths found for the selected range.</p>
         )}
-      </div>
+      </section>
     </div>
   );
 }

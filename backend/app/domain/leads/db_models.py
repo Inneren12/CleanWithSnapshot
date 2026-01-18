@@ -132,6 +132,43 @@ class Lead(Base):
         super().__init__(**kwargs)
 
 
+class LeadTouchpoint(Base):
+    __tablename__ = "lead_touchpoints"
+
+    touchpoint_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    lead_id: Mapped[str] = mapped_column(
+        ForeignKey("leads.lead_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    channel: Mapped[str | None] = mapped_column(String(100))
+    source: Mapped[str | None] = mapped_column(String(100))
+    campaign: Mapped[str | None] = mapped_column(String(100))
+    medium: Mapped[str | None] = mapped_column(String(100))
+    keyword: Mapped[str | None] = mapped_column(String(100))
+    landing_page: Mapped[str | None] = mapped_column(String(255))
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+    lead: Mapped["Lead"] = relationship("Lead")
+
+    __table_args__ = (
+        Index("ix_lead_touchpoints_org_id", "org_id"),
+        Index("ix_lead_touchpoints_org_lead", "org_id", "lead_id"),
+        Index("ix_lead_touchpoints_lead_occurred_at", "lead_id", "occurred_at"),
+    )
+
+
 class ReferralCredit(Base):
     __tablename__ = "referral_credits"
 

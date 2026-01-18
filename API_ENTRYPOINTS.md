@@ -181,6 +181,8 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | GET | `/v1/admin/leads/{lead_id}` | `contacts.view` (or `leads.view`) | Lead detail with contact info, requested service snapshot, notes, and timeline |
 | PATCH | `/v1/admin/leads/{lead_id}` | `contacts.edit` (or `leads.edit`) | Update lead status, notes, or loss reason |
 | POST | `/v1/admin/leads/{lead_id}/timeline` | `contacts.edit` (or `leads.edit`) | Add a lead timeline entry (quote sent, contacted, etc.) |
+| POST | `/v1/admin/leads/{lead_id}/touchpoints` | `contacts.edit` (or `leads.edit`) + `analytics.attribution_multitouch` | Add a lead touchpoint (channel/source/campaign metadata) |
+| GET | `/v1/admin/leads/{lead_id}/attribution` | `contacts.view` (or `leads.view`) + `analytics.attribution_multitouch` | Fetch stored touchpoints + attribution path + split |
 | GET | `/v1/admin/leads/{lead_id}/quotes` | `contacts.view` (or `leads.view`) | List quotes for a lead (includes follow-ups + expiry state) |
 | POST | `/v1/admin/leads/{lead_id}/quotes` | `contacts.edit` (or `leads.edit`) | Create a lead quote (amount, service type, expiry, sent_at) |
 | POST | `/v1/admin/leads/{lead_id}/quotes/{quote_id}/followups` | `contacts.edit` (or `leads.edit`) | Log a manual quote follow-up note |
@@ -222,6 +224,9 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 **Loss reason:** Required when marking a lead as `LOST` via PATCH `/v1/admin/leads/{lead_id}`.
 
 **Quote status values:** `DRAFT`, `SENT`, `EXPIRED`, `ACCEPTED`, `DECLINED` (amounts are stored in cents).
+
+**Attribution split policy:** first/middle/last = 40/30/30. With one touchpoint, it receives 100%; with two touchpoints,
+the last touchpoint receives the middle + last share (60%).
 
 ### Marketing
 
@@ -287,12 +292,15 @@ entries sorted by newest first. Each timeline entry includes `action`, `timestam
 | Method | Path | Permission | Purpose |
 |--------|------|------------|---------|
 | GET | `/v1/admin/analytics/funnel` | `finance.view` | Booking funnel counts (inquiries, quotes, bookings, reviews) + conversions + loss reasons |
+| GET | `/v1/admin/analytics/attribution/paths` | `finance.view` + `analytics.attribution_multitouch` | Top touchpoint paths for leads in the selected range |
 | GET | `/v1/admin/analytics/clients/clv` | `finance.view` | Client lifetime value stats and top clients (paid payments only) |
 | GET | `/v1/admin/analytics/clients/retention` | `finance.view` | Client retention cohorts (monthly, paid payments only) |
 | GET | `/v1/admin/analytics/geo` | `finance.view` | Geographic heatmap aggregates by area (optional coordinate points) |
 | GET | `/v1/admin/analytics/financial_summary` | `finance.view` | Revenue/expense/profit summary (returns `ready=false` until finance data is trustworthy) |
 
 **Query params:** `from`, `to` (ISO 8601 timestamps, optional)
+
+**Attribution path params:** `from`, `to` (ISO 8601 timestamps, optional), `limit` (1-100, default 10)
 
 **CLV query params:** `from`, `to` (ISO 8601 timestamps, optional), `top` (1-100, default 10)
 
