@@ -34,6 +34,29 @@ class NpsResponseListResponse(BaseModel):
     responses: list[NpsResponseItem]
 
 
+class NpsSegmentsSummary(BaseModel):
+    total_responses: int
+    promoters: int
+    passives: int
+    detractors: int
+    nps_score: float | None
+
+
+class NpsDetractorItem(BaseModel):
+    booking_id: str
+    client_id: str | None
+    score: int
+    comment: str | None
+    created_at: datetime
+
+
+class NpsSegmentsResponse(BaseModel):
+    range_start: datetime
+    range_end: datetime
+    segments: NpsSegmentsSummary
+    top_detractors: list[NpsDetractorItem] | None = None
+
+
 class TicketResponse(BaseModel):
     id: str
     order_id: str

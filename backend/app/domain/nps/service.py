@@ -285,6 +285,31 @@ async def list_responses(
     return list(result.scalars().all())
 
 
+async def list_top_detractors(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    start: datetime,
+    end: datetime,
+    limit: int = 5,
+) -> list[NpsResponse]:
+    if limit < 1 or limit > 50:
+        raise ValueError("invalid_limit")
+    stmt = (
+        select(NpsResponse)
+        .where(
+            NpsResponse.org_id == org_id,
+            NpsResponse.created_at >= start,
+            NpsResponse.created_at <= end,
+            NpsResponse.score <= 6,
+        )
+        .order_by(NpsResponse.score.asc(), NpsResponse.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def update_ticket_status(
     session: AsyncSession, ticket_id: str, status: str, *, org_id: uuid.UUID | None = None
 ) -> SupportTicket | None:

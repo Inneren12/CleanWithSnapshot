@@ -683,6 +683,7 @@ Schedules: `daily`, `weekly`, `monthly`.
 | GET | `/v1/admin/quality/reviews` | `quality.view` | List client reviews with filters (`stars`, `from`, `to`, `worker_id`, `client_id`, `has_issue`, `page`) |
 | GET | `/v1/admin/quality/photos` | `quality.view` + `quality.photo_evidence` | List booking photo evidence metadata (`from`, `to`, `worker_id`, `has_issue`) |
 | GET | `/v1/admin/nps/responses` | `quality.view` + `quality.nps` | List NPS responses with filters (`from`, `to`, `segment`) |
+| GET | `/v1/admin/nps/segments` | `quality.view` + `quality.nps` | NPS segment counts + score with optional top detractors (`from`, `to`) |
 | GET | `/v1/admin/photos/{photo_id}/signed_url` | `dispatch` (order photos) or `quality.view` (booking evidence) | Issue a short-lived signed URL for an order/booking photo (org-scoped, consent required; booking evidence requires `quality.photo_evidence`) |
 | GET | `/v1/admin/quality/ratings/distribution` | `quality.view` | Rating distribution for a period (`from`, `to`, defaults to current month) |
 | GET | `/v1/admin/quality/services/breakdown` | `quality.view` | Service-type quality breakdown (`from`, `to` date range, defaults to current month) |

@@ -6581,6 +6581,13 @@ def _rate(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4)
 
 
+def _nps_score(total: int, promoters: int, detractors: int) -> float | None:
+    if total <= 0:
+        return None
+    score = ((promoters / total) - (detractors / total)) * 100
+    return round(score, 1)
+
+
 def _org_scope_condition(entity: object, org_id: uuid.UUID, allow_null: bool = False):
     """Return an org_id filter for a given ORM entity.
 
@@ -10117,6 +10124,53 @@ async def update_support_ticket(
     await session.commit()
     await session.refresh(ticket)
     return _ticket_response(ticket)
+
+
+@router.get(
+    "/v1/admin/nps/segments",
+    response_model=nps_schemas.NpsSegmentsResponse,
+)
+async def get_nps_segments(
+    request: Request,
+    from_ts: datetime | None = Query(default=None, alias="from"),
+    to_ts: datetime | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> nps_schemas.NpsSegmentsResponse:
+    org_id = entitlements.resolve_org_id(request)
+    enabled = await feature_service.effective_feature_enabled(session, org_id, "quality.nps")
+    if not enabled:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Feature disabled")
+    start, end = _normalize_range(from_ts, to_ts)
+    total, _avg_score, promoters, passives, detractors = await nps_distribution(
+        session, start, end, org_id=org_id
+    )
+    top_detractors: list[nps_schemas.NpsDetractorItem] = []
+    if detractors:
+        top_detractors = [
+            nps_schemas.NpsDetractorItem(
+                booking_id=response.order_id,
+                client_id=response.client_id,
+                score=response.score,
+                comment=response.comment,
+                created_at=response.created_at,
+            )
+            for response in await nps_service.list_top_detractors(
+                session, org_id=org_id, start=start, end=end
+            )
+        ]
+    return nps_schemas.NpsSegmentsResponse(
+        range_start=start,
+        range_end=end,
+        segments=nps_schemas.NpsSegmentsSummary(
+            total_responses=total,
+            promoters=promoters,
+            passives=passives,
+            detractors=detractors,
+            nps_score=_nps_score(total, promoters, detractors),
+        ),
+        top_detractors=top_detractors,
+    )
 
 
 @router.get(

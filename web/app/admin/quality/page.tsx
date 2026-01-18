@@ -235,6 +235,9 @@ export default function QualityOverviewPage() {
             <Link className="btn btn-ghost" href="/admin/quality/reviews">
               Reviews timeline
             </Link>
+            <Link className="btn btn-ghost" href="/admin/quality/nps">
+              NPS segments
+            </Link>
             <Link className="btn btn-ghost" href="/admin/quality/leaderboard">
               Worker leaderboard
             </Link>
