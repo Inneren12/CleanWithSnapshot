@@ -177,6 +177,7 @@ from app.domain.outbox.schemas import OutboxEventResponse, OutboxReplayResponse
 from app.domain.outbox.service import replay_outbox_event
 from app.domain.queues.schemas import DLQBatchReplayResponse
 from app.domain.nps import schemas as nps_schemas, service as nps_service
+from app.domain.nps import send_service as nps_send_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.finance import service as finance_service
 from app.domain.pricing.config_loader import load_pricing_config
@@ -10154,6 +10155,69 @@ async def list_nps_responses(
             for response in responses
         ]
     )
+
+
+@router.post("/v1/admin/nps/send", status_code=status.HTTP_202_ACCEPTED)
+async def send_nps_survey(
+    request: Request,
+    booking_id: str = Query(...),
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_permission_keys("quality.manage")),
+) -> dict[str, str]:
+    org_id = entitlements.resolve_org_id(request)
+    rate_limited = await enforce_org_action_rate_limit(request, org_id, "nps_send")
+    if rate_limited:
+        return rate_limited
+    idempotency = await require_idempotency(request, session, org_id, "nps_send")
+    if isinstance(idempotency, Response):
+        return idempotency
+    if idempotency.existing_response:
+        return idempotency.existing_response
+
+    enabled = await feature_service.effective_feature_enabled(session, org_id, "quality.nps")
+    if not enabled:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Feature disabled")
+
+    booking, _lead = await nps_send_service.load_booking_and_lead(
+        session, booking_id=booking_id, org_id=org_id
+    )
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    if booking.status != "DONE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Booking must be completed before sending NPS",
+        )
+
+    outbox_event = await nps_send_service.enqueue_nps_send(
+        session,
+        org_id=org_id,
+        booking_id=booking.booking_id,
+        requested_by=identity.username,
+    )
+    response = {
+        "status": "queued",
+        "event_id": str(outbox_event.event_id),
+        "booking_id": booking.booking_id,
+    }
+
+    request.state.explicit_admin_audit = True
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="nps_send_queued",
+        resource_type="booking",
+        resource_id=booking.booking_id,
+        before=None,
+        after=response,
+    )
+    await idempotency.save_response(
+        session,
+        status_code=status.HTTP_202_ACCEPTED,
+        body=response,
+    )
+    await session.commit()
+    return response
 
 
 def _render_team_form(

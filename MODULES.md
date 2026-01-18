@@ -409,6 +409,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/photos` (photo evidence list + filters)
 - `backend/app/api/routes_admin.py` - `/v1/admin/photos/{photo_id}/signed_url` (signed URL minting)
 - `backend/app/api/routes_admin.py` - `/v1/admin/nps/responses` (NPS response list + segments)
+- `backend/app/api/routes_admin.py` - `/v1/admin/nps/send` (enqueue NPS survey send)
 - `backend/app/api/routes_checklists.py` - `/v1/checklists/*` (job checklists)
 
 **Key Services:**
@@ -417,6 +418,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/domain/quality/service.py` - Photo evidence list + booking photo detail
 - `backend/app/domain/checklists/service.py` - Checklist CRUD
 - `backend/app/domain/nps/service.py` - NPS token issuing, responses, and tickets
+- `backend/app/domain/nps/send_service.py` - NPS send outbox enqueue + gating checks
+- `backend/app/jobs/nps_send_runner.py` - NPS outbox delivery runner
 
 **Key Tables:**
 - `quality_issues` - Issue/complaint records

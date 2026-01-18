@@ -238,6 +238,7 @@ class Settings(BaseSettings):
     email_circuit_recovery_seconds: float = Field(30.0)
     email_unsubscribe_secret: str | None = Field(None)
     email_unsubscribe_ttl_minutes: int = Field(7 * 24 * 60)
+    nps_send_period_days: int = Field(30)
     email_temp_passwords: bool = Field(False)
     outbox_max_attempts: int = Field(5)
     outbox_base_backoff_seconds: float = Field(30.0)
