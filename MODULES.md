@@ -57,6 +57,7 @@ notifications_center.rules_builder   # Rules builder + rule evaluation (feature 
 
 ```
 leads.nurture   # Lead nurture campaigns, steps, enrollments, and logs (feature gated)
+leads.scoring   # Deterministic lead scoring rules + snapshots (feature gated)
 ```
 
 **Configuration:**
