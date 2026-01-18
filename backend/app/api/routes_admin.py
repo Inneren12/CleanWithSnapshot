@@ -58,6 +58,7 @@ from app.domain.analytics.service import (
     funnel_summary,
     geo_area_analytics,
     kpi_aggregates,
+    list_attribution_paths,
     nps_distribution,
     nps_trends,
     estimated_duration_from_booking,
@@ -110,15 +111,24 @@ from app.domain.disputes.db_models import Dispute, FinancialAdjustmentEvent
 from app.domain.documents import service as document_service
 from app.domain.invoices.db_models import Invoice, InvoiceItem, InvoicePublicToken, Payment
 from app.domain.leads import statuses as lead_statuses
-from app.domain.leads.db_models import Lead, LeadQuote, LeadQuoteFollowUp, ReferralCredit
+from app.domain.leads.db_models import (
+    Lead,
+    LeadQuote,
+    LeadQuoteFollowUp,
+    LeadTouchpoint,
+    ReferralCredit,
+)
 from app.domain.nps.db_models import NpsResponse, SupportTicket
 from app.domain.leads.service import (
+    create_lead_touchpoint,
     create_quote_followup,
     export_payload_from_lead,
     apply_referral_conversion,
     list_lead_quotes,
+    list_lead_touchpoints,
     resolve_quote_status,
 )
+from app.domain.leads import attribution as attribution_service
 from app.domain.leads.schemas import (
     AdminLeadDetailResponse,
     AdminLeadListResponse,
@@ -131,6 +141,11 @@ from app.domain.leads.schemas import (
     AdminLeadStatusUpdateRequest,
     AdminLeadTimelineCreateRequest,
     AdminLeadUpdateRequest,
+    LeadAttributionPolicy,
+    LeadAttributionResponse,
+    LeadAttributionSplitEntry,
+    LeadTouchpointCreateRequest,
+    LeadTouchpointResponse,
     admin_lead_detail_from_model,
     admin_lead_from_model,
 )
@@ -2416,6 +2431,36 @@ def _quote_followup_response(followup: LeadQuoteFollowUp) -> AdminLeadQuoteFollo
     )
 
 
+def _touchpoint_response(touchpoint: LeadTouchpoint) -> LeadTouchpointResponse:
+    return LeadTouchpointResponse(
+        touchpoint_id=str(touchpoint.touchpoint_id),
+        occurred_at=touchpoint.occurred_at,
+        channel=touchpoint.channel,
+        source=touchpoint.source,
+        campaign=touchpoint.campaign,
+        medium=touchpoint.medium,
+        keyword=touchpoint.keyword,
+        landing_page=touchpoint.landing_page,
+        metadata=touchpoint.metadata_json or {},
+    )
+
+
+async def _require_attribution_enabled(
+    request: Request, session: AsyncSession, org_id: uuid.UUID
+) -> Response | None:
+    enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "analytics.attribution_multitouch"
+    )
+    if not enabled:
+        return problem_details(
+            request=request,
+            status=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail="Disabled by org settings",
+        )
+    return None
+
+
 def _quote_response(quote: LeadQuote) -> AdminLeadQuoteResponse:
     resolved_status = resolve_quote_status(quote.status, quote.expires_at)
     followups_attr = getattr(quote, "__dict__", {}).get("followups")
@@ -2765,6 +2810,97 @@ async def get_lead_detail(
         lead,
         timeline=timeline,
         referral_credit_count=int(credit_count or 0),
+    )
+
+
+@router.post("/v1/admin/leads/{lead_id}/touchpoints", response_model=LeadTouchpointResponse)
+async def create_lead_touchpoint_endpoint(
+    http_request: Request,
+    lead_id: str,
+    payload: LeadTouchpointCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_any_permission_keys("contacts.edit", "leads.edit")),
+) -> LeadTouchpointResponse:
+    org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
+    guard = await _require_attribution_enabled(http_request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    lead_result = await session.execute(
+        select(Lead).where(Lead.lead_id == lead_id, Lead.org_id == org_id)
+    )
+    lead = lead_result.scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    touchpoint = await create_lead_touchpoint(
+        session,
+        org_id=org_id,
+        lead_id=lead_id,
+        occurred_at=payload.occurred_at,
+        channel=payload.channel,
+        source=payload.source,
+        campaign=payload.campaign,
+        medium=payload.medium,
+        keyword=payload.keyword,
+        landing_page=payload.landing_page,
+        metadata=payload.metadata,
+    )
+
+    response_body = _touchpoint_response(touchpoint)
+    http_request.state.explicit_admin_audit = True
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="lead_touchpoint_create",
+        resource_type="lead",
+        resource_id=lead_id,
+        before=None,
+        after=response_body.model_dump(mode="json"),
+    )
+    await session.commit()
+    return response_body
+
+
+@router.get("/v1/admin/leads/{lead_id}/attribution", response_model=LeadAttributionResponse)
+async def get_lead_attribution(
+    http_request: Request,
+    lead_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_any_permission_keys("contacts.view", "leads.view")),
+) -> LeadAttributionResponse:
+    org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
+    guard = await _require_attribution_enabled(http_request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    lead_result = await session.execute(
+        select(Lead).where(Lead.lead_id == lead_id, Lead.org_id == org_id)
+    )
+    lead = lead_result.scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    touchpoints = await list_lead_touchpoints(session, org_id=org_id, lead_id=lead_id)
+    path = attribution_service.build_path(touchpoints)
+    splits = attribution_service.build_split(touchpoints)
+    weights = attribution_service.attribution_weights()
+    return LeadAttributionResponse(
+        lead_id=lead_id,
+        path=path,
+        touchpoints=[_touchpoint_response(tp) for tp in touchpoints],
+        split=[
+            LeadAttributionSplitEntry(
+                touchpoint_id=str(entry.touchpoint.touchpoint_id),
+                label=entry.label,
+                weight=entry.weight,
+                bucket=entry.bucket,
+            )
+            for entry in splits
+        ],
+        policy=LeadAttributionPolicy(
+            first_weight=weights.first,
+            middle_weight=weights.middle,
+            last_weight=weights.last,
+        ),
     )
 
 
@@ -6292,6 +6428,31 @@ async def get_funnel_analytics(
         loss_reasons=[
             analytics_schemas.FunnelLossReasonSummary(**reason) for reason in loss_reasons
         ],
+    )
+
+
+@router.get(
+    "/v1/admin/analytics/attribution/paths",
+    response_model=analytics_schemas.AttributionPathsResponse,
+)
+async def get_attribution_paths(
+    request: Request,
+    from_ts: datetime | None = Query(default=None, alias="from"),
+    to_ts: datetime | None = Query(default=None, alias="to"),
+    limit: int = Query(default=10, ge=1, le=100),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_finance),
+) -> analytics_schemas.AttributionPathsResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_attribution_enabled(request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+    start, end = _normalize_range(from_ts, to_ts)
+    items = await list_attribution_paths(session, start, end, org_id=org_id, limit=limit)
+    return analytics_schemas.AttributionPathsResponse(
+        range_start=start,
+        range_end=end,
+        items=[analytics_schemas.AttributionPathSummary(**item) for item in items],
     )
 
 

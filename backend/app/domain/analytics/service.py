@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.analytics.db_models import EventLog
 from app.domain.bookings.db_models import Booking, Team
-from app.domain.leads.db_models import Lead, LeadQuote
+from app.domain.leads.db_models import Lead, LeadQuote, LeadTouchpoint
+from app.domain.leads import attribution as attribution_service
 from app.domain.leads import statuses as lead_statuses
 from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.nps.db_models import NpsResponse
@@ -213,6 +214,47 @@ def _booking_area_label(
     if team_zones:
         return team_zones[0] if team_zones else None
     return None
+
+
+async def list_attribution_paths(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    *,
+    org_id: uuid.UUID,
+    limit: int,
+) -> list[dict[str, object]]:
+    stmt = (
+        select(LeadTouchpoint)
+        .where(
+            LeadTouchpoint.org_id == org_id,
+            LeadTouchpoint.occurred_at >= start,
+            LeadTouchpoint.occurred_at <= end,
+        )
+        .order_by(
+            LeadTouchpoint.lead_id.asc(),
+            LeadTouchpoint.occurred_at.asc(),
+            LeadTouchpoint.touchpoint_id.asc(),
+        )
+    )
+    result = await session.execute(stmt)
+    rows = list(result.scalars().all())
+    by_lead: dict[str, list[LeadTouchpoint]] = defaultdict(list)
+    for touchpoint in rows:
+        by_lead[touchpoint.lead_id].append(touchpoint)
+
+    path_counts: Counter[str] = Counter()
+    for touchpoints in by_lead.values():
+        path = attribution_service.build_path(touchpoints)
+        if not path:
+            continue
+        path_counts[path] += 1
+
+    items = [
+        {"path": path, "lead_count": count}
+        for path, count in path_counts.most_common(limit)
+    ]
+    return items
 
 
 async def geo_area_analytics(

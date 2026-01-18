@@ -97,6 +97,12 @@ export default function FunnelAnalyticsPage() {
         featureKey: "module.analytics",
       },
       {
+        key: "analytics-attribution",
+        label: "Attribution",
+        href: "/admin/analytics/attribution",
+        featureKey: "analytics.attribution_multitouch",
+      },
+      {
         key: "analytics-funnel",
         label: "Booking Funnel",
         href: "/admin/analytics/funnel",

@@ -172,3 +172,14 @@ class FinancialSummaryResponse(BaseModel):
     profit_cents: int | None = None
     margin_pp: float | None = None
     gst_owed_cents: int | None = None
+
+
+class AttributionPathSummary(BaseModel):
+    path: str
+    lead_count: int
+
+
+class AttributionPathsResponse(BaseModel):
+    range_start: datetime
+    range_end: datetime
+    items: list[AttributionPathSummary]

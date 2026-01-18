@@ -226,6 +226,52 @@ class AdminLeadQuoteFollowUpCreateRequest(BaseModel):
     note: str = Field(..., min_length=1, max_length=500)
 
 
+class LeadTouchpointCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    occurred_at: Optional[datetime] = None
+    channel: str = Field(..., min_length=1, max_length=100)
+    source: Optional[str] = Field(default=None, max_length=100)
+    campaign: Optional[str] = Field(default=None, max_length=100)
+    medium: Optional[str] = Field(default=None, max_length=100)
+    keyword: Optional[str] = Field(default=None, max_length=100)
+    landing_page: Optional[str] = Field(default=None, max_length=255)
+    metadata: dict = Field(default_factory=dict)
+
+
+class LeadTouchpointResponse(BaseModel):
+    touchpoint_id: str
+    occurred_at: datetime
+    channel: Optional[str] = None
+    source: Optional[str] = None
+    campaign: Optional[str] = None
+    medium: Optional[str] = None
+    keyword: Optional[str] = None
+    landing_page: Optional[str] = None
+    metadata: dict
+
+
+class LeadAttributionSplitEntry(BaseModel):
+    touchpoint_id: str
+    label: str
+    weight: float
+    bucket: str
+
+
+class LeadAttributionPolicy(BaseModel):
+    first_weight: float
+    middle_weight: float
+    last_weight: float
+
+
+class LeadAttributionResponse(BaseModel):
+    lead_id: str
+    path: str
+    touchpoints: List[LeadTouchpointResponse]
+    split: List[LeadAttributionSplitEntry]
+    policy: LeadAttributionPolicy
+
+
 def admin_lead_from_model(model, referral_credit_count: int | None = None) -> AdminLeadResponse:
     credits_attr = getattr(model, "__dict__", {}).get("referral_credits")
     credit_count = referral_credit_count

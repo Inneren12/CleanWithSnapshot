@@ -87,6 +87,12 @@ export default function GeoAnalyticsPage() {
         featureKey: "module.analytics",
       },
       {
+        key: "analytics-attribution",
+        label: "Attribution",
+        href: "/admin/analytics/attribution",
+        featureKey: "analytics.attribution_multitouch",
+      },
+      {
         key: "analytics-geo",
         label: "Geo Heatmap",
         href: "/admin/analytics/geo",
