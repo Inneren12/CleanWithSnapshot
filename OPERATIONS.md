@@ -233,6 +233,19 @@ GOOGLE_OAUTH_REDIRECT_URI="https://panidobro.com/admin/settings/integrations"
 The redirect URI should match the OAuth consent screen configuration and point to the
 admin integrations page where the callback is handled.
 
+### QuickBooks OAuth (Integrations)
+
+Set these to enable QuickBooks OAuth connect/disconnect:
+
+```bash
+QUICKBOOKS_OAUTH_CLIENT_ID="<quickbooks-client-id>"
+QUICKBOOKS_OAUTH_CLIENT_SECRET="<quickbooks-client-secret>"
+QUICKBOOKS_OAUTH_REDIRECT_URI="https://panidobro.com/admin/settings/integrations"
+```
+
+The redirect URI should match the QuickBooks app configuration and point to the
+admin integrations page where the callback is handled.
+
 **Optional variables:**
 
 ```bash

@@ -55,6 +55,18 @@ type GcalConnectStartResponse = {
   authorization_url: string;
 };
 
+type QboIntegrationStatus = {
+  connected: boolean;
+  realm_id?: string | null;
+  oauth_configured: boolean;
+  last_sync_at?: string | null;
+  last_error?: string | null;
+};
+
+type QboConnectStartResponse = {
+  authorization_url: string;
+};
+
 const STORAGE_USERNAME_KEY = "admin_basic_username";
 const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -86,8 +98,11 @@ export default function IntegrationsPage() {
   const [gcalStatus, setGcalStatus] = useState<GcalIntegrationStatus | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [gcalError, setGcalError] = useState<string | null>(null);
+  const [qboStatus, setQboStatus] = useState<QboIntegrationStatus | null>(null);
+  const [qboError, setQboError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [gcalLoading, setGcalLoading] = useState(false);
+  const [qboLoading, setQboLoading] = useState(false);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     if (!username || !password) return {} as Record<string, string>;
@@ -105,6 +120,9 @@ export default function IntegrationsPage() {
     : true;
   const gcalVisible = visibilityReady
     ? isVisible("integrations.google_calendar", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
+  const qboVisible = visibilityReady
+    ? isVisible("integrations.accounting.quickbooks", permissionKeys, featureOverrides, hiddenKeys)
     : true;
 
   const navLinks = useMemo(() => {
@@ -235,6 +253,27 @@ export default function IntegrationsPage() {
     setGcalLoading(false);
   }, [authHeaders, password, username]);
 
+  const loadQboStatus = useCallback(async () => {
+    if (!username || !password) return;
+    setQboError(null);
+    setQboLoading(true);
+    const response = await fetch(`${API_BASE}/v1/admin/integrations/accounting/quickbooks/status`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as QboIntegrationStatus;
+      setQboStatus(data);
+    } else if (response.status === 403) {
+      setQboStatus(null);
+      setQboError("QuickBooks integration is disabled.");
+    } else {
+      setQboStatus(null);
+      setQboError("Failed to load QuickBooks status.");
+    }
+    setQboLoading(false);
+  }, [authHeaders, password, username]);
+
   const startGcalConnect = useCallback(async () => {
     if (!username || !password) return;
     setGcalError(null);
@@ -270,6 +309,41 @@ export default function IntegrationsPage() {
     setGcalLoading(false);
   }, [authHeaders, loadGcalStatus, password, username]);
 
+  const startQboConnect = useCallback(async () => {
+    if (!username || !password) return;
+    setQboError(null);
+    setQboLoading(true);
+    const response = await fetch(`${API_BASE}/v1/admin/integrations/accounting/quickbooks/connect/start`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+    if (!response.ok) {
+      setQboError("Failed to start QuickBooks connection.");
+      setQboLoading(false);
+      return;
+    }
+    const data = (await response.json()) as QboConnectStartResponse;
+    setQboLoading(false);
+    window.location.href = data.authorization_url;
+  }, [authHeaders, password, username]);
+
+  const disconnectQbo = useCallback(async () => {
+    if (!username || !password) return;
+    setQboError(null);
+    setQboLoading(true);
+    const response = await fetch(`${API_BASE}/v1/admin/integrations/accounting/quickbooks/disconnect`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+    if (!response.ok) {
+      setQboError("Failed to disconnect QuickBooks.");
+      setQboLoading(false);
+      return;
+    }
+    await loadQboStatus();
+    setQboLoading(false);
+  }, [authHeaders, loadQboStatus, password, username]);
+
   useEffect(() => {
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
     const storedPassword = window.localStorage.getItem(STORAGE_PASSWORD_KEY);
@@ -297,11 +371,44 @@ export default function IntegrationsPage() {
   }, [gcalVisible, loadGcalStatus]);
 
   useEffect(() => {
+    if (!qboVisible) return;
+    void loadQboStatus();
+  }, [loadQboStatus, qboVisible]);
+
+  useEffect(() => {
     if (!username || !password) return;
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const state = params.get("state");
     if (!code) return;
+    const realmId = params.get("realmId");
+    if (realmId) {
+      if (!isOwner) {
+        setQboError("Only Owners can complete QuickBooks connections.");
+        return;
+      }
+      const finalizeConnect = async () => {
+        setQboLoading(true);
+        const response = await fetch(`${API_BASE}/v1/admin/integrations/accounting/quickbooks/connect/callback`, {
+          method: "POST",
+          headers: {
+            ...authHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ code, realm_id: realmId, state }),
+        });
+        if (!response.ok) {
+          setQboError("Failed to finish QuickBooks connection.");
+        } else {
+          await loadQboStatus();
+        }
+        setQboLoading(false);
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, "", cleanUrl);
+      };
+      void finalizeConnect();
+      return;
+    }
     if (!isOwner) {
       setGcalError("Only Owners can complete Google Calendar connections.");
       return;
@@ -326,12 +433,13 @@ export default function IntegrationsPage() {
       window.history.replaceState({}, "", cleanUrl);
     };
     void finalizeConnect();
-  }, [authHeaders, isOwner, loadGcalStatus, password, username]);
+  }, [authHeaders, isOwner, loadGcalStatus, loadQboStatus, password, username]);
 
   const stripe = integrations?.stripe;
   const twilio = integrations?.twilio;
   const email = integrations?.email;
   const gcal = gcalStatus;
+  const qbo = qboStatus;
 
   const stripeBadge = stripe
     ? stripe.connected
@@ -353,6 +461,11 @@ export default function IntegrationsPage() {
       ? statusBadge("Connected", "confirmed")
       : statusBadge("Not connected", "cancelled")
     : statusBadge("Unknown", "pending");
+  const qboBadge = qbo
+    ? qbo.connected
+      ? statusBadge("Connected", "confirmed")
+      : statusBadge("Not connected", "cancelled")
+    : statusBadge("Unknown", "pending");
 
   return (
     <div className="admin-page">
@@ -371,76 +484,143 @@ export default function IntegrationsPage() {
           <p className="muted">Load admin credentials to view integration status.</p>
         ) : (
           <>
-            {!gcalVisible ? (
-              <p className="alert alert-warning">Google Calendar integration is disabled for this organization.</p>
+            {!gcalVisible && !qboVisible ? (
+              <p className="alert alert-warning">Integrations are disabled for this organization.</p>
             ) : (
               <>
                 {gcalError ? <p className="alert alert-warning">{gcalError}</p> : null}
+                {qboError ? <p className="alert alert-warning">{qboError}</p> : null}
                 {gcalLoading ? <p className="muted">Loading Google Calendar status…</p> : null}
+                {qboLoading ? <p className="muted">Loading QuickBooks status…</p> : null}
                 <div className="settings-grid">
-                  <div className="settings-card">
-                    <div className="settings-card-header">
-                      <div>
-                        <strong>Google Calendar</strong>
-                        <div className="muted small">Connect a Google account for calendar sync</div>
+                  {gcalVisible ? (
+                    <div className="settings-card">
+                      <div className="settings-card-header">
+                        <div>
+                          <strong>Google Calendar</strong>
+                          <div className="muted small">Connect a Google account for calendar sync</div>
+                        </div>
+                        {gcalBadge}
                       </div>
-                      {gcalBadge}
+                      <div className="settings-card-body">
+                        <div className="settings-meta">
+                          <div>
+                            <div className="muted small">Status</div>
+                            <strong>{gcal?.connected ? "Connected" : "Not connected"}</strong>
+                          </div>
+                          <div>
+                            <div className="muted small">OAuth configured</div>
+                            <strong>{gcal?.oauth_configured ? "Yes" : "No"}</strong>
+                          </div>
+                        </div>
+                        <div className="settings-meta">
+                          <div>
+                            <div className="muted small">Calendar</div>
+                            <select className="input" disabled>
+                              <option>{gcal?.calendar_id ?? "Select calendar (coming soon)"}</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="settings-meta">
+                          <div>
+                            <div className="muted small">Last sync</div>
+                            <strong>{formatMaybeDate(gcal?.last_sync_at)}</strong>
+                          </div>
+                          <div>
+                            <div className="muted small">Last error</div>
+                            <strong>{gcal?.last_error ?? "—"}</strong>
+                          </div>
+                        </div>
+                        <div className="settings-actions">
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            onClick={startGcalConnect}
+                            disabled={!isOwner || gcalLoading || !gcal?.oauth_configured}
+                            title={!isOwner ? "Owner access required" : undefined}
+                          >
+                            Connect
+                          </button>
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            onClick={disconnectGcal}
+                            disabled={!isOwner || gcalLoading || !gcal?.connected}
+                            title={!isOwner ? "Owner access required" : undefined}
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                        <div className="muted small">
+                          Required: <code>GOOGLE_OAUTH_CLIENT_ID</code>, <code>GOOGLE_OAUTH_CLIENT_SECRET</code>,{" "}
+                          <code>GOOGLE_OAUTH_REDIRECT_URI</code>
+                        </div>
+                      </div>
                     </div>
-                    <div className="settings-card-body">
-                      <div className="settings-meta">
+                  ) : null}
+                  {qboVisible ? (
+                    <div className="settings-card">
+                      <div className="settings-card-header">
                         <div>
-                          <div className="muted small">Status</div>
-                          <strong>{gcal?.connected ? "Connected" : "Not connected"}</strong>
+                          <strong>QuickBooks</strong>
+                          <div className="muted small">Connect QuickBooks Online for accounting sync</div>
                         </div>
-                        <div>
-                          <div className="muted small">OAuth configured</div>
-                          <strong>{gcal?.oauth_configured ? "Yes" : "No"}</strong>
-                        </div>
+                        {qboBadge}
                       </div>
-                      <div className="settings-meta">
-                        <div>
-                          <div className="muted small">Calendar</div>
-                          <select className="input" disabled>
-                            <option>{gcal?.calendar_id ?? "Select calendar (coming soon)"}</option>
-                          </select>
+                      <div className="settings-card-body">
+                        <div className="settings-meta">
+                          <div>
+                            <div className="muted small">Status</div>
+                            <strong>{qbo?.connected ? "Connected" : "Not connected"}</strong>
+                          </div>
+                          <div>
+                            <div className="muted small">OAuth configured</div>
+                            <strong>{qbo?.oauth_configured ? "Yes" : "No"}</strong>
+                          </div>
                         </div>
-                      </div>
-                      <div className="settings-meta">
-                        <div>
-                          <div className="muted small">Last sync</div>
-                          <strong>{formatMaybeDate(gcal?.last_sync_at)}</strong>
+                        <div className="settings-meta">
+                          <div>
+                            <div className="muted small">Realm ID</div>
+                            <strong>{qbo?.realm_id ?? "—"}</strong>
+                          </div>
                         </div>
-                        <div>
-                          <div className="muted small">Last error</div>
-                          <strong>{gcal?.last_error ?? "—"}</strong>
+                        <div className="settings-meta">
+                          <div>
+                            <div className="muted small">Last sync</div>
+                            <strong>{formatMaybeDate(qbo?.last_sync_at)}</strong>
+                          </div>
+                          <div>
+                            <div className="muted small">Last error</div>
+                            <strong>{qbo?.last_error ?? "—"}</strong>
+                          </div>
                         </div>
-                      </div>
-                      <div className="settings-actions">
-                        <button
-                          className="btn btn-ghost"
-                          type="button"
-                          onClick={startGcalConnect}
-                          disabled={!isOwner || gcalLoading || !gcal?.oauth_configured}
-                          title={!isOwner ? "Owner access required" : undefined}
-                        >
-                          Connect
-                        </button>
-                        <button
-                          className="btn btn-ghost"
-                          type="button"
-                          onClick={disconnectGcal}
-                          disabled={!isOwner || gcalLoading || !gcal?.connected}
-                          title={!isOwner ? "Owner access required" : undefined}
-                        >
-                          Disconnect
-                        </button>
-                      </div>
-                      <div className="muted small">
-                        Required: <code>GOOGLE_OAUTH_CLIENT_ID</code>, <code>GOOGLE_OAUTH_CLIENT_SECRET</code>,{" "}
-                        <code>GOOGLE_OAUTH_REDIRECT_URI</code>
+                        <div className="settings-actions">
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            onClick={startQboConnect}
+                            disabled={!isOwner || qboLoading || !qbo?.oauth_configured}
+                            title={!isOwner ? "Owner access required" : undefined}
+                          >
+                            Connect
+                          </button>
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            onClick={disconnectQbo}
+                            disabled={!isOwner || qboLoading || !qbo?.connected}
+                            title={!isOwner ? "Owner access required" : undefined}
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                        <div className="muted small">
+                          Required: <code>QUICKBOOKS_OAUTH_CLIENT_ID</code>,{" "}
+                          <code>QUICKBOOKS_OAUTH_CLIENT_SECRET</code>, <code>QUICKBOOKS_OAUTH_REDIRECT_URI</code>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  ) : null}
                 </div>
               </>
             )}
