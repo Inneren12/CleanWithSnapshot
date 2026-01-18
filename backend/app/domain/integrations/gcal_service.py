@@ -220,6 +220,15 @@ async def get_primary_calendar_id(session: AsyncSession, org_id: uuid.UUID) -> s
     )
 
 
+async def get_sync_state(
+    session: AsyncSession, org_id: uuid.UUID, calendar_id: str
+) -> IntegrationsGcalSyncState | None:
+    return await session.get(
+        IntegrationsGcalSyncState,
+        {"org_id": org_id, "calendar_id": calendar_id},
+    )
+
+
 async def get_export_calendar(session: AsyncSession, org_id: uuid.UUID) -> IntegrationsGcalCalendar | None:
     return await session.scalar(
         sa.select(IntegrationsGcalCalendar).where(

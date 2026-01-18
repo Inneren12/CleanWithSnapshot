@@ -840,6 +840,11 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Export sync updates existing events when the booking hash changes; unchanged bookings are skipped.
 - Export sync never deletes remote events (manual sync is create/update only).
 
+**GCal Job Gating Rules:**
+- `gcal-sync` uses `integrations_gcal_sync_state` to track `sync_cursor` + `last_sync_at`.
+- Each run is gated: skip when `now - last_sync_at < GCAL_SYNC_INTERVAL_SECONDS`.
+- Sync is skipped when `module.integrations` or `integrations.google_calendar` is disabled.
+
 **Permissions Required:**
 - `settings.manage` - Configure integrations
 
