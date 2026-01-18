@@ -65,7 +65,10 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
   {
     key: "module.quality",
     label: "Quality",
-    children: [{ key: "quality.photo_evidence", label: "Photo evidence gallery" }],
+    children: [
+      { key: "quality.photo_evidence", label: "Photo evidence gallery" },
+      { key: "quality.nps", label: "NPS segments dashboard" },
+    ],
   },
   { key: "module.teams", label: "Teams" },
   {
@@ -166,6 +169,7 @@ const DEFAULT_DISABLED_KEYS = new Set<string>([
   "leads.scoring",
   "analytics.attribution_multitouch",
   "schedule.optimization",
+  "quality.nps",
   "quality.photo_evidence",
 ]);
 

@@ -255,6 +255,59 @@ def test_low_score_creates_ticket_and_admin_api(client, async_session_maker, adm
     assert update.json()["status"] == "IN_PROGRESS"
 
 
+def test_admin_nps_segments_classification(client, async_session_maker, admin_credentials):
+    emails = [f"survey-seg-{uuid4()}@example.com" for _ in range(4)]
+    order_ids = [
+        _seed_order(async_session_maker, f"order-nps-seg-{index}", email=email)[0]
+        for index, email in enumerate(emails)
+    ]
+
+    async def _create_responses():
+        async with async_session_maker() as session:
+            await feature_service.upsert_org_feature_overrides(
+                session, settings.default_org_id, {"quality.nps": True}
+            )
+            bookings = [await session.get(Booking, order_id) for order_id in order_ids]
+            tokens = [
+                await nps_service.issue_nps_token(session, booking=booking)
+                for booking in bookings
+                if booking is not None
+            ]
+            await nps_service.record_response(
+                session, token_record=tokens[0], booking=bookings[0], score=10, comment="Amazing"
+            )
+            await nps_service.record_response(
+                session, token_record=tokens[1], booking=bookings[1], score=8, comment="Solid"
+            )
+            await nps_service.record_response(
+                session, token_record=tokens[2], booking=bookings[2], score=5, comment="Needs work"
+            )
+            await nps_service.record_response(
+                session, token_record=tokens[3], booking=bookings[3], score=2, comment="Awful"
+            )
+            await session.commit()
+
+    asyncio.run(_create_responses())
+
+    response = client.get(
+        "/v1/admin/nps/segments",
+        headers=_auth_headers(settings.admin_basic_username, settings.admin_basic_password),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    segments = body["segments"]
+    assert segments["total_responses"] == 4
+    assert segments["promoters"] == 1
+    assert segments["passives"] == 1
+    assert segments["detractors"] == 2
+    assert segments["nps_score"] == -25.0
+    detractors = body["top_detractors"]
+    assert detractors
+    scores = [entry["score"] for entry in detractors]
+    assert all(score <= 6 for score in scores)
+    assert scores == sorted(scores)
+
+
 def test_admin_ticket_requires_auth(client, admin_credentials):
     response = client.get("/api/admin/tickets")
     assert response.status_code == 401

@@ -84,6 +84,7 @@ schedule.optimization_ai   # AI optimization suggestions (feature gated)
 
 ```
 quality.photo_evidence   # Booking photo evidence metadata (feature gated)
+quality.nps   # NPS segments dashboard + admin responses (feature gated)
 ```
 
 **Configuration:**
