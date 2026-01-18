@@ -63,3 +63,15 @@ class RuleTestResponse(BaseModel):
     matched: bool
     dry_run: bool
     actions_json: list[Any]
+
+
+class RuleRunEventRequest(BaseModel):
+    trigger_type: str = Field(min_length=1, max_length=64)
+    event_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuleRunEventResponse(BaseModel):
+    trigger_type: str
+    run_count: int
+    matched_count: int
+    runs: list[RuleRunResponse]

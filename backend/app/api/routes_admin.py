@@ -220,6 +220,7 @@ from app.domain.subscriptions import service as subscription_service
 from app.domain.subscriptions.db_models import Subscription
 from app.domain.time_tracking.db_models import WorkTimeEntry
 from app.domain.admin_audit import service as audit_service
+from app.domain.rules import engine as rules_engine
 from app.domain.rules import schemas as rules_schemas
 from app.domain.rules import service as rules_service
 from app.domain.workers.compliance import (
@@ -1504,6 +1505,55 @@ async def test_rule(
         matched=run.matched,
         dry_run=rule.dry_run,
         actions_json=run.actions_json or [],
+    )
+
+
+@router.post("/v1/admin/rules/run", response_model=rules_schemas.RuleRunEventResponse)
+async def run_rules_for_event(
+    payload: rules_schemas.RuleRunEventRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(_require_owner),
+) -> rules_schemas.RuleRunEventResponse | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_rules_enabled(request, session, org_id)
+    if isinstance(guard, Response):
+        return guard
+
+    trigger_type = payload.trigger_type
+    adapter = rules_engine.get_trigger_adapter(trigger_type)
+    normalized = adapter.normalize(payload.event_payload)
+
+    runs = await rules_service.evaluate_rules_for_trigger(
+        session,
+        org_id=org_id,
+        trigger_type=trigger_type,
+        payload=normalized.payload,
+        occurred_at=normalized.occurred_at,
+        entity_type=normalized.entity_type,
+        entity_id=normalized.entity_id,
+        idempotency_key=normalized.idempotency_key,
+    )
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        org_id=org_id,
+        action="rules.run",
+        resource_type="rule",
+        resource_id=trigger_type,
+        before={"trigger_type": trigger_type, "event_payload": payload.event_payload},
+        after={
+            "run_count": len(runs),
+            "matched_count": sum(1 for run in runs if run.matched),
+            "idempotency_key": normalized.idempotency_key,
+        },
+    )
+    await session.commit()
+    return rules_schemas.RuleRunEventResponse(
+        trigger_type=trigger_type,
+        run_count=len(runs),
+        matched_count=sum(1 for run in runs if run.matched),
+        runs=[_rule_run_response(run) for run in runs],
     )
 
 

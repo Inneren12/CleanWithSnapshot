@@ -772,6 +772,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Digest job runner: `backend/app/jobs/notifications_digests.py` + `backend/app/jobs/run.py`
 - Digest send gating state: `backend/app/domain/notifications_digests/service.py`
 - Rules builder CRUD + evaluations: `backend/app/api/routes_admin.py` + `backend/app/domain/rules/service.py`
+- Rules engine evaluation + trigger adapters: `backend/app/domain/rules/engine.py`
 - Preset keys: `no_show`, `payment_failed`, `negative_review`, `low_stock`, `high_value_lead`
 - Notification triggers:
    - `negative_review` — Admin client feedback with rating ≤ 2 emits one event per feedback.
@@ -785,6 +786,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - API endpoints and RBAC: `backend/app/api/routes_admin.py`
 - Event/read schema: `backend/app/domain/notifications_center/db_models.py` + Alembic migration
 - Admin UI, CTA link mapping, and filters: `web/app/admin/notifications/page.tsx`
+- Internal evaluation endpoint: `POST /v1/admin/rules/run` with trigger types `worker_no_show`, `payment_failed`,
+  `negative_review`, `low_inventory`, `high_value_lead`
 
 ---
 

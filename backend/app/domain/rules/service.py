@@ -7,6 +7,7 @@ import uuid
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.rules import engine as rules_engine
 from app.domain.rules.db_models import Rule, RuleRun
 
 
@@ -20,15 +21,6 @@ def _normalize_actions(value: list[Any] | None) -> list[Any]:
     if value is None:
         return []
     return value
-
-
-def _conditions_match(payload: dict[str, Any], conditions: dict[str, Any]) -> bool:
-    if not conditions:
-        return True
-    for key, expected in conditions.items():
-        if payload.get(key) != expected:
-            return False
-    return True
 
 
 def _resolve_trigger(trigger_type: str | None, payload: dict[str, Any]) -> str | None:
@@ -46,7 +38,7 @@ def _evaluate_rule(*, rule: Rule, payload: dict[str, Any], trigger_type: str | N
     resolved_trigger = _resolve_trigger(trigger_type, payload)
     if resolved_trigger and rule.trigger_type != resolved_trigger:
         return False
-    return _conditions_match(payload, rule.conditions_json or {})
+    return rules_engine.evaluate_conditions(payload, rule.conditions_json or {})
 
 
 async def list_rules(session: AsyncSession, org_id: uuid.UUID) -> list[Rule]:
@@ -105,6 +97,75 @@ async def list_rule_runs(
         .order_by(RuleRun.occurred_at.desc())
     )
     return list(await session.scalars(stmt))
+
+
+async def list_enabled_rules(
+    session: AsyncSession, org_id: uuid.UUID, trigger_type: str
+) -> list[Rule]:
+    stmt = (
+        sa.select(Rule)
+        .where(
+            Rule.org_id == org_id,
+            Rule.enabled.is_(True),
+            Rule.trigger_type == trigger_type,
+        )
+        .order_by(Rule.created_at.desc())
+    )
+    return list(await session.scalars(stmt))
+
+
+async def get_existing_run(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    idempotency_key: str,
+) -> RuleRun | None:
+    stmt = sa.select(RuleRun).where(
+        RuleRun.org_id == org_id,
+        RuleRun.rule_id == rule_id,
+        RuleRun.idempotency_key == idempotency_key,
+    )
+    return await session.scalar(stmt)
+
+
+async def evaluate_rules_for_trigger(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    trigger_type: str,
+    payload: dict[str, Any],
+    occurred_at: datetime | None,
+    entity_type: str | None,
+    entity_id: str | None,
+    idempotency_key: str | None,
+) -> list[RuleRun]:
+    rules = await list_enabled_rules(session, org_id, trigger_type)
+    runs: list[RuleRun] = []
+    for rule in rules:
+        if idempotency_key:
+            existing = await get_existing_run(
+                session,
+                org_id=org_id,
+                rule_id=rule.rule_id,
+                idempotency_key=idempotency_key,
+            )
+            if existing is not None:
+                runs.append(existing)
+                continue
+        run = await evaluate_rule(
+            session,
+            org_id=org_id,
+            rule=rule,
+            payload=payload,
+            trigger_type=trigger_type,
+            occurred_at=occurred_at,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            idempotency_key=idempotency_key,
+        )
+        runs.append(run)
+    return runs
 
 
 async def evaluate_rule(
