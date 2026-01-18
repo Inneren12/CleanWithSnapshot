@@ -773,6 +773,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Digest send gating state: `backend/app/domain/notifications_digests/service.py`
 - Rules builder CRUD + evaluations: `backend/app/api/routes_admin.py` + `backend/app/domain/rules/service.py`
 - Rules engine evaluation + trigger adapters: `backend/app/domain/rules/engine.py`
+- Rules action execution + adapters: `backend/app/domain/rules/actions.py` (supports `create_notification_event`, `send_email`, `send_sms`; dry-run logs intent, call escalation is not executed yet)
 - Preset keys: `no_show`, `payment_failed`, `negative_review`, `low_stock`, `high_value_lead`
 - Notification triggers:
    - `negative_review` — Admin client feedback with rating ≤ 2 emits one event per feedback.

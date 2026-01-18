@@ -7,8 +7,14 @@ import uuid
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.rules import actions as rules_actions
 from app.domain.rules import engine as rules_engine
 from app.domain.rules.db_models import Rule, RuleRun
+from app.infra.communication import NoopCommunicationAdapter, TwilioCommunicationAdapter
+from app.infra.email import EmailAdapter, NoopEmailAdapter
+
+EmailAdapterLike = EmailAdapter | NoopEmailAdapter
+CommunicationAdapterLike = TwilioCommunicationAdapter | NoopCommunicationAdapter
 
 
 def _normalize_conditions(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -139,6 +145,9 @@ async def evaluate_rules_for_trigger(
     entity_type: str | None,
     entity_id: str | None,
     idempotency_key: str | None,
+    execute_actions: bool = False,
+    email_adapter: EmailAdapterLike | None = None,
+    communication_adapter: CommunicationAdapterLike | None = None,
 ) -> list[RuleRun]:
     rules = await list_enabled_rules(session, org_id, trigger_type)
     runs: list[RuleRun] = []
@@ -163,6 +172,9 @@ async def evaluate_rules_for_trigger(
             entity_type=entity_type,
             entity_id=entity_id,
             idempotency_key=idempotency_key,
+            execute_actions=execute_actions,
+            email_adapter=email_adapter,
+            communication_adapter=communication_adapter,
         )
         runs.append(run)
     return runs
@@ -179,8 +191,12 @@ async def evaluate_rule(
     entity_type: str | None,
     entity_id: str | None,
     idempotency_key: str | None,
+    execute_actions: bool = False,
+    email_adapter: EmailAdapterLike | None = None,
+    communication_adapter: CommunicationAdapterLike | None = None,
 ) -> RuleRun:
     matched = _evaluate_rule(rule=rule, payload=payload, trigger_type=trigger_type)
+    intended_actions = list(rule.actions_json or []) if matched else []
     actions = [] if rule.dry_run or not matched else list(rule.actions_json or [])
     run = RuleRun(
         run_id=uuid.uuid4(),
@@ -195,4 +211,16 @@ async def evaluate_rule(
     )
     session.add(run)
     await session.flush()
+    if execute_actions and matched and intended_actions:
+        await rules_actions.execute_rule_actions(
+            session,
+            org_id=org_id,
+            rule=rule,
+            run=run,
+            actions=intended_actions,
+            payload=payload,
+            dry_run=rule.dry_run,
+            email_adapter=email_adapter,
+            communication_adapter=communication_adapter,
+        )
     return run
