@@ -664,6 +664,19 @@ Referrer-Policy: no-referrer
 Content-Security-Policy: default-src 'self'; ...
 ```
 
+### Bandit Suppressions
+
+**Allowed suppressions:** `# nosec` (optionally with a rule ID like `# nosec B105`).
+
+**Use only when:**
+- The finding is a known false positive or acceptable risk.
+- You can add a short, inline justification (e.g., `# nosec B105 - test fixture uses dummy secret`).
+- The suppression is narrowly scoped to the exact line that triggers Bandit.
+
+**Not allowed:**
+- Blanket suppressions across files or modules.
+- Suppressing findings without a justification comment.
+
 ### Audit Logging
 
 **Log admin actions:**
