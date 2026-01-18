@@ -199,6 +199,9 @@ def downgrade() -> None:
 
 **Always review auto-generated migrations!**
 
+**SQLite ordering reminder:** Never add columns to a table in a revision that can run before the table exists.
+Ensure `down_revision` points at the table-create revision (SQLite will fail `ALTER TABLE` otherwise).
+
 ### SQLite Constraint Changes (Batch Mode)
 
 SQLite cannot `ALTER` constraints directly. When dropping or creating constraints (FKs, unique constraints), wrap the

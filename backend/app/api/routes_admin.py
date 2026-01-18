@@ -1336,6 +1336,8 @@ def _rule_response(rule) -> rules_schemas.RuleResponse:
         trigger_type=rule.trigger_type,
         conditions_json=rule.conditions_json or {},
         actions_json=rule.actions_json or [],
+        escalation_policy=rule.escalation_policy_json or {},
+        escalation_cooldown_minutes=rule.escalation_cooldown_minutes,
         created_at=rule.created_at,
     )
 

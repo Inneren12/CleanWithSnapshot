@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db import UUID_TYPE, Base
@@ -37,6 +37,18 @@ class Rule(Base):
         nullable=False,
         default=list,
         server_default=sa.text("'[]'"),
+    )
+    escalation_policy_json: Mapped[dict[str, Any]] = mapped_column(
+        sa.JSON(),
+        nullable=False,
+        default=dict,
+        server_default=sa.text("'{}'"),
+    )
+    escalation_cooldown_minutes: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=60,
+        server_default="60",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -90,4 +102,45 @@ class RuleRun(Base):
         Index("ix_rule_runs_org_rule", "org_id", "rule_id"),
         Index("ix_rule_runs_org_occurred", "org_id", "occurred_at"),
         Index("ix_rule_runs_rule", "rule_id"),
+    )
+
+
+class RuleEscalation(Base):
+    __tablename__ = "rule_escalations"
+
+    escalation_id: Mapped[uuid.UUID] = mapped_column(UUID_TYPE, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("rules.rule_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    entity_type: Mapped[str | None] = mapped_column(String(64))
+    entity_id: Mapped[str | None] = mapped_column(String(64))
+    levels_json: Mapped[list[str]] = mapped_column(
+        sa.JSON(),
+        nullable=False,
+        default=list,
+        server_default=sa.text("'[]'"),
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_rule_escalations_org_rule_entity",
+            "org_id",
+            "rule_id",
+            "entity_type",
+            "entity_id",
+        ),
+        Index("ix_rule_escalations_rule_occurred", "rule_id", "occurred_at"),
     )
