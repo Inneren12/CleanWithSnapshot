@@ -148,6 +148,7 @@ from app.domain.notifications_digests import schemas as notifications_digest_sch
 from app.domain.notifications_digests import service as notifications_digest_service
 from app.domain.notifications_center.db_models import NotificationEvent
 from app.domain.data_rights import schemas as data_rights_schemas, service as data_rights_service
+from app.infra.communication import resolve_app_communication_adapter
 from app.infra.email import resolve_app_email_adapter
 from app.domain.outbox.db_models import OutboxEvent
 from app.domain.outbox.schemas import OutboxEventResponse, OutboxReplayResponse
@@ -1523,6 +1524,8 @@ async def run_rules_for_event(
     trigger_type = payload.trigger_type
     adapter = rules_engine.get_trigger_adapter(trigger_type)
     normalized = adapter.normalize(payload.event_payload)
+    email_adapter = resolve_app_email_adapter(request)
+    communication_adapter = resolve_app_communication_adapter(request)
 
     runs = await rules_service.evaluate_rules_for_trigger(
         session,
@@ -1533,6 +1536,9 @@ async def run_rules_for_event(
         entity_type=normalized.entity_type,
         entity_id=normalized.entity_id,
         idempotency_key=normalized.idempotency_key,
+        execute_actions=True,
+        email_adapter=email_adapter,
+        communication_adapter=communication_adapter,
     )
     await audit_service.record_action(
         session,
