@@ -80,6 +80,12 @@ schedule.optimization   # Deterministic schedule optimization suggestions (featu
 schedule.optimization_ai   # AI optimization suggestions (feature gated)
 ```
 
+**Quality subfeatures:**
+
+```
+quality.photo_evidence   # Booking photo evidence metadata (feature gated)
+```
+
 **Configuration:**
 - Backend: `backend/app/domain/feature_modules/service.py`
 - Frontend: `web/app/admin/lib/featureVisibility.ts`

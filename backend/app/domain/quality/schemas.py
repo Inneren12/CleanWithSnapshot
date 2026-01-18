@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class QualityIssueStatus(str, Enum):
@@ -117,6 +117,58 @@ class QualityIssueTagsResponse(BaseModel):
 
 class QualityIssueListResponse(BaseModel):
     items: list[QualityIssueResponse]
+    total: int
+
+
+class PhotoEvidenceKind(str, Enum):
+    BEFORE = "BEFORE"
+    AFTER = "AFTER"
+
+    @classmethod
+    def from_any_case(cls, value: str) -> "PhotoEvidenceKind":
+        try:
+            return cls(value.upper())
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError("kind must be BEFORE or AFTER") from exc
+
+
+class BookingPhotoEvidenceCreateRequest(BaseModel):
+    kind: PhotoEvidenceKind
+    storage_key: str
+    mime: str
+    bytes: int = Field(..., ge=0)
+    consent: bool
+    uploaded_by: str | None = None
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _normalize_kind(cls, value: str | PhotoEvidenceKind) -> PhotoEvidenceKind:
+        if isinstance(value, PhotoEvidenceKind):
+            return value
+        if value is None:
+            raise ValueError("kind is required")
+        return PhotoEvidenceKind.from_any_case(str(value))
+
+
+class BookingPhotoEvidenceResponse(BaseModel):
+    photo_id: str
+    booking_id: str
+    kind: PhotoEvidenceKind
+    storage_key: str
+    mime: str
+    bytes: int
+    consent: bool
+    uploaded_by: str
+    created_at: datetime
+
+
+class QualityPhotoEvidenceItem(BookingPhotoEvidenceResponse):
+    worker_id: int | None = None
+    has_issue: bool
+
+
+class QualityPhotoEvidenceListResponse(BaseModel):
+    items: list[QualityPhotoEvidenceItem]
     total: int
 
 

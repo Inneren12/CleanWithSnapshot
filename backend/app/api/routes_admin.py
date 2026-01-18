@@ -71,6 +71,7 @@ from app.infra.org_context import org_id_context
 from app.domain.bookings.db_models import (
     AvailabilityBlock,
     Booking,
+    BookingPhoto,
     BookingWorker,
     EmailEvent,
     OrderPhoto,
@@ -85,6 +86,7 @@ from app.domain.availability import schemas as availability_schemas
 from app.domain.availability import service as availability_service
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
+from app.domain.bookings import photos_service
 from app.domain.bookings.service import DEFAULT_SLOT_DURATION_MINUTES, DEFAULT_TEAM_NAME
 from app.domain.clients.db_models import (
     ClientAddress,
@@ -3524,6 +3526,27 @@ def _serialize_quality_review_item(
     )
 
 
+def _serialize_quality_photo_evidence(
+    photo: BookingPhoto,
+    *,
+    worker_id: int | None,
+    has_issue: bool,
+) -> quality_schemas.QualityPhotoEvidenceItem:
+    return quality_schemas.QualityPhotoEvidenceItem(
+        photo_id=photo.photo_id,
+        booking_id=photo.booking_id,
+        kind=quality_schemas.PhotoEvidenceKind.from_any_case(photo.kind),
+        storage_key=photo.storage_key,
+        mime=photo.mime,
+        bytes=photo.size_bytes,
+        consent=photo.consent,
+        uploaded_by=photo.uploaded_by,
+        created_at=photo.created_at,
+        worker_id=worker_id,
+        has_issue=has_issue,
+    )
+
+
 def _resolve_quality_distribution_range(
     from_date: date | None,
     to_date: date | None,
@@ -3668,6 +3691,41 @@ async def list_quality_reviews(
         page_size=25,
         templates=templates,
     )
+
+
+@router.get("/v1/admin/quality/photos", response_model=quality_schemas.QualityPhotoEvidenceListResponse)
+async def list_quality_photo_evidence(
+    request: Request,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    worker_id: int | None = None,
+    has_issue: bool | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("quality.view")),
+) -> quality_schemas.QualityPhotoEvidenceListResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "quality.photo_evidence"
+    )
+    if not enabled:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Feature disabled")
+    rows = await quality_service.list_quality_photo_evidence(
+        session,
+        org_id=org_id,
+        from_date=from_date,
+        to_date=to_date,
+        worker_id=worker_id,
+        has_issue=has_issue,
+    )
+    items = [
+        _serialize_quality_photo_evidence(
+            photo,
+            worker_id=assigned_worker_id,
+            has_issue=bool(has_issue_flag),
+        )
+        for photo, assigned_worker_id, has_issue_flag in rows
+    ]
+    return quality_schemas.QualityPhotoEvidenceListResponse(items=items, total=len(items))
 
 
 @router.get(
@@ -7545,6 +7603,50 @@ async def update_booking(
 
     schedule_payload = await ops_service.fetch_schedule_booking(session, org_id, booking.booking_id)
     return ScheduleBooking(**schedule_payload)
+
+
+@router.post(
+    "/v1/admin/bookings/{booking_id}/photos",
+    response_model=quality_schemas.BookingPhotoEvidenceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register_booking_photo_evidence(
+    booking_id: str,
+    payload: quality_schemas.BookingPhotoEvidenceCreateRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_permission_keys("quality.manage")),
+) -> quality_schemas.BookingPhotoEvidenceResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    enabled = await feature_service.effective_feature_enabled(
+        session, org_id, "quality.photo_evidence"
+    )
+    if not enabled:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Feature disabled")
+    await photos_service.fetch_order(session, booking_id, org_id)
+    uploader = payload.uploaded_by or identity.username or identity.role.value
+    photo = await quality_service.create_booking_photo_evidence(
+        session,
+        org_id=org_id,
+        booking_id=booking_id,
+        kind=payload.kind,
+        storage_key=payload.storage_key,
+        mime=payload.mime,
+        size_bytes=payload.bytes,
+        consent=payload.consent,
+        uploaded_by=uploader,
+    )
+    return quality_schemas.BookingPhotoEvidenceResponse(
+        photo_id=photo.photo_id,
+        booking_id=photo.booking_id,
+        kind=quality_schemas.PhotoEvidenceKind.from_any_case(photo.kind),
+        storage_key=photo.storage_key,
+        mime=photo.mime,
+        bytes=photo.size_bytes,
+        consent=photo.consent,
+        uploaded_by=photo.uploaded_by,
+        created_at=photo.created_at,
+    )
 
 
 @router.post("/v1/admin/bookings/{booking_id}/confirm", response_model=booking_schemas.BookingResponse)
