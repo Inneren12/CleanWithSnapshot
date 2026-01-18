@@ -219,6 +219,7 @@ from app.domain.ops.schemas import (
     QuickActionModel,
     QuickCreateBookingRequest,
     RankedWorkerSuggestion,
+    ScheduleOptimizationSuggestion,
     ScheduleBlackout,
     ScheduleBooking,
     ScheduleSuggestions,
@@ -1827,6 +1828,20 @@ async def _require_dashboard_enabled(
     request: Request, session: AsyncSession, org_id: uuid.UUID
 ):
     enabled = await feature_service.effective_feature_enabled(session, org_id, "module.dashboard")
+    if not enabled:
+        return problem_details(
+            request=request,
+            status=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail="Disabled by org settings",
+        )
+    return None
+
+
+async def _require_schedule_optimization_enabled(
+    request: Request, session: AsyncSession, org_id: uuid.UUID
+):
+    enabled = await feature_service.effective_feature_enabled(session, org_id, "schedule.optimization")
     if not enabled:
         return problem_details(
             request=request,
@@ -5097,6 +5112,40 @@ async def suggest_schedule(
         ]
 
     return ScheduleSuggestions(**suggestions, ranked_workers=ranked_workers)
+
+
+@router.get(
+    "/v1/admin/schedule/optimization",
+    response_model=list[ScheduleOptimizationSuggestion],
+)
+async def schedule_optimization_suggestions(
+    request: Request,
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    team_id: int | None = None,
+    worker_id: int | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("bookings.view")),
+) -> list[ScheduleOptimizationSuggestion] | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_schedule_optimization_enabled(request, session, org_id)
+    if guard is not None:
+        return guard
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    org_timezone = org_settings_service.resolve_timezone(org_settings)
+    try:
+        suggestions = await ops_service.suggest_schedule_optimizations(
+            session,
+            org_id,
+            start_date=from_date,
+            end_date=to_date,
+            org_timezone=org_timezone,
+            team_id=team_id,
+            worker_id=worker_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return [ScheduleOptimizationSuggestion(**suggestion) for suggestion in suggestions]
 
 
 @router.get("/v1/admin/schedule/addons", response_model=list[addon_schemas.AddonDefinitionResponse])

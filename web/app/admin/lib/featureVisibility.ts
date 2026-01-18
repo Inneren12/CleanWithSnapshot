@@ -53,7 +53,10 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
     key: "module.schedule",
     label: "Schedule",
     description: "Dispatcher timeline and assignment tools.",
-    children: [{ key: "schedule.optimization_ai", label: "AI optimization suggestions" }],
+    children: [
+      { key: "schedule.optimization", label: "Optimization suggestions" },
+      { key: "schedule.optimization_ai", label: "AI optimization suggestions" },
+    ],
   },
   { key: "module.invoices", label: "Invoices" },
   { key: "module.quality", label: "Quality" },
@@ -154,6 +157,7 @@ const DEFAULT_DISABLED_KEYS = new Set<string>([
   "leads.nurture",
   "leads.scoring",
   "analytics.attribution_multitouch",
+  "schedule.optimization",
 ]);
 
 export function moduleBaseForKey(key: string): string {

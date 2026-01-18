@@ -179,6 +179,23 @@ type ScheduleSuggestionsResponse = {
   ranked_workers?: RankedWorkerSuggestion[];
 };
 
+type ScheduleOptimizationSuggestion = {
+  id: string;
+  type: string;
+  title: string;
+  rationale: string;
+  estimated_impact: string | null;
+  apply_payload: {
+    action: string;
+    booking_id: string;
+    team_id: number | null;
+    starts_at: string;
+    ends_at: string;
+    candidate_worker_ids: number[];
+  };
+  severity: "low" | "medium" | "high";
+};
+
 function formatYMDInTz(date: Date, timeZone: string) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -396,6 +413,12 @@ export default function SchedulePage() {
   const [teamCalendar, setTeamCalendar] = useState<TeamCalendarResponse | null>(null);
   const [teamCalendarLoading, setTeamCalendarLoading] = useState(false);
   const [teamCalendarError, setTeamCalendarError] = useState<string | null>(null);
+  const [optimizationSuggestions, setOptimizationSuggestions] = useState<
+    ScheduleOptimizationSuggestion[]
+  >([]);
+  const [optimizationLoading, setOptimizationLoading] = useState(false);
+  const [optimizationError, setOptimizationError] = useState<string | null>(null);
+  const [expandedSuggestionIds, setExpandedSuggestionIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -474,6 +497,9 @@ export default function SchedulePage() {
   const scheduleVisible = visibilityReady
     ? isVisible("module.schedule", permissionKeys, featureOverrides, hiddenKeys)
     : true;
+  const optimizationVisible = visibilityReady
+    ? isVisible("schedule.optimization", permissionKeys, featureOverrides, hiddenKeys)
+    : false;
   const isListView = viewMode === "list";
   const isMonthView = viewMode === "month";
   const isDayView = viewMode === "day";
@@ -501,6 +527,17 @@ export default function SchedulePage() {
         ? "Daily booking volume, workers, and revenue by team."
       : "Dispatcher view in the organization timezone.";
   const navigationStep = isDayView ? 1 : 7;
+  const optimizationRange = useMemo(() => {
+    if (isListLikeView) {
+      if (!listFrom || !listTo) return null;
+      return { from: listFrom, to: listTo };
+    }
+    if (isDayView) {
+      return { from: selectedDate, to: selectedDate };
+    }
+    const weekStart = weekStartFromDay(selectedDate, orgTimezone);
+    return { from: weekStart, to: addDaysYMD(weekStart, 6, orgTimezone) };
+  }, [isDayView, isListLikeView, listFrom, listTo, orgTimezone, selectedDate]);
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -558,6 +595,18 @@ export default function SchedulePage() {
 
   const showToast = useCallback((message: string, kind: "error" | "success" = "error") => {
     setToast({ message, kind });
+  }, []);
+
+  const toggleSuggestionDetails = useCallback((suggestionId: string) => {
+    setExpandedSuggestionIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(suggestionId)) {
+        next.delete(suggestionId);
+      } else {
+        next.add(suggestionId);
+      }
+      return next;
+    });
   }, []);
 
   const refreshSchedule = useCallback(() => {
@@ -908,6 +957,55 @@ export default function SchedulePage() {
     teamFilter,
     workerFilter,
     isTeamView,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (!scheduleVisible || !optimizationVisible) return;
+    if (!optimizationRange) {
+      setOptimizationSuggestions([]);
+      return;
+    }
+    setOptimizationLoading(true);
+    setOptimizationError(null);
+    const params = new URLSearchParams({
+      from: optimizationRange.from,
+      to: optimizationRange.to,
+    });
+    if (teamFilter) params.set("team_id", teamFilter);
+    if (workerFilter) params.set("worker_id", workerFilter);
+    fetch(`${API_BASE}/v1/admin/schedule/optimization?${params.toString()}`, {
+      headers: authHeaders,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Failed to load optimization suggestions");
+        }
+        return response.json();
+      })
+      .then((payload: ScheduleOptimizationSuggestion[]) => {
+        setOptimizationSuggestions(payload);
+      })
+      .catch((fetchError) => {
+        setOptimizationSuggestions([]);
+        setOptimizationError(
+          fetchError instanceof Error
+            ? fetchError.message
+            : "Failed to load optimization suggestions"
+        );
+      })
+      .finally(() => setOptimizationLoading(false));
+  }, [
+    authHeaders,
+    isAuthenticated,
+    optimizationRange,
+    optimizationVisible,
+    refreshToken,
+    scheduleVisible,
+    teamFilter,
+    workerFilter,
   ]);
 
   useEffect(() => {
@@ -2128,6 +2226,82 @@ export default function SchedulePage() {
           <p className="muted schedule-export-filters">{exportFiltersLabel}</p>
         </div>
       </section>
+
+      {optimizationVisible ? (
+        <section className="card schedule-optimization">
+          <div className="card-body">
+            <div className="schedule-optimization-header">
+              <div>
+                <h2>Optimization</h2>
+                <p className="muted">
+                  Deterministic, read-only scheduling suggestions for the selected range.
+                </p>
+              </div>
+            </div>
+            {optimizationLoading ? <p className="muted">Loading suggestions…</p> : null}
+            {optimizationError ? (
+              <p className="muted schedule-error">{optimizationError}</p>
+            ) : null}
+            {optimizationSuggestions.length ? (
+              <div className="schedule-optimization-list">
+                {optimizationSuggestions.map((suggestion) => {
+                  const expanded = expandedSuggestionIds.has(suggestion.id);
+                  const workerCount = suggestion.apply_payload.candidate_worker_ids.length;
+                  return (
+                    <div key={suggestion.id} className="schedule-optimization-item">
+                      <div className="schedule-optimization-main">
+                        <div>
+                          <div className="schedule-optimization-title">{suggestion.title}</div>
+                          <div className="muted">{suggestion.rationale}</div>
+                          {suggestion.estimated_impact ? (
+                            <div className="muted">
+                              Impact: {suggestion.estimated_impact}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="schedule-optimization-actions">
+                          <span
+                            className={`schedule-optimization-severity ${suggestion.severity}`}
+                          >
+                            {suggestion.severity}
+                          </span>
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            onClick={() => toggleSuggestionDetails(suggestion.id)}
+                          >
+                            {expanded ? "Hide details" : "View details"}
+                          </button>
+                        </div>
+                      </div>
+                      {expanded ? (
+                        <div className="schedule-optimization-details">
+                          <div className="schedule-optimization-detail-row">
+                            <span className="muted">Suggested workers</span>
+                            <span>
+                              {workerCount
+                                ? `${workerCount} candidate${workerCount === 1 ? "" : "s"}`
+                                : "None available"}
+                            </span>
+                          </div>
+                          <div className="schedule-optimization-detail-row">
+                            <span className="muted">Apply payload</span>
+                            <pre className="schedule-optimization-payload">
+                              {JSON.stringify(suggestion.apply_payload, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : !optimizationLoading && !optimizationError ? (
+              <p className="muted schedule-empty">No optimization suggestions in this range.</p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {isListLikeView ? (
         <section className="card schedule-list">

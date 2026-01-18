@@ -6,7 +6,9 @@ import pytest
 
 from app.domain.bookings.db_models import Booking, TeamBlackout, Team
 from app.domain.clients.db_models import ClientAddress, ClientUser
+from app.domain.feature_modules.db_models import OrgFeatureConfig
 from app.domain.bookings.service import BUFFER_MINUTES, ensure_default_team
+from app.domain.org_settings import service as org_settings_service
 from app.domain.saas.db_models import Organization
 from app.domain.workers.db_models import Worker
 from app.settings import settings
@@ -15,6 +17,17 @@ from app.settings import settings
 def _basic_auth(username: str, password: str) -> dict[str, str]:
     token = base64.b64encode(f"{username}:{password}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
+
+
+async def _enable_schedule_optimization(session, org_id):
+    record = await session.get(OrgFeatureConfig, org_id)
+    overrides = dict(record.feature_overrides) if record and record.feature_overrides else {}
+    overrides["schedule.optimization"] = True
+    if record is None:
+        record = OrgFeatureConfig(org_id=org_id, feature_overrides=overrides)
+        session.add(record)
+    else:
+        record.feature_overrides = overrides
 
 
 @pytest.fixture(autouse=True)
@@ -243,6 +256,81 @@ async def test_conflicts_and_suggestions_are_org_scoped(client, async_session_ma
     team_ids = {team["team_id"] for team in suggestion_body["teams"]}
     assert default_team.team_id in team_ids
     assert all(team_id != other_team.team_id for team_id in team_ids)
+
+
+@pytest.mark.anyio
+async def test_schedule_optimization_suggestions_are_deterministic(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        await _enable_schedule_optimization(session, team.org_id)
+        worker = Worker(
+            name="Scheduler",
+            phone="+1 900",
+            team_id=team.team_id,
+            email="scheduler@example.com",
+            role="standard",
+            is_active=True,
+        )
+        session.add(worker)
+        await session.flush()
+
+        start_one = dt.datetime(2031, 1, 10, 9, 0, tzinfo=dt.timezone.utc)
+        start_two = dt.datetime(2031, 1, 10, 13, 0, tzinfo=dt.timezone.utc)
+        booking_one = Booking(
+            booking_id="11111111-1111-1111-1111-111111111111",
+            team_id=team.team_id,
+            starts_at=start_one,
+            duration_minutes=90,
+            status="PENDING",
+        )
+        booking_two = Booking(
+            booking_id="22222222-2222-2222-2222-222222222222",
+            team_id=team.team_id,
+            starts_at=start_two,
+            duration_minutes=60,
+            status="PENDING",
+        )
+        session.add_all([booking_one, booking_two])
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    params = {"from": "2031-01-10", "to": "2031-01-10"}
+    resp = client.get("/v1/admin/schedule/optimization", headers=headers, params=params)
+    assert resp.status_code == 200
+    body = resp.json()
+    ids = [item["id"] for item in body]
+    assert ids == [
+        "unassigned:11111111-1111-1111-1111-111111111111",
+        "unassigned:22222222-2222-2222-2222-222222222222",
+    ]
+    assert body[0]["apply_payload"]["candidate_worker_ids"] == [worker.worker_id]
+
+
+@pytest.mark.anyio
+async def test_schedule_optimization_respects_org_timezone(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        await _enable_schedule_optimization(session, team.org_id)
+        org_settings = await org_settings_service.get_or_create_org_settings(session, team.org_id)
+        org_settings.timezone = "America/Los_Angeles"
+        booking_start = dt.datetime(2026, 1, 2, 6, 30, tzinfo=dt.timezone.utc)
+        booking = Booking(
+            booking_id="33333333-3333-3333-3333-333333333333",
+            team_id=team.team_id,
+            starts_at=booking_start,
+            duration_minutes=60,
+            status="PENDING",
+        )
+        session.add(booking)
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    params = {"from": "2026-01-01", "to": "2026-01-01"}
+    resp = client.get("/v1/admin/schedule/optimization", headers=headers, params=params)
+    assert resp.status_code == 200
+    body = resp.json()
+    ids = {item["id"] for item in body}
+    assert "unassigned:33333333-3333-3333-3333-333333333333" in ids
 
 
 @pytest.mark.anyio

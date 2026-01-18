@@ -66,6 +66,13 @@ leads.nurture   # Lead nurture campaigns, steps, enrollments, and logs (feature 
 leads.scoring   # Deterministic lead scoring rules + snapshots (feature gated)
 ```
 
+**Schedule subfeatures:**
+
+```
+schedule.optimization   # Deterministic schedule optimization suggestions (feature gated)
+schedule.optimization_ai   # AI optimization suggestions (feature gated)
+```
+
 **Configuration:**
 - Backend: `backend/app/domain/feature_modules/service.py`
 - Frontend: `web/app/admin/lib/featureVisibility.ts`
