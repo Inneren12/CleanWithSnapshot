@@ -768,6 +768,9 @@ and headers to avoid UTC shifts for near-midnight bookings.
 **Where to change:**
 - Feed filtering, cursor logic, and read tracking: `backend/app/domain/notifications_center/service.py`
 - Preset rules configuration + emission: `backend/app/domain/notifications_center/service.py`
+- Rules `create_notification_event` actions write to the notifications feed and power the ops dashboard
+  critical alerts projection (CRITICAL/HIGH unread): `backend/app/domain/rules/actions.py`,
+  `backend/app/api/routes_admin.py::_build_ops_critical_alerts()`
 - Preset rules API (Owner-only): `backend/app/api/routes_admin.py`
 - Digest settings API (Owner-only): `backend/app/api/routes_admin.py`
 - Digest job runner: `backend/app/jobs/notifications_digests.py` + `backend/app/jobs/run.py`

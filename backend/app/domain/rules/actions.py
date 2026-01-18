@@ -39,6 +39,13 @@ def _coerce_headers(value: Any) -> dict[str, str] | None:
     return headers or None
 
 
+def _normalize_priority(value: str | None) -> str:
+    if not value:
+        return "NORMAL"
+    normalized = value.strip().upper()
+    return normalized or "NORMAL"
+
+
 def _log_action(action_type: str, status: str, extra: dict[str, Any]) -> None:
     logger.info(
         "rules_action_%s" % status,
@@ -128,7 +135,7 @@ async def _handle_notification_event(
         )
         return
 
-    priority = _coerce_str(action.get("priority")) or "NORMAL"
+    priority = _normalize_priority(_coerce_str(action.get("priority")))
     event_type = _coerce_str(action.get("event_type")) or rule.trigger_type
     entity_type = _coerce_str(action.get("entity_type")) or run.entity_type
     entity_id = _coerce_str(action.get("entity_id")) or run.entity_id
