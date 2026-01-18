@@ -41,14 +41,15 @@ jobs:
 
       - name: Dependency vulnerability scan (pip-audit)
         id: pip_audit
-        working-directory: .
         continue-on-error: true
         run: |
           python -m pip install pip-audit==2.7.3 --no-cache-dir
+          pushd backend >/dev/null
           set +e
-          pip-audit -r backend/requirements.txt -f json -o pip-audit.json > pip-audit.log 2>&1
-          EC=$?
+          pip-audit -r requirements.txt -f json -o ../pip-audit.json 2>&1 | tee ../pip-audit.log
+          EC=${PIPESTATUS[0]}
           set -e
+          popd >/dev/null
           echo "exit_code=$EC" >> "$GITHUB_OUTPUT"
 
       - name: Upload pip-audit report
@@ -66,7 +67,7 @@ jobs:
           PIP_AUDIT_EXIT: ${{ steps.pip_audit.outputs.exit_code }}
         run: |
           if [ ! -f pip-audit.json ]; then
-            echo "pip-audit execution failed; no JSON report produced."
+            echo "::error::pip-audit failed to produce JSON report. See pip-audit.log."
             if [ -f pip-audit.log ]; then
               echo "---- pip-audit output ----"
               cat pip-audit.log

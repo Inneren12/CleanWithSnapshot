@@ -231,19 +231,25 @@ python -m app.jobs.run --job leads-nurture-runner --once
 
 ---
 
-## Security Audits in CI
+## CI Security Audits
 
 CI runs dependency audits for backend and web dependencies and fails the workflow on findings.
 
-**pip-audit invocation rule:** Use `-r` **or** a project path, **not both**. For CI, run against the
-requirements file and emit JSON for artifact collection:
+**pip-audit invocation rule:** Run from `backend/` and use `-r requirements.txt` (do not mix `-r` with a
+project path). This keeps relative includes (e.g., `-c constraints.txt`) resolvable and produces the JSON
+report for artifact collection:
 
 ```bash
-pip-audit -r backend/requirements.txt -f json -o pip-audit.json
+cd backend
+pip-audit -r requirements.txt -f json -o ../pip-audit.json
 ```
 
 **CI policy (pip-audit):** Any reported vulnerability fails the job. CI uploads `pip-audit.json` (and logs) and
 prints a short summary (vulnerability count, top packages, top CVE IDs) so failures are actionable.
+
+**Troubleshooting:**
+- If CI reports “no JSON report produced,” check the `pip-audit.log` artifact. The most common cause is running
+  from the wrong directory so relative includes (like `-c constraints.txt`) cannot be resolved.
 
 **Remediation workflow:**
 1. Identify affected packages in `pip-audit.json`.
