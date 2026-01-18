@@ -192,6 +192,7 @@ type ScheduleOptimizationSuggestion = {
     starts_at: string;
     ends_at: string;
     candidate_worker_ids: number[];
+    worker_id?: number | null;
   };
   severity: "low" | "medium" | "high";
 };
@@ -419,6 +420,9 @@ export default function SchedulePage() {
   const [optimizationLoading, setOptimizationLoading] = useState(false);
   const [optimizationError, setOptimizationError] = useState<string | null>(null);
   const [expandedSuggestionIds, setExpandedSuggestionIds] = useState<Set<string>>(new Set());
+  const [applySuggestion, setApplySuggestion] = useState<ScheduleOptimizationSuggestion | null>(null);
+  const [applySubmitting, setApplySubmitting] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -525,8 +529,9 @@ export default function SchedulePage() {
       ? "Weekly utilization by worker in the organization timezone."
       : isTeamView
         ? "Daily booking volume, workers, and revenue by team."
-      : "Dispatcher view in the organization timezone.";
+        : "Dispatcher view in the organization timezone.";
   const navigationStep = isDayView ? 1 : 7;
+  const applyCandidateCount = applySuggestion?.apply_payload.candidate_worker_ids.length ?? 0;
   const optimizationRange = useMemo(() => {
     if (isListLikeView) {
       if (!listFrom || !listTo) return null;
@@ -612,6 +617,63 @@ export default function SchedulePage() {
   const refreshSchedule = useCallback(() => {
     setRefreshToken((value) => value + 1);
   }, []);
+
+  const openApplyDialog = useCallback((suggestion: ScheduleOptimizationSuggestion) => {
+    setApplySuggestion(suggestion);
+    setApplyError(null);
+  }, []);
+
+  const closeApplyDialog = useCallback(() => {
+    if (applySubmitting) return;
+    setApplySuggestion(null);
+    setApplyError(null);
+  }, [applySubmitting]);
+
+  const handleApplySuggestion = useCallback(async () => {
+    if (!applySuggestion) return;
+    const candidateIds = applySuggestion.apply_payload.candidate_worker_ids;
+    if (!candidateIds.length) {
+      setApplyError("No candidate workers available for this suggestion.");
+      return;
+    }
+    setApplySubmitting(true);
+    setApplyError(null);
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/schedule/optimization/apply`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+        },
+        body: JSON.stringify({
+          suggestion_id: applySuggestion.id,
+          apply_payload: {
+            ...applySuggestion.apply_payload,
+            worker_id: candidateIds[0],
+          },
+        }),
+      });
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        const detail = errorPayload?.detail;
+        const errorReason = errorPayload?.errors?.[0]?.reason;
+        const message =
+          typeof detail === "string"
+            ? detail
+            : detail?.message || detail?.reason || "Failed to apply suggestion.";
+        setApplyError(errorReason ? `${message} (${errorReason})` : message);
+        return;
+      }
+      await response.json();
+      showToast("Suggestion applied.", "success");
+      setApplySuggestion(null);
+      refreshSchedule();
+    } catch (fetchError) {
+      setApplyError(fetchError instanceof Error ? fetchError.message : "Failed to apply suggestion.");
+    } finally {
+      setApplySubmitting(false);
+    }
+  }, [applySuggestion, authHeaders, refreshSchedule, showToast]);
 
   useEffect(() => {
     if (!toast) return;
@@ -2247,6 +2309,7 @@ export default function SchedulePage() {
                 {optimizationSuggestions.map((suggestion) => {
                   const expanded = expandedSuggestionIds.has(suggestion.id);
                   const workerCount = suggestion.apply_payload.candidate_worker_ids.length;
+                  const canApply = canAssign && workerCount > 0;
                   return (
                     <div key={suggestion.id} className="schedule-optimization-item">
                       <div className="schedule-optimization-main">
@@ -2265,6 +2328,15 @@ export default function SchedulePage() {
                           >
                             {suggestion.severity}
                           </span>
+                          <button
+                            className="btn btn-primary"
+                            type="button"
+                            onClick={() => openApplyDialog(suggestion)}
+                            disabled={!canApply}
+                            title={!canApply ? "No available workers to apply." : "Apply suggestion"}
+                          >
+                            Apply
+                          </button>
                           <button
                             className="btn btn-ghost"
                             type="button"
@@ -2721,6 +2793,61 @@ export default function SchedulePage() {
             );
           })}
         </section>
+      ) : null}
+
+      {applySuggestion ? (
+        <div className="schedule-modal" role="dialog" aria-modal="true">
+          <div className="schedule-modal-backdrop" onClick={closeApplyDialog} />
+          <div className="schedule-modal-panel">
+            <header className="schedule-modal-header">
+              <div>
+                <h2>Apply optimization</h2>
+                <p className="muted">Confirm the assignment before applying.</p>
+              </div>
+              <button className="btn btn-ghost" type="button" onClick={closeApplyDialog}>
+                Close
+              </button>
+            </header>
+            <div className="schedule-modal-body">
+              {applyError ? <div className="inline-alert error">{applyError}</div> : null}
+              <div className="stack">
+                <div className="schedule-optimization-detail-row">
+                  <span className="muted">Suggestion</span>
+                  <span>{applySuggestion.title}</span>
+                </div>
+                <div className="schedule-optimization-detail-row">
+                  <span className="muted">Booking</span>
+                  <span>{applySuggestion.apply_payload.booking_id}</span>
+                </div>
+                <div className="schedule-optimization-detail-row">
+                  <span className="muted">Candidate workers</span>
+                  <span>
+                    {applyCandidateCount
+                      ? `${applyCandidateCount} available candidate${applyCandidateCount === 1 ? "" : "s"}`
+                      : "None available"}
+                  </span>
+                </div>
+                <p className="muted">
+                  Applying will assign the first available candidate worker and re-check conflicts
+                  before saving.
+                </p>
+              </div>
+            </div>
+            <footer className="schedule-modal-footer">
+              <button className="btn btn-ghost" type="button" onClick={closeApplyDialog}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={() => void handleApplySuggestion()}
+                disabled={applySubmitting || applyCandidateCount === 0}
+              >
+                {applySubmitting ? "Applying…" : "Apply suggestion"}
+              </button>
+            </footer>
+          </div>
+        </div>
       ) : null}
 
       {quickCreateOpen ? (

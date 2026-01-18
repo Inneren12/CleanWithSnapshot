@@ -85,7 +85,7 @@ from app.domain.availability import schemas as availability_schemas
 from app.domain.availability import service as availability_service
 from app.domain.bookings import schemas as booking_schemas
 from app.domain.bookings import service as booking_service
-from app.domain.bookings.service import DEFAULT_TEAM_NAME
+from app.domain.bookings.service import DEFAULT_SLOT_DURATION_MINUTES, DEFAULT_TEAM_NAME
 from app.domain.clients.db_models import (
     ClientAddress,
     ClientFeedback,
@@ -219,6 +219,7 @@ from app.domain.ops.schemas import (
     QuickActionModel,
     QuickCreateBookingRequest,
     RankedWorkerSuggestion,
+    ScheduleOptimizationApplyRequest,
     ScheduleOptimizationSuggestion,
     ScheduleBlackout,
     ScheduleBooking,
@@ -5146,6 +5147,154 @@ async def schedule_optimization_suggestions(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return [ScheduleOptimizationSuggestion(**suggestion) for suggestion in suggestions]
+
+
+@router.post(
+    "/v1/admin/schedule/optimization/apply",
+    response_model=list[ScheduleBooking],
+)
+async def apply_schedule_optimization(
+    request: Request,
+    payload: ScheduleOptimizationApplyRequest,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_dispatch),
+) -> list[ScheduleBooking] | Response:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_schedule_optimization_enabled(request, session, org_id)
+    if guard is not None:
+        return guard
+
+    def _conflict_response(
+        reason: str,
+        message: str,
+        conflicts: list[dict[str, object]] | None = None,
+    ) -> Response:
+        serialized_conflicts = jsonable_encoder(conflicts or [])
+        return problem_details(
+            request=request,
+            status=status.HTTP_409_CONFLICT,
+            title="Conflict",
+            detail=message,
+            errors=[
+                {
+                    "reason": reason,
+                    "conflicts": serialized_conflicts,
+                }
+            ],
+        )
+
+    apply_payload = payload.apply_payload
+    if apply_payload.action != "assign_worker":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported_action")
+
+    expected_suggestion_id = f"unassigned:{apply_payload.booking_id}"
+    if payload.suggestion_id != expected_suggestion_id:
+        return _conflict_response(
+            "suggestion_mismatch",
+            "Suggestion no longer matches the booking.",
+        )
+
+    booking = await session.get(Booking, apply_payload.booking_id)
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="booking_not_found")
+    if booking.org_id != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cross_org_forbidden")
+
+    if booking.assigned_worker_id is not None:
+        return _conflict_response(
+            "booking_already_assigned",
+            "Booking already has a worker assigned.",
+        )
+
+    duration = booking.duration_minutes or DEFAULT_SLOT_DURATION_MINUTES
+    booking_start = booking_service._normalize_datetime(booking.starts_at)
+    booking_end = booking_start + timedelta(minutes=duration)
+    payload_start = booking_service._normalize_datetime(apply_payload.starts_at)
+    payload_end = booking_service._normalize_datetime(apply_payload.ends_at)
+    if payload_start != booking_start or payload_end != booking_end:
+        return _conflict_response(
+            "suggestion_stale",
+            "Booking timing has changed; refresh suggestions.",
+        )
+    if apply_payload.team_id is not None and apply_payload.team_id != booking.team_id:
+        return _conflict_response(
+            "team_mismatch",
+            "Booking team no longer matches the suggestion.",
+        )
+
+    candidate_worker_ids = apply_payload.candidate_worker_ids or []
+    if apply_payload.worker_id is not None:
+        if apply_payload.worker_id not in candidate_worker_ids:
+            return _conflict_response(
+                "worker_not_in_candidates",
+                "Selected worker is no longer a valid candidate.",
+            )
+        candidate_worker_ids = [apply_payload.worker_id]
+
+    if not candidate_worker_ids:
+        return _conflict_response(
+            "no_candidate_workers",
+            "No candidate workers available for this suggestion.",
+        )
+
+    selected_worker: Worker | None = None
+    selected_conflicts: list[dict[str, object]] = []
+    for worker_id in candidate_worker_ids:
+        worker = await session.get(Worker, worker_id)
+        if worker is None or worker.org_id != org_id or not worker.is_active:
+            continue
+        if worker.team_id != booking.team_id:
+            continue
+        conflicts = await ops_service.check_schedule_conflicts(
+            session,
+            org_id,
+            starts_at=booking_start,
+            ends_at=booking_end,
+            team_id=booking.team_id,
+            booking_id=booking.booking_id,
+            worker_id=worker.worker_id,
+        )
+        if conflicts:
+            selected_conflicts = conflicts
+            continue
+        selected_worker = worker
+        selected_conflicts = []
+        break
+
+    if selected_worker is None:
+        return _conflict_response(
+            "conflict",
+            "Candidate workers are no longer available.",
+            conflicts=selected_conflicts,
+        )
+
+    before = {
+        "assigned_worker_id": booking.assigned_worker_id,
+        "team_id": booking.team_id,
+        "starts_at": booking_start.isoformat(),
+        "ends_at": booking_end.isoformat(),
+    }
+    booking.assigned_worker_id = selected_worker.worker_id
+    request.state.explicit_admin_audit = True
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="SCHEDULE_OPTIMIZATION_APPLY",
+        resource_type="booking",
+        resource_id=booking.booking_id,
+        before=before,
+        after={
+            "assigned_worker_id": selected_worker.worker_id,
+            "team_id": booking.team_id,
+            "starts_at": booking_start.isoformat(),
+            "ends_at": booking_end.isoformat(),
+            "suggestion_id": payload.suggestion_id,
+        },
+    )
+    await session.commit()
+
+    booking_payload = await ops_service.fetch_schedule_booking(session, org_id, booking.booking_id)
+    return [ScheduleBooking(**booking_payload)]
 
 
 @router.get("/v1/admin/schedule/addons", response_model=list[addon_schemas.AddonDefinitionResponse])
