@@ -330,6 +330,8 @@ export default function InvoiceFilter() {
 }
 ```
 
+Any page using `useSearchParams` must render a client component inside a `Suspense` boundary when using the App Router.
+
 ### API Authentication
 
 **Send admin credentials via localStorage + Authorization header:**

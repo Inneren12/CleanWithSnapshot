@@ -277,6 +277,12 @@ web/app/
     ├── schedule/               # Team scheduling
     │   └── page.tsx
     │
+    ├── quality/                # Quality oversight
+    │   ├── page.tsx            # Quality overview
+    │   ├── issues/             # Issue triage + detail
+    │   └── photos/             # Photo evidence gallery
+    │       └── page.tsx
+    │
     ├── invoices/               # Invoice management
     │   ├── page.tsx            # Invoice list
     │   └── [id]/page.tsx       # Invoice detail
@@ -419,7 +425,7 @@ web/app/
 | `backend/alembic/versions/0085_*.py` | **RBAC** - Roles & permissions tables |
 | `backend/alembic/versions/6a2b_*.py` | **Availability blocks** - Team blackout |
 
-### Frontend (23 files)
+### Frontend (24 files)
 
 | File | Why Important |
 |------|---------------|
@@ -427,6 +433,7 @@ web/app/
 | `web/app/admin/page.tsx` | **Admin dashboard** |
 | `web/app/admin/dashboard/ops/page.tsx` | **Ops dashboard** |
 | `web/app/admin/schedule/page.tsx` | **Schedule view** |
+| `web/app/admin/quality/photos/page.tsx` | **Quality photo evidence gallery** |
 | `web/app/admin/leads/page.tsx` | **Lead pipeline list** |
 | `web/app/admin/leads/nurture/page.tsx` | **Lead nurture campaigns list** |
 | `web/app/admin/leads/nurture/[campaign_id]/page.tsx` | **Lead nurture campaign steps editor** |

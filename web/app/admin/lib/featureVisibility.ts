@@ -62,7 +62,11 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
     ],
   },
   { key: "module.invoices", label: "Invoices" },
-  { key: "module.quality", label: "Quality" },
+  {
+    key: "module.quality",
+    label: "Quality",
+    children: [{ key: "quality.photo_evidence", label: "Photo evidence gallery" }],
+  },
   { key: "module.teams", label: "Teams" },
   {
     key: "module.analytics",
@@ -162,6 +166,7 @@ const DEFAULT_DISABLED_KEYS = new Set<string>([
   "leads.scoring",
   "analytics.attribution_multitouch",
   "schedule.optimization",
+  "quality.photo_evidence",
 ]);
 
 export function moduleBaseForKey(key: string): string {

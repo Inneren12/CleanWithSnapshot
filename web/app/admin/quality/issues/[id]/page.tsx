@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
@@ -148,6 +149,9 @@ export default function QualityIssueDetailPage() {
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
   const pageVisible = visibilityReady
     ? isVisible("module.quality", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
+  const photoEvidenceVisible = visibilityReady
+    ? isVisible("quality.photo_evidence", permissionKeys, featureOverrides, hiddenKeys)
     : true;
 
   const hasViewPermission = permissionKeys.includes("quality.view");
@@ -541,6 +545,14 @@ export default function QualityIssueDetailPage() {
                 <div className="border rounded p-4">
                   <h2 className="font-semibold mb-2">Linked IDs</h2>
                   <p className="text-sm text-gray-600">Booking: {issueDetail.issue.booking_id || "—"}</p>
+                  {issueDetail.issue.booking_id && photoEvidenceVisible ? (
+                    <Link
+                      className="text-sm text-blue-600 hover:text-blue-800"
+                      href={`/admin/quality/photos?booking_id=${issueDetail.issue.booking_id}`}
+                    >
+                      View photo evidence →
+                    </Link>
+                  ) : null}
                   <p className="text-sm text-gray-600">Worker: {issueDetail.issue.worker_id || "—"}</p>
                   <p className="text-sm text-gray-600">Client: {issueDetail.issue.client_id || "—"}</p>
                 </div>
