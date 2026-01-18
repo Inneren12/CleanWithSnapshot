@@ -57,7 +57,6 @@ DEFAULT_DISABLED_KEYS = {
     "module.integrations",
     "integrations.google_calendar",
     "integrations.accounting.quickbooks",
-    "module.notifications_center",
     "notifications.rules_builder",
 }
 

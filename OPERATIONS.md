@@ -151,6 +151,7 @@ python -m app.jobs.run --job notifications-digest-monthly --once
 - Digest delivery is gated by `module.notifications_center` feature toggle.
 - Delivery is rate-limited per org/period using `notifications_digest_state` so looping runners do not resend
   the same daily/weekly/monthly digest within the same period.
+- Safe to run every loop: each org/digest is gated by a period key computed in the org timezone.
 
 ### Google Calendar sync job (gcal-sync)
 

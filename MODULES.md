@@ -773,6 +773,10 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Digest send gating state: `backend/app/domain/notifications_digests/service.py`
 - Rules builder CRUD + evaluations: `backend/app/api/routes_admin.py` + `backend/app/domain/rules/service.py`
 - Preset keys: `no_show`, `payment_failed`, `negative_review`, `low_stock`, `high_value_lead`
+- Notification triggers:
+   - `negative_review` — Admin client feedback with rating ≤ 2 emits one event per feedback.
+   - `low_stock` — Inventory item transitions from ok → low emits once; stays low does not re-emit until recovery.
+   - `payment_failed` — Stripe payment failure emits event alongside dunning outbox enqueue.
 - Trigger points:
   - `payment_failed` — Stripe webhook payment failure handling (`backend/app/api/routes_payments.py::_handle_invoice_event`)
   - `negative_review` — Admin-created feedback with rating <= 2 (`backend/app/api/routes_admin.py::admin_clients_add_feedback`)
