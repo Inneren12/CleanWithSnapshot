@@ -245,6 +245,18 @@ def _with_unsubscribe(body: str, unsubscribe_url: str | None) -> str:
     return body + "\n\nTo stop these messages, unsubscribe: " + unsubscribe_url
 
 
+async def is_unsubscribed(session: AsyncSession, recipient: str, scope: str, org_id) -> bool:
+    return await _is_unsubscribed(session, recipient, scope, org_id)
+
+
+def build_unsubscribe_link(recipient: str, scope: str, org_id) -> str | None:
+    return _unsubscribe_link(recipient, scope, org_id)
+
+
+def append_unsubscribe_footer(body: str, unsubscribe_url: str | None) -> str:
+    return _with_unsubscribe(body, unsubscribe_url)
+
+
 async def _try_send_email(
     adapter: EmailAdapter | None,
     recipient: str,

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import httpx
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.infra.communication import resolve_communication_adapter
 from app.infra.db import get_session_factory
 from app.infra.email import EmailAdapter, resolve_email_adapter
 from app.infra.logging import clear_log_context
@@ -17,6 +18,7 @@ from app.jobs import (
     dlq_auto_replay,
     email_jobs,
     gcal_sync,
+    leads_nurture_runner,
     notifications_digests,
     outbox,
     qbo_sync,
@@ -31,6 +33,7 @@ logging.basicConfig(level=logging.INFO)
 
 _ADAPTER: EmailAdapter | None = None
 _STORAGE: object | None = None
+_COMMUNICATION: object | None = None
 
 
 async def _run_job(
@@ -154,6 +157,10 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         return lambda session: gcal_sync.run_gcal_sync(session)
     if name == "qbo-sync":
         return lambda session: qbo_sync.run_qbo_sync(session)
+    if name == "leads-nurture-runner":
+        return lambda session: leads_nurture_runner.run_leads_nurture_runner(
+            session, _ADAPTER, _COMMUNICATION
+        )
     raise ValueError(f"unknown_job:{name}")
 
 
@@ -165,9 +172,10 @@ async def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--once", action="store_true", help="Run jobs once and exit")
     args = parser.parse_args(argv)
 
-    global _ADAPTER, _STORAGE
+    global _ADAPTER, _STORAGE, _COMMUNICATION
     _ADAPTER = resolve_email_adapter(settings)
     _STORAGE = new_storage_backend()
+    _COMMUNICATION = resolve_communication_adapter(settings)
     configure_metrics(settings.metrics_enabled)
     session_factory = get_session_factory()
 
@@ -184,6 +192,7 @@ async def main(argv: list[str] | None = None) -> None:
         "notifications-digest-monthly",
         "gcal-sync",
         "qbo-sync",
+        "leads-nurture-runner",
     ]
     runners = [_job_runner(name, base_url=args.base_url) for name in job_names]
 
