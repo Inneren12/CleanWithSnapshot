@@ -231,7 +231,7 @@ python -m app.jobs.run --job leads-nurture-runner --once
 
 ---
 
-## Dependency Vulnerability Audits
+## Security Audits in CI
 
 CI runs dependency audits for backend and web dependencies and fails the workflow on findings.
 
@@ -241,6 +241,14 @@ requirements file and emit JSON for artifact collection:
 ```bash
 pip-audit -r backend/requirements.txt -f json -o pip-audit.json
 ```
+
+**CI policy (pip-audit):** Any reported vulnerability fails the job. CI uploads `pip-audit.json` (and logs) and
+prints a short summary (vulnerability count, top packages, top CVE IDs) so failures are actionable.
+
+**Remediation workflow:**
+1. Identify affected packages in `pip-audit.json`.
+2. Update version pins in `backend/requirements.txt` or `backend/constraints.txt` (minimal changes).
+3. Re-run unit tests and pip-audit before merging.
 
 **Security patch policy (Next.js):** Keep Next.js pinned to the latest patch release within the current minor
 version whenever a critical advisory is published. Apply updates in a targeted PR and re-run `npm audit`.

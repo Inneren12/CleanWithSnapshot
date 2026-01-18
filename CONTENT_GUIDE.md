@@ -659,16 +659,21 @@ is_valid = verify_password("user_password", password_hash)
 
 **CI enforcement:** automated audits run in CI for both backend and web dependencies.
 
-- **Backend:** `pip-audit -r backend/requirements.txt -c backend/constraints.txt --fail-on high`
+- **Backend:** `pip-audit -r backend/requirements.txt -f json -o pip-audit.json`
 - **Web:** `npm audit --omit=dev --audit-level=high`
 
-**Failing criteria:** CI fails on **high** or **critical** vulnerabilities. Low/medium findings are reported
-in the audit output but do not fail the build.
+**Failing criteria:** CI fails when any vulnerability is reported by pip-audit. The JSON report is uploaded
+as a CI artifact and summarized in logs.
 
 **Remediation workflow:**
 1. Confirm the finding is applicable to runtime usage.
-2. If a fix is available, patch in a dedicated PR (respecting the package-manifest policy).
+2. If a fix is available, patch the minimal set of Python pins (requirements/constraints) in a dedicated PR.
 3. If no fix exists, document a risk acceptance and add monitoring/mitigations as needed.
+
+### Dependency Update Policy (Short)
+
+- Prefer minimal, targeted pin updates for security fixes.
+- Web dependency changes require explicit approval per the package-manifest policy above.
 
 **Security headers (enforced by middleware):**
 

@@ -45,20 +45,78 @@ jobs:
         continue-on-error: true
         run: |
           python -m pip install pip-audit==2.7.3 --no-cache-dir
-          pip-audit -r backend/requirements.txt -f json -o pip-audit.json
+          set +e
+          pip-audit -r backend/requirements.txt -f json -o pip-audit.json > pip-audit.log 2>&1
+          EC=$?
+          set -e
+          echo "exit_code=$EC" >> "$GITHUB_OUTPUT"
 
       - name: Upload pip-audit report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pip-audit-report
-          path: pip-audit.json
+          path: |
+            pip-audit.json
+            pip-audit.log
 
-      - name: Enforce pip-audit result
-        if: steps.pip_audit.outcome == 'failure'
+      - name: Summarize pip-audit results
+        if: always()
+        env:
+          PIP_AUDIT_EXIT: ${{ steps.pip_audit.outputs.exit_code }}
         run: |
-          echo "pip-audit reported vulnerabilities or failed to run."
-          exit 1
+          if [ ! -f pip-audit.json ]; then
+            echo "pip-audit execution failed; no JSON report produced."
+            if [ -f pip-audit.log ]; then
+              echo "---- pip-audit output ----"
+              cat pip-audit.log
+              echo "--------------------------"
+            fi
+            exit 2
+          fi
+          python - <<'PY'
+          import json
+          import os
+          from collections import Counter
+          from pathlib import Path
+
+          data = json.loads(Path("pip-audit.json").read_text())
+          if isinstance(data, dict) and "dependencies" in data:
+            deps = data["dependencies"]
+          else:
+            deps = data
+
+          vuln_count = 0
+          packages = Counter()
+          vuln_ids = Counter()
+          for dep in deps or []:
+            vulns = dep.get("vulns", [])
+            vuln_count += len(vulns)
+            if vulns:
+              packages[dep.get("name", "unknown")] += len(vulns)
+              for vuln in vulns:
+                vuln_ids[vuln.get("id", "unknown")] += 1
+
+          top_packages = ", ".join(
+            f"{name}({count})" for name, count in packages.most_common(5)
+          ) or "none"
+          top_vulns = ", ".join(
+            f"{vuln_id}({count})" for vuln_id, count in vuln_ids.most_common(5)
+          ) or "none"
+
+          exit_code_raw = os.environ.get("PIP_AUDIT_EXIT", "unknown")
+          print(f"pip-audit exit code: {exit_code_raw}")
+          print(f"Total vulnerabilities: {vuln_count}")
+          print(f"Top affected packages: {top_packages}")
+          print(f"Top vulnerability IDs: {top_vulns}")
+
+          if vuln_count > 0:
+            raise SystemExit(1)
+
+          if exit_code_raw != "0":
+            print("pip-audit execution failed without producing vulnerability data.")
+            raise SystemExit(2)
+          PY
 
       - name: Lint (syntax guard)
         run: |
