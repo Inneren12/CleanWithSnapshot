@@ -189,6 +189,18 @@ the series link is cleared while historical bookings remain.
 - Styles: `web/app/styles/components.css` (schedule list/table styles)
 - API: `backend/app/api/routes_admin.py::/v1/admin/schedule` (date range + paging + query params)
 
+#### Schedule Optimization Suggestions
+- Feature key: `schedule.optimization` (defaults off, org override required)
+- Frontend: `web/app/admin/schedule/SchedulePageClient.tsx` (Optimization card with Apply button + confirmation)
+- APIs:
+  - `backend/app/api/routes_admin.py::/v1/admin/schedule/optimization` (GET suggestions)
+  - `backend/app/api/routes_admin.py::/v1/admin/schedule/optimization/apply` (POST apply suggestion)
+- Apply flow:
+  - Server revalidates booking timing + conflicts for the selected worker.
+  - Conflicts return HTTP 409 with a structured error payload for UI display.
+  - Successful apply updates the booking assignment and returns updated schedule booking payloads.
+- Audit: `SCHEDULE_OPTIMIZATION_APPLY` is written to `admin_audit_logs` with before/after details.
+
 #### Quick Create Booking
 - Frontend: `web/app/admin/schedule/` (quick create form)
 - API: `backend/app/api/routes_admin.py::/v1/admin/ui/bookings/create`

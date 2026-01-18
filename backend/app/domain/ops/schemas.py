@@ -327,6 +327,12 @@ class ScheduleOptimizationApplyPayload(BaseModel):
     starts_at: datetime
     ends_at: datetime
     candidate_worker_ids: list[int] = Field(default_factory=list)
+    worker_id: int | None = None
+
+
+class ScheduleOptimizationApplyRequest(BaseModel):
+    suggestion_id: str
+    apply_payload: ScheduleOptimizationApplyPayload
 
 
 class ScheduleOptimizationSuggestion(BaseModel):

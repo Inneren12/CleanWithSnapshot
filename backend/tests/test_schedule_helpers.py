@@ -3,7 +3,9 @@ import datetime as dt
 import uuid
 
 import pytest
+from sqlalchemy import select
 
+from app.domain.admin_audit.db_models import AdminAuditLog
 from app.domain.bookings.db_models import Booking, TeamBlackout, Team
 from app.domain.clients.db_models import ClientAddress, ClientUser
 from app.domain.feature_modules.db_models import OrgFeatureConfig
@@ -332,6 +334,125 @@ async def test_schedule_optimization_respects_org_timezone(client, async_session
     ids = {item["id"] for item in body}
     assert "unassigned:33333333-3333-3333-3333-333333333333" in ids
 
+
+@pytest.mark.anyio
+async def test_schedule_optimization_apply_assigns_worker_and_audits(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        await _enable_schedule_optimization(session, team.org_id)
+        worker = Worker(
+            name="Optimizer",
+            phone="+1 333",
+            team_id=team.team_id,
+            email="optimizer@example.com",
+            role="standard",
+            is_active=True,
+        )
+        session.add(worker)
+        await session.flush()
+
+        start = dt.datetime(2032, 2, 2, 9, 0, tzinfo=dt.timezone.utc)
+        booking = Booking(
+            booking_id="44444444-4444-4444-4444-444444444444",
+            team_id=team.team_id,
+            starts_at=start,
+            duration_minutes=60,
+            status="PENDING",
+        )
+        session.add(booking)
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    payload = {
+        "suggestion_id": f"unassigned:{booking.booking_id}",
+        "apply_payload": {
+            "action": "assign_worker",
+            "booking_id": booking.booking_id,
+            "team_id": booking.team_id,
+            "starts_at": start.isoformat(),
+            "ends_at": (start + dt.timedelta(minutes=60)).isoformat(),
+            "candidate_worker_ids": [worker.worker_id],
+            "worker_id": worker.worker_id,
+        },
+    }
+    resp = client.post("/v1/admin/schedule/optimization/apply", headers=headers, json=payload)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body[0]["booking_id"] == booking.booking_id
+    assert body[0]["worker_id"] == worker.worker_id
+
+    async with async_session_maker() as session:
+        updated = await session.get(Booking, booking.booking_id)
+        assert updated.assigned_worker_id == worker.worker_id
+        audit = (
+            await session.execute(
+                select(AdminAuditLog).where(
+                    AdminAuditLog.action == "SCHEDULE_OPTIMIZATION_APPLY",
+                    AdminAuditLog.resource_id == booking.booking_id,
+                )
+            )
+        ).scalar_one_or_none()
+        assert audit is not None
+
+
+@pytest.mark.anyio
+async def test_schedule_optimization_apply_conflict_returns_409(client, async_session_maker):
+    async with async_session_maker() as session:
+        team = await ensure_default_team(session)
+        await _enable_schedule_optimization(session, team.org_id)
+        worker = Worker(
+            name="Busy Optimizer",
+            phone="+1 444",
+            team_id=team.team_id,
+            email="busy@example.com",
+            role="standard",
+            is_active=True,
+        )
+        session.add(worker)
+        await session.flush()
+
+        start = dt.datetime(2032, 3, 3, 10, 0, tzinfo=dt.timezone.utc)
+        session.add(
+            Booking(
+                booking_id="55555555-5555-5555-5555-555555555555",
+                team_id=team.team_id,
+                assigned_worker_id=worker.worker_id,
+                starts_at=start,
+                duration_minutes=90,
+                status="CONFIRMED",
+            )
+        )
+        booking = Booking(
+            booking_id="66666666-6666-6666-6666-666666666666",
+            team_id=team.team_id,
+            starts_at=start,
+            duration_minutes=60,
+            status="PENDING",
+        )
+        session.add(booking)
+        await session.commit()
+
+    headers = _basic_auth("dispatch", "secret")
+    payload = {
+        "suggestion_id": f"unassigned:{booking.booking_id}",
+        "apply_payload": {
+            "action": "assign_worker",
+            "booking_id": booking.booking_id,
+            "team_id": booking.team_id,
+            "starts_at": start.isoformat(),
+            "ends_at": (start + dt.timedelta(minutes=60)).isoformat(),
+            "candidate_worker_ids": [worker.worker_id],
+            "worker_id": worker.worker_id,
+        },
+    }
+    resp = client.post("/v1/admin/schedule/optimization/apply", headers=headers, json=payload)
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["errors"][0]["reason"] == "conflict"
+
+    async with async_session_maker() as session:
+        updated = await session.get(Booking, booking.booking_id)
+        assert updated.assigned_worker_id is None
 
 @pytest.mark.anyio
 async def test_quick_create_requires_booking_permission(client, async_session_maker):
