@@ -69,6 +69,9 @@ export default function QualityOverviewPage() {
     ? isVisible("module.quality", permissionKeys, featureOverrides, hiddenKeys)
     : true;
   const hasViewPermission = permissionKeys.includes("quality.view");
+  const photoEvidenceVisible = visibilityReady
+    ? isVisible("quality.photo_evidence", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -238,6 +241,11 @@ export default function QualityOverviewPage() {
             <Link className="btn btn-ghost" href="/admin/quality/common">
               Common issues
             </Link>
+            {photoEvidenceVisible ? (
+              <Link className="btn btn-ghost" href="/admin/quality/photos">
+                Photo evidence
+              </Link>
+            ) : null}
           </div>
         </div>
         <div className="card-body">

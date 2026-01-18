@@ -392,6 +392,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `web/app/admin/quality/common/page.tsx` - Common issue tags analytics (`/admin/quality/common`)
 - `web/app/admin/quality/reviews/page.tsx` - Reviews timeline + reply tools (`/admin/quality/reviews`)
 - `web/app/admin/quality/leaderboard/page.tsx` - Worker quality leaderboard (`/admin/quality/leaderboard`)
+- `web/app/admin/quality/photos/page.tsx` - Photo evidence gallery (`/admin/quality/photos`)
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/issues` (list + filters)
@@ -405,11 +406,14 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/ratings/distribution` (monthly rating distribution)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/workers/leaderboard` (worker rating/review/complaint leaderboard)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/reviews/{id}/reply` (review reply logging)
+- `backend/app/api/routes_admin.py` - `/v1/admin/quality/photos` (photo evidence list + filters)
+- `backend/app/api/routes_admin.py` - `/v1/admin/photos/{photo_id}/signed_url` (signed URL minting)
 - `backend/app/api/routes_checklists.py` - `/v1/checklists/*` (job checklists)
 
 **Key Services:**
 - `backend/app/domain/quality/service.py` - Issue triage + severity logic
 - `backend/app/domain/quality/service.py` - Review list + reply logging + template catalog
+- `backend/app/domain/quality/service.py` - Photo evidence list + booking photo detail
 - `backend/app/domain/checklists/service.py` - Checklist CRUD
 
 **Key Tables:**
