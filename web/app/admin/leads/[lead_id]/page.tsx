@@ -8,6 +8,7 @@ import {
   type AdminProfile,
   type FeatureConfigResponse,
   type UiPrefsResponse,
+  effectiveFeatureEnabled,
   isVisible,
 } from "../../lib/featureVisibility";
 
@@ -78,6 +79,43 @@ type LeadQuote = {
   created_at: string;
   updated_at: string;
   followups: LeadQuoteFollowUp[];
+};
+
+type NurtureCampaign = {
+  campaign_id: string;
+  key: string;
+  name: string;
+  enabled: boolean;
+};
+
+type NurtureCampaignListResponse = {
+  items: NurtureCampaign[];
+};
+
+type NurtureEnrollment = {
+  enrollment_id: string;
+  campaign_key?: string | null;
+  campaign_name?: string | null;
+  enrolled_at: string;
+  status: string;
+};
+
+type NurtureStepLog = {
+  log_id: string;
+  step_index: number;
+  planned_at: string;
+  sent_at?: string | null;
+  status: string;
+  error?: string | null;
+};
+
+type NurtureEnrollmentStatus = {
+  enrollment: NurtureEnrollment;
+  logs: NurtureStepLog[];
+};
+
+type NurtureLeadStatusResponse = {
+  items: NurtureEnrollmentStatus[];
 };
 
 const ACTIVITY_OPTIONS = [
@@ -161,6 +199,13 @@ export default function LeadDetailPage() {
   const [followupNotes, setFollowupNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nurtureCampaigns, setNurtureCampaigns] = useState<NurtureCampaign[]>([]);
+  const [nurtureStatus, setNurtureStatus] = useState<NurtureEnrollmentStatus[]>([]);
+  const [nurtureLoading, setNurtureLoading] = useState(false);
+  const [nurtureError, setNurtureError] = useState<string | null>(null);
+  const [selectedCampaignKey, setSelectedCampaignKey] = useState("");
+  const [enrollStatus, setEnrollStatus] = useState<string | null>(null);
+  const [enrollError, setEnrollError] = useState<string | null>(null);
   const [activity, setActivity] = useState(ACTIVITY_OPTIONS[0]?.value ?? "Contacted");
   const [activityNote, setActivityNote] = useState("");
   const [activityStatus, setActivityStatus] = useState<string | null>(null);
@@ -182,6 +227,13 @@ export default function LeadDetailPage() {
   const scheduleVisible = visibilityReady
     ? isVisible("module.schedule", permissionKeys, featureOverrides, hiddenKeys)
     : true;
+  const nurtureVisible = visibilityReady
+    ? isVisible("leads.nurture", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
+  const nurtureEnabled = featureConfig
+    ? effectiveFeatureEnabled(featureOverrides, "module.leads") &&
+      effectiveFeatureEnabled(featureOverrides, "leads.nurture")
+    : true;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -190,6 +242,12 @@ export default function LeadDetailPage() {
       { key: "schedule", label: "Schedule", href: "/admin/schedule", featureKey: "module.schedule" },
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "leads", label: "Leads", href: "/admin/leads", featureKey: "module.leads" },
+      {
+        key: "leads-nurture",
+        label: "Lead Nurture",
+        href: "/admin/leads/nurture",
+        featureKey: "leads.nurture",
+      },
       {
         key: "notifications",
         label: "Notifications",
@@ -321,6 +379,48 @@ export default function LeadDetailPage() {
     setQuotesLoading(false);
   }, [authHeaders, leadId, password, username]);
 
+  const loadNurtureCampaigns = useCallback(async () => {
+    if (!username || !password) return;
+    setNurtureLoading(true);
+    setNurtureError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/leads/nurture/campaigns`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as NurtureCampaignListResponse;
+      setNurtureCampaigns(data.items ?? []);
+    } else if (response.status === 403) {
+      setNurtureError("You do not have permission to view nurture campaigns.");
+      setNurtureCampaigns([]);
+    } else {
+      setNurtureError("Failed to load nurture campaigns.");
+      setNurtureCampaigns([]);
+    }
+    setNurtureLoading(false);
+  }, [authHeaders, password, username]);
+
+  const loadNurtureStatus = useCallback(async () => {
+    if (!username || !password) return;
+    setNurtureLoading(true);
+    setNurtureError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}/nurture/status`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as NurtureLeadStatusResponse;
+      setNurtureStatus(data.items ?? []);
+    } else if (response.status === 403) {
+      setNurtureError("You do not have permission to view nurture status.");
+      setNurtureStatus([]);
+    } else {
+      setNurtureError("Failed to load nurture status.");
+      setNurtureStatus([]);
+    }
+    setNurtureLoading(false);
+  }, [authHeaders, leadId, password, username]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
@@ -345,6 +445,12 @@ export default function LeadDetailPage() {
   useEffect(() => {
     void loadQuotes();
   }, [loadQuotes]);
+
+  useEffect(() => {
+    if (!nurtureEnabled) return;
+    void loadNurtureCampaigns();
+    void loadNurtureStatus();
+  }, [loadNurtureCampaigns, loadNurtureStatus, nurtureEnabled]);
 
   const handleActivitySubmit = async () => {
     if (!canEditLeads) {
@@ -401,6 +507,31 @@ export default function LeadDetailPage() {
       void loadQuotes();
     } else {
       setQuoteError("Failed to create quote.");
+    }
+  };
+
+  const handleEnroll = async () => {
+    if (!canEditLeads) {
+      setEnrollError("Read-only role cannot enroll leads.");
+      return;
+    }
+    if (!selectedCampaignKey.trim()) {
+      setEnrollError("Select a campaign to enroll.");
+      return;
+    }
+    setEnrollStatus(null);
+    setEnrollError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}/nurture/enroll`, {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ campaign_key: selectedCampaignKey.trim() }),
+    });
+    if (response.ok) {
+      setEnrollStatus("Enrollment created.");
+      setSelectedCampaignKey("");
+      void loadNurtureStatus();
+    } else {
+      setEnrollError("Failed to enroll lead.");
     }
   };
 
@@ -741,6 +872,101 @@ export default function LeadDetailPage() {
               </div>
             ) : (
               <p className="muted">No quotes logged yet.</p>
+            )}
+          </section>
+
+          <section className="admin-card admin-section">
+            <div className="section-heading">
+              <div>
+                <h2>Lead nurture</h2>
+                <p className="muted">Enroll this lead and review scheduled steps.</p>
+              </div>
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={() => {
+                  void loadNurtureCampaigns();
+                  void loadNurtureStatus();
+                }}
+              >
+                Refresh
+              </button>
+            </div>
+            {visibilityReady && !nurtureVisible ? (
+              <p className="alert alert-warning">Lead nurture is hidden for your profile.</p>
+            ) : null}
+            {featureConfig && !nurtureEnabled ? (
+              <p className="alert alert-warning">Lead nurture is disabled by feature flag.</p>
+            ) : null}
+            <div className="admin-actions" style={{ flexWrap: "wrap" }}>
+              <label style={{ flex: 1, minWidth: 240 }}>
+                <span className="label">Campaign</span>
+                <select
+                  value={selectedCampaignKey}
+                  onChange={(event) => setSelectedCampaignKey(event.target.value)}
+                  disabled={!nurtureEnabled}
+                >
+                  <option value="">Select campaign</option>
+                  {nurtureCampaigns.map((campaign) => (
+                    <option
+                      key={campaign.campaign_id}
+                      value={campaign.key}
+                      disabled={!campaign.enabled}
+                    >
+                      {campaign.name} ({campaign.key}){campaign.enabled ? "" : " · disabled"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={!nurtureEnabled}
+                onClick={() => void handleEnroll()}
+              >
+                Enroll in campaign
+              </button>
+            </div>
+            {enrollStatus ? <p className="alert">{enrollStatus}</p> : null}
+            {enrollError ? <p className="alert alert-error">{enrollError}</p> : null}
+            {nurtureLoading ? <p className="muted">Loading nurture data...</p> : null}
+            {nurtureError ? <p className="alert alert-error">{nurtureError}</p> : null}
+            {nurtureStatus.length ? (
+              <div className="table-responsive">
+                <table className="table-like">
+                  <thead>
+                    <tr>
+                      <th>Campaign</th>
+                      <th>Enrolled</th>
+                      <th>Enrollment</th>
+                      <th>Step</th>
+                      <th>Planned</th>
+                      <th>Sent</th>
+                      <th>Status</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nurtureStatus.flatMap((entry) => {
+                      const logs = entry.logs.length ? entry.logs : [null];
+                      return logs.map((log) => (
+                        <tr key={`${entry.enrollment.enrollment_id}-${log?.log_id ?? "none"}`}>
+                          <td>{entry.enrollment.campaign_name ?? entry.enrollment.campaign_key ?? "—"}</td>
+                          <td>{formatDateTime(entry.enrollment.enrolled_at)}</td>
+                          <td>{entry.enrollment.status}</td>
+                          <td>{log ? log.step_index : "—"}</td>
+                          <td>{log ? formatDateTime(log.planned_at) : "—"}</td>
+                          <td>{log?.sent_at ? formatDateTime(log.sent_at) : "—"}</td>
+                          <td>{log ? log.status : "—"}</td>
+                          <td>{log?.error ?? "—"}</td>
+                        </tr>
+                      ));
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="muted">No nurture enrollments yet.</p>
             )}
           </section>
 

@@ -557,6 +557,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `web/app/page.tsx` - Public lead capture form
 - `web/app/admin/leads/page.tsx` - Lead pipeline list + status updates
 - `web/app/admin/leads/[lead_id]/page.tsx` - Lead detail (contact, notes, timeline, schedule CTA)
+- `web/app/admin/leads/nurture/page.tsx` - Lead nurture campaigns list
+- `web/app/admin/leads/nurture/[campaign_id]/page.tsx` - Lead nurture campaign steps editor
 
 **Backend Routers:**
 - `backend/app/api/routes_leads.py` - `/v1/leads/*`

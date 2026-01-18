@@ -81,6 +81,12 @@ export default function LeadsPage() {
       { key: "dispatcher", label: "Dispatcher", href: "/admin/dispatcher", featureKey: "module.schedule" },
       { key: "leads", label: "Leads", href: "/admin/leads", featureKey: "module.leads" },
       {
+        key: "leads-nurture",
+        label: "Lead Nurture",
+        href: "/admin/leads/nurture",
+        featureKey: "leads.nurture",
+      },
+      {
         key: "notifications",
         label: "Notifications",
         href: "/admin/notifications",

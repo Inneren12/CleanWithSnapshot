@@ -86,7 +86,11 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
       { key: "marketing.promo_codes", label: "Promo codes" },
     ],
   },
-  { key: "module.leads", label: "Leads" },
+  {
+    key: "module.leads",
+    label: "Leads",
+    children: [{ key: "leads.nurture", label: "Lead nurture" }],
+  },
   {
     key: "module.inventory",
     label: "Inventory",
@@ -140,6 +144,7 @@ const DEFAULT_DISABLED_KEYS = new Set<string>([
   "integrations.google_calendar",
   "integrations.maps",
   "notifications_center.rules_builder",
+  "leads.nurture",
 ]);
 
 export function moduleBaseForKey(key: string): string {
