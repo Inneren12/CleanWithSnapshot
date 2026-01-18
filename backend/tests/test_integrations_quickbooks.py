@@ -9,7 +9,7 @@ from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import qbo_service
 from app.domain.integrations.db_models import AccountingInvoiceMap, IntegrationsAccountingAccount
 from app.domain.invoices import statuses as invoice_statuses
-from app.domain.invoices.db_models import Invoice, InvoiceItem
+from app.domain.invoices.db_models import Invoice, InvoiceItem, Payment
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import MembershipRole
 from app.settings import settings
@@ -412,3 +412,109 @@ async def test_qbo_update_invoice_total_triggers_update(async_session_maker, cli
     payload = second.json()
     assert payload["updated"] == 1
     assert stub_client.update_calls == 1
+
+
+@pytest.mark.anyio
+async def test_qbo_pull_status_updates_paid_once(async_session_maker, client, monkeypatch):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "QBO Pull Org")
+        owner = await saas_service.create_user(session, "owner@qbo-pull.com", "secret")
+        membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await _enable_quickbooks(session, org.org_id)
+        session.add(
+            IntegrationsAccountingAccount(
+                org_id=org.org_id,
+                provider=qbo_service.QBO_PROVIDER,
+                encrypted_refresh_token="refresh-token",
+                realm_id="realm-1",
+            )
+        )
+        invoice = await _create_invoice(
+            session,
+            org_id=org.org_id,
+            invoice_number="INV-QBO-4",
+            status=invoice_statuses.INVOICE_STATUS_SENT,
+        )
+        session.add(
+            AccountingInvoiceMap(
+                org_id=org.org_id,
+                local_invoice_id=invoice.invoice_id,
+                remote_invoice_id="remote-4",
+            )
+        )
+        await session.commit()
+
+    monkeypatch.setattr(settings, "quickbooks_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "quickbooks_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(settings, "quickbooks_oauth_redirect_uri", "https://example.com/callback")
+
+    async def exchange_refresh(_refresh: str) -> tuple[str, str | None]:
+        return "access-token", None
+
+    class StubQboClient:
+        def __init__(self):
+            self.query_calls = 0
+
+        async def close(self) -> None:
+            return None
+
+        async def query_payments(self, *, from_date, to_date) -> list[dict]:
+            self.query_calls += 1
+            return [
+                {
+                    "Id": "payment-1",
+                    "TxnDate": date.today().isoformat(),
+                    "TotalAmt": "100.00",
+                    "Line": [
+                        {
+                            "Amount": "100.00",
+                            "LinkedTxn": [{"TxnId": "remote-4", "TxnType": "Invoice"}],
+                        }
+                    ],
+                }
+            ]
+
+    stub_client = StubQboClient()
+    monkeypatch.setattr(qbo_service, "exchange_refresh_token_for_access_token", exchange_refresh)
+    monkeypatch.setattr(qbo_service, "QBO_CLIENT_FACTORY", lambda *_args, **_kwargs: stub_client)
+
+    owner_token = saas_service.build_access_token(owner, membership)
+    response = client.post(
+        "/v1/admin/integrations/accounting/quickbooks/pull_status",
+        params={"from": date.today().isoformat(), "to": date.today().isoformat()},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200
+
+    async with async_session_maker() as session:
+        refreshed = await session.scalar(
+            sa.select(Invoice).where(Invoice.invoice_id == invoice.invoice_id)
+        )
+        assert refreshed.status == invoice_statuses.INVOICE_STATUS_PAID
+        payments = (
+            await session.scalars(
+                sa.select(Payment).where(
+                    Payment.provider == qbo_service.QBO_PROVIDER,
+                    Payment.provider_ref == "payment-1",
+                )
+            )
+        ).all()
+        assert len(payments) == 1
+
+    second = client.post(
+        "/v1/admin/integrations/accounting/quickbooks/pull_status",
+        params={"from": date.today().isoformat(), "to": date.today().isoformat()},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert second.status_code == 200
+
+    async with async_session_maker() as session:
+        payments = (
+            await session.scalars(
+                sa.select(Payment).where(
+                    Payment.provider == qbo_service.QBO_PROVIDER,
+                    Payment.provider_ref == "payment-1",
+                )
+            )
+        ).all()
+        assert len(payments) == 1

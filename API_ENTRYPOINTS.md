@@ -1305,6 +1305,7 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
 | POST | `/v1/admin/integrations/accounting/quickbooks/disconnect` | `settings.manage` (owner) | Disconnect account |
 | POST | `/v1/admin/integrations/accounting/quickbooks/push?from=&to=` | `finance` (finance/admin/owner) | Push invoice updates to QuickBooks |
 | POST | `/v1/admin/integrations/accounting/quickbooks/push/{invoice_id}` | `finance` (finance/admin/owner) | Push a single invoice to QuickBooks |
+| POST | `/v1/admin/integrations/accounting/quickbooks/pull_status?from=&to=` | `finance` (finance/admin/owner) | Pull payment status from QuickBooks |
 
 **Export Sync**
 - **Endpoint:** `POST /v1/admin/integrations/google/gcal/export_sync`
@@ -1340,6 +1341,24 @@ See [docs/ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md#worker-password-management)
   "updated": 2,
   "skipped": 4,
   "total": 7
+}
+```
+
+**QuickBooks Status Pull**
+- **Endpoint:** `POST /v1/admin/integrations/accounting/quickbooks/pull_status`
+- **Query Params:** `from` and `to` (ISO-8601 datetimes; date portion used to filter invoice issue dates and payment TxnDate)
+- **Behavior:** Pulls QuickBooks payments in range and reconciles them to mapped invoices.
+- **Idempotency:** Uses the remote payment ID to avoid duplicate local payments.
+- **Response payload:**
+
+```json
+{
+  "from": "2024-08-01",
+  "to": "2024-08-08",
+  "invoices_touched": 2,
+  "payments_recorded": 2,
+  "payments_skipped": 1,
+  "total": 3
 }
 ```
 
