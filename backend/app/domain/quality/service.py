@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, time, timezone, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.bookings.db_models import Booking, Team
+from app.domain.bookings.db_models import Booking, BookingPhoto, Team
 from app.domain.clients.db_models import ClientFeedback, ClientUser
 from app.domain.leads.db_models import Lead
 from app.domain.quality.db_models import (
@@ -15,7 +16,7 @@ from app.domain.quality.db_models import (
     QualityIssueTag,
     QualityReviewReply,
 )
-from app.domain.quality.schemas import QualityIssueSeverity
+from app.domain.quality.schemas import PhotoEvidenceKind, QualityIssueSeverity
 from app.domain.workers.db_models import Worker
 
 
@@ -150,6 +151,74 @@ async def list_quality_issues(
         .order_by(QualityIssue.created_at.desc())
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def create_booking_photo_evidence(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    booking_id: str,
+    kind: PhotoEvidenceKind,
+    storage_key: str,
+    mime: str,
+    size_bytes: int,
+    consent: bool,
+    uploaded_by: str,
+) -> BookingPhoto:
+    photo = BookingPhoto(
+        photo_id=str(uuid.uuid4()),
+        org_id=org_id,
+        booking_id=booking_id,
+        kind=kind.value,
+        storage_key=storage_key,
+        mime=mime,
+        size_bytes=size_bytes,
+        consent=consent,
+        uploaded_by=uploaded_by,
+    )
+    session.add(photo)
+    await session.commit()
+    await session.refresh(photo)
+    return photo
+
+
+async def list_quality_photo_evidence(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    worker_id: int | None = None,
+    has_issue: bool | None = None,
+) -> list[sa.Row]:
+    issue_exists = sa.exists().where(
+        QualityIssue.org_id == org_id,
+        QualityIssue.booking_id == BookingPhoto.booking_id,
+    )
+    filters: list[sa.ColumnElement[bool]] = [BookingPhoto.org_id == org_id]
+    if from_date:
+        filters.append(BookingPhoto.created_at >= _date_start(from_date))
+    if to_date:
+        filters.append(BookingPhoto.created_at <= _date_end(to_date))
+    if worker_id is not None:
+        filters.append(Booking.assigned_worker_id == worker_id)
+    if has_issue is True:
+        filters.append(issue_exists)
+    elif has_issue is False:
+        filters.append(sa.not_(issue_exists))
+
+    stmt = (
+        sa.select(
+            BookingPhoto,
+            Booking.assigned_worker_id.label("worker_id"),
+            issue_exists.label("has_issue"),
+        )
+        .join(Booking, Booking.booking_id == BookingPhoto.booking_id)
+        .where(*filters)
+        .order_by(BookingPhoto.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    return list(result.all())
 
 
 async def list_active_issues(

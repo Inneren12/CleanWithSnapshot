@@ -183,6 +183,11 @@ class Booking(Base):
         back_populates="order",
         cascade="all, delete-orphan",
     )
+    evidence_photos: Mapped[list["BookingPhoto"]] = relationship(
+        "BookingPhoto",
+        back_populates="booking",
+        cascade="all, delete-orphan",
+    )
     order_addons: Mapped[list["OrderAddon"]] = relationship(
         "OrderAddon",
         back_populates="order",
@@ -326,6 +331,40 @@ class OrderPhoto(Base):
     __table_args__ = (
         Index("ix_order_photos_org_id", "org_id"),
         Index("ix_order_photos_org_order", "org_id", "order_id"),
+    )
+
+
+class BookingPhoto(Base):
+    __tablename__ = "booking_photos"
+
+    photo_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        default=lambda: settings.default_org_id,
+    )
+    booking_id: Mapped[str] = mapped_column(
+        ForeignKey("bookings.booking_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column("bytes", Integer, nullable=False)
+    consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    uploaded_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    booking: Mapped[Booking] = relationship("Booking", back_populates="evidence_photos")
+
+    __table_args__ = (
+        Index("ix_booking_photos_org_id", "org_id"),
+        Index("ix_booking_photos_org_booking", "org_id", "booking_id"),
+        Index("ix_booking_photos_org_created_at", "org_id", "created_at"),
     )
 
 

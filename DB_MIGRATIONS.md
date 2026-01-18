@@ -49,6 +49,7 @@ and `f9c1d2e3a4b5_add_finance_cash_snapshots.py` adds `finance_cash_snapshots` f
 external schedule blocks, and event mappings.
 `46874b82319f_add_accounting_integration_foundation.py` adds QuickBooks Online accounting integration tables for
 accounts, sync state, and invoice mappings.
+`b5c6d7e8f9a0_add_booking_photos.py` adds `booking_photos` for storing photo evidence metadata and consent flags.
 
 **Analytics booking funnel:** No schema changes required (uses existing `leads`, `lead_quotes`, `bookings`,
 and `nps_responses` tables for inquiries, quotes, bookings, and reviews).
