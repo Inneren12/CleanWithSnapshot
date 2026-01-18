@@ -379,6 +379,17 @@ R2_BUCKET="bucket-name"
 R2_ACCESS_KEY="xxx"
 R2_SECRET_KEY="xxx"
 
+### CI secrets scanning (Gitleaks)
+
+CI runs a Gitleaks scan on every PR and main branch push. PRs scan only the diff range; main pushes scan full history. The allowlist lives in `.gitleaks.toml` and intentionally skips docs, tests, and example env files that contain known-safe placeholders. Update the allowlist with a short justification if a new documented fixture triggers a false positive.
+
+**If the scan finds a real secret:**
+1. **Rotate immediately** in the upstream system (vendor console, cloud provider, or auth service). Avoid pasting any secret into tickets or logs.
+2. **Update the secret store** (Vault/SSM/Kubernetes Secret/CI secret) with the new value and re-deploy or restart affected services.
+3. **Invalidate sessions/tokens** where applicable (JWT signing keys, portal secrets, Stripe webhook secrets, OAuth client secrets).
+4. **Audit access**: check logs for unexpected usage and confirm the old secret no longer works.
+5. **Purge the secret from Git history** if it was committed (rewrite history, rotate again after the cleanup).
+
 # Metrics
 METRICS_ENABLED="true"
 METRICS_TOKEN="<token>"

@@ -1,0 +1,15 @@
+[allowlist]
+description = "Allow listed paths contain documented examples or test fixtures with non-sensitive placeholders."
+paths = [
+  '''^backend/tests/''',
+  '''^backend/docs/''',
+  '''^docs/''',
+  '''^scripts/''',
+  '''^backend/scripts/''',
+  '''^backend/\.env\.example$''',
+  '''^backend/\.env\.production\.example$''',
+  '''^OPERATIONS\.md$''',
+  '''^CONTENT_GUIDE\.md$''',
+  '''^README\.md$''',
+  '''^backend/README\.md$'''
+]
