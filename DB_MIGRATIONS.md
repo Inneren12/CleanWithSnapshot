@@ -40,6 +40,8 @@ and `b2f3c4d5e6f7_add_purchase_orders.py` adds `purchase_orders` + `purchase_ord
 and `c6f2b8d1a4e7_add_training_sessions.py` adds `training_sessions` and `training_session_attendees` for calendar sessions,
 and `f2a4b7c8d9e0_add_finance_expenses_budgets.py` adds `finance_expense_categories`, `finance_expenses`, and `finance_budgets`,
 and `f9c1d2e3a4b5_add_finance_cash_snapshots.py` adds `finance_cash_snapshots` for optional cash balance snapshots, and
+`c8d2e4f6a1b3_add_leads_nurture_foundation.py` adds `nurture_campaigns`, `nurture_steps`, `nurture_enrollments`, and
+`nurture_step_log` for lead nurture campaigns, steps, enrollments, and log-only execution planning, and
 `c1a2b3c4d5e6_add_rules_and_rule_runs.py` adds `rules` and `rule_runs` for rule evaluation logging, and
 `a7c3b9d2e1f0_add_gcal_sync_foundation.py` adds Google Calendar integration tables for accounts, calendars, sync state,
 external schedule blocks, and event mappings.

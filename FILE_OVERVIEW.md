@@ -52,6 +52,7 @@ CleanWithSnapshot/
 | `routes_admin_pricing.py` | `/v1/admin/pricing` | Pricing configuration | Small |
 | `routes_admin_inventory.py` | `/v1/admin/inventory` | Inventory categories and items CRUD with RBAC | Small |
 | `routes_admin_finance.py` | `/v1/admin/finance` | Finance expenses, budgets, and categories | Small |
+| `routes_admin_leads_nurture.py` | `/v1/admin/leads/nurture` | Lead nurture campaigns, steps, enrollments, and planning | Small |
 | `routes_dispatcher.py` | `/v1/dispatcher` | Dispatch board, route optimization, AI suggestions | 23KB |
 | `routes_worker.py` | `/v1/worker` | Worker portal - job assignments, status updates | 82KB |
 | `routes_client.py` | `/v1/client` | Client portal - bookings, invoices | 31KB |
@@ -103,6 +104,7 @@ CleanWithSnapshot/
 | `workers/` | 2 files | **Worker management** - Employment data, teams |
 | `clients/` | 2 files | **Client management** - Addresses, feedback, notes |
 | `leads/` | 2 files | **Lead tracking** - Status management, referrals |
+| `leads_nurture/` | 4 files | **Lead nurture** - Campaigns, steps, enrollments, log-only planning |
 
 **Key files:**
 - `bookings/service.py` - Booking CRUD, conflict detection, slot availability

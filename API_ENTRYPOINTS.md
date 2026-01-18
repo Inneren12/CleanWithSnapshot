@@ -26,7 +26,7 @@ Complete reference for CleanWithSnapshot API endpoints, authentication, and usag
 **Response Format:** JSON
 **Error Format:** RFC 7807 Problem Details
 
-### Router Registration (31 routers)
+### Router Registration (32 routers)
 
 | Priority | Router | Path Prefix | Auth | File |
 |----------|--------|-------------|------|------|
@@ -51,16 +51,17 @@ Complete reference for CleanWithSnapshot API endpoints, authentication, and usag
 | 19 | leads | `/v1/leads` | Admin | `routes_leads.py` |
 | 20 | break_glass | `/v1/break-glass` | Emergency | `break_glass.py` |
 | 21 | **admin** | `/v1/admin` | **Admin** | **`routes_admin.py` (largest)** |
-| 22 | admin_settings | `/v1/admin/settings` | Admin | `routes_admin_settings.py` |
-| 23 | admin_integrations | `/v1/admin/integrations` | Admin | `routes_admin_integrations.py` |
-| 24 | admin_iam | `/v1/admin/iam` | Admin | `routes_admin_iam.py` |
-| 25 | admin_pricing | `/v1/admin/pricing` | Admin | `routes_admin_pricing.py` |
-| 26 | admin_finance | `/v1/admin/finance` | Admin | `routes_admin_finance.py` |
-| 27 | queues | `/v1/admin/queue` | Admin | `routes_queues.py` |
-| 28 | timeline | `/v1/timeline` | Admin | `routes_timeline.py` |
-| 29 | health_backup | `/health` | None | `health_backup.py` |
-| 30 | metrics | `/metrics` | Token | `routes_metrics.py` |
-| 31 | style_guide | `/style-guide` | Dev Only | `routes_style_guide.py` |
+| 22 | admin_leads_nurture | `/v1/admin/leads/nurture` | Admin | `routes_admin_leads_nurture.py` |
+| 23 | admin_settings | `/v1/admin/settings` | Admin | `routes_admin_settings.py` |
+| 24 | admin_integrations | `/v1/admin/integrations` | Admin | `routes_admin_integrations.py` |
+| 25 | admin_iam | `/v1/admin/iam` | Admin | `routes_admin_iam.py` |
+| 26 | admin_pricing | `/v1/admin/pricing` | Admin | `routes_admin_pricing.py` |
+| 27 | admin_finance | `/v1/admin/finance` | Admin | `routes_admin_finance.py` |
+| 28 | queues | `/v1/admin/queue` | Admin | `routes_queues.py` |
+| 29 | timeline | `/v1/timeline` | Admin | `routes_timeline.py` |
+| 30 | health_backup | `/health` | None | `health_backup.py` |
+| 31 | metrics | `/metrics` | Token | `routes_metrics.py` |
+| 32 | style_guide | `/style-guide` | Dev Only | `routes_style_guide.py` |
 
 **Entrypoint:** `backend/app/main.py::create_app()` → `app = create_app(settings)`
 
@@ -182,6 +183,25 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | GET | `/v1/admin/leads/{lead_id}/quotes` | `contacts.view` (or `leads.view`) | List quotes for a lead (includes follow-ups + expiry state) |
 | POST | `/v1/admin/leads/{lead_id}/quotes` | `contacts.edit` (or `leads.edit`) | Create a lead quote (amount, service type, expiry, sent_at) |
 | POST | `/v1/admin/leads/{lead_id}/quotes/{quote_id}/followups` | `contacts.edit` (or `leads.edit`) | Log a manual quote follow-up note |
+
+### Lead Nurture (Admin)
+
+**Feature keys:** `module.leads` + `leads.nurture` (both required; disabled by default)
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/leads/nurture/campaigns` | `contacts.view` or `leads.view` | List nurture campaigns |
+| POST | `/v1/admin/leads/nurture/campaigns` | `contacts.edit` or `leads.manage` | Create nurture campaign |
+| GET | `/v1/admin/leads/nurture/campaigns/{campaign_id}` | `contacts.view` or `leads.view` | Get nurture campaign |
+| PATCH | `/v1/admin/leads/nurture/campaigns/{campaign_id}` | `contacts.edit` or `leads.manage` | Update nurture campaign |
+| DELETE | `/v1/admin/leads/nurture/campaigns/{campaign_id}` | `contacts.edit` or `leads.manage` | Delete nurture campaign |
+| GET | `/v1/admin/leads/nurture/campaigns/{campaign_id}/steps` | `contacts.view` or `leads.view` | List campaign steps |
+| POST | `/v1/admin/leads/nurture/campaigns/{campaign_id}/steps` | `contacts.edit` or `leads.manage` | Create campaign step |
+| PATCH | `/v1/admin/leads/nurture/campaigns/{campaign_id}/steps/{step_id}` | `contacts.edit` or `leads.manage` | Update campaign step |
+| DELETE | `/v1/admin/leads/nurture/campaigns/{campaign_id}/steps/{step_id}` | `contacts.edit` or `leads.manage` | Delete campaign step |
+| POST | `/v1/admin/leads/{lead_id}/nurture/enroll` | `contacts.edit` or `leads.manage` | Enroll a lead in a campaign |
+| GET | `/v1/admin/leads/{lead_id}/nurture/status` | `contacts.view` or `leads.view` | View enrollments + logs |
+| POST | `/v1/admin/leads/nurture/plan` | `contacts.edit` or `leads.manage` | Return steps that would run (log-only planning) |
 
 **Query params:** `status`, `query`, `from`, `to`, `page`
 
