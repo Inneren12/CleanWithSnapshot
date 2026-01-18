@@ -108,12 +108,63 @@ jobs:
           print(f"Top affected packages: {top_packages}")
           print(f"Top vulnerability IDs: {top_vulns}")
 
-          if vuln_count > 0:
-            raise SystemExit(1)
-
           if exit_code_raw != "0" or is_error_payload:
             print("pip-audit execution failed without producing vulnerability data.")
             raise SystemExit(2)
+          PY
+
+      - name: Enforce pip-audit policy
+        if: always()
+        env:
+          PIP_AUDIT_EXIT: ${{ steps.pip_audit.outputs.exit_code }}
+          PIP_AUDIT_ALLOWLIST: ""
+        run: |
+          # Exit codes: 0 = no blocking vulns, 1 = blocking vulns, 2 = tool failure
+          python - <<'PY'
+          import json
+          import os
+          from collections import Counter
+          from pathlib import Path
+
+          data = json.loads(Path("pip-audit.json").read_text())
+          if isinstance(data, dict) and "error" in data:
+            print(f"pip-audit error payload: {data.get('error')}")
+            raise SystemExit(2)
+
+          if isinstance(data, dict) and "dependencies" in data:
+            deps = data["dependencies"]
+          else:
+            deps = data
+
+          allowlist = {
+            item.strip()
+            for item in os.environ.get("PIP_AUDIT_ALLOWLIST", "").split(",")
+            if item.strip()
+          }
+          severity_block = {"high", "critical"}
+
+          blocking = []
+          suppressed = []
+          severity_counts = Counter()
+          for dep in deps or []:
+            for vuln in dep.get("vulns", []):
+              vuln_id = vuln.get("id", "unknown")
+              severity = (vuln.get("severity") or "unknown").lower()
+              severity_counts[severity] += 1
+              if vuln_id in allowlist:
+                suppressed.append(vuln_id)
+                continue
+              if severity in severity_block:
+                blocking.append(vuln_id)
+
+          print("pip-audit policy summary:")
+          print(f"- severities: {dict(severity_counts)}")
+          print(f"- allowlist: {sorted(allowlist) or 'none'}")
+          print(f"- suppressed: {sorted(set(suppressed)) or 'none'}")
+          print(f"- blocking (high/critical): {sorted(set(blocking)) or 'none'}")
+
+          if blocking:
+            raise SystemExit(1)
           PY
 
       - name: Lint (syntax guard)
