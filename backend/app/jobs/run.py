@@ -19,6 +19,7 @@ from app.jobs import (
     gcal_sync,
     notifications_digests,
     outbox,
+    qbo_sync,
     storage_janitor,
 )
 from app.infra.storage import new_storage_backend
@@ -151,6 +152,8 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         )
     if name == "gcal-sync":
         return lambda session: gcal_sync.run_gcal_sync(session)
+    if name == "qbo-sync":
+        return lambda session: qbo_sync.run_qbo_sync(session)
     raise ValueError(f"unknown_job:{name}")
 
 
@@ -180,6 +183,7 @@ async def main(argv: list[str] | None = None) -> None:
         "notifications-digest-weekly",
         "notifications-digest-monthly",
         "gcal-sync",
+        "qbo-sync",
     ]
     runners = [_job_runner(name, base_url=args.base_url) for name in job_names]
 
