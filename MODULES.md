@@ -47,6 +47,13 @@ integrations.accounting.quickbooks  # QuickBooks Online sync (feature gated)
 integrations.maps  # Google Maps distance matrix + quota dashboard (feature gated)
 ```
 
+**Dashboard subfeatures:**
+
+```
+dashboard.weather  # Dispatcher weather context (feature gated)
+dashboard.weather_traffic  # Ops dashboard weather + traffic widget (feature gated)
+```
+
 **Notifications subfeatures:**
 
 ```

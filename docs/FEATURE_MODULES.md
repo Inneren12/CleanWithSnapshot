@@ -20,6 +20,7 @@ This project supports organization-level module toggles and user-level UI visibi
   - `module.api`
 - **Sub-features** use the base module name as a prefix:
   - `dashboard.weather`
+  - `dashboard.weather_traffic`
   - `schedule.optimization_ai`
   - `finance.reports`
   - `finance.cash_flow`

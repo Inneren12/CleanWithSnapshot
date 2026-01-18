@@ -199,6 +199,7 @@ def restore_admin_settings():
     original_dlq_outbox_attempt_ceiling = getattr(settings, "dlq_auto_replay_outbox_attempt_ceiling", 7)
     original_dlq_export_replay_limit = getattr(settings, "dlq_auto_replay_export_replay_limit", 2)
     original_dlq_export_cooldown = getattr(settings, "dlq_auto_replay_export_cooldown_minutes", 120)
+    original_weather_traffic_mode = getattr(settings, "weather_traffic_mode", "off")
     yield
     settings.admin_basic_username = original_username
     settings.admin_basic_password = original_password
@@ -229,6 +230,7 @@ def restore_admin_settings():
     settings.dlq_auto_replay_outbox_attempt_ceiling = original_dlq_outbox_attempt_ceiling
     settings.dlq_auto_replay_export_replay_limit = original_dlq_export_replay_limit
     settings.dlq_auto_replay_export_cooldown_minutes = original_dlq_export_cooldown
+    settings.weather_traffic_mode = original_weather_traffic_mode
 
 
 @pytest.fixture(autouse=True)

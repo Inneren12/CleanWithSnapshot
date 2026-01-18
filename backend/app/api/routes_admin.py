@@ -106,6 +106,8 @@ from app.domain.checklists.db_models import ChecklistRun, ChecklistRunItem
 from app.domain.chat_threads import schemas as chat_schemas
 from app.domain.chat_threads import service as chat_service
 from app.domain.chat_threads.service import PARTICIPANT_ADMIN
+from app.domain.dashboard import schemas as dashboard_schemas
+from app.domain.dashboard import weather_traffic as dashboard_weather_traffic
 from app.domain.message_templates import service as message_template_service
 from app.domain.disputes.db_models import Dispute, FinancialAdjustmentEvent
 from app.domain.documents import service as document_service
@@ -998,6 +1000,40 @@ async def get_ops_dashboard(
 
 
 @router.get(
+    "/v1/admin/context/weather_traffic",
+    response_model=dashboard_schemas.WeatherTrafficResponse,
+)
+async def get_weather_traffic_context(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permission_keys("core.view")),
+    as_of: str | None = Query(None, description="ISO timestamp for snapshot context"),
+    org_timezone: str | None = Query(None, description="Org timezone (IANA)"),
+) -> dashboard_schemas.WeatherTrafficResponse:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    guard = await _require_dashboard_enabled(request, session, org_id)
+    if guard is not None:
+        return guard
+    guard = await _require_weather_traffic_enabled(request, session, org_id)
+    if guard is not None:
+        return guard
+
+    org_settings = await org_settings_service.get_or_create_org_settings(session, org_id)
+    resolved_timezone = org_timezone or org_settings_service.resolve_timezone(org_settings)
+    try:
+        ZoneInfo(resolved_timezone)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+
+    resolved_as_of = _parse_weather_traffic_as_of(as_of)
+
+    return await dashboard_weather_traffic.fetch_weather_traffic(
+        org_timezone=resolved_timezone,
+        as_of=resolved_as_of,
+    )
+
+
+@router.get(
     "/v1/admin/activity",
     response_model=ActivityFeedResponse,
     response_model_exclude_none=True,
@@ -1818,6 +1854,19 @@ def _parse_activity_since(since: str | None) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _parse_weather_traffic_as_of(as_of: str | None) -> datetime | None:
+    if not as_of:
+        return None
+    normalized = as_of.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid as_of timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 def _resolve_notifications_user_key(request: Request, identity: AdminIdentity) -> str:
     saas_identity = getattr(request.state, "saas_identity", None)
     if saas_identity and getattr(saas_identity, "user_id", None):
@@ -1829,6 +1878,20 @@ async def _require_dashboard_enabled(
     request: Request, session: AsyncSession, org_id: uuid.UUID
 ):
     enabled = await feature_service.effective_feature_enabled(session, org_id, "module.dashboard")
+    if not enabled:
+        return problem_details(
+            request=request,
+            status=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail="Disabled by org settings",
+        )
+    return None
+
+
+async def _require_weather_traffic_enabled(
+    request: Request, session: AsyncSession, org_id: uuid.UUID
+):
+    enabled = await feature_service.effective_feature_enabled(session, org_id, "dashboard.weather_traffic")
     if not enabled:
         return problem_details(
             request=request,

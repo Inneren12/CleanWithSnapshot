@@ -146,6 +146,27 @@ type OpsDashboardResponse = {
   top_performers: OpsDashboardTopPerformers;
 };
 
+type WeatherTrafficNow = {
+  temp?: number | null;
+  wind_kph?: number | null;
+  precip_mm?: number | null;
+  snow_cm?: number | null;
+};
+
+type WeatherTrafficHour = {
+  starts_at: string;
+  precip_mm?: number | null;
+  snow_cm?: number | null;
+};
+
+type WeatherTrafficResponse = {
+  weather_now: WeatherTrafficNow;
+  next_6h: WeatherTrafficHour[];
+  traffic_hint?: string | null;
+  risk_level: "low" | "medium" | "high";
+  warning: boolean;
+};
+
 type ActivityFeedAction = {
   label: string;
   href: string;
@@ -215,6 +236,15 @@ function formatMonthLabel(value: string, timeZone: string) {
   }).format(dt);
 }
 
+function formatHour(value: string, timeZone: string) {
+  const dt = new Date(value);
+  return new Intl.DateTimeFormat("en-CA", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+  }).format(dt);
+}
+
 function formatPercent(value: number) {
   return new Intl.NumberFormat("en-CA", {
     style: "percent",
@@ -233,6 +263,10 @@ export default function OpsDashboardPage() {
   const [opsData, setOpsData] = useState<OpsDashboardResponse | null>(null);
   const [opsLoading, setOpsLoading] = useState(false);
   const [opsError, setOpsError] = useState<string | null>(null);
+  const [weatherTrafficData, setWeatherTrafficData] = useState<WeatherTrafficResponse | null>(null);
+  const [weatherTrafficLoading, setWeatherTrafficLoading] = useState(false);
+  const [weatherTrafficError, setWeatherTrafficError] = useState<string | null>(null);
+  const [weatherTrafficExpanded, setWeatherTrafficExpanded] = useState(false);
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
   const [activityItems, setActivityItems] = useState<ActivityFeedItem[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -257,6 +291,9 @@ export default function OpsDashboardPage() {
   const qualityVisible = visibilityReady
     ? isVisible("module.quality", permissionKeys, featureOverrides, hiddenKeys) &&
       permissionKeys.includes("quality.view")
+    : false;
+  const weatherTrafficVisible = visibilityReady
+    ? isVisible("dashboard.weather_traffic", permissionKeys, featureOverrides, hiddenKeys)
     : false;
 
   const navLinks = useMemo(() => {
@@ -381,6 +418,46 @@ export default function OpsDashboardPage() {
     }
   }, [authHeaders, password, profile, username]);
 
+  const weatherTrafficAsOf = opsData?.as_of ?? null;
+  const weatherTrafficTimezone = opsData?.org_timezone ?? "UTC";
+
+  const loadWeatherTraffic = useCallback(async () => {
+    if (!username || !password || !profile) return;
+    setWeatherTrafficLoading(true);
+    setWeatherTrafficError(null);
+    try {
+      const params = new URLSearchParams();
+      if (weatherTrafficAsOf) {
+        params.set("as_of", weatherTrafficAsOf);
+      }
+      params.set("org_timezone", weatherTrafficTimezone);
+      const response = await fetch(`${API_BASE}/v1/admin/context/weather_traffic?${params.toString()}`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as WeatherTrafficResponse;
+        setWeatherTrafficData(data);
+      } else {
+        setWeatherTrafficData(null);
+        setWeatherTrafficError("Failed to load weather + traffic context");
+      }
+    } catch (error) {
+      console.error("Failed to load weather + traffic context", error);
+      setWeatherTrafficData(null);
+      setWeatherTrafficError("Failed to load weather + traffic context");
+    } finally {
+      setWeatherTrafficLoading(false);
+    }
+  }, [
+    authHeaders,
+    password,
+    profile,
+    username,
+    weatherTrafficAsOf,
+    weatherTrafficTimezone,
+  ]);
+
   const mergeActivityItems = useCallback((existing: ActivityFeedItem[], incoming: ActivityFeedItem[]) => {
     if (incoming.length === 0) return existing;
     const merged = new Map<string, ActivityFeedItem>();
@@ -457,6 +534,11 @@ export default function OpsDashboardPage() {
   }, [dashboardVisible, loadOpsDashboard, profile, visibilityReady]);
 
   useEffect(() => {
+    if (!profile || (visibilityReady && !dashboardVisible) || !weatherTrafficVisible) return;
+    void loadWeatherTraffic();
+  }, [dashboardVisible, loadWeatherTraffic, profile, visibilityReady, weatherTrafficVisible]);
+
+  useEffect(() => {
     if (!profile || (visibilityReady && !dashboardVisible)) return;
     void loadActivityFeed("initial");
   }, [dashboardVisible, loadActivityFeed, profile, visibilityReady]);
@@ -492,6 +574,10 @@ export default function OpsDashboardPage() {
     setUiPrefs(null);
     setOpsData(null);
     setOpsError(null);
+    setWeatherTrafficData(null);
+    setWeatherTrafficError(null);
+    setWeatherTrafficLoading(false);
+    setWeatherTrafficExpanded(false);
     setActivityItems([]);
     setActivityError(null);
     setActivityLoading(false);
@@ -513,6 +599,9 @@ export default function OpsDashboardPage() {
   const activityVisibleItems = activityExpanded
     ? activityItems
     : activityItems.slice(0, ACTIVITY_DEFAULT_LIMIT);
+  const trafficRiskLabel = weatherTrafficData?.risk_level
+    ? weatherTrafficData.risk_level.toUpperCase()
+    : "—";
   const visibleAlerts = useMemo(
     () =>
       opsData?.critical_alerts.filter((alert) => {
@@ -749,6 +838,102 @@ export default function OpsDashboardPage() {
                   </>
                 ) : (
                   <p className="muted">Quality metrics are not available for this account.</p>
+                )}
+              </section>
+            ) : null}
+
+            {weatherTrafficVisible ? (
+              <section className="admin-card admin-section">
+                <div className="section-heading">
+                  <h2>Weather + Traffic</h2>
+                  <p className="muted">Snapshot in {weatherTrafficTimezone}.</p>
+                </div>
+                {weatherTrafficLoading ? (
+                  <p className="muted">Loading weather + traffic…</p>
+                ) : weatherTrafficError ? (
+                  <p className="muted">{weatherTrafficError}</p>
+                ) : weatherTrafficData ? (
+                  <>
+                    {weatherTrafficData.warning ? (
+                      <p className="muted">Provider unavailable. Showing fallback values.</p>
+                    ) : null}
+                    <div className="admin-actions" style={{ justifyContent: "space-between", gap: "16px" }}>
+                      <div>
+                        <div className="muted">Temp</div>
+                        <div className="hero-metric-value">
+                          {weatherTrafficData.weather_now.temp != null
+                            ? `${weatherTrafficData.weather_now.temp.toFixed(1)}°C`
+                            : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="muted">Wind</div>
+                        <div className="hero-metric-value">
+                          {weatherTrafficData.weather_now.wind_kph != null
+                            ? `${weatherTrafficData.weather_now.wind_kph.toFixed(1)} kph`
+                            : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="muted">Precip</div>
+                        <div className="hero-metric-value">
+                          {weatherTrafficData.weather_now.precip_mm != null
+                            ? `${weatherTrafficData.weather_now.precip_mm.toFixed(1)} mm`
+                            : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="muted">Snow</div>
+                        <div className="hero-metric-value">
+                          {weatherTrafficData.weather_now.snow_cm != null
+                            ? `${weatherTrafficData.weather_now.snow_cm.toFixed(1)} cm`
+                            : "—"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="admin-actions" style={{ marginTop: "12px", justifyContent: "space-between" }}>
+                      <div>
+                        <div className="muted">Traffic risk</div>
+                        <strong>{trafficRiskLabel}</strong>
+                        <div className="muted" style={{ marginTop: "4px" }}>
+                          {weatherTrafficData.traffic_hint ?? "Traffic data unavailable."}
+                        </div>
+                      </div>
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => setWeatherTrafficExpanded((value) => !value)}
+                      >
+                        {weatherTrafficExpanded ? "Hide details" : "Details"}
+                      </button>
+                    </div>
+                    {weatherTrafficExpanded ? (
+                      weatherTrafficData.next_6h.length > 0 ? (
+                        <div className="admin-actions" style={{ flexDirection: "column", gap: "8px", marginTop: "12px" }}>
+                          {weatherTrafficData.next_6h.map((hour) => (
+                            <div
+                              key={hour.starts_at}
+                              className="muted"
+                              style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}
+                            >
+                              <span>{formatHour(hour.starts_at, weatherTrafficTimezone)}</span>
+                              <span>
+                                Precip{" "}
+                                {hour.precip_mm != null ? `${hour.precip_mm.toFixed(1)} mm` : "—"} · Snow{" "}
+                                {hour.snow_cm != null ? `${hour.snow_cm.toFixed(1)} cm` : "—"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="muted" style={{ marginTop: "12px" }}>
+                          No hourly precipitation data available.
+                        </p>
+                      )
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="muted">Weather + traffic data will appear after credentials are saved.</p>
                 )}
               </section>
             ) : null}

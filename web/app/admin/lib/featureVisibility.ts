@@ -47,7 +47,10 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
     key: "module.dashboard",
     label: "Dashboard",
     description: "Core admin overview widgets.",
-    children: [{ key: "dashboard.weather", label: "Weather context" }],
+    children: [
+      { key: "dashboard.weather", label: "Weather context" },
+      { key: "dashboard.weather_traffic", label: "Weather + traffic widget" },
+    ],
   },
   {
     key: "module.schedule",
@@ -147,6 +150,7 @@ export const FEATURE_KEYS: string[] = FEATURE_MODULE_TREE.flatMap((item) => [
 ]);
 
 const DEFAULT_DISABLED_KEYS = new Set<string>([
+  "dashboard.weather_traffic",
   "training.library",
   "training.quizzes",
   "training.certs",
