@@ -1209,6 +1209,105 @@ async def suggest_schedule_resources(
     return {"teams": available_teams, "workers": available_workers}
 
 
+async def suggest_schedule_optimizations(
+    session: AsyncSession,
+    org_id,
+    *,
+    start_date: date,
+    end_date: date,
+    org_timezone: str | None = None,
+    team_id: int | None = None,
+    worker_id: int | None = None,
+) -> list[dict[str, object]]:
+    if end_date < start_date:
+        raise ValueError("invalid_window")
+
+    resolved_timezone = org_timezone or org_settings_service.DEFAULT_TIMEZONE
+    try:
+        org_tz = ZoneInfo(resolved_timezone)
+    except Exception:
+        org_tz = ZoneInfo(org_settings_service.DEFAULT_TIMEZONE)
+
+    start_local = datetime.combine(start_date, time.min).replace(tzinfo=org_tz)
+    end_local = datetime.combine(end_date + timedelta(days=1), time.min).replace(tzinfo=org_tz)
+    window_start = start_local.astimezone(timezone.utc)
+    window_end = end_local.astimezone(timezone.utc)
+
+    conditions = [
+        Booking.org_id == org_id,
+        Booking.archived_at.is_(None),
+        Booking.starts_at >= window_start,
+        Booking.starts_at < window_end,
+    ]
+    if team_id is not None:
+        conditions.append(Booking.team_id == team_id)
+    if worker_id is not None:
+        conditions.append(Booking.assigned_worker_id == worker_id)
+
+    stmt = (
+        select(Booking, Team)
+        .join(Team, Booking.team_id == Team.team_id)
+        .where(*conditions)
+        .order_by(Booking.starts_at.asc(), Booking.booking_id.asc())
+    )
+    rows = (await session.execute(stmt)).all()
+
+    suggestions: list[dict[str, object]] = []
+    for booking, team in rows:
+        if booking.assigned_worker_id is not None:
+            continue
+        duration = booking.duration_minutes or DEFAULT_SLOT_DURATION_MINUTES
+        normalized_start = _normalize(booking.starts_at)
+        normalized_end = normalized_start + timedelta(minutes=duration)
+        resource_suggestions = await suggest_schedule_resources(
+            session,
+            org_id,
+            starts_at=normalized_start,
+            ends_at=normalized_end,
+            exclude_booking_id=booking.booking_id,
+        )
+        workers = [
+            worker
+            for worker in resource_suggestions.get("workers", [])
+            if worker.get("team_id") == booking.team_id
+        ]
+        workers = sorted(
+            workers,
+            key=lambda item: (item.get("name") or "", item.get("worker_id") or 0),
+        )
+        candidate_worker_ids = [
+            worker["worker_id"] for worker in workers if worker.get("worker_id") is not None
+        ]
+        if candidate_worker_ids:
+            worker_label = "worker" if len(candidate_worker_ids) == 1 else "workers"
+            rationale = f"{len(candidate_worker_ids)} available {worker_label} in {team.name} for this slot."
+            severity = "medium"
+        else:
+            rationale = f"No available workers in {team.name} for this slot; review manually."
+            severity = "high"
+
+        suggestions.append(
+            {
+                "id": f"unassigned:{booking.booking_id}",
+                "type": "unassigned_booking",
+                "title": f"Assign a worker for booking {booking.booking_id}",
+                "rationale": rationale,
+                "estimated_impact": "Keeps the booking from remaining unassigned.",
+                "apply_payload": {
+                    "action": "assign_worker",
+                    "booking_id": booking.booking_id,
+                    "team_id": booking.team_id,
+                    "starts_at": normalized_start,
+                    "ends_at": normalized_end,
+                    "candidate_worker_ids": candidate_worker_ids,
+                },
+                "severity": severity,
+            }
+        )
+
+    return suggestions
+
+
 async def check_schedule_conflicts(
     session: AsyncSession,
     org_id,

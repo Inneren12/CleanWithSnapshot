@@ -31,6 +31,7 @@ MODULE_KEYS = [
 SUBFEATURE_KEYS = [
     "dashboard.weather",
     "schedule.optimization_ai",
+    "schedule.optimization",
     "finance.reports",
     "finance.cash_flow",
     "analytics.attribution_multitouch",
@@ -67,6 +68,7 @@ DEFAULT_DISABLED_KEYS = {
     "leads.nurture",
     "leads.scoring",
     "analytics.attribution_multitouch",
+    "schedule.optimization",
 }
 
 MODULE_PERMISSIONS: dict[str, str] = {

@@ -320,6 +320,25 @@ class ScheduleSuggestions(BaseModel):
     ranked_workers: list[RankedWorkerSuggestion] = Field(default_factory=list)
 
 
+class ScheduleOptimizationApplyPayload(BaseModel):
+    action: str
+    booking_id: str
+    team_id: int | None = None
+    starts_at: datetime
+    ends_at: datetime
+    candidate_worker_ids: list[int] = Field(default_factory=list)
+
+
+class ScheduleOptimizationSuggestion(BaseModel):
+    id: str
+    type: str
+    title: str
+    rationale: str
+    estimated_impact: str | None = None
+    apply_payload: ScheduleOptimizationApplyPayload
+    severity: str
+
+
 class QuickCreateClientInput(BaseModel):
     name: str
     email: EmailStr

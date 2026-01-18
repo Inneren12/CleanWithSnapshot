@@ -1014,6 +1014,7 @@ Schedules: `daily`, `weekly`, `monthly`.
 | GET | `/v1/admin/schedule` | `bookings.view` | Schedule view |
 | GET | `/v1/admin/schedule/team_calendar` | `bookings.view` | Team calendar aggregates (org TZ boundaries) |
 | GET | `/v1/admin/schedule/worker_timeline` | `bookings.view` | Worker timeline aggregates (org TZ boundaries) |
+| GET | `/v1/admin/schedule/optimization` | `bookings.view` + `schedule.optimization` | Deterministic optimization suggestions (read-only) |
 | GET | `/v1/admin/schedule/external_blocks?from=&to=` | `dispatch` (dispatcher/admin/owner) | External calendar blocks for conflict awareness |
 | GET | `/v1/admin/ui/bookings` | `bookings.view` | List bookings |
 | GET | `/v1/admin/ui/bookings/{id}` | `bookings.view` | Booking detail |
@@ -1051,6 +1052,17 @@ curl -X POST https://api.panidobro.com/v1/admin/ui/bookings/create \
 **List response fields:** `total`, `limit`, `offset`, `query` (in addition to `from_date`, `to_date`, `bookings`).
 
 **Schedule booking fields:** Each `booking` includes `worker_name`, `team_name`, `client_label`, `address`, `service_label`, `price_cents`, and optional `notes` (client/address notes when present).
+
+**Schedule optimization query params (`GET /v1/admin/schedule/optimization`):**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `from` | `YYYY-MM-DD` | Start date (org timezone) |
+| `to` | `YYYY-MM-DD` | End date (org timezone) |
+| `team_id` | `int` | (Optional) Filter by team |
+| `worker_id` | `int` | (Optional) Filter by worker |
+
+**Optimization suggestion fields:** Each suggestion includes `id`, `type`, `title`, `rationale`, `estimated_impact`, `apply_payload` (opaque action payload), and `severity`.
 
 **Team calendar query params (`GET /v1/admin/schedule/team_calendar`):**
 
