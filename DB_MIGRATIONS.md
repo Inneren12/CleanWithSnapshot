@@ -42,6 +42,8 @@ and `f2a4b7c8d9e0_add_finance_expenses_budgets.py` adds `finance_expense_categor
 and `f9c1d2e3a4b5_add_finance_cash_snapshots.py` adds `finance_cash_snapshots` for optional cash balance snapshots, and
 `a7c3b9d2e1f0_add_gcal_sync_foundation.py` adds Google Calendar integration tables for accounts, calendars, sync state,
 external schedule blocks, and event mappings.
+`46874b82319f_add_accounting_integration_foundation.py` adds QuickBooks Online accounting integration tables for
+accounts, sync state, and invoice mappings.
 
 **Analytics booking funnel:** No schema changes required (uses existing `leads`, `lead_quotes`, `bookings`,
 and `nps_responses` tables for inquiries, quotes, bookings, and reviews).

@@ -43,6 +43,7 @@ module.api                    # API access
 
 ```
 integrations.google_calendar  # Google Calendar OAuth + sync (feature gated)
+integrations.accounting.quickbooks  # QuickBooks Online sync (feature gated)
 ```
 
 **Configuration:**
@@ -829,6 +830,9 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `integrations_gcal_sync_state` - Sync cursor + last sync metadata
 - `schedule_external_blocks` - External calendar blocks
 - `integrations_gcal_event_map` - Booking-to-event mapping for exports
+- `integrations_accounting_accounts` - Accounting OAuth accounts (refresh token + realm)
+- `accounting_sync_state` - Cursor and last sync metadata for accounting providers
+- `accounting_invoice_map` - Local invoice to remote accounting invoice mapping
 
 **External Block Semantics (Google Calendar import):**
 - Imported events create/update `schedule_external_blocks` (idempotent by `external_event_id` per org).
@@ -849,6 +853,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `settings.manage` - Configure integrations
 
 **Feature Key:** `module.integrations`
+
+**Subfeature Keys:** `integrations.google_calendar`, `integrations.accounting.quickbooks`
 
 ---
 
