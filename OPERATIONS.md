@@ -246,6 +246,29 @@ curl -u "$ADMIN_BASIC_USERNAME:$ADMIN_BASIC_PASSWORD" \\
 
 ---
 
+## NPS Survey Sends
+
+**Endpoint:** `POST /v1/admin/nps/send?booking_id=<booking_id>`
+
+**Behavior:**
+- Enqueues an outbox event for the booking; the `nps-send-runner` job delivers the send.
+- Gate sends per booking (once) and per client within the configured period to prevent spam.
+- Honors the `quality.nps` feature flag and NPS unsubscribe list.
+- If email or SMS delivery is disabled, the job logs and marks the outbox event as sent.
+
+**Required configuration:**
+- `PUBLIC_BASE_URL` or `CLIENT_PORTAL_BASE_URL` must be set so survey links are generated.
+- The `outbox-delivery` job must be running to deliver queued emails.
+
+**Example:**
+
+```bash
+curl -u "$ADMIN_BASIC_USERNAME:$ADMIN_BASIC_PASSWORD" \\
+  -X POST "https://api.panidobro.com/v1/admin/nps/send?booking_id=BOOKING_ID"
+```
+
+---
+
 ## Environment Configuration
 
 ### Critical Environment Variables
@@ -359,6 +382,9 @@ R2_SECRET_KEY="xxx"
 # Metrics
 METRICS_ENABLED="true"
 METRICS_TOKEN="<token>"
+
+# NPS sends
+NPS_SEND_PERIOD_DAYS="30"
 ```
 
 **Rules action adapters:**

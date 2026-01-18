@@ -10,9 +10,10 @@ from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.leads.db_models import Lead
 from app.domain.feature_modules import service as feature_service
-from app.domain.nps.db_models import NpsResponse
+from app.domain.nps import send_service as nps_send_service
+from app.domain.outbox.db_models import OutboxEvent
 from app.infra.email import EmailAdapter
-from app.jobs import email_jobs
+from app.jobs import email_jobs, nps_send_runner
 from app.settings import settings
 
 
@@ -178,10 +179,12 @@ def test_invoice_notifications_cover_sent_and_overdue(async_session_maker):
         settings.public_base_url = original_base
 
 
-def test_nps_job_skips_after_first_send(async_session_maker):
+def test_nps_outbox_runner_dedupes_and_skips_duplicates(async_session_maker):
     adapter = StubAdapter()
     original_base = settings.public_base_url
+    original_email_mode = settings.email_mode
     settings.public_base_url = "https://example.test"
+    settings.email_mode = "sendgrid"
 
     async def _seed_booking() -> str:
         async with async_session_maker() as session:
@@ -206,30 +209,53 @@ def test_nps_job_skips_after_first_send(async_session_maker):
     try:
         booking_id = asyncio.run(_seed_booking())
 
+        async def _enqueue_twice() -> None:
+            async with async_session_maker() as session:
+                await nps_send_service.enqueue_nps_send(
+                    session,
+                    org_id=settings.default_org_id,
+                    booking_id=booking_id,
+                    requested_by="test",
+                )
+                await nps_send_service.enqueue_nps_send(
+                    session,
+                    org_id=settings.default_org_id,
+                    booking_id=booking_id,
+                    requested_by="test",
+                )
+                await session.commit()
+
         async def _run_jobs() -> tuple[dict[str, int], dict[str, int]]:
             async with async_session_maker() as session:
-                first = await email_jobs.run_nps_sends(session, adapter, base_url=settings.public_base_url)
+                first = await nps_send_runner.run_nps_send_runner(
+                    session, adapter, None, base_url=settings.public_base_url
+                )
             async with async_session_maker() as session:
-                second = await email_jobs.run_nps_sends(session, adapter, base_url=settings.public_base_url)
+                second = await nps_send_runner.run_nps_send_runner(
+                    session, adapter, None, base_url=settings.public_base_url
+                )
             return first, second
 
+        asyncio.run(_enqueue_twice())
         first_result, second_result = asyncio.run(_run_jobs())
-        assert first_result == {"sent": 1}
-        assert second_result == {"sent": 0}
-        assert len(adapter.sent) == 1
+        assert first_result["sent"] == 1
+        assert second_result["sent"] == 0
 
-        async def _event_and_response_counts() -> tuple[int, int]:
+        async def _event_counts() -> tuple[int, int]:
             async with async_session_maker() as session:
-                event_count = await session.scalar(
+                email_count = await session.scalar(
                     sa.select(sa.func.count()).select_from(EmailEvent).where(EmailEvent.email_type == "nps_survey")
                 )
-                response_count = await session.scalar(
-                    sa.select(sa.func.count()).select_from(NpsResponse).where(NpsResponse.order_id == booking_id)
+                outbox_count = await session.scalar(
+                    sa.select(sa.func.count()).select_from(OutboxEvent).where(
+                        OutboxEvent.kind == nps_send_service.NPS_OUTBOX_KIND
+                    )
                 )
-                return int(event_count or 0), int(response_count or 0)
+                return int(email_count or 0), int(outbox_count or 0)
 
-        events, responses = asyncio.run(_event_and_response_counts())
-        assert events == 1
-        assert responses == 0
+        emails, outbox_events = asyncio.run(_event_counts())
+        assert emails == 1
+        assert outbox_events == 1
     finally:
         settings.public_base_url = original_base
+        settings.email_mode = original_email_mode

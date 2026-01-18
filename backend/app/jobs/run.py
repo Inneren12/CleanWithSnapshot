@@ -19,6 +19,7 @@ from app.jobs import (
     email_jobs,
     gcal_sync,
     leads_nurture_runner,
+    nps_send_runner,
     notifications_digests,
     outbox,
     qbo_sync,
@@ -122,7 +123,13 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
     if name == "invoice-reminders":
         return lambda session: email_jobs.run_invoice_notifications(session, _ADAPTER, base_url=base_url)
     if name == "nps-send":
-        return lambda session: email_jobs.run_nps_sends(session, _ADAPTER, base_url=base_url)
+        return lambda session: nps_send_runner.run_nps_send_runner(
+            session, _ADAPTER, _COMMUNICATION, base_url=base_url
+        )
+    if name == "nps-send-runner":
+        return lambda session: nps_send_runner.run_nps_send_runner(
+            session, _ADAPTER, _COMMUNICATION, base_url=base_url
+        )
     if name == "email-dlq":
         return lambda session: email_jobs.run_email_dlq(session, _ADAPTER)
     if name == "outbox-delivery":
@@ -182,7 +189,7 @@ async def main(argv: list[str] | None = None) -> None:
     job_names = args.jobs or [
         "booking-reminders",
         "invoice-reminders",
-        "nps-send",
+        "nps-send-runner",
         "email-dlq",
         "outbox-delivery",
         "dlq-auto-replay",
