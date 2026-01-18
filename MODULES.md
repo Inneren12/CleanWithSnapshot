@@ -408,6 +408,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/reviews/{id}/reply` (review reply logging)
 - `backend/app/api/routes_admin.py` - `/v1/admin/quality/photos` (photo evidence list + filters)
 - `backend/app/api/routes_admin.py` - `/v1/admin/photos/{photo_id}/signed_url` (signed URL minting)
+- `backend/app/api/routes_admin.py` - `/v1/admin/nps/responses` (NPS response list + segments)
 - `backend/app/api/routes_checklists.py` - `/v1/checklists/*` (job checklists)
 
 **Key Services:**
@@ -415,12 +416,16 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `backend/app/domain/quality/service.py` - Review list + reply logging + template catalog
 - `backend/app/domain/quality/service.py` - Photo evidence list + booking photo detail
 - `backend/app/domain/checklists/service.py` - Checklist CRUD
+- `backend/app/domain/nps/service.py` - NPS token issuing, responses, and tickets
 
 **Key Tables:**
 - `quality_issues` - Issue/complaint records
 - `quality_issue_tags` - Issue tag mappings
 - `quality_tag_catalog` - Allowed tag catalog
 - `quality_review_replies` - Logged review replies
+- `nps_tokens` - Org-scoped public response tokens
+- `nps_responses` - Customer NPS feedback
+- `support_tickets` - Low-score support tickets
 - `checklists` - Checklist templates
 - `checklist_items` - Individual check items
 
@@ -436,7 +441,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `bookings.view` - View job checklists
 - `bookings.edit` - Update checklists
 
-**Feature Key:** `module.quality`
+**Feature Key:** `module.quality`, `quality.nps`
 
 **Where to Change:**
 - API: `backend/app/api/routes_admin.py::/v1/admin/quality/issues`
@@ -477,6 +482,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `client_users` - Client identities for CLV/retention
 - `client_addresses` - Area labels + coordinates
 - `teams` - Zone metadata
+- `nps_tokens` - Survey token registry
 - `nps_responses` - Post-service reviews
 
 **Permissions Required:**

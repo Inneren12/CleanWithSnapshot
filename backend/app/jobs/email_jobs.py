@@ -11,6 +11,7 @@ from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice
 from app.domain.leads.db_models import Lead
 from app.domain.notifications import email_service
+from app.domain.feature_modules import service as feature_service
 from app.domain.nps import service as nps_service
 from app.domain.nps.db_models import NpsResponse
 from app.infra.email import EmailAdapter
@@ -163,13 +164,13 @@ async def run_nps_sends(
 
     sent = 0
     for booking, lead in result.all():
-        token = nps_service.issue_nps_token(
-            booking.booking_id,
-            client_id=booking.client_id,
-            email=lead.email,
-            secret=settings.client_portal_secret,
+        nps_enabled = await feature_service.effective_feature_enabled(
+            session, booking.org_id, "quality.nps"
         )
-        survey_link = f"{base}/nps/{booking.booking_id}?token={token}"
+        if not nps_enabled:
+            continue
+        token_record = await nps_service.issue_nps_token(session, booking=booking)
+        survey_link = f"{base}/nps/{booking.booking_id}?token={token_record.token}"
         delivered = await email_service.send_nps_survey_email(
             session,
             adapter,

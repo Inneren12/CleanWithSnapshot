@@ -1,16 +1,18 @@
 import base64
 import asyncio
-from datetime import datetime, timezone
-from uuid import uuid4
+from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
 
-from app.domain.bookings.db_models import Booking
+from app.domain.bookings.db_models import Booking, Team
 from app.domain.clients.db_models import ClientUser
+from app.domain.feature_modules import service as feature_service
 from app.domain.leads.db_models import Lead
 from app.domain.nps import service as nps_service
 from app.domain.nps.db_models import NpsResponse, SupportTicket
+from app.domain.saas.db_models import Organization
 from app.settings import settings
 
 
@@ -41,22 +43,31 @@ def _lead_payload(name: str = "Survey Lead", email: str = "survey@example.com") 
     }
 
 
-def _seed_order(session_factory, order_id: str = "order-nps-1", *, email: str) -> tuple[str, str, str]:
+def _seed_order(
+    session_factory,
+    order_id: str = "order-nps-1",
+    *,
+    email: str,
+    org_id: UUID | None = None,
+    team_id: int = 1,
+) -> tuple[str, str, str]:
     async def _create():
         async with session_factory() as session:
-            client = ClientUser(email=email)
+            target_org = org_id or settings.default_org_id
+            client = ClientUser(email=email, org_id=target_org)
             session.add(client)
             await session.flush()
 
-            lead = Lead(**_lead_payload(email=email))
+            lead = Lead(**_lead_payload(email=email), org_id=target_org)
             session.add(lead)
             await session.flush()
 
             booking = Booking(
                 booking_id=order_id,
+                org_id=target_org,
                 client_id=client.client_id,
                 lead_id=lead.lead_id,
-                team_id=1,
+                team_id=team_id,
                 starts_at=datetime.now(timezone.utc),
                 duration_minutes=60,
                 planned_minutes=60,
@@ -68,6 +79,20 @@ def _seed_order(session_factory, order_id: str = "order-nps-1", *, email: str) -
             session.add(booking)
             await session.commit()
             return booking.booking_id, client.client_id, lead.lead_id
+
+    return asyncio.run(_create())
+
+
+def _seed_org(session_factory, name: str) -> tuple[UUID, int]:
+    async def _create():
+        async with session_factory() as session:
+            org = Organization(name=name)
+            session.add(org)
+            await session.flush()
+            team = Team(name=f"{name} Team", org_id=org.org_id)
+            session.add(team)
+            await session.commit()
+            return org.org_id, team.team_id
 
     return asyncio.run(_create())
 
@@ -87,59 +112,117 @@ def admin_credentials():
 
 def test_nps_token_validation_and_single_response(client, async_session_maker):
     email = f"survey-{uuid4()}@example.com"
-    order_id, client_id, _ = _seed_order(async_session_maker, "order-nps-1", email=email)
-    token = nps_service.issue_nps_token(
-        order_id,
-        client_id=client_id,
-        email=email,
-        secret=settings.client_portal_secret,
-    )
+    order_id, _client_id, _ = _seed_order(async_session_maker, "order-nps-1", email=email)
 
-    bad = client.get(f"/nps/{order_id}?token=bad-token")
-    assert bad.status_code == 400
+    async def _create_token():
+        async with async_session_maker() as session:
+            await feature_service.upsert_org_feature_overrides(
+                session, settings.default_org_id, {"quality.nps": True}
+            )
+            booking = await session.get(Booking, order_id)
+            token_record = await nps_service.issue_nps_token(session, booking=booking)
+            await session.commit()
+            return token_record.token
 
-    form = client.get(f"/nps/{order_id}?token={token}")
-    assert form.status_code == 200
-    assert "How did we do?" in form.text
+    token = asyncio.run(_create_token())
 
     first = client.post(
-        f"/nps/{order_id}",
-        data={"token": token, "score": 8, "comment": "Great"},
+        f"/v1/public/nps/{token}",
+        json={"score": 8, "comment": "Great"},
     )
     assert first.status_code == 200
+    assert first.json()["status"] == "submitted"
 
     repeat = client.post(
-        f"/nps/{order_id}",
-        data={"token": token, "score": 9},
+        f"/v1/public/nps/{token}",
+        json={"score": 9},
     )
     assert repeat.status_code == 200
-    assert "already received" in repeat.text
+    assert repeat.json()["status"] == "already_submitted"
 
     async def _verify_response():
         async with async_session_maker() as session:
-            result = await session.execute(
-                sa.select(NpsResponse).where(NpsResponse.order_id == order_id)
-            )
-            return result.scalar_one()
+            result = await session.execute(sa.select(NpsResponse))
+            return result.scalars().all()
 
     saved = asyncio.run(_verify_response())
-    assert saved.score == 8
-    assert saved.order_id == order_id
+    assert len(saved) == 1
+    assert saved[0].score == 8
+    assert saved[0].order_id == order_id
+
+
+def test_nps_token_expired(client, async_session_maker):
+    email = f"survey-expired-{uuid4()}@example.com"
+    order_id, _client_id, _ = _seed_order(async_session_maker, "order-nps-expired", email=email)
+
+    async def _expire_token():
+        async with async_session_maker() as session:
+            await feature_service.upsert_org_feature_overrides(
+                session, settings.default_org_id, {"quality.nps": True}
+            )
+            booking = await session.get(Booking, order_id)
+            token_record = await nps_service.issue_nps_token(session, booking=booking)
+            token_record.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+            await session.commit()
+            return token_record.token
+
+    token = asyncio.run(_expire_token())
+    response = client.post(
+        f"/v1/public/nps/{token}",
+        json={"score": 7},
+    )
+    assert response.status_code == 400
+
+
+def test_nps_token_org_scoping(client, async_session_maker):
+    org_id, team_id = _seed_org(async_session_maker, "Org Scoped")
+    email = f"survey-org-{uuid4()}@example.com"
+    order_id, _client_id, _ = _seed_order(
+        async_session_maker,
+        "order-nps-org",
+        email=email,
+        org_id=org_id,
+        team_id=team_id,
+    )
+
+    async def _mutate_token():
+        async with async_session_maker() as session:
+            await feature_service.upsert_org_feature_overrides(
+                session, org_id, {"quality.nps": True}
+            )
+            booking = await session.get(Booking, order_id)
+            token_record = await nps_service.issue_nps_token(session, booking=booking)
+            token_record.org_id = settings.default_org_id
+            await session.commit()
+            return token_record.token
+
+    token = asyncio.run(_mutate_token())
+    response = client.post(
+        f"/v1/public/nps/{token}",
+        json={"score": 6},
+    )
+    assert response.status_code == 400
 
 
 def test_low_score_creates_ticket_and_admin_api(client, async_session_maker, admin_credentials):
     email = f"survey-low-{uuid4()}@example.com"
-    order_id, client_id, _ = _seed_order(async_session_maker, "order-nps-2", email=email)
-    token = nps_service.issue_nps_token(
-        order_id,
-        client_id=client_id,
-        email=email,
-        secret=settings.client_portal_secret,
-    )
+    order_id, _client_id, _ = _seed_order(async_session_maker, "order-nps-2", email=email)
+
+    async def _create_token():
+        async with async_session_maker() as session:
+            await feature_service.upsert_org_feature_overrides(
+                session, settings.default_org_id, {"quality.nps": True}
+            )
+            booking = await session.get(Booking, order_id)
+            token_record = await nps_service.issue_nps_token(session, booking=booking)
+            await session.commit()
+            return token_record.token
+
+    token = asyncio.run(_create_token())
 
     submission = client.post(
-        f"/nps/{order_id}",
-        data={"token": token, "score": 2, "comment": "Needs work"},
+        f"/v1/public/nps/{token}",
+        json={"score": 2, "comment": "Needs work"},
     )
     assert submission.status_code == 200
 

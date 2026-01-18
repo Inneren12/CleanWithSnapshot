@@ -484,7 +484,9 @@ async def _nps_state(session: AsyncSession, booking: Booking) -> tuple[bool, Nps
         )
         .limit(1)
     )
-    response = await nps_service.get_existing_response(session, booking.booking_id)
+    response = await nps_service.get_existing_response(
+        session, booking.booking_id, org_id=booking.org_id
+    )
     ticket = await nps_service.get_existing_ticket(session, booking.booking_id)
     return bool(survey_sent), response, ticket
 

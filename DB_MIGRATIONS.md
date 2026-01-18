@@ -26,7 +26,8 @@ This guide covers database schema management using Alembic in the CleanWithSnaps
 **Policy:** Forward-only (no downgrades in production)
 **Validation:** Health endpoint checks migration status
 
-**Recent migrations:** `c2a1b3d4e5f6_add_lead_touchpoints.py` adds `lead_touchpoints` for multi-touch attribution,
+**Recent migrations:** `f2c3d4e5f6a7_nps_tokens_public_submit.py` adds `nps_tokens` and token-based NPS responses,
+`c2a1b3d4e5f6_add_lead_touchpoints.py` adds `lead_touchpoints` for multi-touch attribution,
 `aa12b3cd45ef_add_marketing_spend_and_email_manual.py` adds `marketing_spend`,
 `email_segments`, and `email_campaigns` for marketing analytics and manual campaigns,
 `e6b1c2d3f4a5_add_promo_codes.py` adds `promo_codes` + `promo_code_redemptions`,
@@ -52,7 +53,7 @@ accounts, sync state, and invoice mappings.
 `b5c6d7e8f9a0_add_booking_photos.py` adds `booking_photos` for storing photo evidence metadata and consent flags.
 
 **Analytics booking funnel:** No schema changes required (uses existing `leads`, `lead_quotes`, `bookings`,
-and `nps_responses` tables for inquiries, quotes, bookings, and reviews).
+`nps_tokens`, and `nps_responses` tables for inquiries, quotes, bookings, and reviews).
 
 ---
 

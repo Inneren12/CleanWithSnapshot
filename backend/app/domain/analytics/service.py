@@ -537,9 +537,8 @@ async def funnel_summary(
     review_stmt = (
         select(func.count())
         .select_from(NpsResponse)
-        .join(Booking, Booking.booking_id == NpsResponse.order_id)
         .where(
-            Booking.org_id == org_id,
+            NpsResponse.org_id == org_id,
             NpsResponse.created_at >= start,
             NpsResponse.created_at <= end,
         )
@@ -598,9 +597,8 @@ async def nps_distribution(
             func.sum(sa.case((NpsResponse.score <= 6, 1), else_=0)),
         )
         .select_from(NpsResponse)
-        .join(Booking, Booking.booking_id == NpsResponse.order_id)
         .where(
-            Booking.org_id == org_id,
+            NpsResponse.org_id == org_id,
             NpsResponse.created_at >= start,
             NpsResponse.created_at <= end,
         )
@@ -643,9 +641,8 @@ async def nps_trends(
             func.count(),
         )
         .select_from(NpsResponse)
-        .join(Booking, Booking.booking_id == NpsResponse.order_id)
         .where(
-            Booking.org_id == org_id,
+            NpsResponse.org_id == org_id,
             NpsResponse.created_at >= start,
             NpsResponse.created_at <= end,
         )
@@ -660,9 +657,8 @@ async def nps_trends(
             func.count(),
         )
         .select_from(NpsResponse)
-        .join(Booking, Booking.booking_id == NpsResponse.order_id)
         .where(
-            Booking.org_id == org_id,
+            NpsResponse.org_id == org_id,
             NpsResponse.created_at >= start,
             NpsResponse.created_at <= end,
         )
