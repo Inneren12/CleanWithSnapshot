@@ -42,7 +42,7 @@ CleanWithSnapshot/
 
 ### API Layer (`/backend/app/api`)
 
-**Main route files (30 routers total):**
+**Main route files (31 routers total):**
 
 | File | Path Prefix | Purpose | Size |
 |------|-------------|---------|------|
@@ -53,6 +53,7 @@ CleanWithSnapshot/
 | `routes_admin_inventory.py` | `/v1/admin/inventory` | Inventory categories and items CRUD with RBAC | Small |
 | `routes_admin_finance.py` | `/v1/admin/finance` | Finance expenses, budgets, and categories | Small |
 | `routes_admin_leads_nurture.py` | `/v1/admin/leads/nurture` | Lead nurture campaigns, steps, enrollments, and planning | Small |
+| `routes_admin_leads_scoring.py` | `/v1/admin/leads/scoring` | Lead scoring rules, recompute, and snapshots | Small |
 | `routes_dispatcher.py` | `/v1/dispatcher` | Dispatch board, route optimization, AI suggestions | 23KB |
 | `routes_worker.py` | `/v1/worker` | Worker portal - job assignments, status updates | 82KB |
 | `routes_client.py` | `/v1/client` | Client portal - bookings, invoices | 31KB |
@@ -418,7 +419,7 @@ web/app/
 | `backend/alembic/versions/0085_*.py` | **RBAC** - Roles & permissions tables |
 | `backend/alembic/versions/6a2b_*.py` | **Availability blocks** - Team blackout |
 
-### Frontend (22 files)
+### Frontend (23 files)
 
 | File | Why Important |
 |------|---------------|
@@ -429,6 +430,7 @@ web/app/
 | `web/app/admin/leads/page.tsx` | **Lead pipeline list** |
 | `web/app/admin/leads/nurture/page.tsx` | **Lead nurture campaigns list** |
 | `web/app/admin/leads/nurture/[campaign_id]/page.tsx` | **Lead nurture campaign steps editor** |
+| `web/app/admin/leads/scoring/page.tsx` | **Lead scoring rules editor + preview** |
 | `web/app/admin/invoices/page.tsx` | **Invoice list + overdue alerts** |
 | `web/app/admin/invoices/[id]/page.tsx` | **Invoice detail** |
 | `web/app/admin/inventory/page.tsx` | **Inventory items list** |

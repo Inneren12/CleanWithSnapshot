@@ -87,6 +87,12 @@ export default function LeadsPage() {
         featureKey: "leads.nurture",
       },
       {
+        key: "leads-scoring",
+        label: "Lead Scoring",
+        href: "/admin/leads/scoring",
+        featureKey: "leads.scoring",
+      },
+      {
         key: "notifications",
         label: "Notifications",
         href: "/admin/notifications",
