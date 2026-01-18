@@ -560,12 +560,14 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `web/app/admin/leads/[lead_id]/page.tsx` - Lead detail (contact, notes, timeline, schedule CTA)
 - `web/app/admin/leads/nurture/page.tsx` - Lead nurture campaigns list
 - `web/app/admin/leads/nurture/[campaign_id]/page.tsx` - Lead nurture campaign steps editor
+- `web/app/admin/leads/scoring/page.tsx` - Lead scoring rules editor + recompute preview
 
 **Backend Routers:**
 - `backend/app/api/routes_leads.py` - `/v1/leads/*`
 - `backend/app/api/routes_public.py` - `/v1/public/leads` (public submission)
 - `backend/app/api/routes_admin.py` - `/v1/admin/leads` (list, detail, update, timeline, quotes)
 - `backend/app/api/routes_admin_leads_nurture.py` - `/v1/admin/leads/nurture` (campaigns, steps, enrollments, planning)
+- `backend/app/api/routes_admin_leads_scoring.py` - `/v1/admin/leads/scoring` (rules, recompute, snapshots)
 
 **Key Services:**
 - `backend/app/domain/leads/service.py` - Lead CRUD, status management, quote helpers
@@ -580,6 +582,8 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `nurture_steps` - Ordered nurture steps (delay_hours, channel, payload)
 - `nurture_enrollments` - Lead enrollments per campaign
 - `nurture_step_log` - Planned/queued nurture step log entries (idempotent)
+- `lead_scoring_rules` - Versioned scoring rule sets per org
+- `lead_scores_snapshot` - Latest deterministic score per lead
 
 **Permissions Required:**
 - `contacts.view` - View leads
@@ -588,7 +592,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - `leads.manage` - Manage nurture campaigns, steps, enrollments, and planning (optional)
 
 **Feature Key:** `module.leads` (disabled by default)
-**Subfeature Key:** `leads.nurture` (disabled by default)
+**Subfeature Keys:** `leads.nurture` (disabled by default), `leads.scoring` (disabled by default)
 
 ---
 

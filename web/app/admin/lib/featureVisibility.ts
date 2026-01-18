@@ -89,7 +89,10 @@ export const FEATURE_MODULE_TREE: FeatureTreeItem[] = [
   {
     key: "module.leads",
     label: "Leads",
-    children: [{ key: "leads.nurture", label: "Lead nurture" }],
+    children: [
+      { key: "leads.nurture", label: "Lead nurture" },
+      { key: "leads.scoring", label: "Lead scoring" },
+    ],
   },
   {
     key: "module.inventory",
@@ -145,6 +148,7 @@ const DEFAULT_DISABLED_KEYS = new Set<string>([
   "integrations.maps",
   "notifications_center.rules_builder",
   "leads.nurture",
+  "leads.scoring",
 ]);
 
 export function moduleBaseForKey(key: string): string {

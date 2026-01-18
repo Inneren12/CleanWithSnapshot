@@ -118,6 +118,21 @@ type NurtureLeadStatusResponse = {
   items: NurtureEnrollmentStatus[];
 };
 
+type ScoreReason = {
+  rule_key: string;
+  label: string;
+  points: number;
+};
+
+type ScoreSnapshot = {
+  org_id: string;
+  lead_id: string;
+  score: number;
+  reasons: ScoreReason[];
+  computed_at: string;
+  rules_version: number;
+};
+
 const ACTIVITY_OPTIONS = [
   { value: "Contacted", label: "Contacted" },
   { value: "Quote sent", label: "Quote sent" },
@@ -177,6 +192,10 @@ function stringifyAddOns(addOns: unknown): string {
   return entries.map(([key, value]) => `${key}: ${value}`).join(", ");
 }
 
+function formatScore(score: number) {
+  return score > 0 ? `+${score}` : `${score}`;
+}
+
 export default function LeadDetailPage() {
   const params = useParams();
   const leadId = params.lead_id as string;
@@ -206,6 +225,9 @@ export default function LeadDetailPage() {
   const [selectedCampaignKey, setSelectedCampaignKey] = useState("");
   const [enrollStatus, setEnrollStatus] = useState<string | null>(null);
   const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [scoreSnapshot, setScoreSnapshot] = useState<ScoreSnapshot | null>(null);
+  const [scoreLoading, setScoreLoading] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
   const [activity, setActivity] = useState(ACTIVITY_OPTIONS[0]?.value ?? "Contacted");
   const [activityNote, setActivityNote] = useState("");
   const [activityStatus, setActivityStatus] = useState<string | null>(null);
@@ -234,6 +256,13 @@ export default function LeadDetailPage() {
     ? effectiveFeatureEnabled(featureOverrides, "module.leads") &&
       effectiveFeatureEnabled(featureOverrides, "leads.nurture")
     : true;
+  const scoringVisible = visibilityReady
+    ? isVisible("leads.scoring", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
+  const scoringEnabled = featureConfig
+    ? effectiveFeatureEnabled(featureOverrides, "module.leads") &&
+      effectiveFeatureEnabled(featureOverrides, "leads.scoring")
+    : true;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -247,6 +276,12 @@ export default function LeadDetailPage() {
         label: "Lead Nurture",
         href: "/admin/leads/nurture",
         featureKey: "leads.nurture",
+      },
+      {
+        key: "leads-scoring",
+        label: "Lead Scoring",
+        href: "/admin/leads/scoring",
+        featureKey: "leads.scoring",
       },
       {
         key: "notifications",
@@ -421,6 +456,30 @@ export default function LeadDetailPage() {
     setNurtureLoading(false);
   }, [authHeaders, leadId, password, username]);
 
+  const loadScoreSnapshot = useCallback(async () => {
+    if (!username || !password) return;
+    if (!scoringEnabled) return;
+    setScoreLoading(true);
+    setScoreError(null);
+    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}/scoring`, {
+      headers: authHeaders,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as ScoreSnapshot;
+      setScoreSnapshot(data);
+    } else if (response.status === 404) {
+      setScoreSnapshot(null);
+    } else if (response.status === 403) {
+      setScoreError("You do not have permission to view lead scores.");
+      setScoreSnapshot(null);
+    } else {
+      setScoreError("Failed to load lead score.");
+      setScoreSnapshot(null);
+    }
+    setScoreLoading(false);
+  }, [authHeaders, leadId, password, scoringEnabled, username]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
@@ -451,6 +510,10 @@ export default function LeadDetailPage() {
     void loadNurtureCampaigns();
     void loadNurtureStatus();
   }, [loadNurtureCampaigns, loadNurtureStatus, nurtureEnabled]);
+
+  useEffect(() => {
+    void loadScoreSnapshot();
+  }, [loadScoreSnapshot]);
 
   const handleActivitySubmit = async () => {
     if (!canEditLeads) {
@@ -577,6 +640,7 @@ export default function LeadDetailPage() {
   const estimateSnapshot = lead?.estimate_snapshot ?? {};
   const estimateTotal = lead ? pickEstimateTotal(estimateSnapshot) : null;
   const estimateCurrency = "CAD";
+  const topScoreReasons = scoreSnapshot?.reasons.slice(0, 3) ?? [];
 
   return (
     <div className="page">
@@ -622,6 +686,51 @@ export default function LeadDetailPage() {
                 <div>{lead.referral_credits}</div>
               </div>
             </div>
+          </section>
+
+          <section className="admin-card admin-section">
+            <div className="section-heading">
+              <h2>Lead score</h2>
+              <p className="muted">Deterministic score and top drivers for this lead.</p>
+            </div>
+            {!scoringVisible ? <p className="alert alert-warning">Lead scoring is hidden for your profile.</p> : null}
+            {!scoringEnabled ? (
+              <p className="alert alert-warning">Coming soon / disabled. Enable lead scoring in Modules &amp; Visibility.</p>
+            ) : null}
+            {scoreLoading ? <p className="muted">Loading lead score...</p> : null}
+            {scoreError ? <p className="alert alert-error">{scoreError}</p> : null}
+            {scoringEnabled ? (
+              <div className="admin-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                <div>
+                  <span className="label">Score</span>
+                  <div className="status-badge ok" style={{ display: "inline-flex", marginTop: "6px" }}>
+                    {scoreSnapshot ? formatScore(scoreSnapshot.score) : "—"}
+                  </div>
+                </div>
+                <div>
+                  <span className="label">Rules version</span>
+                  <div>{scoreSnapshot ? `v${scoreSnapshot.rules_version}` : "—"}</div>
+                </div>
+                <div>
+                  <span className="label">Computed</span>
+                  <div>{scoreSnapshot ? formatDateTime(scoreSnapshot.computed_at) : "—"}</div>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span className="label">Top reasons</span>
+                  {topScoreReasons.length === 0 ? (
+                    <p className="muted">No score recorded yet.</p>
+                  ) : (
+                    <ul className="clean-list" style={{ marginTop: "8px" }}>
+                      {topScoreReasons.map((reason) => (
+                        <li key={`${reason.rule_key}-${reason.label}`}>
+                          <strong>{formatScore(reason.points)}</strong> {reason.label}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </section>
 
           <section className="admin-card admin-section">
