@@ -231,6 +231,22 @@ python -m app.jobs.run --job leads-nurture-runner --once
 
 ---
 
+## Dependency Vulnerability Audits
+
+CI runs dependency audits for backend and web dependencies and fails the workflow on findings.
+
+**pip-audit invocation rule:** Use `-r` **or** a project path, **not both**. For CI, run against the
+requirements file and emit JSON for artifact collection:
+
+```bash
+pip-audit -r backend/requirements.txt -f json -o pip-audit.json
+```
+
+**Security patch policy (Next.js):** Keep Next.js pinned to the latest patch release within the current minor
+version whenever a critical advisory is published. Apply updates in a targeted PR and re-run `npm audit`.
+
+---
+
 ## Finance tax exports
 
 Finance tax exports are generated on-demand as ZIP bundles of CSV files for GST reporting (summary, payments,

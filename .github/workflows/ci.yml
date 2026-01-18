@@ -40,9 +40,25 @@ jobs:
           pip install -r requirements.txt
 
       - name: Dependency vulnerability scan (pip-audit)
+        id: pip_audit
+        working-directory: .
+        continue-on-error: true
         run: |
           python -m pip install pip-audit==2.7.3 --no-cache-dir
-          pip-audit -r requirements.txt -c constraints.txt --fail-on high
+          pip-audit -r backend/requirements.txt -f json -o pip-audit.json
+
+      - name: Upload pip-audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit.json
+
+      - name: Enforce pip-audit result
+        if: steps.pip_audit.outcome == 'failure'
+        run: |
+          echo "pip-audit reported vulnerabilities or failed to run."
+          exit 1
 
       - name: Lint (syntax guard)
         run: |
