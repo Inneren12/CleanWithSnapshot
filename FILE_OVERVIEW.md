@@ -416,7 +416,7 @@ web/app/
 | `backend/alembic/versions/0085_*.py` | **RBAC** - Roles & permissions tables |
 | `backend/alembic/versions/6a2b_*.py` | **Availability blocks** - Team blackout |
 
-### Frontend (21 files)
+### Frontend (22 files)
 
 | File | Why Important |
 |------|---------------|
@@ -436,6 +436,7 @@ web/app/
 | `web/app/admin/training/library/page.tsx` | **Training library placeholder** |
 | `web/app/admin/training/quizzes/page.tsx` | **Training quizzes placeholder** |
 | `web/app/admin/training/cert-templates/page.tsx` | **Certificate templates placeholder** |
+| `web/app/admin/notifications/rules/page.tsx` | **Rules builder UI + test preview** |
 | `web/app/admin/iam/roles/page.tsx` | **Role management** |
 | `web/app/admin/settings/modules/page.tsx` | **Feature toggles** |
 | `web/app/admin/settings/availability-blocks/page.tsx` | **Availability blocking** |

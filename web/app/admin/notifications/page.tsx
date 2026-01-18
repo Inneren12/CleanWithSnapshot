@@ -131,6 +131,9 @@ export default function NotificationsPage() {
   const pageVisible = visibilityReady
     ? isVisible("module.notifications_center", permissionKeys, featureOverrides, hiddenKeys)
     : true;
+  const rulesVisible = visibilityReady
+    ? isVisible("notifications_center.rules_builder", permissionKeys, featureOverrides, hiddenKeys)
+    : true;
 
   const navLinks = useMemo(() => {
     if (!visibilityReady || !profile) return [];
@@ -143,6 +146,12 @@ export default function NotificationsPage() {
         label: "Notifications",
         href: "/admin/notifications",
         featureKey: "module.notifications_center",
+      },
+      {
+        key: "notifications-rules",
+        label: "Rules Builder",
+        href: "/admin/notifications/rules",
+        featureKey: "notifications_center.rules_builder",
       },
       { key: "teams", label: "Teams", href: "/admin/teams", featureKey: "module.teams" },
       { key: "inventory", label: "Inventory", href: "/admin/inventory", featureKey: "module.inventory" },
@@ -352,6 +361,19 @@ export default function NotificationsPage() {
             Clear
           </button>
         </div>
+      </section>
+
+      <section className="admin-card admin-section">
+        <div className="section-heading">
+          <div>
+            <h2>Rules builder</h2>
+            <p className="muted">Design alert routing logic with triggers, conditions, and actions.</p>
+          </div>
+          <Link className="btn btn-primary" href="/admin/notifications/rules">
+            Open rules
+          </Link>
+        </div>
+        {!rulesVisible ? <p className="alert alert-warning">Rules builder is disabled by org settings.</p> : null}
       </section>
 
       <section className="admin-card admin-section">

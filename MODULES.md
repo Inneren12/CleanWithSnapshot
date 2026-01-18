@@ -49,7 +49,7 @@ integrations.accounting.quickbooks  # QuickBooks Online sync (feature gated)
 **Notifications subfeatures:**
 
 ```
-notifications.rules_builder   # Rules builder + rule evaluation (feature gated)
+notifications_center.rules_builder   # Rules builder + rule evaluation (feature gated)
 ```
 
 **Configuration:**
@@ -740,6 +740,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Key Pages:**
 - `web/app/admin/notifications/page.tsx` - Admin notification inbox UI
+- `web/app/admin/notifications/rules/page.tsx` - Rules builder UI (conditions/actions, test preview, runs log)
 
 **Backend Routers:**
 - `backend/app/api/routes_admin.py` - `/v1/admin/notifications*` feed + read endpoints
@@ -762,7 +763,7 @@ and headers to avoid UTC shifts for near-midnight bookings.
 
 **Feature Key:** `module.notifications_center`
 
-**Feature Subkey:** `notifications.rules_builder`
+**Feature Subkey:** `notifications_center.rules_builder`
 
 **Where to change:**
 - Feed filtering, cursor logic, and read tracking: `backend/app/domain/notifications_center/service.py`
