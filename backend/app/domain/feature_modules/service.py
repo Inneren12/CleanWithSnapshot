@@ -48,6 +48,7 @@ SUBFEATURE_KEYS = [
     "integrations.maps",
     "notifications.rules_builder",
     "leads.nurture",
+    "leads.scoring",
 ]
 
 FEATURE_KEYS = MODULE_KEYS + SUBFEATURE_KEYS
@@ -63,6 +64,7 @@ DEFAULT_DISABLED_KEYS = {
     "integrations.maps",
     "notifications.rules_builder",
     "leads.nurture",
+    "leads.scoring",
 }
 
 MODULE_PERMISSIONS: dict[str, str] = {

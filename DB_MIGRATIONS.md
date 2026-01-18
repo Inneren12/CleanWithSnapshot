@@ -30,6 +30,7 @@ This guide covers database schema management using Alembic in the CleanWithSnaps
 `email_segments`, and `email_campaigns` for marketing analytics and manual campaigns,
 `e6b1c2d3f4a5_add_promo_codes.py` adds `promo_codes` + `promo_code_redemptions`,
 `d3b7c1a4f8e2_add_lead_quotes_and_loss_reason.py` adds lead quotes + loss reason tracking,
+`e2b1c4d5f6a7_add_lead_scoring_tables.py` adds `lead_scoring_rules` + `lead_scores_snapshot` for deterministic lead scoring,
 `6ddda2f1b93a_quality_issue_responses.py` adds `quality_issue_responses`,
 `9b7c1d2e3f4a_quality_issue_tags.py` adds `quality_issue_tags` + `quality_tag_catalog`,
 `1b2c3d4e5f6a_quality_issue_tag_position.py` adds tag ordering via `quality_issue_tags.position`,

@@ -19,6 +19,7 @@ from app.api.routes_admin_iam import router as admin_iam_router
 from app.api.routes_admin_integrations import router as admin_integrations_router
 from app.api.routes_admin_inventory import router as admin_inventory_router
 from app.api.routes_admin_leads_nurture import router as admin_leads_nurture_router
+from app.api.routes_admin_leads_scoring import router as admin_leads_scoring_router
 from app.api.routes_admin_marketing import router as admin_marketing_router
 from app.api.routes_admin_pricing import router as admin_pricing_router
 from app.api.routes_admin_settings import router as admin_settings_router
@@ -430,6 +431,7 @@ def create_app(app_settings) -> FastAPI:
     app.include_router(admin_inventory_router)
     app.include_router(admin_finance_router)
     app.include_router(admin_leads_nurture_router)
+    app.include_router(admin_leads_scoring_router)
     app.include_router(queues_router)
     app.include_router(health_backup_router)
     app.include_router(timeline_router)

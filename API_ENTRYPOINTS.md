@@ -26,7 +26,7 @@ Complete reference for CleanWithSnapshot API endpoints, authentication, and usag
 **Response Format:** JSON
 **Error Format:** RFC 7807 Problem Details
 
-### Router Registration (32 routers)
+### Router Registration (33 routers)
 
 | Priority | Router | Path Prefix | Auth | File |
 |----------|--------|-------------|------|------|
@@ -52,16 +52,17 @@ Complete reference for CleanWithSnapshot API endpoints, authentication, and usag
 | 20 | break_glass | `/v1/break-glass` | Emergency | `break_glass.py` |
 | 21 | **admin** | `/v1/admin` | **Admin** | **`routes_admin.py` (largest)** |
 | 22 | admin_leads_nurture | `/v1/admin/leads/nurture` | Admin | `routes_admin_leads_nurture.py` |
-| 23 | admin_settings | `/v1/admin/settings` | Admin | `routes_admin_settings.py` |
-| 24 | admin_integrations | `/v1/admin/integrations` | Admin | `routes_admin_integrations.py` |
-| 25 | admin_iam | `/v1/admin/iam` | Admin | `routes_admin_iam.py` |
-| 26 | admin_pricing | `/v1/admin/pricing` | Admin | `routes_admin_pricing.py` |
-| 27 | admin_finance | `/v1/admin/finance` | Admin | `routes_admin_finance.py` |
-| 28 | queues | `/v1/admin/queue` | Admin | `routes_queues.py` |
-| 29 | timeline | `/v1/timeline` | Admin | `routes_timeline.py` |
-| 30 | health_backup | `/health` | None | `health_backup.py` |
-| 31 | metrics | `/metrics` | Token | `routes_metrics.py` |
-| 32 | style_guide | `/style-guide` | Dev Only | `routes_style_guide.py` |
+| 23 | admin_leads_scoring | `/v1/admin/leads/scoring` | Admin | `routes_admin_leads_scoring.py` |
+| 24 | admin_settings | `/v1/admin/settings` | Admin | `routes_admin_settings.py` |
+| 25 | admin_integrations | `/v1/admin/integrations` | Admin | `routes_admin_integrations.py` |
+| 26 | admin_iam | `/v1/admin/iam` | Admin | `routes_admin_iam.py` |
+| 27 | admin_pricing | `/v1/admin/pricing` | Admin | `routes_admin_pricing.py` |
+| 28 | admin_finance | `/v1/admin/finance` | Admin | `routes_admin_finance.py` |
+| 29 | queues | `/v1/admin/queue` | Admin | `routes_queues.py` |
+| 30 | timeline | `/v1/timeline` | Admin | `routes_timeline.py` |
+| 31 | health_backup | `/health` | None | `health_backup.py` |
+| 32 | metrics | `/metrics` | Token | `routes_metrics.py` |
+| 33 | style_guide | `/style-guide` | Dev Only | `routes_style_guide.py` |
 
 **Entrypoint:** `backend/app/main.py::create_app()` → `app = create_app(settings)`
 
@@ -183,6 +184,17 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | GET | `/v1/admin/leads/{lead_id}/quotes` | `contacts.view` (or `leads.view`) | List quotes for a lead (includes follow-ups + expiry state) |
 | POST | `/v1/admin/leads/{lead_id}/quotes` | `contacts.edit` (or `leads.edit`) | Create a lead quote (amount, service type, expiry, sent_at) |
 | POST | `/v1/admin/leads/{lead_id}/quotes/{quote_id}/followups` | `contacts.edit` (or `leads.edit`) | Log a manual quote follow-up note |
+
+### Lead Scoring (Admin)
+
+**Feature keys:** `module.leads` + `leads.scoring` (both required; disabled by default)
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| GET | `/v1/admin/leads/scoring/rules` | `leads.view` | List lead scoring rule versions and active version |
+| PATCH | `/v1/admin/leads/scoring/rules` | `leads.manage` | Create a new lead scoring rules version |
+| POST | `/v1/admin/leads/{lead_id}/scoring/recompute` | `leads.manage` | Recompute and persist lead score snapshot |
+| GET | `/v1/admin/leads/{lead_id}/scoring` | `leads.view` | Fetch stored lead score snapshot (score + reasons + rules_version) |
 
 ### Lead Nurture (Admin)
 
