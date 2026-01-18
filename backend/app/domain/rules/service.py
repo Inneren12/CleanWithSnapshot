@@ -67,6 +67,8 @@ async def create_rule(session: AsyncSession, org_id: uuid.UUID, data: dict[str, 
         trigger_type=data["trigger_type"],
         conditions_json=_normalize_conditions(data.get("conditions_json")),
         actions_json=_normalize_actions(data.get("actions_json")),
+        escalation_policy_json=data.get("escalation_policy") or {},
+        escalation_cooldown_minutes=data.get("escalation_cooldown_minutes", 60),
     )
     session.add(rule)
     await session.flush()
@@ -86,6 +88,10 @@ async def update_rule(session: AsyncSession, rule: Rule, data: dict[str, Any]) -
         rule.conditions_json = _normalize_conditions(data.get("conditions_json"))
     if "actions_json" in data:
         rule.actions_json = _normalize_actions(data.get("actions_json"))
+    if "escalation_policy" in data:
+        rule.escalation_policy_json = data.get("escalation_policy") or {}
+    if "escalation_cooldown_minutes" in data:
+        rule.escalation_cooldown_minutes = data.get("escalation_cooldown_minutes") or 0
     await session.flush()
     return rule
 

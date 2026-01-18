@@ -302,6 +302,8 @@ METRICS_TOKEN="<token>"
 - `create_notification_event` always writes to the notifications inbox when rules execute.
 - `send_email` only runs when `EMAIL_MODE` is enabled; otherwise it logs a skipped action.
 - `send_sms` only runs when `SMS_MODE=twilio`; otherwise it logs a skipped action.
+- `escalate` uses the rule escalation policy (level1 email, level2 sms) and writes cooldown tracking to
+  `rule_escalations`; it will skip if within the cooldown window.
 - Phone-call escalation is not executed yet (rule configs can store call intent, but it will only log).
 
 **Full list:** See [docs/ENV_AUDIT_REPORT.md](./docs/ENV_AUDIT_REPORT.md)
