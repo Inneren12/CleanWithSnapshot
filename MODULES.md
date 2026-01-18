@@ -44,6 +44,7 @@ module.api                    # API access
 ```
 integrations.google_calendar  # Google Calendar OAuth + sync (feature gated)
 integrations.accounting.quickbooks  # QuickBooks Online sync (feature gated)
+integrations.maps  # Google Maps distance matrix + quota dashboard (feature gated)
 ```
 
 **Notifications subfeatures:**

@@ -17,6 +17,7 @@ from app.domain.integrations.db_models import (
     IntegrationsGcalEventMap,
     IntegrationsGcalSyncState,
     IntegrationsGoogleAccount,
+    MapsUsage,
     ScheduleExternalBlock,
 )
 from app.infra.db import Base
@@ -127,5 +128,6 @@ async def test_integrations_tables_exist_in_metadata():
     assert IntegrationsGcalSyncState.__tablename__ in Base.metadata.tables
     assert ScheduleExternalBlock.__tablename__ in Base.metadata.tables
     assert IntegrationsGcalEventMap.__tablename__ in Base.metadata.tables
+    assert MapsUsage.__tablename__ in Base.metadata.tables
 
     await engine.dispose()

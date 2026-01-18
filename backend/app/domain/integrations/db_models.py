@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Date, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -225,3 +225,18 @@ class AccountingInvoiceMap(Base):
             name="uq_accounting_invoice_map_org_remote",
         ),
     )
+
+
+class MapsUsage(Base):
+    __tablename__ = "maps_usage"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("organizations.org_id", ondelete="CASCADE"),
+        primary_key=True,
+        default=lambda: settings.default_org_id,
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    count: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0, server_default="0")
+
+    __table_args__ = (Index("ix_maps_usage_org_id", "org_id"),)

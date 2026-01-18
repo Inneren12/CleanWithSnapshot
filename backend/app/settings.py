@@ -107,6 +107,8 @@ class Settings(BaseSettings):
     captcha_mode: Literal["off", "turnstile"] = Field("off")
     turnstile_secret_key: str | None = Field(None)
     google_maps_api_key: str | None = Field(None)
+    maps_monthly_quota_limit: int = Field(10000)
+    maps_requests_per_minute: int = Field(30)
     google_oauth_client_id: str | None = Field(None)
     google_oauth_client_secret: str | None = Field(None)
     google_oauth_redirect_uri: str | None = Field(None)

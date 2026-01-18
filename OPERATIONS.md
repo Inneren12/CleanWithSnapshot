@@ -271,6 +271,26 @@ QUICKBOOKS_OAUTH_REDIRECT_URI="https://panidobro.com/admin/settings/integrations
 The redirect URI should match the QuickBooks app configuration and point to the
 admin integrations page where the callback is handled.
 
+### Maps (Google Maps Distance Matrix)
+
+Set these to enable Maps distance matrix requests and quota tracking:
+
+```bash
+GOOGLE_MAPS_API_KEY="<google-maps-api-key>"
+```
+
+**Optional quota controls:**
+
+```bash
+MAPS_MONTHLY_QUOTA_LIMIT="10000"  # billable elements per month, set to 0 for unlimited
+MAPS_REQUESTS_PER_MINUTE="30"     # per-org rate limit
+```
+
+**Runbook:**
+- If the key is missing or quota is exceeded, the API returns heuristic estimates instead of failing.
+- Track usage via `GET /v1/admin/maps/quota` (owner/admin), and validate the key via
+  `POST /v1/admin/maps/test_key` (owner only).
+
 **Optional variables:**
 
 ```bash

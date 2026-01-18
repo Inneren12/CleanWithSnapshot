@@ -198,6 +198,14 @@ curl -u "+1234567890:workerpassword" https://api.panidobro.com/v1/worker/jobs
 | GET | `/v1/admin/marketing/analytics/lead-sources` | `settings.manage` | Lead source analytics for a month (leads, bookings, revenue, spend) |
 | GET | `/v1/admin/marketing/spend` | `settings.manage` | List manual spend entries for a month |
 | PUT | `/v1/admin/marketing/spend` | `settings.manage` | Upsert manual spend for a source + month |
+
+### Maps
+
+| Method | Path | Permission | Purpose |
+|--------|------|------------|---------|
+| POST | `/v1/admin/maps/distance_matrix` | `dispatch` | Distance matrix estimates for origin/destination pairs |
+| GET | `/v1/admin/maps/quota` | `view` | Monthly quota usage and key status |
+| POST | `/v1/admin/maps/test_key` | `admin` (owner only) | Validate Google Maps API key configuration |
 | GET | `/v1/admin/marketing/email-segments` | `settings.manage` | List email segments |
 | POST | `/v1/admin/marketing/email-segments` | `settings.manage` | Create email segment |
 | GET | `/v1/admin/marketing/email-segments/{segment_id}` | `settings.manage` | Get email segment |
