@@ -256,6 +256,60 @@ async def push_quickbooks_invoice(
     )
 
 
+@router.post(
+    "/v1/admin/integrations/accounting/quickbooks/pull_status",
+    response_model=integrations_schemas.QboInvoicePullResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def pull_quickbooks_status(
+    request: Request,
+    from_date: datetime = Query(..., alias="from"),
+    to_date: datetime = Query(..., alias="to"),
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.FINANCE)),
+    session: AsyncSession = Depends(get_db_session),
+) -> integrations_schemas.QboInvoicePullResponse:
+    await _require_quickbooks_enabled(session, org_id)
+    if not qbo_service.oauth_configured():
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks OAuth Not Configured",
+            detail="Missing QuickBooks OAuth configuration.",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    if from_date.tzinfo is None:
+        from_date = from_date.replace(tzinfo=timezone.utc)
+    if to_date.tzinfo is None:
+        to_date = to_date.replace(tzinfo=timezone.utc)
+    try:
+        result = await qbo_service.pull_invoice_status_from_qbo(
+            session,
+            org_id,
+            from_date=from_date.date(),
+            to_date=to_date.date(),
+        )
+    except ValueError as exc:
+        await qbo_service.record_sync_error(session, org_id, str(exc))
+        await session.commit()
+        return problem_details(
+            request=request,
+            status=400,
+            title="QuickBooks Status Pull Failed",
+            detail=str(exc),
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+    await session.commit()
+    return integrations_schemas.QboInvoicePullResponse(
+        from_utc=result.from_date,
+        to_utc=result.to_date,
+        invoices_touched=result.invoices_touched,
+        payments_recorded=result.payments_recorded,
+        payments_skipped=result.payments_skipped,
+        total=result.total,
+    )
+
+
 @router.get(
     "/v1/admin/integrations/google/status",
     response_model=integrations_schemas.GcalIntegrationStatus,

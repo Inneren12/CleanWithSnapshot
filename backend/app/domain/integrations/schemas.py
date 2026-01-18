@@ -136,3 +136,14 @@ class QboInvoicePushItemResponse(BaseModel):
     invoice_id: str
     remote_invoice_id: str | None = None
     action: str
+
+
+class QboInvoicePullResponse(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    from_utc: date = Field(alias="from")
+    to_utc: date = Field(alias="to")
+    invoices_touched: int
+    payments_recorded: int
+    payments_skipped: int
+    total: int

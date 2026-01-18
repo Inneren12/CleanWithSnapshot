@@ -849,6 +849,10 @@ and headers to avoid UTC shifts for near-midnight bookings.
 - Invoice push only includes `SENT`, `PARTIAL`, and `OVERDUE` invoices; drafts are skipped.
 - Push updates existing remote invoices when the payload hash changes; unchanged invoices are skipped.
 
+**QuickBooks Status Pull Idempotency Rules:**
+- Status pull reconciles QuickBooks payments to mapped invoices within the requested date range.
+- Payment reconciliation is idempotent using the remote payment ID (no duplicate local payments).
+
 **GCal Job Gating Rules:**
 - `gcal-sync` uses `integrations_gcal_sync_state` to track `sync_cursor` + `last_sync_at`.
 - Each run is gated: skip when `now - last_sync_at < GCAL_SYNC_INTERVAL_SECONDS`.
