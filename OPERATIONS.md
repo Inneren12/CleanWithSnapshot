@@ -152,6 +152,27 @@ python -m app.jobs.run --job notifications-digest-monthly --once
 - Delivery is rate-limited per org/period using `notifications_digest_state` so looping runners do not resend
   the same daily/weekly/monthly digest within the same period.
 
+### Google Calendar sync job (gcal-sync)
+
+**Run locally (one-shot):**
+
+```bash
+cd backend
+python -m app.jobs.run --job gcal-sync --once
+```
+
+**Environment variables:**
+- `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` (OAuth setup)
+- `GCAL_SYNC_INTERVAL_SECONDS` (minimum seconds between sync runs per org/calendar)
+- `GCAL_SYNC_INITIAL_DAYS` (initial lookback window when no cursor exists)
+- `GCAL_SYNC_FUTURE_DAYS` (future horizon to sync)
+- `GCAL_SYNC_BACKFILL_MINUTES` (overlap window to avoid missing near-edge changes)
+
+**Safe cadence:**
+- The runner can loop every minute, but `gcal-sync` only executes when
+  `now - last_sync_at >= GCAL_SYNC_INTERVAL_SECONDS`.
+- Sync is skipped entirely if the integration is disabled for the org.
+
 ---
 
 ## Finance tax exports

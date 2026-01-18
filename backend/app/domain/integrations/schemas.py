@@ -47,6 +47,8 @@ class GcalIntegrationStatus(BaseModel):
     connected: bool
     calendar_id: str | None = None
     oauth_configured: bool
+    last_sync_at: datetime | None = None
+    last_error: str | None = None
 
 
 class GcalConnectStartResponse(BaseModel):

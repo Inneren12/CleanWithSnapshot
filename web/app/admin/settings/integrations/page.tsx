@@ -47,6 +47,8 @@ type GcalIntegrationStatus = {
   connected: boolean;
   calendar_id?: string | null;
   oauth_configured: boolean;
+  last_sync_at?: string | null;
+  last_error?: string | null;
 };
 
 type GcalConnectStartResponse = {
@@ -401,6 +403,16 @@ export default function IntegrationsPage() {
                           <select className="input" disabled>
                             <option>{gcal?.calendar_id ?? "Select calendar (coming soon)"}</option>
                           </select>
+                        </div>
+                      </div>
+                      <div className="settings-meta">
+                        <div>
+                          <div className="muted small">Last sync</div>
+                          <strong>{formatMaybeDate(gcal?.last_sync_at)}</strong>
+                        </div>
+                        <div>
+                          <div className="muted small">Last error</div>
+                          <strong>{gcal?.last_error ?? "—"}</strong>
                         </div>
                       </div>
                       <div className="settings-actions">

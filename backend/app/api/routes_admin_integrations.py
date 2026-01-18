@@ -55,10 +55,15 @@ async def get_google_calendar_status(
 
     account = await gcal_service.get_google_account(session, org_id)
     calendar_id = await gcal_service.get_primary_calendar_id(session, org_id)
+    sync_state = None
+    if account and calendar_id:
+        sync_state = await gcal_service.get_sync_state(session, org_id, calendar_id)
     return integrations_schemas.GcalIntegrationStatus(
         connected=bool(account),
         calendar_id=calendar_id if account else None,
         oauth_configured=gcal_service.oauth_configured(),
+        last_sync_at=sync_state.last_sync_at if sync_state else None,
+        last_error=sync_state.last_error if sync_state else None,
     )
 
 
