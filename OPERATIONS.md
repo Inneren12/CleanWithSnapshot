@@ -175,6 +175,30 @@ python -m app.jobs.run --job gcal-sync --once
 
 ---
 
+### QuickBooks sync job (qbo-sync)
+
+Runs the QuickBooks Online sync loop (invoice push + payment status pull).
+
+**Run locally (one-shot):**
+
+```bash
+cd backend
+python -m app.jobs.run --job qbo-sync --once
+```
+
+**Environment variables:**
+- `QUICKBOOKS_OAUTH_CLIENT_ID`, `QUICKBOOKS_OAUTH_CLIENT_SECRET`, `QUICKBOOKS_OAUTH_REDIRECT_URI` (OAuth setup)
+- `QBO_SYNC_INTERVAL_SECONDS` (minimum seconds between sync runs per org)
+- `QBO_SYNC_INITIAL_DAYS` (lookback window when no cursor exists)
+- `QBO_SYNC_BACKFILL_DAYS` (overlap window to avoid missing late updates)
+
+**Safe cadence:**
+- The runner can loop every minute, but `qbo-sync` only executes when
+  `now - last_sync_at >= QBO_SYNC_INTERVAL_SECONDS`.
+- Sync is skipped entirely if the integration is disabled for the org or OAuth is not configured.
+
+---
+
 ## Finance tax exports
 
 Finance tax exports are generated on-demand as ZIP bundles of CSV files for GST reporting (summary, payments,
