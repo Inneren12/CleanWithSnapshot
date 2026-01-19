@@ -117,6 +117,8 @@ npm run dev
 - **PostgreSQL 16** (optional for dev; SQLite works for unit tests)
 - **Redis** (optional for dev; rate limiting fails open without it)
 
+The exact CI-matched versions are pinned in `.python-version` and `.nvmrc`. Load them locally with your version manager (e.g., `pyenv install --skip-existing $(cat .python-version)` and `nvm install`).
+
 ### Backend Setup
 
 ```bash
