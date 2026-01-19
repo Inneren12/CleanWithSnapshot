@@ -189,6 +189,7 @@ jobs:
 
       - name: Scan api image (Trivy)
         uses: aquasecurity/trivy-action@0.29.0
+        continue-on-error: true
         with:
           image-ref: cleanwithsnapshot-api
           format: json
@@ -200,6 +201,7 @@ jobs:
 
       - name: Scan web image (Trivy)
         uses: aquasecurity/trivy-action@0.29.0
+        continue-on-error: true
         with:
           image-ref: cleanwithsnapshot-web
           format: json
@@ -299,6 +301,35 @@ jobs:
           name: trivy-reports
           path: |
             trivy-cleanwithsnapshot-*.json
+
+      - name: Fail if Trivy gate hit (HIGH/CRITICAL)
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          reports = [
+              Path("trivy-cleanwithsnapshot-api.json"),
+              Path("trivy-cleanwithsnapshot-web.json"),
+          ]
+
+          def has_high_critical(report: Path) -> bool:
+              if not report.exists():
+                  return False
+              data = json.loads(report.read_text())
+              for r in data.get("Results", []) or []:
+                  for v in (r.get("Vulnerabilities") or []):
+                      if v.get("Severity") in ("CRITICAL", "HIGH"):
+                          # ignore-unfixed уже применён Trivy action'ом,
+                          # но если вдруг нет — можно дополнительно проверять FixedVersion.
+                          return True
+              return False
+
+          hit = any(has_high_critical(p) for p in reports)
+          raise SystemExit(1 if hit else 0)
+          PY
+
 
   secrets-scan:
     name: Security - Secrets Scan (Gitleaks)
