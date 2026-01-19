@@ -383,3 +383,60 @@ jobs:
           else
             echo "ℹ No ops/ directory found, skipping bash validation"
           fi
+
+  smoke-compose:
+    name: Smoke - Docker Compose
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    env:
+      COMPOSE_PROJECT_NAME: cleanwithsnapshot-ci
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create CI .env for compose
+        run: |
+          cat > .env <<'EOF'
+          APP_ENV=dev
+          TESTING=true
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres
+          POSTGRES_DB=cleaning
+          DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/cleaning
+          NEXT_PUBLIC_API_BASE_URL=http://api:8000
+          EOF
+
+      - name: Start Docker Compose stack (smoke)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait db redis api web
+
+      - name: Run smoke tests
+        run: ./ops/smoke.sh
+        env:
+          API_BASE_URL: http://localhost:8000
+          WEB_BASE_URL: http://localhost:3000
+
+      - name: Capture compose logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml ps > compose-ps.txt
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color > compose.log
+
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-smoke-logs
+          path: |
+            compose.log
+            compose-ps.txt
+
+      - name: Tear down Docker Compose stack
+        if: always()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
+
+      - name: Cleanup CI .env
+        if: always()
+        run: rm -f .env

@@ -1,0 +1,13 @@
+services:
+  api:
+    ports:
+      - "8000:8000"
+
+  web:
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: "http://api:8000"
+    build:
+      args:
+        NEXT_PUBLIC_API_BASE_URL: "http://api:8000"
