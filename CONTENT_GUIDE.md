@@ -584,6 +584,9 @@ cd backend
 # Unit tests only (CI mode)
 pytest -v -m "not smoke and not postgres" --ignore=tests/smoke
 
+# Coverage (CI policy - report only)
+pytest -v -m "not smoke and not postgres" --ignore=tests/smoke --cov=backend/app --cov-report=xml --cov-report=term
+
 # All tests (local with PostgreSQL)
 pytest -v
 
@@ -609,6 +612,13 @@ npm run build
 ```
 
 **No Jest/Vitest tests yet** - focus on type safety + build validation.
+
+### Coverage Policy (Phase 0)
+
+**Current rule:** CI collects pytest-cov XML + terminal reports for `backend/app` and uploads the artifact.
+
+**Enforcement:** Report-only (no `--cov-fail-under` threshold yet). We will set a baseline threshold after the
+first few CI runs establish a stable coverage percentage.
 
 ---
 
