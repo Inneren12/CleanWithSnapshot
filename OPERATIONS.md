@@ -792,25 +792,35 @@ curl https://api.panidobro.com/healthz
 
 ### Multiple Migration Heads
 
-**Symptom:** `alembic heads` shows multiple heads
+**Symptom:** `alembic heads` shows multiple heads or the staging/prod pipeline fails the Alembic head check.
 
-**Solution:**
+**What to do in staging/prod pipelines:**
 
-```bash
-cd backend
+1. **Stop the deployment** (do not run migrations with multiple heads).
+2. **Identify all heads** in the repo:
+   ```bash
+   cd backend
+   alembic heads
+   ```
+3. **Create a merge migration** that includes every head:
+   ```bash
+   alembic merge -m "merge migration heads" <head1> <head2> ... <headN>
+   ```
+4. **Commit the merge** and re-run the pipeline:
+   ```bash
+   git add alembic/versions/merge_*.py
+   git commit -m "chore(db): merge migration heads"
+   git push
+   ```
+5. **Re-deploy** once CI is green:
+   ```bash
+   ./ops/deploy.sh
+   ```
 
-# Merge heads
-alembic merge -m "merge migration heads" abc123 def456
+**Important:** do not apply migrations in staging/prod until the merge migration lands and `alembic heads`
+returns a single revision.
 
-# Commit merge migration
-git add alembic/versions/merge_*.py
-git commit -m "chore(db): merge migration heads"
-
-# Deploy
-./ops/deploy.sh
-```
-
-See [DB_MIGRATIONS.md](./DB_MIGRATIONS.md#merging-heads)
+See [DB_MIGRATIONS.md](./DB_MIGRATIONS.md#merging-heads) for the detailed merge procedure.
 
 ---
 

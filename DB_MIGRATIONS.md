@@ -372,6 +372,42 @@ alembic heads
 # Should show only one head
 ```
 
+### N-Head Merge Procedure (Exact Steps)
+
+Use this when `alembic heads` returns **N > 2** revisions.
+
+```bash
+cd backend
+
+# 1) Capture all current heads (copy the revision IDs)
+alembic heads
+
+# 2) Create a single merge migration that references ALL heads
+alembic merge -m "merge heads <head1> <head2> <head3> ... <headN>" <head1> <head2> <head3> ... <headN>
+
+# 3) Verify the merge migration points at every head
+alembic heads
+# Output should show exactly one head (the new merge revision)
+
+# 4) Run the upgrade to validate the merge works
+alembic upgrade head
+```
+
+**Checklist for N-head merges:**
+- The generated merge migration should have `down_revision = ("<head1>", "<head2>", ... "<headN>")`.
+- `upgrade()` and `downgrade()` should be empty no-ops.
+- Commit the merge migration immediately so CI sees a single head.
+
+### Migration Captain Recommendation (Parallel Work)
+
+When multiple engineers are creating migrations in parallel, designate a **migration captain** for the release:
+
+1. **Owns the migration merge**: keeps `main` at a single head by creating merge migrations as needed.
+2. **Coordinates timing**: ensures teams rebase/pull before generating new migrations.
+3. **Runs the preflight**: validates `alembic heads` returns one revision before PRs merge.
+
+This avoids repeated multi-head conflicts and keeps CI/deploy pipelines green.
+
 **Example merge migration:**
 
 ```python
