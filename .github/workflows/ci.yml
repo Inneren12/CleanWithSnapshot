@@ -235,6 +235,76 @@ jobs:
             bandit-report.json
             bandit.log
 
+  rls-audit:
+    name: Security - RLS Coverage Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/cleaning
+      APP_ENV: dev
+      TESTING: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cleaning
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Verify Python runtime matches .python-version
+        run: |
+          expected=$(cat ../.python-version)
+          actual=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
+          if [ "$actual" != "$expected" ]; then
+            echo "Python version mismatch: expected ${expected}, got ${actual}"
+            exit 1
+          fi
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt', 'backend/constraints.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Run RLS coverage audit
+        run: |
+          python scripts/audit_rls_coverage.py --output rls-audit.md --fail-on-core-missing
+
+      - name: Upload RLS audit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rls-audit-report
+          path: backend/rls-audit.md
+
   container-scan:
     name: Security - Trivy Image Scan
     runs-on: ubuntu-latest

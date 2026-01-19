@@ -95,6 +95,22 @@ quality.nps   # NPS segments dashboard + admin responses (feature gated)
 
 ---
 
+## Multi-tenant Data Isolation (RLS Audit)
+
+Tenant isolation relies on Postgres Row-Level Security (RLS) policies for tables scoped by `org_id`.
+Use the audit script to verify coverage for both core and non-core tables:
+
+```bash
+cd backend
+python scripts/audit_rls_coverage.py --fail-on-core-missing --output rls-audit.md
+```
+
+**Core RLS gate (CI fails if missing):** `bookings`, `invoices`, `leads`, `clients` (stored in
+`client_users`), `workers`. Any additional `org_id` tables are reported as warnings until they are
+graduated into the core list.
+
+---
+
 ## Core Business Modules
 
 ### 1. Dashboard
