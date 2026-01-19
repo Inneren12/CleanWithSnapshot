@@ -7,12 +7,13 @@ Comprehensive guide for deploying, monitoring, and troubleshooting CleanWithSnap
 ## Table of Contents
 
 1. [Deployment](#deployment)
-2. [Environment Configuration](#environment-configuration)
-3. [Health Monitoring](#health-monitoring)
-4. [Logs & Debugging](#logs--debugging)
-5. [Backup & Restore](#backup--restore)
-6. [Troubleshooting](#troubleshooting)
-7. [Performance Tuning](#performance-tuning)
+2. [Security Scanning](#security-scanning)
+3. [Environment Configuration](#environment-configuration)
+4. [Health Monitoring](#health-monitoring)
+5. [Logs & Debugging](#logs--debugging)
+6. [Backup & Restore](#backup--restore)
+7. [Troubleshooting](#troubleshooting)
+8. [Performance Tuning](#performance-tuning)
 
 ---
 
@@ -128,6 +129,29 @@ git reset --hard <sha>
 ```
 
 **Important:** Migrations are forward-only. Rollback code, NOT migrations.
+
+---
+
+## Security Scanning
+
+### Container vulnerability policy (Trivy)
+
+**CI behavior:** The pipeline builds the `api` and `web` images with `docker compose build api web` and scans
+those images with Trivy. The job **fails on CRITICAL vulnerabilities** so releases are blocked until critical
+issues are addressed. Trivy JSON reports are uploaded as CI artifacts for review.
+
+**Remediation workflow:**
+
+1. **Identify the affected component** in the Trivy report (base image, OS package, or application dependency).
+2. **Upgrade the base image** (e.g., `python:3.11-slim`, `node:20-alpine`) or update the dependency that pulls
+   in the vulnerable package.
+3. **Rebuild the image locally** and re-run Trivy to verify the fix:
+   ```bash
+   docker compose build api web
+   trivy image cleanwithsnapshot-api
+   trivy image cleanwithsnapshot-web
+   ```
+4. **Re-run CI** (or push a follow-up commit) once the critical findings are resolved.
 
 ---
 
