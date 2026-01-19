@@ -8,6 +8,11 @@ Multi-tenant SaaS application for cleaning service operations management.
 
 ## Quick Start
 
+**Toolchain versions:**
+
+This repo pins the local runtime versions in `.python-version` and `.nvmrc` to match CI.
+Use your preferred version manager to load them (e.g., `pyenv install --skip-existing $(cat .python-version)` and `nvm install`).
+
 **Development:**
 
 ```bash

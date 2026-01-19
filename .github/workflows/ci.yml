@@ -21,10 +21,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version-file: .python-version
 
       - name: Display Python version
         run: python --version
+
+      - name: Verify Python runtime matches .python-version
+        run: |
+          expected=$(cat ../.python-version)
+          actual=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
+          if [ "$actual" != "$expected" ]; then
+            echo "Python version mismatch: expected ${expected}, got ${actual}"
+            exit 1
+          fi
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
@@ -81,10 +90,19 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
 
       - name: Display Node version
         run: node --version
+
+      - name: Verify Node runtime matches .nvmrc
+        run: |
+          expected=$(cat ../.nvmrc)
+          actual=$(node --version | sed 's/^v//')
+          if [ "$actual" != "$expected" ]; then
+            echo "Node version mismatch: expected ${expected}, got ${actual}"
+            exit 1
+          fi
 
       - name: Cache npm dependencies
         uses: actions/cache@v4
@@ -123,7 +141,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version-file: .python-version
+
+      - name: Verify Python runtime matches .python-version
+        run: |
+          expected=$(cat ../.python-version)
+          actual=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
+          if [ "$actual" != "$expected" ]; then
+            echo "Python version mismatch: expected ${expected}, got ${actual}"
+            exit 1
+          fi
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
@@ -162,7 +189,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version-file: .python-version
+
+      - name: Verify Python runtime matches .python-version
+        run: |
+          expected=$(cat .python-version)
+          actual=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
+          if [ "$actual" != "$expected" ]; then
+            echo "Python version mismatch: expected ${expected}, got ${actual}"
+            exit 1
+          fi
 
       - name: Install Bandit
         run: python -m pip install bandit==1.7.9 --no-cache-dir
