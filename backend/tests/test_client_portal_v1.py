@@ -197,7 +197,7 @@ async def test_client_photo_flow_redirect_only(client, async_session_maker, monk
     url = signed_resp.json()["url"]
     assert "/signed-download" in url
 
-    redirect_resp = client.get(url, allow_redirects=False)
+    redirect_resp = client.get(url, follow_redirects=False)
     assert redirect_resp.status_code == settings.photo_download_redirect_status
     assert "cdn.example.com" in redirect_resp.headers.get("location", "")
 
@@ -219,4 +219,3 @@ async def test_client_portal_logging_redacts_token(client, async_session_maker, 
     assert response.status_code == 200
     assert token not in caplog.text
     assert client_user.email not in caplog.text
-

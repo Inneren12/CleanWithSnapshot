@@ -3261,10 +3261,21 @@ async def update_lead_status(
 async def email_scan(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
-    _identity: AdminIdentity = Depends(require_dispatch),
+    identity: AdminIdentity = Depends(require_dispatch),
 ) -> dict[str, int]:
     adapter = resolve_app_email_adapter(http_request.app)
     result = await email_service.scan_and_send_reminders(session, adapter)
+    http_request.state.explicit_admin_audit = True
+    await audit_service.record_action(
+        session,
+        identity=identity,
+        action="POST /v1/admin/email-scan",
+        resource_type=None,
+        resource_id=None,
+        before=None,
+        after=result,
+    )
+    await session.commit()
     return result
 
 

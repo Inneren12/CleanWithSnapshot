@@ -124,7 +124,7 @@ def test_cloudflare_images_upload_and_redirect(
     assert photo.storage_key == "img-123"
 
     download = client.get(
-        f"/v1/orders/{booking_id}/photos/{photo_id}/download", headers=headers, allow_redirects=False
+        f"/v1/orders/{booking_id}/photos/{photo_id}/download", headers=headers, follow_redirects=False
     )
     assert download.status_code == 307, download.text
     location = download.headers["location"]
