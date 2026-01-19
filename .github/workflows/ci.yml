@@ -208,6 +208,36 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+      
+      - name: Dump API Trivy HIGH/CRITICAL (top)
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("trivy-cleanwithsnapshot-api.json")
+          if not p.exists():
+              print("missing report", p)
+              raise SystemExit(0)
+          d = json.loads(p.read_text())
+          vulns = []
+          for r in d.get("Results", []) or []:
+              for v in (r.get("Vulnerabilities") or []):
+                  vulns.append({
+                      "Target": r.get("Target"),
+                      "Pkg": v.get("PkgName"),
+                      "Installed": v.get("InstalledVersion"),
+                      "Fixed": v.get("FixedVersion"),
+                      "Severity": v.get("Severity"),
+                      "VulnID": v.get("VulnerabilityID"),
+                      "Title": v.get("Title"),
+                  })
+          vulns = [x for x in vulns if x["Severity"] in ("CRITICAL","HIGH")]
+          vulns.sort(key=lambda x: (x["Severity"]!="CRITICAL", x["Pkg"] or "", x["VulnID"] or ""))
+          print(f"HIGH/CRITICAL count: {len(vulns)}")
+          for x in vulns[:30]:
+              print(f'{x["Severity"]} {x["VulnID"]} {x["Pkg"]} {x["Installed"]} -> {x["Fixed"]} target={x["Target"]}')
+          PY
 
       - name: Summarize Trivy results
         if: always()
