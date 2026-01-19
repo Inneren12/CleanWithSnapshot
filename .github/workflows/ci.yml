@@ -51,6 +51,19 @@ jobs:
       - name: Install pytest-cov
         run: python -m pip install pytest-cov==5.0.0 --no-cache-dir
 
+      - name: Alembic heads preflight (single-head guard)
+        run: |
+          set -euo pipefail
+          heads=$(alembic heads -q || true)
+          count=$(printf "%s\n" "$heads" | sed '/^$/d' | wc -l | tr -d ' ')
+          if [ "$count" -gt 1 ]; then
+            echo "❌ Multiple Alembic heads detected ($count). Merge heads before running migration tests."
+            echo "Heads:"
+            printf "%s\n" "$heads"
+            exit 1
+          fi
+          echo "✅ Alembic head OK: ${heads}"
+
       - name: Lint (syntax guard)
         run: |
           python -m pip install ruff==0.6.5
