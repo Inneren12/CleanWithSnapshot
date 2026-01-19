@@ -25,7 +25,7 @@ def upgrade() -> None:
         sa.Column("org_id", UUID_TYPE, nullable=False),
         sa.Column("key", sa.String(length=100), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["org_id"], ["organizations.org_id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("campaign_id"),
@@ -47,7 +47,7 @@ def upgrade() -> None:
         ),
         sa.Column("template_key", sa.String(length=255), nullable=True),
         sa.Column("payload_json", sa.JSON(), nullable=True),
-        sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.ForeignKeyConstraint(["org_id"], ["organizations.org_id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["campaign_id"], ["nurture_campaigns.campaign_id"], ondelete="CASCADE"

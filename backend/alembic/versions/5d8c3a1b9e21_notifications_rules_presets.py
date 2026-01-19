@@ -30,7 +30,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("preset_key", sa.String(length=64), nullable=False),
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default="0"),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("notify_roles", sa.JSON(), nullable=False, server_default=sa.text("'[]'")),
         sa.Column("notify_user_ids", sa.JSON(), nullable=False, server_default=sa.text("'[]'")),
         sa.Column("escalation_delay_min", sa.Integer(), nullable=True),
