@@ -11,8 +11,22 @@ from app.settings import settings
 pytestmark = pytest.mark.migrations
 
 
+def _alembic_config() -> Config:
+    config_path = Path(__file__).resolve().parents[1] / "alembic.ini"
+    config = Config(str(config_path))
+    script_location = config.get_main_option("script_location")
+    if script_location is None:
+        raise AssertionError("Alembic config missing script_location.")
+    script_path = Path(script_location).expanduser()
+    if not script_path.is_absolute():
+        script_path = (config_path.parent / script_path).resolve()
+    if not script_path.exists():
+        raise AssertionError(f"Alembic script_location not found: {script_path}")
+    return config
+
+
 def test_alembic_has_single_head():
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config = _alembic_config()
     script_directory = ScriptDirectory.from_config(config)
 
     heads = script_directory.get_heads()
@@ -22,7 +36,7 @@ def test_alembic_has_single_head():
 
 def test_alembic_upgrade_head(tmp_path):
     db_path = tmp_path / "test.db"
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config = _alembic_config()
     original_database_url = settings.database_url
     try:
         settings.database_url = f"sqlite+aiosqlite:///{db_path}"
@@ -48,7 +62,7 @@ def test_alembic_upgrade_head(tmp_path):
 
 def test_default_team_dedupe_is_fk_safe(tmp_path):
     db_path = tmp_path / "dupes.db"
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config = _alembic_config()
     original_database_url = settings.database_url
     try:
         settings.database_url = f"sqlite+aiosqlite:///{db_path}"
@@ -106,7 +120,7 @@ def test_default_team_dedupe_is_fk_safe(tmp_path):
 
 def test_invoice_tax_backfill_preserves_zero_tax_invoices(tmp_path):
     db_path = tmp_path / "tax_backfill.db"
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config = _alembic_config()
     original_database_url = settings.database_url
 
     try:
