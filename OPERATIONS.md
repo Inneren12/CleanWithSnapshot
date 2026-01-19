@@ -111,6 +111,31 @@ curl -fsS https://panidobro.com/
 
 ---
 
+### CI Smoke Tests (Docker Compose)
+
+The CI pipeline validates deploy readiness by spinning up Docker Compose and running the same
+`ops/smoke.sh` health checks used in production.
+
+**CI flow:**
+
+```bash
+# Start the minimal stack with CI-specific overrides
+docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait db redis api web
+
+# Run smoke tests against the locally exposed services
+API_BASE_URL=http://localhost:8000 \
+WEB_BASE_URL=http://localhost:3000 \
+./ops/smoke.sh
+
+# Always clean up
+docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
+```
+
+**Failure artifacts:** If the smoke tests fail, CI uploads Docker Compose logs and service status
+to help debug startup issues.
+
+---
+
 ### Rollback
 
 **Rollback to previous commit:**
