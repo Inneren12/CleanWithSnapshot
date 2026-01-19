@@ -391,7 +391,7 @@ def test_r2_backend_redirects_with_public_base(
         download = client.get(
             f"/v1/orders/{booking_id}/photos/{photo_id}/download",
             headers=admin_headers,
-            allow_redirects=False,
+            follow_redirects=False,
         )
 
         assert download.status_code in {302, 307}
