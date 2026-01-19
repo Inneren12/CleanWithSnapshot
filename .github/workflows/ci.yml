@@ -223,6 +223,7 @@ jobs:
               "api": Path("trivy-cleanwithsnapshot-api.json"),
               "web": Path("trivy-cleanwithsnapshot-web.json"),
           }
+          missing = []
 
           def count_by_severity(data):
               counts = {sev: 0 for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]}
@@ -236,7 +237,8 @@ jobs:
           for label, path in reports.items():
               if not path.exists():
                   print(f"Error: no Trivy report found for {label} at {path}.")
-                  sys.exit(2)
+                  missing.append(label)
+                  continue
               with path.open() as handle:
                   data = json.load(handle)
               counts = count_by_severity(data)
@@ -255,6 +257,9 @@ jobs:
                       print(f"{name}: {count}")
               else:
                   print("Top 10 packages by vulnerability count: none found")
+          if missing:
+              sys.exit(2)
+          sys.exit(0)
           PY
 
       - name: Upload Trivy reports
@@ -263,8 +268,7 @@ jobs:
         with:
           name: trivy-reports
           path: |
-            trivy-cleanwithsnapshot-api.json
-            trivy-cleanwithsnapshot-web.json
+            trivy-cleanwithsnapshot-*.json
 
   secrets-scan:
     name: Security - Secrets Scan (Gitleaks)
