@@ -48,7 +48,7 @@ def upgrade() -> None:
     op.add_column(
         "leads",
         sa.Column(
-            "pending_deletion", sa.Boolean(), server_default="0", nullable=False
+            "pending_deletion", sa.Boolean(), server_default=sa.text("false"), nullable=False
         ),
     )
     op.add_column(

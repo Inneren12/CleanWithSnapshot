@@ -38,10 +38,10 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text(f"'{DEFAULT_ORG_ID}'"),
         ),
-        sa.Column("docs_received", sa.Boolean(), nullable=False, server_default=sa.text("0")),
-        sa.Column("background_check", sa.Boolean(), nullable=False, server_default=sa.text("0")),
-        sa.Column("training_completed", sa.Boolean(), nullable=False, server_default=sa.text("0")),
-        sa.Column("first_booking_done", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("docs_received", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("background_check", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("training_completed", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("first_booking_done", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
     op.create_index("ix_worker_onboarding_org_id", "worker_onboarding", ["org_id"])
