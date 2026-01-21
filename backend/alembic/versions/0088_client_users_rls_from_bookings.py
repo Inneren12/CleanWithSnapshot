@@ -17,7 +17,7 @@ depends_on = None
 
 SCHEMA = "public"
 TABLE = "client_users"
-POLICY_NAME = "client_users_org_rls"
+POLICY_NAME = "client_users_org_isolation"
 
 
 def _is_postgres() -> bool:
