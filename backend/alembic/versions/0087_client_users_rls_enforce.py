@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0087_client_users_rls_enforce"
-down_revision = "0086_client_users_rls_org_isolation"
+down_revision = "0086_merge_0085_heads"
 branch_labels = None
 depends_on = None
 
