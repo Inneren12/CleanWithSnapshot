@@ -714,6 +714,25 @@ gzip /opt/backups/postgres/backup_*.sql
 
 ---
 
+### Backup Verification & Heartbeat
+
+**Verify latest backup integrity + record heartbeat:**
+
+```bash
+/opt/cleaning/ops/backup_verify.sh
+```
+
+**What it checks:**
+- Latest `cleaning_*.sql.gz` exists in `/opt/backups/postgres/`
+- Gzip integrity passes (`gzip -t`)
+- SQL header sanity (`PostgreSQL database dump` + `Dumped from database`)
+
+**Heartbeat file (monitoring target):** `/opt/cleaning/ops/state/backup_last_ok.txt`
+- Contains the last successful verification timestamp in UTC.
+- Alert if the timestamp is stale (e.g., > 26 hours).
+
+---
+
 ### Database Restore
 
 **From backup file:**
@@ -738,6 +757,33 @@ docker compose exec db psql -U postgres cleaning -c "SELECT COUNT(*) FROM bookin
 # 5. Restart services
 docker compose up -d
 ```
+
+---
+
+### Restore Verification (Staging Proof)
+
+Run this on staging after copying over the most recent backup to prove restores work.
+
+1. **Copy the latest backup to staging**
+   ```bash
+   scp /opt/backups/postgres/cleaning_YYYYMMDDTHHMMSSZ.sql.gz staging:/opt/backups/postgres/
+   ```
+2. **Restore into staging**
+   ```bash
+   cd /opt/cleaning
+   docker compose stop api web
+   docker compose exec db psql -U postgres -c "DROP DATABASE cleaning;"
+   docker compose exec db psql -U postgres -c "CREATE DATABASE cleaning;"
+   gunzip -c /opt/backups/postgres/cleaning_YYYYMMDDTHHMMSSZ.sql.gz | \
+     docker compose exec -T db psql -U postgres cleaning
+   ```
+3. **Proof checks**
+   ```bash
+   docker compose exec db psql -U postgres cleaning -c "SELECT COUNT(*) FROM bookings;"
+   curl -fsS http://localhost:8000/readyz | jq '.status'
+   ```
+4. **Record the drill**
+   - Log the restore date, backup filename, and verification output in your incident/ops log.
 
 ---
 
