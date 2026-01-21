@@ -180,6 +180,37 @@ issues are addressed. Trivy JSON reports are uploaded as CI artifacts for review
 
 ---
 
+### RLS coverage audit
+
+We run a Row-Level Security (RLS) coverage audit to ensure every org-scoped table is protected.
+The audit script inspects tables with an `org_id` column and verifies that RLS is enabled and
+at least one policy exists.
+
+**Core table gate:** The CI job fails if any of the following core tables lack RLS coverage:
+`bookings`, `invoices`, `leads`, `clients` (maps to `client_users`), `workers`. Non-core tables
+are reported as warnings only (the warning list is included in the report output).
+
+**Run locally (database mode):**
+
+```bash
+cd backend
+python -m alembic -c alembic_rls_audit.ini upgrade head
+python scripts/audit_rls_coverage.py --fail-on-core-missing --output rls-audit.md
+```
+
+**Run locally without a database (metadata mode):**
+
+```bash
+cd backend
+python scripts/audit_rls_coverage.py --source metadata --output rls-audit.md
+```
+
+**CI behavior:** The `Security - RLS Coverage Audit` job provisions a temporary Postgres service,
+applies migrations using `alembic_rls_audit.ini` (so both `versions_clean` and `versions` are applied),
+and runs the audit. The markdown report is uploaded as a CI artifact.
+
+---
+
 ## Scheduled Jobs
 
 The API container runs the job runner to process background tasks (email reminders, outbox delivery, storage cleanup).

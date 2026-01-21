@@ -25,7 +25,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("digest_key", sa.String(length=64), nullable=False),
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("schedule", sa.String(length=16), nullable=False),
         sa.Column("recipients", sa.JSON(), nullable=False, server_default=sa.text("'[]'")),
         sa.ForeignKeyConstraint(["org_id"], ["organizations.org_id"], ondelete="CASCADE"),

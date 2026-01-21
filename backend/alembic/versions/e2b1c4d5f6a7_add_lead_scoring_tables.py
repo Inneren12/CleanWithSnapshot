@@ -23,7 +23,7 @@ def upgrade() -> None:
         "lead_scoring_rules",
         sa.Column("org_id", UUID_TYPE, nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
-        sa.Column("enabled", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("enabled", sa.Boolean(), server_default=sa.text("true"), nullable=False),
         sa.Column("rules_json", sa.JSON(), server_default=sa.text("'[]'"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["org_id"], ["organizations.org_id"], ondelete="CASCADE"),

@@ -29,7 +29,7 @@ def upgrade() -> None:
                 "is_blocked",
                 sa.Boolean(),
                 nullable=False,
-                server_default=sa.text("0"),
+                server_default=sa.text("false"),
             )
         )
         batch_op.add_column(sa.Column("tags_json", sa.Text(), nullable=True))
