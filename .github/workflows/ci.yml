@@ -299,7 +299,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           python -m pip install "alembic>=1.13"
-
+      - name: Show alembic heads
+        run: |
+          python -m pip install -r requirements.txt
+          python -m alembic heads
       - name: Apply migrations
         run: python -m alembic upgrade head
 
