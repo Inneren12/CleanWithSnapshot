@@ -15,6 +15,7 @@ down_revision = "f2c3d4e5f6a7"
 branch_labels = None
 depends_on = None
 
+SCHEMA = "public"
 TABLE = "client_users"
 
 
@@ -24,21 +25,23 @@ def _is_postgres() -> bool:
 
 
 def _policy_sql() -> str:
+    qualified_table = f"{SCHEMA}.{TABLE}"
     return f"""
-ALTER TABLE {TABLE} ENABLE ROW LEVEL SECURITY;
-ALTER TABLE {TABLE} FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS {TABLE}_org_isolation ON {TABLE};
-CREATE POLICY {TABLE}_org_isolation ON {TABLE}
+ALTER TABLE {qualified_table} ENABLE ROW LEVEL SECURITY;
+ALTER TABLE {qualified_table} FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS {TABLE}_org_isolation ON {qualified_table};
+CREATE POLICY {TABLE}_org_isolation ON {qualified_table}
     USING (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
     WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
 """
 
 
 def _downgrade_sql() -> str:
+    qualified_table = f"{SCHEMA}.{TABLE}"
     return f"""
-DROP POLICY IF EXISTS {TABLE}_org_isolation ON {TABLE};
-ALTER TABLE {TABLE} NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE {TABLE} DISABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS {TABLE}_org_isolation ON {qualified_table};
+ALTER TABLE {qualified_table} NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE {qualified_table} DISABLE ROW LEVEL SECURITY;
 """
 
 
