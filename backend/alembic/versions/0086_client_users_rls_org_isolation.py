@@ -1,7 +1,7 @@
 """add RLS org isolation for client_users
 
 Revision ID: 0086_client_users_rls_org_isolation
-Revises: 0044_postgres_rls_org_isolation
+Revises: f2c3d4e5f6a7
 Create Date: 2026-03-05 00:00:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0086_client_users_rls_org_isolation"
-down_revision = "0044_postgres_rls_org_isolation"
+down_revision = "f2c3d4e5f6a7"
 branch_labels = None
 depends_on = None
 
