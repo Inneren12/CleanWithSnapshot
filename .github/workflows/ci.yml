@@ -242,6 +242,63 @@ jobs:
           path: |
             bandit-report.json
             bandit.log
+       
+       - name: DEBUG Alembic chain + RLS state
+        if: always()
+        run: |
+          set -euxo pipefail
+          cd backend
+
+          echo "=== Alembic current ==="
+          alembic current || true
+
+          echo "=== Alembic heads ==="
+          alembic heads || true
+
+          echo "=== Alembic history (tail 80) ==="
+          alembic history | tail -n 80 || true
+
+          echo "=== env.py version_locations grep ==="
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("alembic/env.py")
+          print("env.py exists:", p.exists())
+          if p.exists():
+              t = p.read_text(encoding="utf-8", errors="ignore")
+              for key in ["version_locations", "script_location"]:
+                  if key in t:
+                      print(f"FOUND {key} in env.py")
+              # print the relevant lines
+              for i, line in enumerate(t.splitlines(), 1):
+                  if "version_locations" in line or "script_location" in line:
+                      print(f"{i}: {line}")
+          PY
+
+          echo "=== Postgres RLS flags for client_users ==="
+          python - <<'PY'
+          import os
+          import sqlalchemy as sa
+
+          url = os.environ["DATABASE_URL"]
+          # if your DATABASE_URL is async (postgresql+asyncpg), normalize it:
+          url = url.replace("+asyncpg", "").replace("+psycopg", "")
+          eng = sa.create_engine(url)
+          with eng.connect() as c:
+              r = c.execute(sa.text("""
+                SELECT c.relrowsecurity, c.relforcerowsecurity
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid=c.relnamespace
+                WHERE n.nspname='public' AND c.relname='client_users'
+              """)).first()
+              print("client_users relrowsecurity/force:", r)
+              pol = c.execute(sa.text("""
+                SELECT policyname, cmd
+                FROM pg_policies
+                WHERE schemaname='public' AND tablename='client_users'
+                ORDER BY policyname, cmd
+              """)).fetchall()
+              print("client_users policies:", pol)
+          PY
 
   rls-audit:
     name: Security - RLS Coverage Audit
