@@ -36,6 +36,9 @@ scp /opt/backups/postgres/cleaning_YYYYMMDDTHHMMSSZ.sql.gz \
 
 scp /opt/backups/postgres/uploads_YYYYMMDDTHHMMSSZ.tar.gz \
   staging:/opt/backups/postgres/
+
+scp /opt/backups/postgres/LAST_SUCCESS.txt \
+  staging:/opt/backups/postgres/
 ```
 
 ### 2) Run the staging restore script
