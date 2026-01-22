@@ -198,6 +198,10 @@ python -m alembic -c alembic_rls_audit.ini upgrade head
 python scripts/audit_rls_coverage.py --fail-on-core-missing --output rls-audit.md
 ```
 
+rls-audit uses `alembic_rls_audit.ini`.
+Run from repo root: `python -m alembic -c backend/alembic_rls_audit.ini upgrade head`.
+Run from backend/: `python -m alembic -c alembic_rls_audit.ini upgrade head`.
+
 **Run locally without a database (metadata mode):**
 
 ```bash
