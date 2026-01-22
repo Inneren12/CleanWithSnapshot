@@ -694,7 +694,7 @@ docker compose restart api
 
 ```bash
 # Add to cron (daily at 2 AM)
-0 2 * * * /opt/cleaning/ops/backup.sh
+0 2 * * * /opt/cleaning/ops/backup_now.sh
 ```
 
 **Manual backup:**
@@ -727,9 +727,14 @@ gzip /opt/backups/postgres/backup_*.sql
 - Gzip integrity passes (`gzip -t`)
 - SQL header sanity (`PostgreSQL database dump` + `Dumped from database`)
 
-**Heartbeat file (monitoring target):** `/opt/cleaning/ops/state/backup_last_ok.txt`
+**Heartbeat file (verification record):** `/opt/cleaning/ops/state/backup_last_ok.txt`
 - Contains the last successful verification timestamp in UTC.
 - Alert if the timestamp is stale (e.g., > 26 hours).
+
+**Backup health marker (`/healthz/backup`):** `/opt/backups/postgres/LAST_SUCCESS.txt`
+- Written by `ops/backup_now.sh` on successful backup completion.
+- `/healthz/backup` returns 200 only when the marker exists and is newer than 26 hours.
+- If this marker is missing after a restore, run `ops/backup_now.sh` to regenerate it.
 
 ---
 

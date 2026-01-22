@@ -102,6 +102,12 @@ We maintain two migration directories:
 before checking RLS coverage. This ensures the audit reflects the intended full schema, including security
 migrations stored outside `versions_clean`.
 
+**Audit command (CI/local parity):**
+```bash
+cd backend
+python -m alembic -c alembic_rls_audit.ini upgrade head
+```
+
 ### Migration Environment (`env.py`)
 
 **Critical:** `env.py` imports ALL domain models so Alembic can detect schema changes:

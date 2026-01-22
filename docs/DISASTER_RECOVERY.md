@@ -21,6 +21,7 @@ artifacts (no new database technology or PITR in Phase 0).
 - **Backup heartbeat**: `/opt/backups/postgres/LAST_SUCCESS.txt` (used by `/healthz/backup`)
 
 The backup files are generated via `ops/backup_now.sh` and validated with `ops/backup_verify.sh`.
+`/healthz/backup` reads `LAST_SUCCESS.txt`; a missing or stale marker returns HTTP 503.
 
 ## Staging Restore (Step-by-Step)
 
@@ -35,6 +36,10 @@ scp /opt/backups/postgres/cleaning_YYYYMMDDTHHMMSSZ.sql.gz \
   staging:/opt/backups/postgres/
 
 scp /opt/backups/postgres/uploads_YYYYMMDDTHHMMSSZ.tar.gz \
+  staging:/opt/backups/postgres/
+
+# Copy the backup success marker so /healthz/backup can validate freshness
+scp /opt/backups/postgres/LAST_SUCCESS.txt \
   staging:/opt/backups/postgres/
 ```
 
@@ -59,13 +64,21 @@ UPLOADS_ARCHIVE=/opt/backups/postgres/uploads_YYYYMMDDTHHMMSSZ.tar.gz \
 curl -fsS http://localhost:8000/healthz | jq .
 curl -fsS http://localhost:8000/readyz | jq .
 
-# Backup health marker (optional if API mounted to /opt/backups/postgres)
+# Backup health marker (requires /opt/backups/postgres to be mounted in API)
 curl -fsS http://localhost:8000/healthz/backup | jq .
 
 # Sample queries
 # (Use counts/IDs that are stable and representative for your data set.)
 docker compose exec -T db psql -U postgres -d cleaning -c "SELECT COUNT(*) FROM bookings;"
 docker compose exec -T db psql -U postgres -d cleaning -c "SELECT COUNT(*) FROM leads;"
+```
+
+If `/healthz/backup` returns 503 because `LAST_SUCCESS.txt` is missing, re-run the backup job to
+regenerate the marker:
+
+```bash
+cd /opt/cleaning
+./ops/backup_now.sh
 ```
 
 ### 4) Record the drill

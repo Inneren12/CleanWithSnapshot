@@ -7,8 +7,11 @@
 ```bash
 cd /opt/cleaning
 
-# Check heartbeat timestamp
+# Check verification heartbeat timestamp
 cat /opt/cleaning/ops/state/backup_last_ok.txt
+
+# Check backup health marker used by /healthz/backup
+cat /opt/backups/postgres/LAST_SUCCESS.txt
 
 # List latest backups
 ls -lh /opt/backups/postgres | tail -n 10
@@ -30,15 +33,32 @@ ls -lh /opt/backups/postgres | tail -n 10
 
 1. **Run a manual backup:**
    ```bash
-   docker compose exec db pg_dump -U postgres cleaning > /opt/backups/postgres/cleaning_manual.sql
-   gzip /opt/backups/postgres/cleaning_manual.sql
+   /opt/cleaning/ops/backup_now.sh
+
+   # Verify marker updated
+   cat /opt/backups/postgres/LAST_SUCCESS.txt
    ```
 2. **Restart cron or the backup job:**
-   - Validate `crontab -l` for `/opt/cleaning/ops/backup.sh`.
+   - Validate `crontab -l` for `/opt/cleaning/ops/backup_now.sh`.
+   - There is **no** `backup.sh` in this repository; the cron job must invoke `backup_now.sh`.
+   - If cron is missing, restoring it is part of incident resolution.
 3. **Re-run verification:**
    ```bash
    /opt/cleaning/ops/backup_verify.sh
    ```
+
+## Sanity check (/healthz/backup failing)
+
+```bash
+# Marker must exist and be recent
+cat /opt/backups/postgres/LAST_SUCCESS.txt
+
+# Manually run the backup job if needed
+/opt/cleaning/ops/backup_now.sh
+
+# Re-check health endpoint
+curl -fsS http://localhost:8000/healthz/backup | jq .
+```
 
 ## Rollback / restore pointers
 

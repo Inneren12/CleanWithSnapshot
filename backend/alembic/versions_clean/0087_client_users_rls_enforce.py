@@ -66,9 +66,9 @@ BEGIN
           AND policyname = '{POLICY_NAME}'
     ) THEN
         EXECUTE $sql$
-            CREATE POLICY {POLICY_NAME} ON {qualified_table}
-            USING ({TENANT_EXPR})
-            WITH CHECK ({TENANT_EXPR})
+        CREATE POLICY {POLICY_NAME} ON {qualified_table}
+        USING ({TENANT_EXPR})
+        WITH CHECK ({TENANT_EXPR})
         $sql$;
     END IF;
 END
