@@ -1115,11 +1115,25 @@ docker stats
 - [docs/DLQ_RUNBOOK.md](./docs/DLQ_RUNBOOK.md) - Dead letter queue management
 - [docs/SMOKE.md](./docs/SMOKE.md) - Smoke testing guide
 - [docs/ENV_AUDIT_REPORT.md](./docs/ENV_AUDIT_REPORT.md) - Environment variables
+
+### Incident Response Runbooks
+
+See [docs/runbooks/README.md](./docs/runbooks/README.md) for the complete incident response runbook index.
+
+**Infrastructure & Services:**
 - [docs/runbooks/api-down.md](./docs/runbooks/api-down.md) - Incident: API down
 - [docs/runbooks/db-down.md](./docs/runbooks/db-down.md) - Incident: Database down
 - [docs/runbooks/redis-down.md](./docs/runbooks/redis-down.md) - Incident: Redis down
 - [docs/runbooks/disk-full.md](./docs/runbooks/disk-full.md) - Incident: Disk full
+
+**Application & Jobs:**
 - [docs/runbooks/migrations-not-current.md](./docs/runbooks/migrations-not-current.md) - Incident: Migrations not current
+- [docs/runbooks/job-scheduler-stale.md](./docs/runbooks/job-scheduler-stale.md) - Incident: Job scheduler stale
+- [docs/runbooks/high-resource-usage.md](./docs/runbooks/high-resource-usage.md) - Incident: High resource usage (CPU/Memory)
+
+**External Integrations:**
 - [docs/runbooks/email-sms-provider-failing.md](./docs/runbooks/email-sms-provider-failing.md) - Incident: Email/SMS provider failing
 - [docs/runbooks/payment-webhook-failing.md](./docs/runbooks/payment-webhook-failing.md) - Incident: Payment webhook failing
+
+**Backup & Recovery:**
 - [docs/runbooks/backup-stale.md](./docs/runbooks/backup-stale.md) - Incident: Backup stale
