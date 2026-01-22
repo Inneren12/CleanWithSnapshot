@@ -34,7 +34,7 @@ ls -lh /opt/backups/postgres | tail -n 10
    gzip /opt/backups/postgres/cleaning_manual.sql
    ```
 2. **Restart cron or the backup job:**
-   - Validate `crontab -l` for `/opt/cleaning/ops/backup.sh`.
+   - Validate `crontab -l` for `ops/backup_now.sh`.
 3. **Re-run verification:**
    ```bash
    /opt/cleaning/ops/backup_verify.sh
