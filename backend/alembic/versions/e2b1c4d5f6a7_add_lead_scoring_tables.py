@@ -1,7 +1,7 @@
 """add lead scoring tables
 
 Revision ID: e2b1c4d5f6a7
-Revises: d8f2e3a4b5c6
+Revises: f9c1d2e3a4b5
 Create Date: 2026-02-20 12:00:00.000000
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 UUID_TYPE = sa.Uuid(as_uuid=True)
 
 revision = "e2b1c4d5f6a7"
-down_revision = "d8f2e3a4b5c6"
+down_revision = "f9c1d2e3a4b5"
 branch_labels = None
 depends_on = None
 

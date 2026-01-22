@@ -1,7 +1,7 @@
 """add client_users RLS policy from bookings
 
 Revision ID: 0088_client_users_rls_from_bookings
-Revises: 0087_client_users_rls_enforce
+Revises: 0086_client_users_rls_org_isolation
 Create Date: 2026-03-05 00:25:00.000000
 """
 
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0088_client_users_rls_from_bookings"
-down_revision = "0087_client_users_rls_enforce"
+down_revision = "0086_client_users_rls_org_isolation"
 branch_labels = None
 depends_on = None
 

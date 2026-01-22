@@ -1,7 +1,7 @@
 """add competitor benchmarking tables
 
 Revision ID: c7d8e9f0a1b2
-Revises: b5c6d7e8f9a0
+Revises: f9c1d2e3a4b5
 Create Date: 2026-02-10 09:15:00.000000
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "c7d8e9f0a1b2"
-down_revision = "b5c6d7e8f9a0"
+down_revision = "f9c1d2e3a4b5"
 branch_labels = None
 depends_on = None
 
