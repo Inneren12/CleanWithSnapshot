@@ -58,9 +58,6 @@ scrape_configs:
       # Add parsed fields as labels for filtering
       - labels:
           level:
-          request_id:
-          org_id:
-          user_id:
           method:
           status_code:
 
