@@ -198,9 +198,9 @@ python -m alembic -c alembic_rls_audit.ini upgrade head
 python scripts/audit_rls_coverage.py --fail-on-core-missing --output rls-audit.md
 ```
 
-rls-audit uses `alembic_rls_audit.ini`.
-Run from repo root: `python -m alembic -c backend/alembic_rls_audit.ini upgrade head`.
-Run from backend/: `python -m alembic -c alembic_rls_audit.ini upgrade head`.
+rls-audit uses the canonical Alembic tree from `alembic.ini` (same tree as `alembic_rls_audit.ini`).
+Run from repo root: `python -m alembic -c backend/alembic.ini upgrade head`.
+Run from backend/: `python -m alembic -c alembic.ini upgrade head`.
 
 **Run locally without a database (metadata mode):**
 
@@ -210,9 +210,9 @@ python scripts/audit_rls_coverage.py --source metadata --output rls-audit.md
 ```
 
 **CI behavior:** The `Security - RLS Coverage Audit` job provisions a temporary Postgres service,
-applies migrations using `alembic_rls_audit.ini` (which points at `alembic/versions` to avoid
-duplicate revision IDs while including the RLS chain), and runs the audit. The markdown report
-is uploaded as a CI artifact.
+applies migrations using `alembic.ini` (which points at `alembic/versions` to avoid duplicate
+revision IDs while including the RLS chain), and runs the audit. The markdown report is uploaded
+as a CI artifact.
 
 ---
 

@@ -308,11 +308,11 @@ jobs:
 
       - name: Inspect Alembic graph
         run: |
-          python -m alembic -c alembic_rls_audit.ini heads
-          python -m alembic -c alembic_rls_audit.ini history | tail -n 40
+          python -m alembic -c alembic.ini heads
+          python -m alembic -c alembic.ini history | tail -n 60
 
       - name: Apply migrations
-        run: python -m alembic -c alembic_rls_audit.ini upgrade head
+        run: python -m alembic -c alembic.ini upgrade head
 
       - name: Run RLS coverage audit
         run: |

@@ -72,8 +72,8 @@ backend/
 │       ├── 0002_slots_v1.py
 │       ├── ...
 │       └── 6a2b1c6f3c2b_availability_blocks.py
-├── alembic.ini                 # Alembic configuration
-└── alembic_rls_audit.ini        # CI-only config for RLS audit (versions only)
+├── alembic.ini                 # Alembic configuration (canonical versions tree)
+└── alembic_rls_audit.ini        # CI-only config for RLS audit (same canonical tree)
 └── app/
     ├── domain/
     │   └── {module}/
@@ -91,23 +91,23 @@ backend/
 | `alembic/env.py` | **Migration environment** - Imports all models, sets database URL |
 | `alembic/versions/*.py` | **Migration files** - Schema change scripts |
 
-### versions_clean vs versions
+### Canonical migrations directory
 
-We maintain two migration directories:
+We maintain two migration directories, but only **one** is canonical for Alembic:
 
-- `backend/alembic/versions_clean`: the default chain used by `alembic.ini` (legacy primary migration history).
-- `backend/alembic/versions`: the canonical chain for RLS audit and newer security migrations.
+- `backend/alembic/versions`: **canonical** migration tree used by `alembic.ini` and CI.
+- `backend/alembic/versions_clean`: **legacy archive** retained for reference only.
 
-**CI RLS audit:** uses `alembic_rls_audit.ini` with `version_locations=alembic/versions` to avoid duplicate
-revision IDs while still applying the full RLS migration chain (including 0086/0087/0088).
+**CI RLS audit:** uses `alembic.ini` (or `alembic_rls_audit.ini`) pointing at `alembic/versions` to avoid
+duplicate revision IDs while still applying the full RLS migration chain (including 0086/0087/0088).
 
-**Canonical audit tree:** `alembic/versions` is the single source of truth for the audit graph. Do not
-mix `versions_clean` into the audit config or duplicate revision IDs across audit directories.
+**Rule:** Do **not** mix `versions_clean` and `versions` in any Alembic config. Mixing directories causes
+duplicate revision IDs and missing down_revision errors.
 
 **Audit command (CI/local parity):**
 ```bash
 cd backend
-python -m alembic -c alembic_rls_audit.ini upgrade head
+python -m alembic -c alembic.ini upgrade head
 ```
 
 ### Migration Environment (`env.py`)
