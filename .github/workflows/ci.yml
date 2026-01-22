@@ -306,6 +306,11 @@ jobs:
           ls -la
           python -c "import os; print(os.getcwd())"
 
+      - name: Inspect Alembic graph
+        run: |
+          python -m alembic -c alembic_rls_audit.ini heads
+          python -m alembic -c alembic_rls_audit.ini history | tail -n 40
+
       - name: Apply migrations
         run: python -m alembic -c alembic_rls_audit.ini upgrade head
 

@@ -73,7 +73,7 @@ backend/
 │       ├── ...
 │       └── 6a2b1c6f3c2b_availability_blocks.py
 ├── alembic.ini                 # Alembic configuration
-└── alembic_rls_audit.ini        # CI-only config for RLS audit (versions_clean + versions)
+└── alembic_rls_audit.ini        # CI-only config for RLS audit (versions only)
 └── app/
     ├── domain/
     │   └── {module}/
@@ -95,11 +95,14 @@ backend/
 
 We maintain two migration directories:
 
-- `backend/alembic/versions_clean`: the default chain used by `alembic.ini` (primary migration history).
+- `backend/alembic/versions_clean`: the default chain used by `alembic.ini` (legacy primary migration history).
 - `backend/alembic/versions`: the canonical chain for RLS audit and newer security migrations.
 
 **CI RLS audit:** uses `alembic_rls_audit.ini` with `version_locations=alembic/versions` to avoid duplicate
 revision IDs while still applying the full RLS migration chain (including 0086/0087/0088).
+
+**Canonical audit tree:** `alembic/versions` is the single source of truth for the audit graph. Do not
+mix `versions_clean` into the audit config or duplicate revision IDs across audit directories.
 
 **Audit command (CI/local parity):**
 ```bash
