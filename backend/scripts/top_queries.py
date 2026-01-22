@@ -91,6 +91,11 @@ def _fetch_stats(engine: Engine, order_by: str, limit: int) -> list[dict[str, ob
                mean_exec_time AS mean_time_ms,
                rows
         FROM pg_stat_statements
+        WHERE dbid = (
+            SELECT oid
+            FROM pg_database
+            WHERE datname = current_database()
+        )
     """
     legacy_query = """
         SELECT queryid,
@@ -100,6 +105,11 @@ def _fetch_stats(engine: Engine, order_by: str, limit: int) -> list[dict[str, ob
                mean_time AS mean_time_ms,
                rows
         FROM pg_stat_statements
+        WHERE dbid = (
+            SELECT oid
+            FROM pg_database
+            WHERE datname = current_database()
+        )
     """
     order_clause = "ORDER BY total_time_ms DESC" if order_by == "total_time" else "ORDER BY mean_time_ms DESC"
     query_text = f"{base_query} {order_clause} LIMIT :limit"
