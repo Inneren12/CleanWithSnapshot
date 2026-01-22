@@ -1,0 +1,127 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape Docker container logs (api, web, jobs)
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["promtail=true"]
+
+    relabel_configs:
+      # Use container name as the job label
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+
+      # Use service label if present
+      - source_labels: ['__meta_docker_container_label_service']
+        target_label: 'service'
+
+      # Add compose project label
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'compose_project'
+
+    pipeline_stages:
+      # Parse JSON logs
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+            message: message
+            logger: logger
+            request_id: request_id
+            org_id: org_id
+            user_id: user_id
+            role: role
+            method: method
+            path: path
+            status_code: status_code
+            latency_ms: latency_ms
+
+      # Use timestamp from log if available
+      - timestamp:
+          source: timestamp
+          format: RFC3339
+
+      # Add parsed fields as labels for filtering
+      - labels:
+          level:
+          request_id:
+          org_id:
+          user_id:
+          method:
+          status_code:
+
+  # Scrape Caddy access logs (JSON format)
+  - job_name: caddy_access
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: caddy
+          service: caddy
+          __path__: /var/log/caddy/access_*.log
+
+    pipeline_stages:
+      # Parse Caddy JSON logs
+      - json:
+          expressions:
+            timestamp: ts
+            level: level
+            request_method: request.method
+            request_uri: request.uri
+            request_host: request.host
+            status: status
+            duration: duration
+            size: size
+            user_agent: request.headers.User-Agent[0]
+
+      # Use timestamp from log
+      - timestamp:
+          source: timestamp
+          format: Unix
+
+      # Add labels
+      - labels:
+          request_method:
+          status:
+          request_host:
+
+  # Scrape Caddy general logs
+  - job_name: caddy_general
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: caddy
+          service: caddy
+          __path__: /var/log/caddy/caddy.log
+
+    pipeline_stages:
+      # Parse JSON if possible
+      - json:
+          expressions:
+            timestamp: ts
+            level: level
+            message: msg
+
+      # Use timestamp from log
+      - timestamp:
+          source: timestamp
+          format: Unix
+
+      # Add labels
+      - labels:
+          level:
