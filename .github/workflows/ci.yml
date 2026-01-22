@@ -69,6 +69,11 @@ jobs:
           python -m pip install ruff==0.6.5
           ruff check app tests --select E9
 
+      - name: Install ripgrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
       - name: Guard boolean defaults in migrations
         run: |
           set -euo pipefail
