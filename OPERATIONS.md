@@ -1115,3 +1115,11 @@ docker stats
 - [docs/DLQ_RUNBOOK.md](./docs/DLQ_RUNBOOK.md) - Dead letter queue management
 - [docs/SMOKE.md](./docs/SMOKE.md) - Smoke testing guide
 - [docs/ENV_AUDIT_REPORT.md](./docs/ENV_AUDIT_REPORT.md) - Environment variables
+- [docs/runbooks/api-down.md](./docs/runbooks/api-down.md) - Incident: API down
+- [docs/runbooks/db-down.md](./docs/runbooks/db-down.md) - Incident: Database down
+- [docs/runbooks/redis-down.md](./docs/runbooks/redis-down.md) - Incident: Redis down
+- [docs/runbooks/disk-full.md](./docs/runbooks/disk-full.md) - Incident: Disk full
+- [docs/runbooks/migrations-not-current.md](./docs/runbooks/migrations-not-current.md) - Incident: Migrations not current
+- [docs/runbooks/email-sms-provider-failing.md](./docs/runbooks/email-sms-provider-failing.md) - Incident: Email/SMS provider failing
+- [docs/runbooks/payment-webhook-failing.md](./docs/runbooks/payment-webhook-failing.md) - Incident: Payment webhook failing
+- [docs/runbooks/backup-stale.md](./docs/runbooks/backup-stale.md) - Incident: Backup stale
