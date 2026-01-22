@@ -301,7 +301,7 @@ jobs:
           python -m pip install "alembic>=1.13"
 
       - name: Apply migrations
-        run: python -m alembic -c alembic_rls_audit.ini upgrade head
+        run: python -m alembic -c backend/alembic_rls_audit.ini upgrade head
 
       - name: Run RLS coverage audit
         run: |

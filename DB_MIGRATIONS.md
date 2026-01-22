@@ -87,7 +87,7 @@ backend/
 | File | Purpose |
 |------|---------|
 | `alembic.ini` | Alembic configuration (database URL placeholder, logging) |
-| `alembic_rls_audit.ini` | CI audit config that includes both `versions_clean` and `versions` |
+| `alembic_rls_audit.ini` | CI audit config that applies the canonical RLS audit chain |
 | `alembic/env.py` | **Migration environment** - Imports all models, sets database URL |
 | `alembic/versions/*.py` | **Migration files** - Schema change scripts |
 
@@ -96,11 +96,10 @@ backend/
 We maintain two migration directories:
 
 - `backend/alembic/versions_clean`: the default chain used by `alembic.ini` (primary migration history).
-- `backend/alembic/versions`: auxiliary migrations that may be staged or audited separately.
+- `backend/alembic/versions`: the canonical chain for RLS audit and newer security migrations.
 
-**CI RLS audit:** uses `alembic_rls_audit.ini` so the audit applies **both** chains (`versions_clean` + `versions`)
-before checking RLS coverage. This ensures the audit reflects the intended full schema, including security
-migrations stored outside `versions_clean`.
+**CI RLS audit:** uses `alembic_rls_audit.ini` with `version_locations=alembic/versions` to avoid duplicate
+revision IDs while still applying the full RLS migration chain (including 0086/0087/0088).
 
 **Audit command (CI/local parity):**
 ```bash
