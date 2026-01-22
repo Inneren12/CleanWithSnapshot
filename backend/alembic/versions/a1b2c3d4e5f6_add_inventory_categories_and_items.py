@@ -1,7 +1,7 @@
 """add inventory categories and items tables
 
 Revision ID: a1b2c3d4e5f6
-Revises: f0b1c2d3e4f5
+Revises: 0092_cleanup_broken_migration
 Create Date: 2026-01-17 00:00:00.000000
 
 """
@@ -14,7 +14,7 @@ UUID_TYPE = sa.Uuid(as_uuid=True)
 
 # revision identifiers, used by Alembic.
 revision = "a1b2c3d4e5f6"
-down_revision = "f0b1c2d3e4f5"
+down_revision = "0092_cleanup_broken_migration"
 branch_labels = None
 depends_on = None
 
