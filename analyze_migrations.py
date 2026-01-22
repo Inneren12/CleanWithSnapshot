@@ -29,15 +29,26 @@ class Migration:
         if revision_match:
             self.revision = revision_match.group(1)
 
-        # Extract down_revision (handle both formats)
-        down_match = re.search(r'^down_revision\s*(?::\s*Union\[str,\s*None\])?\s*=\s*[\'"]([^\'"]+)[\'"]', content, re.MULTILINE)
-        if down_match:
-            self.down_revision = down_match.group(1) if down_match.group(1) != 'None' else None
+        # Extract down_revision (handle both formats: string, tuple, and None)
+        # First try tuple format (for merge migrations)
+        down_tuple_match = re.search(r'^down_revision\s*(?::\s*[^=]+)?\s*=\s*\(([^)]+)\)', content, re.MULTILINE | re.DOTALL)
+        if down_tuple_match:
+            # Extract all quoted strings from the tuple
+            tuple_content = down_tuple_match.group(1)
+            down_revisions = re.findall(r'[\'"]([^\'"]+)[\'"]', tuple_content)
+            if down_revisions:
+                # Store as tuple if multiple, otherwise as single string
+                self.down_revision = tuple(down_revisions) if len(down_revisions) > 1 else down_revisions[0]
         else:
-            # Check for None value
-            down_none = re.search(r'^down_revision\s*(?::\s*Union\[str,\s*None\])?\s*=\s*None', content, re.MULTILINE)
-            if down_none:
-                self.down_revision = None
+            # Try single string format
+            down_match = re.search(r'^down_revision\s*(?::\s*Union\[str,\s*None\])?\s*=\s*[\'"]([^\'"]+)[\'"]', content, re.MULTILINE)
+            if down_match:
+                self.down_revision = down_match.group(1) if down_match.group(1) != 'None' else None
+            else:
+                # Check for None value
+                down_none = re.search(r'^down_revision\s*(?::\s*Union\[str,\s*None\])?\s*=\s*None', content, re.MULTILINE)
+                if down_none:
+                    self.down_revision = None
 
         # Extract branch_labels
         branch_match = re.search(r'^branch_labels\s*=\s*[\'"]([^\'"]+)[\'"]', content, re.MULTILINE)
@@ -78,17 +89,26 @@ class MigrationGraph:
     def _build_graph(self):
         """Build parent-child relationships."""
         for revision, migration in self.migrations.items():
-            # Handle down_revision
-            if migration.down_revision and migration.down_revision in self.migrations:
-                self.children[migration.down_revision].append(revision)
-                self.parents[revision].append(migration.down_revision)
+            # Handle down_revision (can be string or tuple)
+            if migration.down_revision:
+                # Handle tuple format (merge migrations)
+                if isinstance(migration.down_revision, tuple):
+                    for parent_rev in migration.down_revision:
+                        if parent_rev in self.migrations:
+                            self.children[parent_rev].append(revision)
+                            self.parents[revision].append(parent_rev)
+                # Handle single string format
+                elif migration.down_revision in self.migrations:
+                    self.children[migration.down_revision].append(revision)
+                    self.parents[revision].append(migration.down_revision)
 
             # Handle depends_on (for merge migrations)
             if migration.depends_on:
                 for dep in migration.depends_on:
                     if dep in self.migrations:
                         self.children[dep].append(revision)
-                        if migration.down_revision != dep:  # Avoid duplicates
+                        # Check if already in parents to avoid duplicates
+                        if migration.down_revision != dep and dep not in self.parents[revision]:
                             self.parents[revision].append(dep)
 
     def find_heads(self) -> List[str]:
@@ -150,8 +170,15 @@ class MigrationGraph:
         """Find references to non-existent revisions."""
         broken = []
         for revision, migration in self.migrations.items():
-            if migration.down_revision and migration.down_revision not in self.migrations:
-                broken.append((revision, migration.down_revision))
+            if migration.down_revision:
+                # Handle tuple format (merge migrations)
+                if isinstance(migration.down_revision, tuple):
+                    for parent_rev in migration.down_revision:
+                        if parent_rev not in self.migrations:
+                            broken.append((revision, parent_rev))
+                # Handle single string format
+                elif migration.down_revision not in self.migrations:
+                    broken.append((revision, migration.down_revision))
             if migration.depends_on:
                 for dep in migration.depends_on:
                     if dep not in self.migrations:
@@ -176,8 +203,14 @@ class MigrationGraph:
 
         # Follow down_revision primarily
         if migration.down_revision:
-            parent_path = self.get_path_to_root(migration.down_revision, visited)
-            return parent_path + [revision]
+            # Handle tuple format (merge migrations) - follow first parent
+            if isinstance(migration.down_revision, tuple):
+                if migration.down_revision:
+                    parent_path = self.get_path_to_root(migration.down_revision[0], visited)
+                    return parent_path + [revision]
+            else:
+                parent_path = self.get_path_to_root(migration.down_revision, visited)
+                return parent_path + [revision]
 
         return [revision]
 
