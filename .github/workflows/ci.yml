@@ -306,6 +306,10 @@ jobs:
           ls -la
           python -c "import os; print(os.getcwd())"
 
+      - name: Inventory Alembic revisions
+        run: |
+          python scripts/alembic_revision_inventory.py --canon alembic/versions --noncanon alembic/versions_clean
+
       - name: Inspect Alembic graph
         run: |
           python -m alembic -c alembic.ini heads

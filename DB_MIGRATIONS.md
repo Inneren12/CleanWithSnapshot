@@ -110,6 +110,13 @@ cd backend
 python -m alembic -c alembic.ini upgrade head
 ```
 
+**Revision inventory (canonical vs archive):**
+```bash
+cd backend
+python scripts/alembic_revision_inventory.py --canon alembic/versions --noncanon alembic/versions_clean
+```
+- Exits non-zero if any referenced down_revision is missing or if canonical has duplicate revision IDs.
+
 ### Migration Environment (`env.py`)
 
 **Critical:** `env.py` imports ALL domain models so Alembic can detect schema changes:
@@ -697,6 +704,21 @@ def upgrade() -> None:
 ---
 
 ## Troubleshooting
+
+### Missing revision KeyError (e.g., `KeyError: '46874b82319f'`)
+
+1. Run the revision inventory to identify missing references:
+   ```bash
+   cd backend
+   python scripts/alembic_revision_inventory.py --canon alembic/versions --noncanon alembic/versions_clean
+   ```
+2. If a revision exists only in `versions_clean`, copy it into `versions` using the copy helper:
+   ```bash
+   cd backend
+   python scripts/alembic_copy_missing.py --canon alembic/versions --noncanon alembic/versions_clean
+   ```
+3. If the revision is missing in both trees, restore it from git history or correct the referencing
+   migration’s down_revision (last resort).
 
 ### "Target database is not up to date"
 

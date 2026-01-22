@@ -17,6 +17,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column(
+        "organization_settings",
+        sa.Column("finance_ready", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    )
+
     op.create_table(
         "finance_tax_instalments",
         sa.Column("instalment_id", sa.Uuid(as_uuid=True), primary_key=True, nullable=False),
@@ -59,6 +64,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_column("organization_settings", "finance_ready")
+
     op.drop_index("ix_finance_tax_exports_org_id", table_name="finance_tax_exports")
     op.drop_table("finance_tax_exports")
     op.drop_index("ix_finance_tax_instalments_org_due", table_name="finance_tax_instalments")
