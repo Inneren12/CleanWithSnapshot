@@ -1,0 +1,302 @@
+Found 139 migration files
+
+Successfully parsed 139 migrations
+
+================================================================================
+MIGRATION STRUCTURE ANALYSIS
+================================================================================
+
+📍 HEADS (migrations with no children): 42
+   - 0011_jobs_an (0011_jobs_and_export_replay.py)
+   - 0042_photo_r (0042_photo_review_and_signing.py)
+   - 0048_dispatc (0048_dispatcher_comm_audits.py)
+   - 0049_invoice (0049_invoice_tax_snapshots.py)
+   - 0049_stripe_ (0049_stripe_event_metadata.py)
+   - 0052_stripe_ (0052_stripe_events_processed.py)
+   - 0065 (0065_add_client_users_org_id.py)
+   - 0067 (0067_event_logs_booking_fk_cascade.py)
+   - 0080_booking (0080_booking_address_usage_and_address_defaults.py)
+   - 0081_merge_h (0081_merge_heads_0048_and_0080.py)
+   - 0085_iam_rol (0085_iam_roles_permissions.py)
+   - 0085_org_set (0085_org_settings_core.py)
+   - 0085_pricing (0085_pricing_policies_settings.py)
+   - 0086_client_ (0086_client_users_rls_org_isolation.py)
+   - 0086_merge_0 (0086_merge_0085_heads.py)
+   - 0088_client_ (0088_client_users_rls_from_bookings.py)
+   - 1a6b6e3f2c2c (1a6b6e3f2c2c_add_billing_pause_fields.py)
+   - 2c3b4b9a1e9a (2c3b4b9a1e9a_add_client_users_is_active.py)
+   - 34d313a57aa7 (34d313a57aa7_merge_heads_iam_prior_merge.py)
+   - 5d8c3a1b9e21 (5d8c3a1b9e21_notifications_rules_presets.py)
+   - 6a2b1c6f3c2b (6a2b1c6f3c2b_availability_blocks.py)
+   - 7a4c2d1f8e3b (7a4c2d1f8e3b_notifications_digest_settings.py)
+   - 7f871a8d46f5 (7f871a8d46f5_merge_alembic_heads.py)
+   - 9a5e2c8c64c0 (9a5e2c8c64c0_perf_queue_indexes.py)
+   - 9f2b7c4d1a0e (9f2b7c4d1a0e_team_settings_fields.py)
+   - a1b2c3d4e5f6 (a1b2c3d4e5f6_placeholder_head.py)
+   - a2b3c4d5e6f7 (a2b3c4d5e6f7_add_finance_tax_tables.py)
+   - a7c3b9d2e1f0 (a7c3b9d2e1f0_add_gcal_sync_foundation.py)
+   - b1c2d3e4f5a6 (b1c2d3e4f5a6_placeholder_head.py)
+   - b8e1c2d3f4a5 (b8e1c2d3f4a5_merge_heads_34d313a57aa7_6a2b1c6f3c2b.py)
+   - b9c8d7e6f5a4 (b9c8d7e6f5a4_add_inventory_suppliers.py)
+   - c1a2b3c4d5e6 (c1a2b3c4d5e6_add_rules_and_rule_runs.py)
+   - c2a1b3d4e5f6 (c2a1b3d4e5f6_add_lead_touchpoints.py)
+   - c4d5e6f7a8b9 (c4d5e6f7a8b9_add_inventory_consumption.py)
+   - c7d8e9f0a1b2 (c7d8e9f0a1b2_add_competitor_benchmarking.py)
+   - c8d2e4f6a1b3 (c8d2e4f6a1b3_add_leads_nurture_foundation.py)
+   - c9f0a1b2c3d4 (c9f0a1b2c3d4_merge_heads_b1c2d3e4f5a6_b7f4d2e9c1a0.py)
+   - cf72c4eb59bc (cf72c4eb59bc_placeholder_head.py)
+   - d4e5f6a7b8c9 (d4e5f6a7b8c9_merge_heads_a1b2_b1c2_c9f0_cf72.py)
+   - e1f2a3b4c5d6 (e1f2a3b4c5d6_merge_heads_a1b2_b1c2_cf72_d4e5.py)
+   - e2b1c4d5f6a7 (e2b1c4d5f6a7_add_lead_scoring_tables.py)
+   - f83f22a8223b (f83f22a8223b_merge_alembic_heads.py)
+
+🌱 ROOTS (migrations with no parents): 19
+   - 0001_initial (0001_initial.py)
+   - 0081_merge_h (0081_merge_heads_0048_and_0080.py)
+   - 0082_merge_h (0082_merge_heads_0081_and_9c1b2f4a8d0b.py)
+   - 0086_merge_0 (0086_merge_0085_heads.py)
+   - 03149fcdd67f (03149fcdd67f_merge_heads_5d8c3a1b9e21_and_.py)
+   - 34d313a57aa7 (34d313a57aa7_merge_heads_iam_prior_merge.py)
+   - 3cbbc3fa5729 (3cbbc3fa5729_merge_alembic_heads.py)
+   - 4a939bab6876 (4a939bab6876_merge_heads_0067_and_2c3b4b9a1e9a.py)
+   - 6565fde00428 (6565fde00428_merge_heads.py)
+   - 96339be46688 (96339be46688_merge_alembic_heads.py)
+   - a2cce6391ad9 (a2cce6391ad9_merge_alembic_heads_0049.py)
+   - b8e1c2d3f4a5 (b8e1c2d3f4a5_merge_heads_34d313a57aa7_6a2b1c6f3c2b.py)
+   - bc6a9a9f5c2b (bc6a9a9f5c2b_merge_heads_1a6b_and_9a5e.py)
+   - c4b6c7ab0034 (c4b6c7ab0034_merge_heads_9f2b7c4d1a0e_and_.py)
+   - d4e5f6a7b8c9 (d4e5f6a7b8c9_merge_heads_a1b2_b1c2_c9f0_cf72.py)
+   - e1f2a3b4c5d6 (e1f2a3b4c5d6_merge_heads_a1b2_b1c2_cf72_d4e5.py)
+   - f1e2d3c4b5a6 (f1e2d3c4b5a6_merge_heads_a1b2_b1c2_cf72_e1f2.py)
+   - f83f22a8223b (f83f22a8223b_merge_alembic_heads.py)
+   - f8dba77650d4 (f8dba77650d4_merge_migration_heads.py)
+
+🔀 BRANCHES (migrations with multiple children): 12
+   - 0010_invoice (0010_invoices.py) -> 2 children:
+      → 0011_invoice (0011_invoice_public_tokens.py)
+      → 0011_jobs_an (0011_jobs_and_export_replay.py)
+   - 0047_break_g (0047_break_glass_sessions.py) -> 2 children:
+      → 0048_admin_t (0048_admin_totp_mfa.py)
+      → 0048_dispatc (0048_dispatcher_comm_audits.py)
+   - 0048_admin_t (0048_admin_totp_mfa.py) -> 2 children:
+      → 0049_invoice (0049_invoice_tax_snapshots.py)
+      → 0049_stripe_ (0049_stripe_event_metadata.py)
+   - bc6a9a9f5c2b (bc6a9a9f5c2b_merge_heads_1a6b_and_9a5e.py) -> 3 children:
+      → 0050_data_ri (0050_data_rights_tables.py)
+      → 0064 (0064_add_worker_password_hash.py)
+      → 9c1b2f4a8d0b (9c1b2f4a8d0b_client_address_coords.py)
+   - 0084_feature (0084_feature_modules_visibility.py) -> 3 children:
+      → 0085_iam_rol (0085_iam_roles_permissions.py)
+      → 0085_org_set (0085_org_settings_core.py)
+      → 0085_pricing (0085_pricing_policies_settings.py)
+   - a2cce6391ad9 (a2cce6391ad9_merge_alembic_heads_0049.py) -> 2 children:
+      → 1a6b6e3f2c2c (1a6b6e3f2c2c_add_billing_pause_fields.py)
+      → 9a5e2c8c64c0 (9a5e2c8c64c0_perf_queue_indexes.py)
+   - f8dba77650d4 (f8dba77650d4_merge_migration_heads.py) -> 2 children:
+      → 2c3b4b9a1e9a (2c3b4b9a1e9a_add_client_users_is_active.py)
+      → 6a2b1c6f3c2b (6a2b1c6f3c2b_availability_blocks.py)
+   - 1b2c3d4e5f6a (1b2c3d4e5f6a_quality_issue_tag_position.py) -> 2 children:
+      → 4c2b1c9e7d8a (4c2b1c9e7d8a_notifications_center_events.py)
+      → 7a4c2d1f8e3b (7a4c2d1f8e3b_notifications_digest_settings.py)
+   - aa12b3cd45ef (aa12b3cd45ef_add_marketing_spend_and_email_manual.py) -> 4 children:
+      → a1b2c3d4e5f6 (a1b2c3d4e5f6_placeholder_head.py)
+      → b1c2d3e4f5a6 (b1c2d3e4f5a6_placeholder_head.py)
+      → b7f4d2e9c1a0 (b7f4d2e9c1a0_add_training_requirements_records.py)
+      → cf72c4eb59bc (cf72c4eb59bc_placeholder_head.py)
+   - f9c1d2e3a4b5 (f9c1d2e3a4b5_add_finance_cash_snapshots.py) -> 6 children:
+      → a2b3c4d5e6f7 (a2b3c4d5e6f7_add_finance_tax_tables.py)
+      → a7c3b9d2e1f0 (a7c3b9d2e1f0_add_gcal_sync_foundation.py)
+      → b2c3d4e5f6a7 (b2c3d4e5f6a7_add_maps_usage.py)
+      → c1a2b3c4d5e6 (c1a2b3c4d5e6_add_rules_and_rule_runs.py)
+      → c8d2e4f6a1b3 (c8d2e4f6a1b3_add_leads_nurture_foundation.py)
+      → f2c3d4e5f6a7 (f2c3d4e5f6a7_nps_tokens_public_submit.py)
+   - f1e2d3c4b5a6 (f1e2d3c4b5a6_merge_heads_a1b2_b1c2_cf72_e1f2.py) -> 2 children:
+      → a9a9247301a9 (a9a9247301a9_merge_heads_a1b2c3d4e5f6_b1c2d3e4f5a6_.py)
+      → f9c1d2e3a4b5 (f9c1d2e3a4b5_add_finance_cash_snapshots.py)
+   - a9a9247301a9 (a9a9247301a9_merge_heads_a1b2c3d4e5f6_b1c2d3e4f5a6_.py) -> 2 children:
+      → b2f3c4d5e6f7 (b2f3c4d5e6f7_add_purchase_orders.py)
+      → b9c8d7e6f5a4 (b9c8d7e6f5a4_add_inventory_suppliers.py)
+
+🔄 CYCLES: 0
+   ✓ No cycles detected
+
+❌ BROKEN CHAINS (references to missing revisions): 3
+   - 0088_client_ (0088_client_users_rls_from_bookings.py) references missing: 0087_client_
+   - c7d8e9f0a1b2 (c7d8e9f0a1b2_add_competitor_benchmarking.py) references missing: b5c6d7e8f9a0
+   - e2b1c4d5f6a7 (e2b1c4d5f6a7_add_lead_scoring_tables.py) references missing: d8f2e3a4b5c6
+
+================================================================================
+MIGRATION TREE STRUCTURE
+================================================================================
+
+=== Root: 0001_initial ===
+● 0001_initial - initial
+└─   ● 0002_slots_v - slots v1 tables
+└─   └─     ● 0003_email_e - email events table
+└─   └─     └─       ● 0004_lead_st - add lead status column
+└─   └─     └─       └─         ● 0005_deposit - deposit policy and stripe fields
+└─   └─     └─       └─         └─           ● 0006_event_l - event logs and actual duration
+└─   └─     └─       └─         └─           └─             ● 0007_referra - add referral codes and credits
+└─   └─     └─       └─         └─           └─             └─               ● 0008_default - make team name unique and seed default
+└─   └─     └─       └─         └─           └─             └─               └─                 ● 0009_export_ - Add export_events dead-letter table
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   🔀 0010_invoice - Add invoices, invoice items, and payments tables
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     ● 0011_invoice - Add invoice public tokens
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       ● 0012_stripe_ - stripe invoice payments
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         ● 0013_time_tr - time tracking tables and planned minutes
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           ● 0014_checkli - checklist tables
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             ● 0015_order_p - order photos and consent flag
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               ● 0016_reason_ - reason logs table
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 ● 0017_client_ - Add client users and attach to bookings
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   ● 0018_subscri - subscriptions
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     ● 0019_addons - add addons tables
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       ● 0020_nps_and - add nps responses and support tickets
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         ● 0021_booking - Add policy snapshot to bookings
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           ● 0022_booking - add risk scoring fields to bookings
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             ● 0023_policy_ - add audit trail for policy overrides
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               ● 0024_dispute - add disputes schema and financial tracking columns
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 ● 0025_admin_a - admin audit logs
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   ● 0026_documen - Add document templates and issued documents
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     ● 0027_workers - workers and booking assignment
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       ● 0028_team_sc - team working hours and blackouts tables
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         ● 0029_invoice - invoice payments support bookings and stripe refs
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           ● 0030_email_e - Add invoice scope to email events
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             ● 0031_saas_mu - SaaS multitenant auth foundation.
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               ● 0032_saas_bi - Revision ID: 0032_saas_billing_and_limits
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 ● 0033_jobs_ru - Revision ID: 0033_jobs_runner_heartbeat
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 └─                                                                   ● 0034_org_id_ - Ensure org_id columns use UUID and seed determinis
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 └─                                                                   └─                                                                     ● 0035_core_ta - Add org_id to core business tables with backfill a
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 └─                                                                   └─                                                                     └─                                                                       ● 0036_stripe_ - Add org_id to Stripe events for scoping.
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 └─                                                                   └─                                                                     └─                                                                       └─                                                                         ● 0037_email_d - Add email dedupe keys, DLQ table, and unsubscribe 
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 └─                                                                   └─                                                                     └─                                                                       └─                                                                         └─                                                                           ● 0038_order_p - order photo tombstones
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 └─                                                                   └─                                                                     └─                                                                       └─                                                                         └─                                                                           └─                                                                             ● 0039_auth_ha - Auth hardening sessions and token audit
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 └─                                                                   └─                                                                     └─                                                                       └─                                                                         └─                                                                           └─                                                                             └─                                                                               ● 0040_order_p - Add storage provider and key to order photos
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 └─                                                                   └─                                                                     └─                                                                       └─                                                                         └─                                                                           └─                                                                             └─                                                                               └─                                                                                 ● 0041_temp_pa - temp password enforcement and audit
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ├─                     └─                       └─                         └─                           └─                             └─                               └─                                 └─                                   └─                                     └─                                       └─                                         └─                                           └─                                             └─                                               └─                                                 └─                                                   └─                                                     └─                                                       └─                                                         └─                                                           └─                                                             └─                                                               └─                                                                 └─                                                                   └─                                                                     └─                                                                       └─                                                                         └─                                                                           └─                                                                             └─                                                                               └─                                                                                 └─                                                                                   🔴 0042_photo_r - Photo review workflow and signing fields
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   └─                     🔴 0011_jobs_an - Add job status tracking and export replay metadata
+
+=== Root: 0081_merge_h ===
+🔴 0081_merge_h - Merge alembic heads 0048 and 0080
+
+=== Root: 0082_merge_h ===
+● 0082_merge_h - Merge heads 0081_merge_heads_0048_and_0080 and 9c1
+└─   ● 0083_dispatc - Add dispatcher alert state table.
+└─   └─     🔀 0084_feature - Add org feature configs and user UI preferences.
+└─   └─     ├─       🔴 0085_iam_rol - Add IAM roles and custom role assignments.
+└─   └─     ├─       🔴 0085_org_set - Org settings core
+└─   └─     └─       🔴 0085_pricing - Add service catalog and booking policy settings.
+
+=== Root: 0086_merge_0 ===
+🔴 0086_merge_0 - Merge 0085 heads.
+
+=== Root: 03149fcdd67f ===
+● 03149fcdd67f - merge heads 5d8c3a1b9e21 and 7a4c2d1f8e3b
+└─   ● c2f4b8a1d9e0 - add lead pipeline fields
+└─   └─     ● d3b7c1a4f8e2 - add lead quotes and loss reason
+└─   └─     └─       ● e6b1c2d3f4a5 - add promo codes and redemptions
+└─   └─     └─       └─         ● f0b1c2d3e4f5 - add digest state and referral credit trigger
+└─   └─     └─       └─         └─           🔀 aa12b3cd45ef - add marketing spend and email manual tables
+└─   └─     └─       └─         └─           ├─             🔴 a1b2c3d4e5f6 - placeholder head for merge
+└─   └─     └─       └─         └─           ├─             🔴 b1c2d3e4f5a6 - placeholder head for merge
+└─   └─     └─       └─         └─           ├─             ● b7f4d2e9c1a0 - add training requirements and records
+└─   └─     └─       └─         └─           ├─             └─               🔴 c9f0a1b2c3d4 - merge heads b7f4d2e9c1a0
+└─   └─     └─       └─         └─           └─             🔴 cf72c4eb59bc - placeholder head for merge
+
+=== Root: 34d313a57aa7 ===
+🔴 34d313a57aa7 - merge heads (iam + prior merge)
+
+=== Root: 3cbbc3fa5729 ===
+● 3cbbc3fa5729 - merge alembic heads
+└─   🔴 7f871a8d46f5 - merge alembic heads
+
+=== Root: 4a939bab6876 ===
+● 4a939bab6876 - merge heads 0067 and 2c3b4b9a1e9a
+└─   ● 0068_add_tea - add archived_at to teams and workers
+└─   └─     ● 0069_add_boo - add archived_at to bookings
+└─   └─     └─       ● 0070_add_wor - add worker skills and ratings
+└─   └─     └─       └─         ● 0071_worker_ - add worker reviews and notes
+└─   └─     └─       └─         └─           ● 0072_worker_ - add worker onboarding and certificates
+└─   └─     └─       └─         └─           └─             ● 0073_client_ - add client notes, tags, and blocked status
+└─   └─     └─       └─         └─           └─             └─               ● 0074_direct_ - direct admin worker chat tables
+└─   └─     └─       └─         └─           └─             └─               └─                 ● 0075_message - message templates
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   ● 0076_client_ - add client note types
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   └─                     ● 0077_client_ - add client addresses
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   └─                     └─                       ● 0078_client_ - add client feedback
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   └─                     └─                       └─                         ● 0079_chat_pa - chat participant keys and org defaults
+└─   └─     └─       └─         └─           └─             └─               └─                 └─                   └─                     └─                       └─                         └─                           🔴 0080_booking - add booking address usage and defaults
+
+=== Root: 6565fde00428 ===
+● 6565fde00428 - merge heads
+└─   ● 0066 - add booking_workers join table
+└─   └─     🔴 0067 - Add cascade delete for event_logs booking FK.
+
+=== Root: 96339be46688 ===
+● 96339be46688 - merge alembic heads
+└─   ● 0043_subscri - add subscription status reason
+└─   └─     ● 0044_postgre - add org isolation rls
+└─   └─     └─       ● 0045_outbox_ - Outbox events table
+└─   └─     └─       └─         ● 0046_admin_i - Admin idempotency table
+└─   └─     └─       └─         └─           🔀 0047_break_g - Break glass sessions table
+└─   └─     └─       └─         └─           ├─             🔀 0048_admin_t - Admin TOTP MFA for SaaS users
+└─   └─     └─       └─         └─           ├─             ├─               🔴 0049_invoice - Invoice tax snapshots
+
+... (51 more lines)
+
+================================================================================
+RECOMMENDATIONS
+================================================================================
+
+⚠️  CRITICAL: Multiple heads detected!
+   Found 42 heads. This will cause issues with migrations.
+
+   SOLUTION: Create a merge migration using:
+   alembic merge -m 'merge multiple heads' 0011_jobs_an 0042_photo_r 0048_dispatc 0049_invoice 0049_stripe_ 0052_stripe_ 0065 0067 0080_booking 0081_merge_h 0085_iam_rol 0085_org_set 0085_pricing 0086_client_ 0086_merge_0 0088_client_ 1a6b6e3f2c2c 2c3b4b9a1e9a 34d313a57aa7 5d8c3a1b9e21 6a2b1c6f3c2b 7a4c2d1f8e3b 7f871a8d46f5 9a5e2c8c64c0 9f2b7c4d1a0e a1b2c3d4e5f6 a2b3c4d5e6f7 a7c3b9d2e1f0 b1c2d3e4f5a6 b8e1c2d3f4a5 b9c8d7e6f5a4 c1a2b3c4d5e6 c2a1b3d4e5f6 c4d5e6f7a8b9 c7d8e9f0a1b2 c8d2e4f6a1b3 c9f0a1b2c3d4 cf72c4eb59bc d4e5f6a7b8c9 e1f2a3b4c5d6 e2b1c4d5f6a7 f83f22a8223b
+
+   Or use the full revision IDs:
+   - 0011_jobs_and_export_replay
+   - 0042_photo_review_and_signing
+   - 0048_dispatcher_comm_audits
+   - 0049_invoice_tax_snapshots
+   - 0049_stripe_event_metadata
+   - 0052_stripe_events_processed
+   - 0065
+   - 0067
+   - 0080_booking_address_usage_and_address_defaults
+   - 0081_merge_heads_0048_and_0080
+   - 0085_iam_roles_permissions
+   - 0085_org_settings_core
+   - 0085_pricing_policies_settings
+   - 0086_client_users_rls_org_isolation
+   - 0086_merge_0085_heads
+   - 0088_client_users_rls_from_bookings
+   - 1a6b6e3f2c2c
+   - 2c3b4b9a1e9a
+   - 34d313a57aa7
+   - 5d8c3a1b9e21
+   - 6a2b1c6f3c2b
+   - 7a4c2d1f8e3b
+   - 7f871a8d46f5
+   - 9a5e2c8c64c0
+   - 9f2b7c4d1a0e
+   - a1b2c3d4e5f6
+   - a2b3c4d5e6f7
+   - a7c3b9d2e1f0
+   - b1c2d3e4f5a6
+   - b8e1c2d3f4a5
+   - b9c8d7e6f5a4
+   - c1a2b3c4d5e6
+   - c2a1b3d4e5f6
+   - c4d5e6f7a8b9
+   - c7d8e9f0a1b2
+   - c8d2e4f6a1b3
+   - c9f0a1b2c3d4
+   - cf72c4eb59bc
+   - d4e5f6a7b8c9
+   - e1f2a3b4c5d6
+   - e2b1c4d5f6a7
+   - f83f22a8223b
+
+⚠️  WARNING: 12 branching point(s) detected
+   This is normal if merge migrations were created properly.
+
+❌ ERROR: 3 broken reference(s) detected!
+   Some migrations reference non-existent parent revisions.
