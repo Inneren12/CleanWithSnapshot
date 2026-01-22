@@ -21,7 +21,7 @@ Comprehensive guide for deploying, monitoring, and troubleshooting CleanWithSnap
 
 ### Production Stack
 
-**Infrastructure:** Docker Compose with 5 services
+**Infrastructure:** Docker Compose with 9 services
 
 ```
 ┌─────────────────────────────────────────┐
@@ -35,11 +35,18 @@ Comprehensive guide for deploying, monitoring, and troubleshooting CleanWithSnap
     │ :8000    │         │ :3000    │
     └─────┬────┘         └──────────┘
           │
-          ▼
-    ┌──────────┐         ┌──────────┐
-    │ Postgres │         │ Redis    │
-    │ :5432    │         │ :6379    │
-    └──────────┘         └──────────┘
+          ├──────────────┬─────────────┐
+          ▼              ▼             ▼
+    ┌──────────┐   ┌──────────┐  ┌──────────┐
+    │ Postgres │   │ Redis    │  │ Jobs     │
+    │ :5432    │   │ :6379    │  │ :8001    │
+    └──────────┘   └──────────┘  └──────────┘
+
+    Observability Stack:
+    ┌──────────┐   ┌──────────┐   ┌──────────┐
+    │ Promtail │──▶│ Loki     │◀──│ Grafana  │
+    │ (collect)│   │ :3100    │   │ :3001    │
+    └──────────┘   └──────────┘   └──────────┘
 ```
 
 **Services:**
@@ -49,8 +56,12 @@ Comprehensive guide for deploying, monitoring, and troubleshooting CleanWithSnap
 | `caddy` | caddy:2 | 80, 443 | `caddy_data`, `caddy_config` |
 | `api` | ./backend (Dockerfile) | 8000 | `./var/uploads` |
 | `web` | ./web (Dockerfile) | 3000 | None |
+| `jobs` | ./backend (Dockerfile) | 8001 | `./var/uploads` |
 | `db` | postgres:16 | 5432 | `pg_data` |
 | `redis` | redis:7-alpine | 6379 | `redis_data` |
+| `loki` | grafana/loki:2.9.3 | 3100 | `loki_data` |
+| `promtail` | grafana/promtail:2.9.3 | 9080 | None (agent) |
+| `grafana` | grafana/grafana:10.2.3 | 3001 | `grafana_data` |
 
 ---
 
@@ -470,9 +481,12 @@ CI runs a Gitleaks scan on every PR and main branch push. PRs scan only the diff
 4. **Audit access**: check logs for unexpected usage and confirm the old secret no longer works.
 5. **Purge the secret from Git history** if it was committed (rewrite history, rotate again after the cleanup).
 
-# Metrics
+# Metrics & Observability
 METRICS_ENABLED="true"
 METRICS_TOKEN="<token>"
+
+# Grafana (Log Aggregation UI)
+GRAFANA_ADMIN_PASSWORD="<strong-password>"  # Default: admin (CHANGE IN PRODUCTION!)
 
 # NPS sends
 NPS_SEND_PERIOD_DAYS="30"
@@ -683,6 +697,254 @@ docker compose restart api
 ```
 
 **Production:** Keep `LOG_LEVEL="INFO"` or `"WARNING"`
+
+---
+
+### Centralized Log Aggregation
+
+**Stack:** Loki + Promtail + Grafana
+
+**Overview:**
+- **Loki**: Log aggregation backend (stores and indexes logs)
+- **Promtail**: Log collector (scrapes Docker containers and files)
+- **Grafana**: Query UI (visualize and search logs)
+
+**Access Grafana:**
+
+```bash
+# Local development
+http://localhost:3001
+
+# Production (via SSH tunnel)
+ssh -L 3001:localhost:3001 user@production-server
+# Then open http://localhost:3001
+```
+
+**Default credentials:**
+- Username: `admin`
+- Password: Set via `GRAFANA_ADMIN_PASSWORD` in `.env` (default: `admin`)
+
+**⚠️ IMPORTANT:** Change the default Grafana password in production!
+
+---
+
+### Querying Logs
+
+**Access Grafana Explore:** Navigate to Explore (compass icon) → Select "Loki" datasource
+
+**Common LogQL Queries:**
+
+**1. Query by service:**
+```logql
+{service="api"}
+{service="jobs"}
+{service="web"}
+{service="caddy"}
+```
+
+**2. Query by request ID (trace a specific request):**
+```logql
+{service="api"} | json | request_id="abc-123"
+```
+
+**3. Query by organization ID:**
+```logql
+{service="api"} | json | org_id="org-789"
+```
+
+**4. Query by user ID:**
+```logql
+{service="api"} | json | user_id="user-456"
+```
+
+**5. Filter by log level:**
+```logql
+{service="api"} | json | level="ERROR"
+{service="api"} | json | level=~"ERROR|CRITICAL"
+```
+
+**6. Filter by HTTP status code:**
+```logql
+{service="api"} | json | status_code>=500
+{service="api"} | json | status_code="404"
+```
+
+**7. Filter by HTTP method and path:**
+```logql
+{service="api"} | json | method="POST" | path=~"/v1/admin/.*"
+```
+
+**8. Search for specific text in logs:**
+```logql
+{service="api"} |= "database connection"
+{service="api"} |~ "error|exception"
+```
+
+**9. Combine multiple filters:**
+```logql
+{service="api"} | json
+  | org_id="org-789"
+  | level="ERROR"
+  | status_code>=500
+```
+
+**10. Query Caddy access logs:**
+```logql
+{job="caddy"} | json | status>=400
+{job="caddy"} | json | request_method="POST" | status="200"
+```
+
+**11. Rate of errors (metrics from logs):**
+```logql
+rate({service="api"} | json | level="ERROR" [5m])
+```
+
+**12. Count of requests by status:**
+```logql
+sum by(status_code) (count_over_time({service="api"} | json [1h]))
+```
+
+---
+
+### Log Retention Policy
+
+**Current Configuration:**
+
+| Component | Retention Period | Configuration File |
+|-----------|------------------|-------------------|
+| **Loki** | 30 days | `config/loki.yaml` |
+| **Caddy file logs** | 7 days (168 hours) | `Caddyfile` |
+| **Docker stdout** | Until container removed | N/A |
+
+**Loki Retention Settings:**
+- **Retention period**: 30 days (`retention_period: 30d`)
+- **Compaction interval**: 10 minutes
+- **Delete delay**: 2 hours after retention period expires
+- **Storage**: Local filesystem at `/loki` volume
+
+**To adjust retention:**
+
+Edit `config/loki.yaml`:
+```yaml
+limits_config:
+  retention_period: 30d  # Change to 60d, 90d, etc.
+```
+
+Then restart Loki:
+```bash
+docker compose restart loki
+```
+
+**⚠️ Storage considerations:**
+- Longer retention = more disk space needed
+- Monitor `loki_data` volume size: `docker system df -v`
+- Default 30 days balances retention with storage costs
+
+---
+
+### Log Aggregation Architecture
+
+**Data Flow:**
+
+```
+┌─────────────────────────────────────────────────┐
+│  Docker Containers (api, web, jobs)             │
+│  - JSON logs to stdout                          │
+└──────────────────┬──────────────────────────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │  Promtail            │
+        │  - Scrapes Docker    │
+        │  - Parses JSON       │
+        │  - Extracts labels   │
+        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐      ┌─────────────┐
+        │  Loki                │◄─────┤  Caddy      │
+        │  - Stores logs       │      │  - File logs│
+        │  - Indexes by labels │      └─────────────┘
+        │  - 30-day retention  │
+        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │  Grafana             │
+        │  - Query UI          │
+        │  - Visualizations    │
+        │  - :3001             │
+        └──────────────────────┘
+```
+
+**Services:**
+
+| Service | Port | Purpose | Resource Limits |
+|---------|------|---------|-----------------|
+| `loki` | 3100 | Log storage & indexing | 1 CPU, 512MB RAM |
+| `promtail` | 9080 | Log collection | 0.5 CPU, 256MB RAM |
+| `grafana` | 3001 | Query UI | 1 CPU, 512MB RAM |
+
+**Volumes:**
+- `loki_data`: Stores compressed log chunks and indexes
+- `grafana_data`: Stores Grafana dashboards and settings
+
+---
+
+### Troubleshooting Log Aggregation
+
+**Check if services are running:**
+
+```bash
+docker compose ps loki promtail grafana
+```
+
+**View Loki logs:**
+
+```bash
+docker compose logs -f loki
+```
+
+**View Promtail logs:**
+
+```bash
+docker compose logs -f promtail
+```
+
+**Check Loki health:**
+
+```bash
+curl http://localhost:3100/ready
+```
+
+**Expected response:** `ready`
+
+**Check Promtail is scraping:**
+
+```bash
+curl http://localhost:9080/metrics | grep promtail_targets_active_total
+```
+
+**Common issues:**
+
+1. **No logs appearing in Grafana**
+   - Check Promtail is running: `docker compose ps promtail`
+   - Verify Promtail can reach Loki: `docker compose logs promtail | grep "error"`
+   - Ensure containers have `promtail=true` label
+
+2. **High disk usage**
+   - Check Loki data size: `du -sh /var/lib/docker/volumes/cleanwithsnapshot_loki_data`
+   - Consider reducing retention period
+   - Verify compaction is running: `docker compose logs loki | grep compactor`
+
+3. **Grafana login issues**
+   - Reset password: `docker compose restart grafana`
+   - Check `GRAFANA_ADMIN_PASSWORD` in `.env`
+
+4. **Query performance slow**
+   - Reduce time range (query last hour instead of last week)
+   - Add more specific label filters
+   - Check Loki resource usage: `docker stats loki`
 
 ---
 
