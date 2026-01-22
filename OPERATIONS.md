@@ -1261,6 +1261,47 @@ docker compose exec db vacuumdb -U postgres -d cleaning --analyze
 
 ---
 
+### pg_stat_statements Baseline Report
+
+Use `pg_stat_statements` for visibility into the slowest and most expensive queries before
+any tuning. This is safe to enable and provides a baseline report without changing query
+plans.
+
+**Enable the extension (Docker Compose):**
+
+1. Ensure Postgres preloads the extension (already configured in `docker-compose.yml`):
+   ```yaml
+   command:
+     - "postgres"
+     - "-c"
+     - "shared_preload_libraries=pg_stat_statements"
+     - "-c"
+     - "pg_stat_statements.track=all"
+   ```
+2. Restart Postgres after updating configuration:
+   ```bash
+   docker compose restart db
+   ```
+3. Create the extension:
+   ```bash
+   docker compose exec db psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \\
+     -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+   ```
+
+**Managed Postgres:** enable `shared_preload_libraries=pg_stat_statements` and
+`pg_stat_statements.track=all` in the provider parameter group, restart the instance, and run
+the same `CREATE EXTENSION` command in a SQL console.
+
+**Run the baseline report:**
+
+```bash
+python backend/scripts/top_queries.py --limit 20 --order-by total_time
+```
+
+The script masks literals so query parameters are not printed.
+
+---
+
 ### Connection Pooling
 
 **Tune pool settings** (`backend/app/settings.py`):
