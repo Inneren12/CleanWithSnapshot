@@ -12,6 +12,7 @@ from app.infra.db import get_session_factory
 from app.infra.email import EmailAdapter, resolve_email_adapter
 from app.infra.logging import clear_log_context
 from app.infra.metrics import configure_metrics, metrics
+from app.infra.tracing import configure_tracing
 from app.jobs.heartbeat import _resolve_runner_id, record_heartbeat
 from app.jobs import (
     accounting_export,
@@ -179,6 +180,7 @@ async def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--once", action="store_true", help="Run jobs once and exit")
     args = parser.parse_args(argv)
 
+    configure_tracing(service_name="jobs")
     global _ADAPTER, _STORAGE, _COMMUNICATION
     _ADAPTER = resolve_email_adapter(settings)
     _STORAGE = new_storage_backend()

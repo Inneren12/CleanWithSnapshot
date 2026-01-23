@@ -47,6 +47,9 @@ def _get_session_factory() -> async_sessionmaker[AsyncSession]:
             })
 
         _engine = create_async_engine(settings.database_url, **engine_kwargs)
+        from app.infra.tracing import instrument_sqlalchemy
+
+        instrument_sqlalchemy(_engine.sync_engine)
         _configure_logging(_engine, is_postgres)
         _configure_org_context(_engine, is_postgres)
         _session_factory = async_sessionmaker(
