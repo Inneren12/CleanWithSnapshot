@@ -1,8 +1,15 @@
+from importlib.util import find_spec
+
 from fastapi.testclient import TestClient
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import InMemorySpanExporter, SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.trace import SpanKind
+
+if find_spec("opentelemetry.sdk.trace.export.in_memory_span_exporter"):
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+else:  # pragma: no cover - compatibility with older OTel versions
+    from opentelemetry.sdk.trace.export import InMemorySpanExporter
 
 from app import main
 from app.settings import settings

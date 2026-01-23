@@ -93,15 +93,18 @@ def configure_tracing(*, service_name: str | None = None) -> None:
     tracer_provider = TracerProvider(resource=resource)
     trace.set_tracer_provider(tracer_provider)
 
-    exporter_kwargs: dict[str, object] = {}
     otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-    if otlp_endpoint:
-        exporter_kwargs["endpoint"] = otlp_endpoint
-        exporter_kwargs["insecure"] = otlp_endpoint.startswith("http://")
-    else:
-        exporter_kwargs["insecure"] = True
-    exporter = OTLPSpanExporter(**exporter_kwargs)
-    tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+    app_env = os.getenv("APP_ENV", "").lower()
+    is_testing = os.getenv("TESTING", "").lower() == "true" or app_env == "test"
+    if otlp_endpoint and not is_testing:
+        exporter_kwargs: dict[str, object] = {
+            "endpoint": otlp_endpoint,
+            "insecure": otlp_endpoint.startswith("http://"),
+        }
+        exporter = OTLPSpanExporter(**exporter_kwargs)
+        tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+    elif not otlp_endpoint and not is_testing:
+        logger.debug("tracing_exporter_skipped_no_endpoint")
 
     if not _HTTPX_CONFIGURED:
         HTTPXClientInstrumentor().instrument(
