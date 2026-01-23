@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from opentelemetry import trace
+
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
 ADDRESS_RE = re.compile(
@@ -80,6 +82,19 @@ def _extract_extra(record: logging.LogRecord) -> dict[str, Any]:
     return structured
 
 
+def _get_trace_context() -> dict[str, str]:
+    span = trace.get_current_span()
+    if not span:
+        return {}
+    span_context = span.get_span_context()
+    if not span_context or not span_context.is_valid:
+        return {}
+    return {
+        "trace_id": f"{span_context.trace_id:032x}",
+        "span_id": f"{span_context.span_id:016x}",
+    }
+
+
 class RedactingJsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401 - concise formatter
         payload: Dict[str, Any] = {
@@ -88,6 +103,9 @@ class RedactingJsonFormatter(logging.Formatter):
             "message": redact_pii(str(record.getMessage())),
             "logger": record.name,
         }
+        trace_context = _get_trace_context()
+        if trace_context:
+            payload.update(trace_context)
         context = LOG_CONTEXT.get({})
         if context:
             payload.update(_sanitize_value(context))

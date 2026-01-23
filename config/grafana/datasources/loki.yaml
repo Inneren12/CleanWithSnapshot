@@ -16,3 +16,7 @@ datasources:
           matcherRegex: "request_id[\":]\\s*\"([^\"]+)\""
           name: request_id
           url: ""
+        - datasourceUid: tempo
+          matcherRegex: "trace_id[\":]\\s*\"([^\"]+)\""
+          name: trace_id
+          url: "$${__value.raw}"

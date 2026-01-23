@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from opentelemetry import trace
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.admin_auth import AdminAccessMiddleware, AdminAuditMiddleware
@@ -132,6 +133,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             request_id = str(uuid.uuid4())
         request.state.request_id = request_id
         update_log_context(request_id=request_id, method=request.method, path=request.url.path)
+        span = trace.get_current_span()
+        if span and span.is_recording():
+            span.set_attribute("request_id", request_id)
 
         response = None
         status_code = 500
