@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  - name: Postgres
+    type: postgres
+    access: proxy
+    url: ${POSTGRES_HOST:-db}:5432
+    user: ${POSTGRES_READONLY_USER}
+    uid: postgres
+    isDefault: false
+    editable: false
+    database: ${POSTGRES_DB}
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+    secureJsonData:
+      password: ${POSTGRES_READONLY_PASSWORD}

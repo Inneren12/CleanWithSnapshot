@@ -53,6 +53,10 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_HOST=${POSTGRES_HOST:-db}
+      - POSTGRES_READONLY_PASSWORD=${POSTGRES_READONLY_PASSWORD}
+      - POSTGRES_READONLY_USER=${POSTGRES_READONLY_USER}
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana

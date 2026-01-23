@@ -1,0 +1,168 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "total_time_ms"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "sql": "SELECT query, round(total_time::numeric, 2) AS total_time_ms, round(mean_time::numeric, 2) AS mean_time_ms, calls FROM pg_stat_statements ORDER BY total_time DESC LIMIT 10;"
+        }
+      ],
+      "title": "Top Queries by total_time",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "id": 2,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "mean_time_ms"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "sql": "SELECT query, round(mean_time::numeric, 2) AS mean_time_ms, round(total_time::numeric, 2) AS total_time_ms, calls FROM pg_stat_statements ORDER BY mean_time DESC LIMIT 10;"
+        }
+      ],
+      "title": "Top Queries by mean_time",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 3,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "calls"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "sql": "SELECT query, calls, round(total_time::numeric, 2) AS total_time_ms, round(mean_time::numeric, 2) AS mean_time_ms FROM pg_stat_statements ORDER BY calls DESC LIMIT 10;"
+        }
+      ],
+      "title": "Top Queries by calls",
+      "type": "table"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": [
+    "observability",
+    "postgres"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Postgres Query Performance",
+  "uid": "pg-stat-statements",
+  "version": 1,
+  "weekStart": ""
+}
