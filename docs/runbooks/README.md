@@ -33,6 +33,8 @@ Each runbook follows a standard structure:
 |---------|-------------|----------|
 | [Migrations Not Current](./migrations-not-current.md) | `migrations_current: false` | **High** |
 | [Job Scheduler Stale](./job-scheduler-stale.md) | Stale job heartbeat, DLQ backlog | **Medium** |
+| [Jobs Heartbeat Missing](./JOBS_HEARTBEAT.md) | Jobs heartbeat stale or missing | **High** |
+| [Outbox Backlog High](./OUTBOX_BACKLOG.md) | Outbox lag, delivery errors | **High** |
 | [High Resource Usage](./high-resource-usage.md) | CPU > 80%, Memory > 85%, OOM kills | **Medium** |
 
 ### External Integrations

@@ -1,0 +1,42 @@
+groups:
+  - name: jobs.outbox.alerts
+    interval: 30s
+    rules:
+      - alert: JobsHeartbeatMissing
+        expr: |
+          max by (job) (job_runner_up{job="jobs-runner"}) == 0
+          or max by (job) (job_heartbeat_age_seconds{job="jobs-runner"}) > 300
+          or absent(job_heartbeat_age_seconds{job="jobs-runner"})
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Jobs heartbeat missing or stale"
+          description: |
+            Jobs runner heartbeat is missing or older than 5 minutes.
+            This indicates the scheduler may not be running or cannot write heartbeats.
+          runbook: "docs/runbooks/JOBS_HEARTBEAT.md"
+      - alert: OutboxBacklogHigh
+        expr: |
+          max by (type) (outbox_lag_seconds) > 900
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Outbox backlog is growing"
+          description: |
+            The oldest pending outbox event is older than 15 minutes.
+            Delivery is falling behind expected cadence.
+          runbook: "docs/runbooks/OUTBOX_BACKLOG.md"
+      - alert: OutboxDeliveryErrorsHigh
+        expr: |
+          sum(increase(outbox_deliver_total{result="error"}[10m])) > 5
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Outbox delivery errors elevated"
+          description: |
+            Outbox delivery attempts are failing repeatedly.
+            Investigate recent errors, provider health, and replay policies.
+          runbook: "docs/runbooks/OUTBOX_BACKLOG.md"
