@@ -99,6 +99,7 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ${PROM_METRICS_TOKEN_FILE:-./secrets/prom_metrics_token}:/run/secrets/prom_metrics_token:ro
       - prometheus_data:/prometheus
     deploy:
       resources:
