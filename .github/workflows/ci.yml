@@ -331,8 +331,8 @@ jobs:
 
       - name: Capture built image IDs
         run: |
-          API_IMAGE_ID=$(docker compose images -q api)
-          WEB_IMAGE_ID=$(docker compose images -q web)
+          API_IMAGE_ID=$(docker image inspect -f '{{.Id}}' cleanwithsnapshot-api:ci)
+          WEB_IMAGE_ID=$(docker image inspect -f '{{.Id}}' cleanwithsnapshot-web:ci)
           if [ -z "${API_IMAGE_ID}" ] || [ -z "${WEB_IMAGE_ID}" ]; then
             echo "Failed to resolve image IDs. api=${API_IMAGE_ID} web=${WEB_IMAGE_ID}"
             exit 1
@@ -340,15 +340,15 @@ jobs:
           echo "API_IMAGE_ID=${API_IMAGE_ID}" >> "$GITHUB_ENV"
           echo "WEB_IMAGE_ID=${WEB_IMAGE_ID}" >> "$GITHUB_ENV"
           {
-            echo "api ${API_IMAGE_ID}"
-            echo "web ${WEB_IMAGE_ID}"
-            docker image inspect --format='{{.RepoTags}} {{.Id}}' "${API_IMAGE_ID}"
-            docker image inspect --format='{{.RepoTags}} {{.Id}}' "${WEB_IMAGE_ID}"
+            echo "api cleanwithsnapshot-api:ci ${API_IMAGE_ID}"
+            echo "web cleanwithsnapshot-web:ci ${WEB_IMAGE_ID}"
+            docker image inspect --format='{{.RepoTags}} {{.Id}}' cleanwithsnapshot-api:ci
+            docker image inspect --format='{{.RepoTags}} {{.Id}}' cleanwithsnapshot-web:ci
           } > built-image-ids.txt
 
       - name: Verify api image wheel/jaraco versions
         run: |
-          docker run --rm "${API_IMAGE_ID}" \
+          docker run --rm cleanwithsnapshot-api:ci \
             python -c "import importlib.metadata as m; print('wheel', m.version('wheel')); print('jaraco.context', m.version('jaraco.context'))"
 
       - name: Install Trivy CLI
@@ -364,7 +364,7 @@ jobs:
             --scanners vuln \
             --severity "${TRIVY_SEVERITY}" \
             --ignore-unfixed \
-            "${API_IMAGE_ID}"
+            cleanwithsnapshot-api:ci
 
       - name: Scan web image (Trivy)
         continue-on-error: true
@@ -375,7 +375,7 @@ jobs:
             --scanners vuln \
             --severity "${TRIVY_SEVERITY}" \
             --ignore-unfixed \
-            "${WEB_IMAGE_ID}"
+            cleanwithsnapshot-web:ci
       
       - name: Dump API Trivy HIGH/CRITICAL (top)
         if: always()
