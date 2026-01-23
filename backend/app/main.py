@@ -64,6 +64,7 @@ from app.infra.email import EmailAdapter
 from app.infra.logging import clear_log_context, configure_logging, update_log_context
 from app.infra.metrics import configure_metrics, metrics
 from app.infra.security import RateLimiter, resolve_client_key
+from app.infra.tracing import configure_tracing, instrument_fastapi
 from app.settings import settings
 from app.services import build_app_services
 
@@ -288,6 +289,7 @@ def _validate_prod_config(app_settings) -> None:
 
 
 def create_app(app_settings) -> FastAPI:
+    configure_tracing(service_name="api")
     configure_logging()
     metrics_client = configure_metrics(
         app_settings.metrics_enabled, service_name=app_settings.app_name
@@ -321,6 +323,7 @@ def create_app(app_settings) -> FastAPI:
         await app.state.action_rate_limiter.close()
 
     app = FastAPI(title="Cleaning Economy Bot", version="1.0.0", lifespan=lifespan)
+    instrument_fastapi(app)
 
     app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
