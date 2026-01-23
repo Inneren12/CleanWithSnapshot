@@ -329,34 +329,53 @@ jobs:
       - name: Build api and web images
         run: docker compose build api web
 
+      - name: Capture built image IDs
+        run: |
+          API_IMAGE_ID=$(docker compose images -q api)
+          WEB_IMAGE_ID=$(docker compose images -q web)
+          if [ -z "${API_IMAGE_ID}" ] || [ -z "${WEB_IMAGE_ID}" ]; then
+            echo "Failed to resolve image IDs. api=${API_IMAGE_ID} web=${WEB_IMAGE_ID}"
+            exit 1
+          fi
+          echo "API_IMAGE_ID=${API_IMAGE_ID}" >> "$GITHUB_ENV"
+          echo "WEB_IMAGE_ID=${WEB_IMAGE_ID}" >> "$GITHUB_ENV"
+          {
+            echo "api ${API_IMAGE_ID}"
+            echo "web ${WEB_IMAGE_ID}"
+            docker image inspect --format='{{.RepoTags}} {{.Id}}' "${API_IMAGE_ID}"
+            docker image inspect --format='{{.RepoTags}} {{.Id}}' "${WEB_IMAGE_ID}"
+          } > built-image-ids.txt
+
       - name: Verify api image wheel/jaraco versions
         run: |
-          docker run --rm cleanwithsnapshot-api \
+          docker run --rm "${API_IMAGE_ID}" \
             python -c "import importlib.metadata as m; print('wheel', m.version('wheel')); print('jaraco.context', m.version('jaraco.context'))"
 
+      - name: Install Trivy CLI
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
       - name: Scan api image (Trivy)
-        uses: aquasecurity/trivy-action@0.29.0
         continue-on-error: true
-        with:
-          image-ref: cleanwithsnapshot-api
-          format: json
-          output: trivy-cleanwithsnapshot-api.json
-          scanners: vuln
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+        run: |
+          trivy image \
+            --format json \
+            --output trivy-cleanwithsnapshot-api.json \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --ignore-unfixed \
+            "${API_IMAGE_ID}"
 
       - name: Scan web image (Trivy)
-        uses: aquasecurity/trivy-action@0.29.0
         continue-on-error: true
-        with:
-          image-ref: cleanwithsnapshot-web
-          format: json
-          output: trivy-cleanwithsnapshot-web.json
-          scanners: vuln
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+        run: |
+          trivy image \
+            --format json \
+            --output trivy-cleanwithsnapshot-web.json \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --ignore-unfixed \
+            "${WEB_IMAGE_ID}"
       
       - name: Dump API Trivy HIGH/CRITICAL (top)
         if: always()
@@ -448,6 +467,7 @@ jobs:
           name: trivy-reports
           path: |
             trivy-cleanwithsnapshot-*.json
+            built-image-ids.txt
 
       - name: Fail if Trivy gate hit (HIGH/CRITICAL)
         if: always()

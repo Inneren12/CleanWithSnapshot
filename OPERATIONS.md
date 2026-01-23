@@ -178,6 +178,7 @@ issues are addressed. Trivy JSON reports are uploaded as CI artifacts for review
 
 **Policy note:** We run Trivy with `TRIVY_IGNORE_UNFIXED=true`, and CI fails only when a HIGH/CRITICAL finding
 has a fix available. To enforce the stricter mode (fail on any HIGH/CRITICAL), set `TRIVY_IGNORE_UNFIXED=false`.
+CI scans the freshly built images by **image ID** to avoid stale tag reuse.
 
 **Trivy gate fix:** Bump `wheel` to `0.46.2` and `jaraco.context` to `6.1.0` in the Docker build constraints/pins so
 the API image installs the patched versions and clears fixable HIGH findings.
