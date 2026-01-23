@@ -1,0 +1,30 @@
+groups:
+  - name: slo.recording.rules
+    interval: 30s
+    rules:
+      - record: sli:request_success_rate5m
+        expr: |
+          sum(rate(http_requests_total{status_class=~"2xx|3xx"}[5m])) by (service)
+          /
+          clamp_min(sum(rate(http_requests_total[5m])) by (service), 1)
+      - record: sli:error_rate5m
+        expr: |
+          sum(rate(http_requests_total{status_class="5xx"}[5m])) by (service)
+          /
+          clamp_min(sum(rate(http_requests_total[5m])) by (service), 1)
+      - record: sli:request_success_rate30d
+        expr: |
+          sum(increase(http_requests_total{status_class=~"2xx|3xx"}[30d])) by (service)
+          /
+          clamp_min(sum(increase(http_requests_total[30d])) by (service), 1)
+      - record: sli:error_rate30d
+        expr: |
+          sum(increase(http_requests_total{status_class="5xx"}[30d])) by (service)
+          /
+          clamp_min(sum(increase(http_requests_total[30d])) by (service), 1)
+      - record: sli:latency_p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(http_request_latency_seconds_bucket[5m])) by (le, route, service)
+          )

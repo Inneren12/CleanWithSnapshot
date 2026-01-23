@@ -89,7 +89,28 @@ services:
           cpus: '0.25'
           memory: 128M
 
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
 volumes:
   loki_data:
   grafana_data:
   tempo_data:
+  prometheus_data:
