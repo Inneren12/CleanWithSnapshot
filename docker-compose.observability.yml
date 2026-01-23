@@ -101,6 +101,8 @@ services:
       - ./prometheus/rules:/etc/prometheus/rules:ro
       - ${PROM_METRICS_TOKEN_FILE:-./secrets/prom_metrics_token}:/run/secrets/prom_metrics_token:ro
       - prometheus_data:/prometheus
+    depends_on:
+      - alertmanager
     deploy:
       resources:
         limits:
@@ -110,8 +112,33 @@ services:
           cpus: '0.25'
           memory: 128M
 
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/config.yml
+      - --config.expand-env=true
+    ports:
+      - "127.0.0.1:9093:9093"
+    environment:
+      - ALERTMANAGER_SLACK_WEBHOOK_URL=${ALERTMANAGER_SLACK_WEBHOOK_URL}
+      - ALERTMANAGER_SLACK_CHANNEL=${ALERTMANAGER_SLACK_CHANNEL:-#alerts}
+      - ALERTMANAGER_WEBHOOK_URL=${ALERTMANAGER_WEBHOOK_URL}
+    volumes:
+      - ./alertmanager/config.yml:/etc/alertmanager/config.yml:ro
+      - alertmanager_data:/alertmanager
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
 volumes:
   loki_data:
   grafana_data:
   tempo_data:
   prometheus_data:
+  alertmanager_data:
