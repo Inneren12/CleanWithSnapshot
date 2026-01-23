@@ -189,6 +189,21 @@ issues are addressed. Trivy JSON reports are uploaded as CI artifacts for review
    ```
 4. **Re-run CI** (or push a follow-up commit) once the critical findings are resolved.
 
+**How we keep images patched:**
+
+- **Pin to patched base tags** for API and Web images (Python/Node patch releases) and refresh them when
+  Trivy reports CRITICAL/HIGH issues in base layers.
+- **Upgrade OS packages during image builds** (`apt-get upgrade -y` or `apk upgrade --no-cache`) and
+  remove package lists/caches to keep the runtime image lean.
+- **Update runtime package tools** (pip/setuptools/wheel) when Trivy flags bundled vulnerabilities in
+  language tooling layers.
+
+**Trivy ignore policy (strict):**
+
+- Only add `.trivyignore` entries for CVEs that have **no upstream fix** or are **false positives**.
+- Each ignore must include a **justification** and an **expiry date** (or a tracking issue link).
+- Never use wildcard ignores or blanket severity ignores; keep the list minimal and time-bounded.
+
 ---
 
 ### RLS coverage audit
