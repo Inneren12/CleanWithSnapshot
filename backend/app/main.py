@@ -327,7 +327,6 @@ def create_app(app_settings) -> FastAPI:
         await app.state.action_rate_limiter.close()
 
     app = FastAPI(title="Cleaning Economy Bot", version="1.0.0", lifespan=lifespan)
-    instrument_fastapi(app)
 
     app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
@@ -353,6 +352,8 @@ def create_app(app_settings) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # OTel instrumentation must be added last so it wraps all middleware.
+    instrument_fastapi(app)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
