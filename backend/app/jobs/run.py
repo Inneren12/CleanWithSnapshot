@@ -183,7 +183,7 @@ async def main(argv: list[str] | None = None) -> None:
     _ADAPTER = resolve_email_adapter(settings)
     _STORAGE = new_storage_backend()
     _COMMUNICATION = resolve_communication_adapter(settings)
-    configure_metrics(settings.metrics_enabled)
+    configure_metrics(settings.metrics_enabled, service_name=settings.app_name)
     session_factory = get_session_factory()
 
     job_names = args.jobs or [

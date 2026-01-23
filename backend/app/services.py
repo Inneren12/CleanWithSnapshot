@@ -25,7 +25,9 @@ class AppServices:
 
 
 def build_app_services(app_settings, *, metrics: Metrics | None = None) -> AppServices:
-    metrics_client = metrics or configure_metrics(app_settings.metrics_enabled)
+    metrics_client = metrics or configure_metrics(
+        app_settings.metrics_enabled, service_name=app_settings.app_name
+    )
     return AppServices(
         storage=new_storage_backend(),
         email_adapter=resolve_email_adapter(app_settings),
