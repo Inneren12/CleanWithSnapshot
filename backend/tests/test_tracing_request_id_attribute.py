@@ -1,7 +1,6 @@
 from importlib.util import find_spec
 
 from fastapi.testclient import TestClient
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.trace import SpanKind
@@ -15,19 +14,17 @@ from app import main
 from app.settings import settings
 
 
-def test_request_id_attached_to_server_span(monkeypatch):
+def test_request_id_attached_to_server_span():
     exporter = InMemorySpanExporter()
     tracer_provider = TracerProvider()
     tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-    def _configure_tracing(*args, **kwargs) -> None:
-        trace.set_tracer_provider(tracer_provider)
-
-    monkeypatch.setattr(main, "configure_tracing", _configure_tracing)
-
-    app = main.create_app(settings)
+    app = main.create_app(settings, tracer_provider=tracer_provider)
     with TestClient(app) as client:
         response = client.get("/healthz")
+
+    if hasattr(tracer_provider, "force_flush"):
+        tracer_provider.force_flush()
 
     request_id = response.headers.get("X-Request-ID")
     spans = exporter.get_finished_spans()

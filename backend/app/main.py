@@ -292,8 +292,9 @@ def _validate_prod_config(app_settings) -> None:
         raise RuntimeError("Invalid production configuration: " + "; ".join(errors))
 
 
-def create_app(app_settings) -> FastAPI:
-    configure_tracing(service_name="api")
+def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
+    if tracer_provider is None:
+        configure_tracing(service_name="api")
     configure_logging()
     metrics_client = configure_metrics(
         app_settings.metrics_enabled, service_name=app_settings.app_name
@@ -353,7 +354,7 @@ def create_app(app_settings) -> FastAPI:
     )
 
     # OTel instrumentation must be added last so it wraps all middleware.
-    instrument_fastapi(app)
+    instrument_fastapi(app, tracer_provider=tracer_provider)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):

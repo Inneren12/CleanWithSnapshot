@@ -120,10 +120,10 @@ def configure_tracing(*, service_name: str | None = None) -> None:
         _TRACING_SHUTDOWN_REGISTERED = True
 
 
-def instrument_fastapi(app: FastAPI) -> None:
+def instrument_fastapi(app: FastAPI, *, tracer_provider=None) -> None:  # noqa: ANN001
     FastAPIInstrumentor().instrument_app(
         app,
-        tracer_provider=trace.get_tracer_provider(),
+        tracer_provider=tracer_provider or trace.get_tracer_provider(),
         server_request_hook=_fastapi_request_hook,
     )
 
