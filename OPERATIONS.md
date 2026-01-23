@@ -179,6 +179,9 @@ issues are addressed. Trivy JSON reports are uploaded as CI artifacts for review
 **Policy note:** We run Trivy with `TRIVY_IGNORE_UNFIXED=true`, and CI fails only when a HIGH/CRITICAL finding
 has a fix available. To enforce the stricter mode (fail on any HIGH/CRITICAL), set `TRIVY_IGNORE_UNFIXED=false`.
 
+**Trivy gate fix:** Bump `wheel` to `0.46.2` and `jaraco.context` to `6.1.0` in the API image requirements to clear
+fixable HIGH findings reported in the Trivy API scan.
+
 **Remediation workflow:**
 
 1. **Identify the affected component** in the Trivy report (base image, OS package, or application dependency).
