@@ -181,6 +181,7 @@ has a fix available. To enforce the stricter mode (fail on any HIGH/CRITICAL), s
 
 **Trivy gate fix:** Bump `wheel` to `0.46.2` and `jaraco.context` to `6.1.0` in the Docker build constraints/pins so
 the API image installs the patched versions and clears fixable HIGH findings.
+To remediate Python CVEs in images, pin fixed versions in the runtime requirements file used by the Docker build.
 
 **Remediation workflow:**
 

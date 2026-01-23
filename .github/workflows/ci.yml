@@ -329,6 +329,11 @@ jobs:
       - name: Build api and web images
         run: docker compose build api web
 
+      - name: Verify api image wheel/jaraco versions
+        run: |
+          docker run --rm cleanwithsnapshot-api \
+            python -c "import importlib.metadata as m; print('wheel', m.version('wheel')); print('jaraco.context', m.version('jaraco.context'))"
+
       - name: Scan api image (Trivy)
         uses: aquasecurity/trivy-action@0.29.0
         continue-on-error: true
