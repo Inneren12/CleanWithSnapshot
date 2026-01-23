@@ -209,6 +209,7 @@ the API image installs the patched versions and clears fixable HIGH findings.
 - Only add `.trivyignore` entries for CVEs that have **no upstream fix** or are **false positives**.
 - Each ignore must include a **justification** and an **expiry date** (or a tracking issue link).
 - Never use wildcard ignores or blanket severity ignores; keep the list minimal and time-bounded.
+- Avoid Dockerfile heredocs for diagnostics; use single-line commands (e.g., `python -c`) if needed.
 
 ---
 
