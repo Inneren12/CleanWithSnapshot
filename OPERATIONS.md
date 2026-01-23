@@ -176,6 +176,14 @@ git reset --hard <sha>
 those images with Trivy. The job **fails on CRITICAL vulnerabilities** so releases are blocked until critical
 issues are addressed. Trivy JSON reports are uploaded as CI artifacts for review.
 
+**Policy note:** We run Trivy with `TRIVY_IGNORE_UNFIXED=true`, and CI fails only when a HIGH/CRITICAL finding
+has a fix available. To enforce the stricter mode (fail on any HIGH/CRITICAL), set `TRIVY_IGNORE_UNFIXED=false`.
+CI scans the freshly built images by **explicit compose image tags** to avoid stale tag reuse.
+
+**Trivy gate fix:** Bump `wheel` to `0.46.2` and `jaraco.context` to `6.1.0` in the Docker build constraints/pins so
+the API image installs the patched versions and clears fixable HIGH findings.
+To remediate Python CVEs in images, pin fixed versions in the runtime requirements file used by the Docker build.
+
 **Remediation workflow:**
 
 1. **Identify the affected component** in the Trivy report (base image, OS package, or application dependency).
@@ -188,6 +196,22 @@ issues are addressed. Trivy JSON reports are uploaded as CI artifacts for review
    trivy image cleanwithsnapshot-web
    ```
 4. **Re-run CI** (or push a follow-up commit) once the critical findings are resolved.
+
+**How we keep images patched:**
+
+- **Pin to patched base tags** for API and Web images (Python/Node patch releases) and refresh them when
+  Trivy reports CRITICAL/HIGH issues in base layers.
+- **Upgrade OS packages during image builds** (`apt-get upgrade -y` or `apk upgrade --no-cache`) and
+  remove package lists/caches to keep the runtime image lean.
+- **Update runtime package tools** (pip/setuptools/wheel) when Trivy flags bundled vulnerabilities in
+  language tooling layers.
+
+**Trivy ignore policy (strict):**
+
+- Only add `.trivyignore` entries for CVEs that have **no upstream fix** or are **false positives**.
+- Each ignore must include a **justification** and an **expiry date** (or a tracking issue link).
+- Never use wildcard ignores or blanket severity ignores; keep the list minimal and time-bounded.
+- Avoid Dockerfile heredocs for diagnostics; use single-line commands (e.g., `python -c`) if needed.
 
 ---
 

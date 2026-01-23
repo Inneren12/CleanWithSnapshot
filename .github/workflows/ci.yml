@@ -319,6 +319,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
+      TRIVY_IGNORE_UNFIXED: "true"
+      TRIVY_SEVERITY: "CRITICAL,HIGH"
 
     steps:
       - name: Checkout code
@@ -327,29 +329,63 @@ jobs:
       - name: Build api and web images
         run: docker compose build api web
 
+      - name: Capture built image IDs
+        run: |
+          API_IMAGE_ID=$(docker image inspect -f '{{.Id}}' cleanwithsnapshot-api:ci)
+          WEB_IMAGE_ID=$(docker image inspect -f '{{.Id}}' cleanwithsnapshot-web:ci)
+          if [ -z "${API_IMAGE_ID}" ] || [ -z "${WEB_IMAGE_ID}" ]; then
+            echo "Failed to resolve image IDs. api=${API_IMAGE_ID} web=${WEB_IMAGE_ID}"
+            exit 1
+          fi
+          echo "API_IMAGE_ID=${API_IMAGE_ID}" >> "$GITHUB_ENV"
+          echo "WEB_IMAGE_ID=${WEB_IMAGE_ID}" >> "$GITHUB_ENV"
+          {
+            echo "api cleanwithsnapshot-api:ci ${API_IMAGE_ID}"
+            echo "web cleanwithsnapshot-web:ci ${WEB_IMAGE_ID}"
+            docker image inspect --format='{{.RepoTags}} {{.Id}}' cleanwithsnapshot-api:ci
+            docker image inspect --format='{{.RepoTags}} {{.Id}}' cleanwithsnapshot-web:ci
+          } > built-image-ids.txt
+
+      - name: Verify api image wheel/jaraco versions
+        run: |
+          docker run --rm cleanwithsnapshot-api:ci \
+            python -c "import importlib.metadata as m; print('wheel', m.version('wheel')); print('jaraco.context', m.version('jaraco.context'))"
+
+      - name: Inspect api image site-packages for duplicates
+        run: |
+          docker run --rm cleanwithsnapshot-api:ci \
+            python -c "import sys, importlib.metadata as m; print('sys.path:', *sys.path, sep='\\n  '); print('wheel:', m.version('wheel')); print('jaraco.context:', m.version('jaraco.context'))"
+          docker run --rm cleanwithsnapshot-api:ci sh -lc "\
+            set -e; \
+            echo '=== FIND wheel/jaraco dist-info ==='; \
+            find / -type d \\( -name 'wheel-*.dist-info' -o -name 'jaraco.context-*.dist-info' \\) 2>/dev/null | sort | sed 's/^/FOUND: /'; \
+            echo '=== DONE ==='"
+
+      - name: Install Trivy CLI
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
       - name: Scan api image (Trivy)
-        uses: aquasecurity/trivy-action@0.29.0
         continue-on-error: true
-        with:
-          image-ref: cleanwithsnapshot-api
-          format: json
-          output: trivy-cleanwithsnapshot-api.json
-          scanners: vuln
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+        run: |
+          trivy image \
+            --format json \
+            --output trivy-cleanwithsnapshot-api.json \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --ignore-unfixed \
+            cleanwithsnapshot-api:ci
 
       - name: Scan web image (Trivy)
-        uses: aquasecurity/trivy-action@0.29.0
         continue-on-error: true
-        with:
-          image-ref: cleanwithsnapshot-web
-          format: json
-          output: trivy-cleanwithsnapshot-web.json
-          scanners: vuln
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+        run: |
+          trivy image \
+            --format json \
+            --output trivy-cleanwithsnapshot-web.json \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --ignore-unfixed \
+            cleanwithsnapshot-web:ci
       
       - name: Dump API Trivy HIGH/CRITICAL (top)
         if: always()
@@ -441,12 +477,14 @@ jobs:
           name: trivy-reports
           path: |
             trivy-cleanwithsnapshot-*.json
+            built-image-ids.txt
 
       - name: Fail if Trivy gate hit (HIGH/CRITICAL)
         if: always()
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           reports = [
@@ -454,20 +492,77 @@ jobs:
               Path("trivy-cleanwithsnapshot-web.json"),
           ]
 
-          def has_high_critical(report: Path) -> bool:
-              if not report.exists():
-                  return False
-              data = json.loads(report.read_text())
-              for r in data.get("Results", []) or []:
-                  for v in (r.get("Vulnerabilities") or []):
-                      if v.get("Severity") in ("CRITICAL", "HIGH"):
-                          # ignore-unfixed уже применён Trivy action'ом,
-                          # но если вдруг нет — можно дополнительно проверять FixedVersion.
-                          return True
-              return False
+          truthy = {"1", "true", "yes", "on"}
+          ignore_unfixed = os.getenv("TRIVY_IGNORE_UNFIXED", "false").strip().lower() in truthy
 
-          hit = any(has_high_critical(p) for p in reports)
-          raise SystemExit(1 if hit else 0)
+          def status_indicates_fix(status: str) -> bool:
+              if not status:
+                  return False
+              return status.strip().lower() == "fixed"
+
+          def status_indicates_no_fix(status: str) -> bool:
+              if not status:
+                  return False
+              return status.strip().lower() in {"affected", "will_not_fix", "unfixed", "not_fixed", "unknown"}
+
+          def summarize_report(report: Path) -> tuple[int, int, list[dict]]:
+              if not report.exists():
+                  print(f"Error: missing Trivy report {report}")
+                  return 0, 0, []
+              data = json.loads(report.read_text())
+              total = 0
+              fixable = 0
+              details = []
+              for result in data.get("Results", []) or []:
+                  for vuln in (result.get("Vulnerabilities") or []):
+                      severity = vuln.get("Severity")
+                      if severity not in ("CRITICAL", "HIGH"):
+                          continue
+                      total += 1
+                      fixed = (vuln.get("FixedVersion") or "").strip()
+                      status = (vuln.get("Status") or "").strip()
+                      fixable_hit = True
+                      if ignore_unfixed:
+                          if status_indicates_no_fix(status):
+                              fixable_hit = False
+                          else:
+                              fixable_hit = bool(fixed or status_indicates_fix(status))
+                      if fixable_hit:
+                          fixable += 1
+                      details.append(
+                          {
+                              "PkgName": vuln.get("PkgName"),
+                              "InstalledVersion": vuln.get("InstalledVersion"),
+                              "FixedVersion": vuln.get("FixedVersion"),
+                              "VulnerabilityID": vuln.get("VulnerabilityID"),
+                              "Severity": severity,
+                          }
+                      )
+              return total, fixable, details
+
+          missing_reports = [p for p in reports if not p.exists()]
+          if missing_reports:
+              print("Missing Trivy reports:", ", ".join(str(p) for p in missing_reports))
+              raise SystemExit(2)
+
+          overall_fixable = 0
+          for report in reports:
+              total, fixable, details = summarize_report(report)
+              overall_fixable += fixable
+              print(f"Trivy gate summary for {report}:")
+              print(f"  HIGH/CRITICAL total: {total}")
+              print(f"  Fixable HIGH/CRITICAL (gate): {fixable}")
+              for entry in sorted(
+                  details,
+                  key=lambda d: (d["Severity"] != "CRITICAL", d["PkgName"] or "", d["VulnerabilityID"] or ""),
+              )[:10]:
+                  print(
+                      "  "
+                      f'{entry["Severity"]} {entry["VulnerabilityID"]} '
+                      f'{entry["PkgName"]} {entry["InstalledVersion"]} -> {entry["FixedVersion"]}'
+                  )
+
+          raise SystemExit(1 if overall_fixable else 0)
           PY
 
 

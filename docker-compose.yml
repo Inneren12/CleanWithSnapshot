@@ -50,6 +50,7 @@ services:
     volumes:
       - /opt/backups/postgres:/opt/backups/postgres:ro
       - ./var/uploads:/app/var/uploads
+    image: cleanwithsnapshot-api:ci
     build: ./backend
     restart: unless-stopped
     env_file:
@@ -93,6 +94,7 @@ services:
       - "service=jobs"
 
   web:
+    image: cleanwithsnapshot-web:ci
     build:
       context: ./web
       args:
