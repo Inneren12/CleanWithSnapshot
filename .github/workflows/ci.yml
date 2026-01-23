@@ -675,3 +675,49 @@ jobs:
       - name: Cleanup CI .env
         if: always()
         run: rm -f .env
+
+  perf-baseline:
+    name: Performance - Baseline Comparison (Warn-only)
+    runs-on: ubuntu-latest
+    if: ${{ secrets.PERF_BASE_URL != '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run healthz load test + baseline compare
+        env:
+          BASE_URL: ${{ secrets.PERF_BASE_URL }}
+        run: |
+          k6 run --no-thresholds --summary-export k6-healthz.json load-tests/k6/healthz.js
+          python load-tests/compare_baseline.py --scenario healthz --results k6-healthz.json --mode warn
+
+      - name: Run admin load test + baseline compare
+        env:
+          BASE_URL: ${{ secrets.PERF_BASE_URL }}
+          ADMIN_USER: ${{ secrets.PERF_ADMIN_USER }}
+          ADMIN_PASSWORD: ${{ secrets.PERF_ADMIN_PASSWORD }}
+          ADMIN_AUTH_HEADER: ${{ secrets.PERF_ADMIN_AUTH_HEADER }}
+        run: |
+          if [ -z "${ADMIN_AUTH_HEADER:-}" ] && { [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_PASSWORD:-}" ]; }; then
+            echo "Skipping admin_list scenario: admin credentials not provided."
+            exit 0
+          fi
+          k6 run --no-thresholds --summary-export k6-admin.json load-tests/k6/admin_list.js
+          python load-tests/compare_baseline.py --scenario admin_list --results k6-admin.json --mode warn
+
+      - name: Run booking flow load test + baseline compare
+        env:
+          BASE_URL: ${{ secrets.PERF_BASE_URL }}
+          BOOKING_CAPTCHA_TOKEN: ${{ secrets.PERF_BOOKING_CAPTCHA_TOKEN }}
+        run: |
+          k6 run --no-thresholds --summary-export k6-booking.json load-tests/k6/booking_flow.js
+          python load-tests/compare_baseline.py --scenario booking_flow --results k6-booking.json --mode warn

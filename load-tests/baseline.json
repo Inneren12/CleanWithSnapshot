@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scenarios": {
+    "healthz": {
+      "p95_ms": 500,
+      "p99_ms": 800,
+      "error_rate": 0.01,
+      "rps": 1.0
+    },
+    "admin_list": {
+      "p95_ms": 800,
+      "p99_ms": 1200,
+      "error_rate": 0.02,
+      "rps": 2.0
+    },
+    "booking_flow": {
+      "p95_ms": 1200,
+      "p99_ms": 1800,
+      "error_rate": 0.02,
+      "rps": 0.5
+    }
+  }
+}
