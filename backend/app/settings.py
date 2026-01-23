@@ -29,10 +29,26 @@ class Settings(BaseSettings):
     trusted_proxy_cidrs_raw: str | None = Field(None, validation_alias="trusted_proxy_cidrs")
     pricing_config_path: str = Field("pricing/economy_v1.json")
     database_url: str = Field("postgresql+psycopg://postgres:postgres@postgres:5432/cleaning")
-    database_pool_size: int = Field(5)
-    database_max_overflow: int = Field(5)
-    database_pool_timeout_seconds: float = Field(30.0)
-    database_statement_timeout_ms: int = Field(5000)
+    database_pool_size: int = Field(
+        5, ge=1, validation_alias=AliasChoices("DATABASE_POOL_SIZE", "database_pool_size")
+    )
+    database_max_overflow: int = Field(
+        5, ge=0, validation_alias=AliasChoices("DATABASE_MAX_OVERFLOW", "database_max_overflow")
+    )
+    database_pool_timeout_seconds: float = Field(
+        30.0,
+        ge=0,
+        validation_alias=AliasChoices(
+            "DATABASE_POOL_TIMEOUT_SECONDS", "database_pool_timeout_seconds"
+        ),
+    )
+    database_statement_timeout_ms: int = Field(
+        5000,
+        ge=0,
+        validation_alias=AliasChoices(
+            "DATABASE_STATEMENT_TIMEOUT_MS", "database_statement_timeout_ms"
+        ),
+    )
     email_mode: Literal["off", "sendgrid", "smtp"] = Field("off")
     email_from: str | None = Field(None)
     email_from_name: str | None = Field(None)
