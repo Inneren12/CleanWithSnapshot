@@ -66,3 +66,39 @@ histogram_quantile(
 
 - Avoid user/org IDs or raw paths in labels.
 - `/metrics` is token-protected in production; use the configured bearer token for scrapes.
+
+## Prometheus Auth Token (Prod + Dev)
+
+Prometheus must present a bearer token when scraping `/metrics` in prod (`APP_ENV=prod`).
+The scrape config reads a token from a mounted secret file.
+
+### Create and store the token
+
+1. Generate a token and store it on the host (not in git):
+
+   ```
+   sudo install -d /opt/cleaning/secrets
+   openssl rand -hex 32 | sudo tee /opt/cleaning/secrets/prom_metrics_token >/dev/null
+   sudo chmod 0400 /opt/cleaning/secrets/prom_metrics_token
+   ```
+
+2. Configure docker-compose to mount it:
+
+   - Default (dev): `./secrets/prom_metrics_token`
+   - Prod: set `PROM_METRICS_TOKEN_FILE=/opt/cleaning/secrets/prom_metrics_token`
+
+   The Prometheus service mounts this file to `/run/secrets/prom_metrics_token`
+   and uses `bearer_token_file` in `prometheus.yml`.
+
+### Local/dev setup
+
+If you want Prometheus running locally, either:
+
+- Create an empty token file at `./secrets/prom_metrics_token`, or
+- Set `PROM_METRICS_TOKEN_FILE` to a local path containing a token that matches
+  your API's metrics auth.
+
+### Ops verification checklist
+
+- Prometheus **/targets** shows `clean-api` **UP** (no 401).
+- Run `up{job="clean-api"}` and confirm samples are present.

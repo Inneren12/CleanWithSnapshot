@@ -3,6 +3,7 @@
 .env.*
 *.pem
 *.key
+secrets/
 
 # node/next
 web/node_modules/
