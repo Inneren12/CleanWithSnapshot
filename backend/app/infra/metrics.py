@@ -14,11 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 class Metrics:
-    def __init__(self, enabled: bool = False) -> None:
-        self._configure(enabled)
+    def __init__(self, enabled: bool = False, *, service_name: str | None = None) -> None:
+        self._configure(enabled, service_name=service_name)
 
-    def _configure(self, enabled: bool) -> None:
+    def _configure(self, enabled: bool, *, service_name: str | None = None) -> None:
         self.enabled = enabled
+        self.service_name = service_name or "unknown"
         self.registry = CollectorRegistry(auto_describe=True)
         if not enabled:
             self.outbox_queue_depth = None
@@ -118,19 +119,19 @@ class Metrics:
         self.http_5xx = Counter(
             "http_5xx_total",
             "HTTP responses with status >= 500.",
-            ["method", "path"],
+            ["method", "route", "service"],
             registry=self.registry,
         )
         self.http_requests = Counter(
             "http_requests_total",
-            "HTTP requests by method, path, and status class.",
-            ["method", "path", "status_class"],
+            "HTTP requests by method, route, and status class.",
+            ["method", "route", "status_class", "service"],
             registry=self.registry,
         )
         self.http_latency = Histogram(
             "http_request_latency_seconds",
             "HTTP request latency in seconds.",
-            ["method", "path", "status_class"],
+            ["method", "route", "status_class", "service"],
             buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
             registry=self.registry,
         )
@@ -213,25 +214,29 @@ class Metrics:
             return
         self.bookings.labels(action=action).inc(count)
 
-    def record_http_5xx(self, method: str, path: str) -> None:
+    def record_http_5xx(self, method: str, route: str) -> None:
         if not self.enabled or self.http_5xx is None:
             return
-        self.http_5xx.labels(method=method, path=path).inc()
+        self.http_5xx.labels(method=method, route=route, service=self.service_name).inc()
 
-    def record_http_latency(self, method: str, path: str, status_code: int, duration_seconds: float) -> None:
+    def record_http_latency(
+        self, method: str, route: str, status_code: int, duration_seconds: float
+    ) -> None:
         if not self.enabled or self.http_latency is None:
             return
         status_class = f"{status_code // 100}xx" if status_code else "unknown"
         duration_seconds = max(0.0, float(duration_seconds))
-        self.http_latency.labels(method=method, path=path, status_class=status_class).observe(
-            duration_seconds
-        )
+        self.http_latency.labels(
+            method=method, route=route, status_class=status_class, service=self.service_name
+        ).observe(duration_seconds)
 
-    def record_http_request(self, method: str, path: str, status_code: int) -> None:
+    def record_http_request(self, method: str, route: str, status_code: int) -> None:
         if not self.enabled or self.http_requests is None:
             return
         status_class = f"{status_code // 100}xx" if status_code else "unknown"
-        self.http_requests.labels(method=method, path=path, status_class=status_class).inc()
+        self.http_requests.labels(
+            method=method, route=route, status_class=status_class, service=self.service_name
+        ).inc()
 
     def record_job_heartbeat(self, job: str, timestamp: float | None = None) -> None:
         if not self.enabled or self.job_heartbeat is None or self.job_runner_up is None:
@@ -319,6 +324,6 @@ class Metrics:
 metrics = Metrics(enabled=False)
 
 
-def configure_metrics(enabled: bool) -> Metrics:
-    metrics._configure(enabled)
+def configure_metrics(enabled: bool, service_name: str | None = None) -> Metrics:
+    metrics._configure(enabled, service_name=service_name)
     return metrics

@@ -167,7 +167,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         self.metrics = metrics_client
 
     async def dispatch(self, request: Request, call_next: Callable):
-        path_label = "unmatched"
+        route_label = "unmatched"
         start = time.perf_counter()
         status_code = 500
         try:
@@ -175,17 +175,17 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             status_code = response.status_code
         except Exception:
             route = request.scope.get("route")
-            path_label = getattr(route, "path", path_label)
-            self.metrics.record_http_5xx(request.method, path_label)
+            route_label = getattr(route, "path", route_label)
+            self.metrics.record_http_5xx(request.method, route_label)
             raise
         finally:
             route = request.scope.get("route")
-            path_label = getattr(route, "path", path_label)
+            route_label = getattr(route, "path", route_label)
             duration = time.perf_counter() - start
-            self.metrics.record_http_latency(request.method, path_label, status_code, duration)
-            self.metrics.record_http_request(request.method, path_label, status_code)
+            self.metrics.record_http_latency(request.method, route_label, status_code, duration)
+            self.metrics.record_http_request(request.method, route_label, status_code)
         if status_code >= 500:
-            self.metrics.record_http_5xx(request.method, path_label)
+            self.metrics.record_http_5xx(request.method, route_label)
         return response
 
 
@@ -289,7 +289,9 @@ def _validate_prod_config(app_settings) -> None:
 
 def create_app(app_settings) -> FastAPI:
     configure_logging()
-    metrics_client = configure_metrics(app_settings.metrics_enabled)
+    metrics_client = configure_metrics(
+        app_settings.metrics_enabled, service_name=app_settings.app_name
+    )
     _validate_prod_config(app_settings)
 
     services = build_app_services(app_settings, metrics=metrics_client)

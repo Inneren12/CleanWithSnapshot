@@ -11,7 +11,7 @@ def _remove_route(path: str) -> None:
 
 
 def test_http_latency_uses_route_template(client_no_raise):
-    configure_metrics(True)
+    configure_metrics(True, service_name="test-service")
 
     async def ok_handler(item_id: str):  # pragma: no cover - executed via request
         return {"ok": True}
@@ -26,7 +26,7 @@ def test_http_latency_uses_route_template(client_no_raise):
     for metric in app.state.metrics.http_latency.collect():
         samples.extend(metric.samples)
 
-    assert any(sample.labels.get("path") == route_path for sample in samples)
+    assert any(sample.labels.get("route") == route_path for sample in samples)
     _remove_route(route_path)
 
 

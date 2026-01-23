@@ -7,7 +7,7 @@ def test_metrics_endpoint_requires_token_when_configured(client):
     settings.metrics_token = "secret-token"
     settings.app_env = "prod"
     settings.metrics_enabled = True
-    app.state.metrics = configure_metrics(True)
+    app.state.metrics = configure_metrics(True, service_name=settings.app_name)
 
     unauthorized = client.get("/metrics")
     assert unauthorized.status_code == 401
@@ -22,7 +22,7 @@ def test_metrics_endpoint_requires_token_when_configured(client):
 def test_metrics_path_label_uses_route_template(client_no_raise):
     settings.metrics_token = None
     settings.app_env = "dev"
-    configure_metrics(True)
+    configure_metrics(True, service_name=settings.app_name)
 
     async def boom_handler(item_id: str):  # pragma: no cover - handler executed in request
         raise RuntimeError("boom")
@@ -36,7 +36,7 @@ def test_metrics_path_label_uses_route_template(client_no_raise):
     for metric in app.state.metrics.http_5xx.collect():
         samples.extend(metric.samples)
 
-    assert any(sample.labels.get("path") == "/boom/{item_id}" for sample in samples)
+    assert any(sample.labels.get("route") == "/boom/{item_id}" for sample in samples)
 
     app.router.routes = [route for route in app.router.routes if getattr(route, "path", None) != "/boom/{item_id}"]
 
@@ -44,7 +44,7 @@ def test_metrics_path_label_uses_route_template(client_no_raise):
 def test_metrics_unmatched_path_uses_placeholder(client_no_raise):
     settings.metrics_token = None
     settings.app_env = "dev"
-    configure_metrics(True)
+    configure_metrics(True, service_name=settings.app_name)
 
     response = client_no_raise.get("/does-not-exist/12345/abc")
     assert response.status_code == 404
@@ -53,7 +53,7 @@ def test_metrics_unmatched_path_uses_placeholder(client_no_raise):
     for metric in app.state.metrics.http_latency.collect():
         samples.extend(metric.samples)
 
-    assert any(sample.labels.get("path") == "unmatched" for sample in samples)
+    assert any(sample.labels.get("route") == "unmatched" for sample in samples)
 
 
 def test_metrics_endpoint_disabled_when_metrics_off(client):
@@ -65,3 +65,23 @@ def test_metrics_endpoint_disabled_when_metrics_off(client):
     response = client.get("/metrics")
 
     assert response.status_code == 404
+
+
+def test_metrics_endpoint_exports_http_series(client):
+    settings.metrics_enabled = True
+    settings.metrics_token = None
+    settings.app_env = "dev"
+    settings.app_name = "test-service"
+    app.state.metrics = configure_metrics(True, service_name=settings.app_name)
+
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+    metrics_response = client.get("/metrics")
+    assert metrics_response.status_code == 200
+    payload = metrics_response.text
+
+    assert "http_requests_total" in payload
+    assert "http_request_latency_seconds_bucket" in payload
+    assert 'route="/healthz"' in payload
+    assert 'service="test-service"' in payload
