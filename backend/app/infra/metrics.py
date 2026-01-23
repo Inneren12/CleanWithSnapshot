@@ -40,8 +40,14 @@ class Metrics:
             self.job_heartbeat = None
             self.job_heartbeat_age = None
             self.job_last_success = None
+            self.jobs_last_success = None
+            self.jobs_run_total = None
+            self.jobs_duration = None
             self.job_runner_up = None
             self.job_errors = None
+            self.outbox_pending_total = None
+            self.outbox_deliver_total = None
+            self.outbox_lag_seconds = None
             self.circuit_state = None
             return
 
@@ -153,6 +159,25 @@ class Metrics:
             ["job"],
             registry=self.registry,
         )
+        self.jobs_last_success = Gauge(
+            "jobs_last_success_timestamp",
+            "Unix timestamp for the latest successful job run.",
+            ["job"],
+            registry=self.registry,
+        )
+        self.jobs_run_total = Counter(
+            "jobs_run_total",
+            "Job run outcomes by job name.",
+            ["job", "result"],
+            registry=self.registry,
+        )
+        self.jobs_duration = Histogram(
+            "jobs_duration_seconds",
+            "Job run duration in seconds.",
+            ["job"],
+            buckets=(0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300),
+            registry=self.registry,
+        )
         self.job_runner_up = Gauge(
             "job_runner_up",
             "Job runner liveness indicator (1=recent heartbeat).",
@@ -163,6 +188,24 @@ class Metrics:
             "job_errors_total",
             "Job execution errors by job and reason.",
             ["job", "reason"],
+            registry=self.registry,
+        )
+        self.outbox_pending_total = Gauge(
+            "outbox_pending_total",
+            "Outbox pending messages by type.",
+            ["type"],
+            registry=self.registry,
+        )
+        self.outbox_deliver_total = Counter(
+            "outbox_deliver_total",
+            "Outbox delivery attempts by type and result.",
+            ["type", "result"],
+            registry=self.registry,
+        )
+        self.outbox_lag_seconds = Gauge(
+            "outbox_lag_seconds",
+            "Age of the oldest pending outbox event by type.",
+            ["type"],
             registry=self.registry,
         )
         self.circuit_state = Gauge(
@@ -260,16 +303,33 @@ class Metrics:
             self.job_runner_up.labels(job=job).set(1 if safe_age <= threshold_seconds else 0)
 
     def record_job_success(self, job: str, timestamp: float | None = None) -> None:
-        if not self.enabled or self.job_last_success is None:
+        if (
+            not self.enabled
+            or self.job_last_success is None
+            or self.jobs_last_success is None
+        ):
             return
         ts = timestamp if timestamp is not None else time.time()
         self.job_last_success.labels(job=job).set(ts)
+        self.jobs_last_success.labels(job=job).set(ts)
 
     def record_job_error(self, job: str, reason: str) -> None:
         if not self.enabled or self.job_errors is None:
             return
         safe_reason = reason or "unknown"
         self.job_errors.labels(job=job, reason=safe_reason).inc()
+
+    def record_job_run(self, job: str, result: str) -> None:
+        if not self.enabled or self.jobs_run_total is None:
+            return
+        safe_result = result or "unknown"
+        self.jobs_run_total.labels(job=job, result=safe_result).inc()
+
+    def record_job_duration(self, job: str, duration_seconds: float) -> None:
+        if not self.enabled or self.jobs_duration is None:
+            return
+        safe_duration = max(0.0, float(duration_seconds))
+        self.jobs_duration.labels(job=job).observe(safe_duration)
 
     def record_email_notification(self, template: str, status: str, count: int = 1) -> None:
         if not self.enabled or self.email_notifications is None:
@@ -289,6 +349,26 @@ class Metrics:
             return
         safe_status = status or "unknown"
         self.outbox_queue_depth.labels(status=safe_status).set(max(0, count))
+
+    def set_outbox_pending_total(self, kind: str, count: int) -> None:
+        if not self.enabled or self.outbox_pending_total is None:
+            return
+        safe_kind = kind or "unknown"
+        self.outbox_pending_total.labels(type=safe_kind).set(max(0, count))
+
+    def record_outbox_delivery(self, kind: str, result: str) -> None:
+        if not self.enabled or self.outbox_deliver_total is None:
+            return
+        safe_kind = kind or "unknown"
+        safe_result = result or "unknown"
+        self.outbox_deliver_total.labels(type=safe_kind, result=safe_result).inc()
+
+    def set_outbox_lag(self, kind: str, lag_seconds: float) -> None:
+        if not self.enabled or self.outbox_lag_seconds is None:
+            return
+        safe_kind = kind or "unknown"
+        safe_lag = max(0.0, float(lag_seconds))
+        self.outbox_lag_seconds.labels(type=safe_kind).set(safe_lag)
 
     def record_dlq_depth(self, kind: str, stage: str, count: int) -> None:
         if not self.enabled or self.dlq_depth_snapshot is None:

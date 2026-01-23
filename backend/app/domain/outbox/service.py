@@ -180,6 +180,7 @@ async def deliver_outbox_event(
         result = flush()
         if inspect.isawaitable(result):
             await result
+    metrics.record_outbox_delivery(event.kind, "success" if delivered else "error")
     return delivered, event.last_error
 
 
@@ -245,6 +246,50 @@ async def _record_outbox_depth(session: AsyncSession) -> None:
                 counts[status] = int(count)
     for status, count in counts.items():
         metrics.set_outbox_depth(status, count)
+
+    kind_results = await session.execute(select(OutboxEvent.kind).distinct())
+    try:
+        kinds = [row[0] for row in kind_results.all() if isinstance(row, tuple) and row]
+    except Exception:  # pragma: no cover - defensive for stub sessions
+        kinds = []
+
+    pending_counts: dict[str, int] = {}
+    pending_result = await session.execute(
+        select(OutboxEvent.kind, func.count())
+        .where(OutboxEvent.status.in_(PENDING_STATUSES))
+        .group_by(OutboxEvent.kind)
+    )
+    try:
+        pending_rows = pending_result.all()
+    except Exception:  # pragma: no cover - defensive for stub sessions
+        pending_rows = []
+    for row in pending_rows:
+        if isinstance(row, tuple) and len(row) == 2:
+            kind, count = row
+            pending_counts[kind] = int(count)
+
+    lag_result = await session.execute(
+        select(OutboxEvent.kind, func.min(OutboxEvent.created_at))
+        .where(OutboxEvent.status.in_(PENDING_STATUSES))
+        .group_by(OutboxEvent.kind)
+    )
+    try:
+        lag_rows = lag_result.all()
+    except Exception:  # pragma: no cover - defensive for stub sessions
+        lag_rows = []
+    lag_by_kind: dict[str, datetime] = {}
+    for row in lag_rows:
+        if isinstance(row, tuple) and len(row) == 2:
+            kind, created_at = row
+            if created_at is not None:
+                lag_by_kind[kind] = created_at
+
+    now = _now()
+    for kind in set(kinds) | set(pending_counts.keys()) | set(lag_by_kind.keys()):
+        metrics.set_outbox_pending_total(kind, pending_counts.get(kind, 0))
+        created_at = lag_by_kind.get(kind)
+        lag_seconds = (now - created_at).total_seconds() if created_at else 0.0
+        metrics.set_outbox_lag(kind, lag_seconds)
 
 
 async def outbox_counts_by_status(session: AsyncSession, statuses: Iterable[str]) -> dict[str, int]:
