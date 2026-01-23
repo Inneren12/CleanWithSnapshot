@@ -2,6 +2,7 @@ import asyncio
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from app.domain.bookings import service as booking_service
 from app.domain.bookings.db_models import Booking
 from app.domain.bookings.service import (
     BUFFER_MINUTES,
@@ -73,6 +74,30 @@ def test_slots_block_spanning_booking(async_session_maker):
             day_start_local = datetime(2025, 1, 2, 9, 0, tzinfo=ZoneInfo("America/Edmonton"))
             day_start_utc = day_start_local.astimezone(timezone.utc)
             assert day_start_utc not in slots
+
+    asyncio.run(_run())
+
+
+def test_generate_slots_with_fixed_datetime(async_session_maker, monkeypatch):
+    fixed_now = datetime(2026, 1, 15, 15, 30, tzinfo=timezone.utc)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            if tz:
+                return fixed_now.astimezone(tz)
+            return fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(booking_service, "datetime", FixedDateTime)
+
+    async def _run() -> None:
+        async with async_session_maker() as session:
+            target_date = date(2026, 1, 15)
+            start_local = datetime(2026, 1, 15, 9, 0, tzinfo=ZoneInfo("America/Edmonton"))
+            start_utc = start_local.astimezone(timezone.utc)
+            await _insert_booking(session, start_utc, 60, status="CONFIRMED")
+            slots = await generate_slots(target_date, 60, session)
+            assert start_utc not in slots
 
     asyncio.run(_run())
 
