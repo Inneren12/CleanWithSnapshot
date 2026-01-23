@@ -9,3 +9,8 @@ datasources:
     isDefault: true
     jsonData:
       maxLines: 1000
+      derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: "trace_id[\":]\\s*\"([^\"]+)\""
+          name: trace_id
+          url: "$${__value.raw}"
