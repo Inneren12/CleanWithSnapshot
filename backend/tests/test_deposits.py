@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import stripe
 import sqlalchemy as sa
 
+from app.domain.bookings import service as booking_service
 from app.domain.bookings.db_models import Booking, EmailEvent
 from app.domain.leads.db_models import Lead
 from app.infra import stripe as stripe_infra
@@ -289,16 +290,30 @@ def test_returning_client_can_book_without_deposit(client, async_session_maker):
     assert data["policy_snapshot"]["deposit"]["required"] is False
 
 
-def test_short_notice_policy_snapshot(client, async_session_maker):
+def test_short_notice_policy_snapshot(client, async_session_maker, monkeypatch):
     settings.deposits_enabled = True
     settings.stripe_secret_key = "sk_test"
     settings.stripe_webhook_secret = "whsec_test"
+    fixed_now_local = datetime(2026, 1, 15, 1, 0, tzinfo=LOCAL_TZ)
+    fixed_now_utc = fixed_now_local.astimezone(timezone.utc)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            if tz:
+                return fixed_now_utc.astimezone(tz)
+            return fixed_now_utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(booking_service, "datetime", FixedDateTime)
     original_client = getattr(app.state, "stripe_client", None)
     try:
         app.state.stripe_client = _stub_stripe("cs_short_notice")
         lead_id = _seed_lead(async_session_maker)
+        starts_at = (
+            fixed_now_local + timedelta(hours=12)
+        ).replace(minute=0, second=0, microsecond=0)
         payload = {
-            "starts_at": _booking_start_in_hours(12),
+            "starts_at": starts_at.astimezone(timezone.utc).isoformat(),
             "time_on_site_hours": 2,
             "lead_id": lead_id,
         }

@@ -186,6 +186,11 @@ def _normalize_datetime(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _sqlite_datetime_param(value: datetime) -> str:
+    normalized = _normalize_datetime(value)
+    return normalized.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _lead_time_hours(starts_at: datetime) -> float:
     now = datetime.now(timezone.utc)
     delta = starts_at - now
@@ -445,11 +450,17 @@ def _booking_window_filters(
             booking_end = Booking.starts_at + func.make_interval(mins=Booking.duration_minutes)
 
     buffer_delta = timedelta(minutes=BUFFER_MINUTES)
+    if bind and bind.dialect.name == "sqlite":
+        day_start_buffer = _sqlite_datetime_param(day_start - buffer_delta)
+        day_end_buffer = _sqlite_datetime_param(day_end + buffer_delta)
+    else:
+        day_start_buffer = day_start - buffer_delta
+        day_end_buffer = day_end + buffer_delta
     return select(Booking).where(
         and_(
             Booking.team_id == team_id,
-            Booking.starts_at < day_end + buffer_delta,
-            booking_end > day_start - buffer_delta,
+            Booking.starts_at < day_end_buffer,
+            booking_end > day_start_buffer,
             Booking.status.in_(BLOCKING_STATUSES),
         )
     )
