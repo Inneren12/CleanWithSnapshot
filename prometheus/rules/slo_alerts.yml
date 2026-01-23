@@ -1,0 +1,100 @@
+groups:
+  - name: slo.alerting.rules
+    interval: 30s
+    rules:
+      - alert: SLOAvailabilityBurnRateFast
+        expr: |
+          (
+            sum(rate(http_requests_total{status_class="5xx"}[5m])) by (service)
+            /
+            clamp_min(sum(rate(http_requests_total[5m])) by (service), 1)
+          ) > (1 - 0.99) * 14
+          and
+          (
+            sum(rate(http_requests_total{status_class="5xx"}[1h])) by (service)
+            /
+            clamp_min(sum(rate(http_requests_total[1h])) by (service), 1)
+          ) > (1 - 0.99) * 14
+        for: 2m
+        labels:
+          severity: page
+          slo: availability
+        annotations:
+          summary: "Availability SLO burn rate (fast) for {{ $labels.service }}"
+          description: |
+            Error budget burn rate is too high for the 99% availability SLO.
+            5m and 1h windows are burning faster than 14x budget.
+      - alert: SLOAvailabilityBurnRateSlow
+        expr: |
+          (
+            sum(rate(http_requests_total{status_class="5xx"}[30m])) by (service)
+            /
+            clamp_min(sum(rate(http_requests_total[30m])) by (service), 1)
+          ) > (1 - 0.99) * 6
+          and
+          (
+            sum(rate(http_requests_total{status_class="5xx"}[6h])) by (service)
+            /
+            clamp_min(sum(rate(http_requests_total[6h])) by (service), 1)
+          ) > (1 - 0.99) * 6
+        for: 10m
+        labels:
+          severity: ticket
+          slo: availability
+        annotations:
+          summary: "Availability SLO burn rate (slow) for {{ $labels.service }}"
+          description: |
+            Error budget burn rate is elevated for the 99% availability SLO.
+            30m and 6h windows are burning faster than 6x budget.
+      - alert: SLOLatencyBurnRateFast
+        expr: |
+          (
+            1 - (
+              sum(rate(http_request_latency_seconds_bucket{le="0.3",route=~"/v1/(bookings|customers|quotes|cleaners)"}[5m])) by (route, service)
+              /
+              clamp_min(sum(rate(http_request_latency_seconds_bucket{le="+Inf",route=~"/v1/(bookings|customers|quotes|cleaners)"}[5m])) by (route, service), 1)
+            )
+          ) > (1 - 0.95) * 14
+          and
+          (
+            1 - (
+              sum(rate(http_request_latency_seconds_bucket{le="0.3",route=~"/v1/(bookings|customers|quotes|cleaners)"}[1h])) by (route, service)
+              /
+              clamp_min(sum(rate(http_request_latency_seconds_bucket{le="+Inf",route=~"/v1/(bookings|customers|quotes|cleaners)"}[1h])) by (route, service), 1)
+            )
+          ) > (1 - 0.95) * 14
+        for: 5m
+        labels:
+          severity: page
+          slo: latency
+        annotations:
+          summary: "Latency SLO burn rate (fast) for {{ $labels.service }} {{ $labels.route }}"
+          description: |
+            Latency error budget burn rate is too high for the 95%<300ms SLO.
+            5m and 1h windows are burning faster than 14x budget.
+      - alert: SLOLatencyBurnRateSlow
+        expr: |
+          (
+            1 - (
+              sum(rate(http_request_latency_seconds_bucket{le="0.3",route=~"/v1/(bookings|customers|quotes|cleaners)"}[30m])) by (route, service)
+              /
+              clamp_min(sum(rate(http_request_latency_seconds_bucket{le="+Inf",route=~"/v1/(bookings|customers|quotes|cleaners)"}[30m])) by (route, service), 1)
+            )
+          ) > (1 - 0.95) * 6
+          and
+          (
+            1 - (
+              sum(rate(http_request_latency_seconds_bucket{le="0.3",route=~"/v1/(bookings|customers|quotes|cleaners)"}[6h])) by (route, service)
+              /
+              clamp_min(sum(rate(http_request_latency_seconds_bucket{le="+Inf",route=~"/v1/(bookings|customers|quotes|cleaners)"}[6h])) by (route, service), 1)
+            )
+          ) > (1 - 0.95) * 6
+        for: 15m
+        labels:
+          severity: ticket
+          slo: latency
+        annotations:
+          summary: "Latency SLO burn rate (slow) for {{ $labels.service }} {{ $labels.route }}"
+          description: |
+            Latency error budget burn rate is elevated for the 95%<300ms SLO.
+            30m and 6h windows are burning faster than 6x budget.

@@ -1,0 +1,31 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ["alertname", "service", "route"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: slo-paging
+  routes:
+    - matchers: [severity="page"]
+      receiver: slo-paging
+    - matchers: [severity="ticket"]
+      receiver: slo-paging
+
+receivers:
+  - name: slo-paging
+    slack_configs:
+      - api_url: "${ALERTMANAGER_SLACK_WEBHOOK_URL}"
+        channel: "${ALERTMANAGER_SLACK_CHANNEL}"
+        username: "alertmanager"
+        icon_emoji: ":rotating_light:"
+        send_resolved: true
+        title: "{{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})"
+        text: >-
+          {{ range .Alerts }}*{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          {{ end }}
+    webhook_configs:
+      - url: "${ALERTMANAGER_WEBHOOK_URL}"
+        send_resolved: true
