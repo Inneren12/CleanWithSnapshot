@@ -356,8 +356,10 @@ jobs:
           docker run --rm cleanwithsnapshot-api:ci \
             python -c "import sys, importlib.metadata as m; print('sys.path:', *sys.path, sep='\\n  '); print('wheel:', m.version('wheel')); print('jaraco.context:', m.version('jaraco.context'))"
           docker run --rm cleanwithsnapshot-api:ci sh -lc "\
-            find / -type d \\( -name 'wheel-*.dist-info' -o -name 'jaraco.context-*.dist-info' \\) 2>/dev/null | \
-            sed -e 's/^/FOUND: /'"
+            set -e; \
+            echo '=== FIND wheel/jaraco dist-info ==='; \
+            find / -type d \\( -name 'wheel-*.dist-info' -o -name 'jaraco.context-*.dist-info' \\) 2>/dev/null | sort | sed 's/^/FOUND: /'; \
+            echo '=== DONE ==='"
 
       - name: Install Trivy CLI
         run: |

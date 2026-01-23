@@ -11,20 +11,14 @@ RUN apt-get update \
         setuptools==78.1.1 \
         wheel==0.46.2 \
         jaraco.context==6.1.0 \
-    && rm -rf \
-        /usr/local/lib/python*/site-packages/wheel-*.dist-info \
-        /usr/local/lib/python*/site-packages/wheel \
-        /usr/local/lib/python*/site-packages/jaraco.context-*.dist-info \
-        /usr/local/lib/python*/site-packages/jaraco/context* \
-        /usr/lib/python*/dist-packages/wheel-*.dist-info \
-        /usr/lib/python*/dist-packages/wheel \
-        /usr/lib/python*/dist-packages/jaraco.context-*.dist-info \
-        /usr/lib/python*/dist-packages/jaraco/context* \
-        || true \
-    && python -m pip install --no-cache-dir --upgrade --force-reinstall --no-deps \
-        wheel==0.46.2 \
-        jaraco.context==6.1.0 \
-    && python -m pip install --no-cache-dir --upgrade -r requirements.txt
+    && python -m pip install --no-cache-dir --upgrade -r requirements.txt \
+    && set -e; \
+        echo "Cleaning stale dist-info..."; \
+        find /usr /usr/local -type d -name 'wheel-*.dist-info' 2>/dev/null | grep -v 'wheel-0.46.2.dist-info' | xargs -r rm -rf; \
+        find /usr /usr/local -type d -name 'jaraco.context-*.dist-info' 2>/dev/null | grep -v 'jaraco.context-6.1.0.dist-info' | xargs -r rm -rf; \
+        echo "Verifying stale dist-info removed..."; \
+        test -z "$(find /usr /usr/local -type d -name 'wheel-0.45.1.dist-info' 2>/dev/null)"; \
+        test -z "$(find /usr /usr/local -type d -name 'jaraco.context-5.3.0.dist-info' 2>/dev/null)"
 
 COPY . .
 
