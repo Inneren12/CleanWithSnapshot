@@ -1,3 +1,5 @@
+import atexit
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -15,6 +17,10 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 _TRACING_CONFIGURED = False
 _HTTPX_CONFIGURED = False
 _SQLALCHEMY_ENGINES: set[int] = set()
+_TRACING_SHUTDOWN = False
+_TRACING_SHUTDOWN_REGISTERED = False
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_repo_root() -> Path:
@@ -68,7 +74,7 @@ def _httpx_request_hook(span, request) -> None:  # noqa: ANN001
 
 
 def configure_tracing(*, service_name: str | None = None) -> None:
-    global _TRACING_CONFIGURED, _HTTPX_CONFIGURED
+    global _TRACING_CONFIGURED, _HTTPX_CONFIGURED, _TRACING_SHUTDOWN_REGISTERED
     if _TRACING_CONFIGURED:
         return
 
@@ -87,15 +93,18 @@ def configure_tracing(*, service_name: str | None = None) -> None:
     tracer_provider = TracerProvider(resource=resource)
     trace.set_tracer_provider(tracer_provider)
 
-    exporter_kwargs: dict[str, object] = {}
     otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-    if otlp_endpoint:
-        exporter_kwargs["endpoint"] = otlp_endpoint
-        exporter_kwargs["insecure"] = otlp_endpoint.startswith("http://")
-    else:
-        exporter_kwargs["insecure"] = True
-    exporter = OTLPSpanExporter(**exporter_kwargs)
-    tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+    app_env = os.getenv("APP_ENV", "").lower()
+    is_testing = os.getenv("TESTING", "").lower() == "true" or app_env == "test"
+    if otlp_endpoint and not is_testing:
+        exporter_kwargs: dict[str, object] = {
+            "endpoint": otlp_endpoint,
+            "insecure": otlp_endpoint.startswith("http://"),
+        }
+        exporter = OTLPSpanExporter(**exporter_kwargs)
+        tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+    elif not otlp_endpoint and not is_testing:
+        logger.debug("tracing_exporter_skipped_no_endpoint")
 
     if not _HTTPX_CONFIGURED:
         HTTPXClientInstrumentor().instrument(
@@ -106,11 +115,15 @@ def configure_tracing(*, service_name: str | None = None) -> None:
 
     _TRACING_CONFIGURED = True
 
+    if not _TRACING_SHUTDOWN_REGISTERED:
+        atexit.register(shutdown_tracing)
+        _TRACING_SHUTDOWN_REGISTERED = True
 
-def instrument_fastapi(app: FastAPI) -> None:
+
+def instrument_fastapi(app: FastAPI, *, tracer_provider=None) -> None:  # noqa: ANN001
     FastAPIInstrumentor().instrument_app(
         app,
-        tracer_provider=trace.get_tracer_provider(),
+        tracer_provider=tracer_provider or trace.get_tracer_provider(),
         server_request_hook=_fastapi_request_hook,
     )
 
@@ -127,3 +140,21 @@ def instrument_sqlalchemy(engine) -> None:  # noqa: ANN001
         capture_statement=False,
     )
     _SQLALCHEMY_ENGINES.add(engine_id)
+
+
+def shutdown_tracing(*, force_flush: bool = True) -> None:
+    global _TRACING_SHUTDOWN
+    if _TRACING_SHUTDOWN:
+        return
+    _TRACING_SHUTDOWN = True
+    try:
+        tracer_provider = trace.get_tracer_provider()
+        if force_flush:
+            flush = getattr(tracer_provider, "force_flush", None)
+            if callable(flush):
+                flush()
+        shutdown = getattr(tracer_provider, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tracing_shutdown_failed", extra={"extra": {"error": type(exc).__name__}})

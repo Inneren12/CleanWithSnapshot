@@ -12,7 +12,7 @@ from app.infra.db import get_session_factory
 from app.infra.email import EmailAdapter, resolve_email_adapter
 from app.infra.logging import clear_log_context
 from app.infra.metrics import configure_metrics, metrics
-from app.infra.tracing import configure_tracing
+from app.infra.tracing import configure_tracing, shutdown_tracing
 from app.jobs.heartbeat import _resolve_runner_id, record_heartbeat
 from app.jobs import (
     accounting_export,
@@ -172,7 +172,7 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
     raise ValueError(f"unknown_job:{name}")
 
 
-async def main(argv: list[str] | None = None) -> None:
+async def run(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run scheduled jobs")
     parser.add_argument("--job", action="append", dest="jobs", help="Job name to run")
     parser.add_argument("--interval", type=int, default=60, help="Seconds between loops when not using --once")
@@ -181,51 +181,58 @@ async def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     configure_tracing(service_name="jobs")
-    global _ADAPTER, _STORAGE, _COMMUNICATION
-    _ADAPTER = resolve_email_adapter(settings)
-    _STORAGE = new_storage_backend()
-    _COMMUNICATION = resolve_communication_adapter(settings)
-    configure_metrics(settings.metrics_enabled, service_name=settings.app_name)
-    session_factory = get_session_factory()
+    try:
+        global _ADAPTER, _STORAGE, _COMMUNICATION
+        _ADAPTER = resolve_email_adapter(settings)
+        _STORAGE = new_storage_backend()
+        _COMMUNICATION = resolve_communication_adapter(settings)
+        configure_metrics(settings.metrics_enabled, service_name=settings.app_name)
+        session_factory = get_session_factory()
 
-    job_names = args.jobs or [
-        "booking-reminders",
-        "invoice-reminders",
-        "nps-send-runner",
-        "email-dlq",
-        "outbox-delivery",
-        "dlq-auto-replay",
-        "storage-janitor",
-        "notifications-digest-daily",
-        "notifications-digest-weekly",
-        "notifications-digest-monthly",
-        "gcal-sync",
-        "qbo-sync",
-        "leads-nurture-runner",
-    ]
-    runners = [_job_runner(name, base_url=args.base_url) for name in job_names]
+        job_names = args.jobs or [
+            "booking-reminders",
+            "invoice-reminders",
+            "nps-send-runner",
+            "email-dlq",
+            "outbox-delivery",
+            "dlq-auto-replay",
+            "storage-janitor",
+            "notifications-digest-daily",
+            "notifications-digest-weekly",
+            "notifications-digest-monthly",
+            "gcal-sync",
+            "qbo-sync",
+            "leads-nurture-runner",
+        ]
+        runners = [_job_runner(name, base_url=args.base_url) for name in job_names]
 
-    runner_id = _resolve_runner_id(settings.job_runner_id)
+        runner_id = _resolve_runner_id(settings.job_runner_id)
 
-    while True:
-        for name, runner in zip(job_names, runners):
-            try:
-                await _run_job(name, session_factory, runner, runner_id=runner_id)
-            except Exception as exc:  # noqa: BLE001
-                metrics.record_email_job(name, "error")
-                logger.warning("job_failed", extra={"extra": {"job": name, "reason": type(exc).__name__}})
-                await _record_job_result(
-                    session_factory,
-                    name,
-                    success=False,
-                    error_reason=type(exc).__name__,
-                    runner_id=runner_id,
-                )
-        await record_heartbeat(session_factory, name="jobs-runner", runner_id=runner_id)
-        await _notify_external_heartbeat(settings.better_stack_heartbeat_url)
-        if args.once:
-            break
-        await asyncio.sleep(max(args.interval, 1))
+        while True:
+            for name, runner in zip(job_names, runners):
+                try:
+                    await _run_job(name, session_factory, runner, runner_id=runner_id)
+                except Exception as exc:  # noqa: BLE001
+                    metrics.record_email_job(name, "error")
+                    logger.warning("job_failed", extra={"extra": {"job": name, "reason": type(exc).__name__}})
+                    await _record_job_result(
+                        session_factory,
+                        name,
+                        success=False,
+                        error_reason=type(exc).__name__,
+                        runner_id=runner_id,
+                    )
+            await record_heartbeat(session_factory, name="jobs-runner", runner_id=runner_id)
+            await _notify_external_heartbeat(settings.better_stack_heartbeat_url)
+            if args.once:
+                break
+            await asyncio.sleep(max(args.interval, 1))
+    finally:
+        shutdown_tracing()
+
+
+async def main(argv: list[str] | None = None) -> None:
+    await run(argv)
 
 
 if __name__ == "__main__":
