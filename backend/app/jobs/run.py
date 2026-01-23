@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
@@ -210,8 +211,10 @@ async def run(argv: list[str] | None = None) -> None:
 
         while True:
             for name, runner in zip(job_names, runners):
+                started_at = time.monotonic()
                 try:
                     await _run_job(name, session_factory, runner, runner_id=runner_id)
+                    metrics.record_job_run(name, "success")
                 except Exception as exc:  # noqa: BLE001
                     metrics.record_email_job(name, "error")
                     logger.warning("job_failed", extra={"extra": {"job": name, "reason": type(exc).__name__}})
@@ -222,6 +225,9 @@ async def run(argv: list[str] | None = None) -> None:
                         error_reason=type(exc).__name__,
                         runner_id=runner_id,
                     )
+                    metrics.record_job_run(name, "error")
+                finally:
+                    metrics.record_job_duration(name, time.monotonic() - started_at)
             await record_heartbeat(session_factory, name="jobs-runner", runner_id=runner_id)
             await _notify_external_heartbeat(settings.better_stack_heartbeat_url)
             if args.once:
