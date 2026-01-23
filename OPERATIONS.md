@@ -176,6 +176,9 @@ git reset --hard <sha>
 those images with Trivy. The job **fails on CRITICAL vulnerabilities** so releases are blocked until critical
 issues are addressed. Trivy JSON reports are uploaded as CI artifacts for review.
 
+**Policy note:** We run Trivy with `TRIVY_IGNORE_UNFIXED=true`, and CI fails only when a HIGH/CRITICAL finding
+has a fix available. To enforce the stricter mode (fail on any HIGH/CRITICAL), set `TRIVY_IGNORE_UNFIXED=false`.
+
 **Remediation workflow:**
 
 1. **Identify the affected component** in the Trivy report (base image, OS package, or application dependency).

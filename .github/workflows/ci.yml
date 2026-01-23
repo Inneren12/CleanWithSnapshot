@@ -319,6 +319,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
+      TRIVY_IGNORE_UNFIXED: "true"
+      TRIVY_SEVERITY: "CRITICAL,HIGH"
 
     steps:
       - name: Checkout code
@@ -447,6 +449,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           reports = [
@@ -454,20 +457,77 @@ jobs:
               Path("trivy-cleanwithsnapshot-web.json"),
           ]
 
-          def has_high_critical(report: Path) -> bool:
-              if not report.exists():
-                  return False
-              data = json.loads(report.read_text())
-              for r in data.get("Results", []) or []:
-                  for v in (r.get("Vulnerabilities") or []):
-                      if v.get("Severity") in ("CRITICAL", "HIGH"):
-                          # ignore-unfixed уже применён Trivy action'ом,
-                          # но если вдруг нет — можно дополнительно проверять FixedVersion.
-                          return True
-              return False
+          truthy = {"1", "true", "yes", "on"}
+          ignore_unfixed = os.getenv("TRIVY_IGNORE_UNFIXED", "false").strip().lower() in truthy
 
-          hit = any(has_high_critical(p) for p in reports)
-          raise SystemExit(1 if hit else 0)
+          def status_indicates_fix(status: str) -> bool:
+              if not status:
+                  return False
+              return status.strip().lower() == "fixed"
+
+          def status_indicates_no_fix(status: str) -> bool:
+              if not status:
+                  return False
+              return status.strip().lower() in {"affected", "will_not_fix", "unfixed", "not_fixed", "unknown"}
+
+          def summarize_report(report: Path) -> tuple[int, int, list[dict]]:
+              if not report.exists():
+                  print(f"Error: missing Trivy report {report}")
+                  return 0, 0, []
+              data = json.loads(report.read_text())
+              total = 0
+              fixable = 0
+              details = []
+              for result in data.get("Results", []) or []:
+                  for vuln in (result.get("Vulnerabilities") or []):
+                      severity = vuln.get("Severity")
+                      if severity not in ("CRITICAL", "HIGH"):
+                          continue
+                      total += 1
+                      fixed = (vuln.get("FixedVersion") or "").strip()
+                      status = (vuln.get("Status") or "").strip()
+                      fixable_hit = True
+                      if ignore_unfixed:
+                          if status_indicates_no_fix(status):
+                              fixable_hit = False
+                          else:
+                              fixable_hit = bool(fixed or status_indicates_fix(status))
+                      if fixable_hit:
+                          fixable += 1
+                      details.append(
+                          {
+                              "PkgName": vuln.get("PkgName"),
+                              "InstalledVersion": vuln.get("InstalledVersion"),
+                              "FixedVersion": vuln.get("FixedVersion"),
+                              "VulnerabilityID": vuln.get("VulnerabilityID"),
+                              "Severity": severity,
+                          }
+                      )
+              return total, fixable, details
+
+          missing_reports = [p for p in reports if not p.exists()]
+          if missing_reports:
+              print("Missing Trivy reports:", ", ".join(str(p) for p in missing_reports))
+              raise SystemExit(2)
+
+          overall_fixable = 0
+          for report in reports:
+              total, fixable, details = summarize_report(report)
+              overall_fixable += fixable
+              print(f"Trivy gate summary for {report}:")
+              print(f"  HIGH/CRITICAL total: {total}")
+              print(f"  Fixable HIGH/CRITICAL (gate): {fixable}")
+              for entry in sorted(
+                  details,
+                  key=lambda d: (d["Severity"] != "CRITICAL", d["PkgName"] or "", d["VulnerabilityID"] or ""),
+              )[:10]:
+                  print(
+                      "  "
+                      f'{entry["Severity"]} {entry["VulnerabilityID"]} '
+                      f'{entry["PkgName"]} {entry["InstalledVersion"]} -> {entry["FixedVersion"]}'
+                  )
+
+          raise SystemExit(1 if overall_fixable else 0)
           PY
 
 
