@@ -1,0 +1,140 @@
+name: E2E - Playwright Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  e2e:
+    name: E2E - Playwright (Chrome)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      COMPOSE_PROJECT_NAME: cleanwithsnapshot-e2e
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Display Node version
+        run: node --version
+
+      - name: Create CI .env for compose
+        run: |
+          cat > .env <<'EOF'
+          APP_ENV=dev
+          TESTING=true
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres
+          POSTGRES_DB=cleaning
+          DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/cleaning
+          NEXT_PUBLIC_API_BASE_URL=http://api:8000
+          EOF
+
+      - name: Start Docker Compose stack
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait db redis api web
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for API health check..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8000/healthz > /dev/null; do sleep 2; done' || {
+            echo "API health check failed after 60s"
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml logs api
+            exit 1
+          }
+          echo "✓ API is healthy"
+
+          echo "Waiting for Web to be ready..."
+          timeout 60 bash -c 'until curl -sf http://localhost:3000 > /dev/null; do sleep 2; done' || {
+            echo "Web health check failed after 60s"
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml logs web
+            exit 1
+          }
+          echo "✓ Web is ready"
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Install Playwright (ephemeral)
+        working-directory: web
+        run: |
+          echo "Installing Playwright without modifying package manifests..."
+          npm i -D --no-save --no-package-lock @playwright/test playwright
+          echo "✓ Playwright installed ephemerally"
+
+      - name: Run Playwright E2E tests
+        working-directory: .
+        run: |
+          echo "Running Playwright tests from e2e directory..."
+          cd e2e
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+          PW_CHANNEL=chrome \
+          PLAYWRIGHT_BASE_URL=http://localhost:3000 \
+          PLAYWRIGHT_API_BASE_URL=http://localhost:8000 \
+          ADMIN_BASIC_USERNAME=admin \
+          ADMIN_BASIC_PASSWORD=admin123 \
+          npx --prefix ../web playwright test --config=playwright.config.ts
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 7
+
+      - name: Capture compose logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml ps > compose-ps-e2e.txt
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color > compose-e2e.log
+
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-e2e-logs
+          path: |
+            compose-e2e.log
+            compose-ps-e2e.txt
+
+      - name: Tear down Docker Compose stack
+        if: always()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
+
+      - name: Cleanup CI .env
+        if: always()
+        run: rm -f .env
+
+      - name: Verify no package manifest changes
+        if: always()
+        run: |
+          if git diff --exit-code web/package.json web/package-lock.json; then
+            echo "✓ No package manifest changes detected"
+          else
+            echo "❌ Package manifests were modified (should be ephemeral)"
+            git diff web/package.json web/package-lock.json
+            exit 1
+          fi
