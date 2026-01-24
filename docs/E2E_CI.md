@@ -2,6 +2,9 @@
 
 This repo runs Playwright E2E with Docker Compose and ephemeral Playwright deps.
 
+> Note: `web/vitest.config.ts` is excluded from Next.js typechecking in production builds,
+> so Vitest is not required for the Docker image.
+
 ## Local run (mirrors CI)
 
 ```bash
