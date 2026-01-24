@@ -41,9 +41,17 @@ jobs:
           from pathlib import Path
 
           text = Path("backend/app/settings.py").read_text(encoding="utf-8")
-          keys = sorted(set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", text)))
+          keys = set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", text))
+          keys.update(re.findall(r"([A-Z0-9_]+) is required when", text))
+          keys.add("METRICS_TOKEN")
+          keys = sorted(keys)
           if not keys:
-            keys = ["AUTH_SECRET_KEY", "CLIENT_PORTAL_SECRET", "WORKER_PORTAL_SECRET"]
+            keys = [
+              "AUTH_SECRET_KEY",
+              "CLIENT_PORTAL_SECRET",
+              "WORKER_PORTAL_SECRET",
+              "METRICS_TOKEN",
+            ]
           print("\n".join(keys))
           PY
           while read -r key; do
@@ -55,9 +63,17 @@ jobs:
           from pathlib import Path
 
           text = Path("backend/app/settings.py").read_text(encoding="utf-8")
-          keys = sorted(set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", text)))
+          keys = set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", text))
+          keys.update(re.findall(r"([A-Z0-9_]+) is required when", text))
+          keys.add("METRICS_TOKEN")
+          keys = sorted(keys)
           if not keys:
-            keys = ["AUTH_SECRET_KEY", "CLIENT_PORTAL_SECRET", "WORKER_PORTAL_SECRET"]
+            keys = [
+              "AUTH_SECRET_KEY",
+              "CLIENT_PORTAL_SECRET",
+              "WORKER_PORTAL_SECRET",
+              "METRICS_TOKEN",
+            ]
           for key in keys:
             print(f"{key}=ci-{secrets.token_hex(32)}")
           PY
@@ -66,7 +82,7 @@ jobs:
       - name: Verify ENV_FILE secrets are present
         run: |
           echo "ENV_FILE=$ENV_FILE"
-          grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET)=' backend/.env.e2e.ci \
+          grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN)=' backend/.env.e2e.ci \
             | sed -E 's/=.*/=<redacted>/'
 
       - name: Compose up (E2E override)
