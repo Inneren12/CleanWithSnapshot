@@ -12,8 +12,8 @@ cd web
 npm ci
 npm i -D --no-save --no-package-lock @playwright/test playwright
 
-PLAYWRIGHT_BASE_URL=http://localhost:3000 \
-PLAYWRIGHT_API_BASE_URL=http://localhost:8000 \
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
+PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:8000 \
 ADMIN_BASIC_USERNAME=e2e \
 ADMIN_BASIC_PASSWORD=pass \
 PW_CHANNEL=chrome \

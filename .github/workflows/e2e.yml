@@ -39,9 +39,25 @@ jobs:
 
       - name: Wait for stack readiness
         run: |
-          for i in {1..60}; do curl -fsS http://localhost:8000/healthz && break || sleep 2; done
-          for i in {1..60}; do curl -fsS http://localhost:8000/readyz && break || sleep 2; done
-          for i in {1..60}; do curl -fsS http://localhost:3000/ >/dev/null && break || sleep 2; done
+          wait_on() {
+            local url=$1
+            local name=$2
+            local ok=0
+            for i in {1..60}; do
+              if curl -fsS "$url" >/dev/null; then
+                ok=1
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "Timed out waiting for ${name} at ${url}"
+              return 1
+            fi
+          }
+          wait_on "http://127.0.0.1:8000/healthz" "api healthz"
+          wait_on "http://127.0.0.1:8000/readyz" "api readyz"
+          wait_on "http://127.0.0.1:3000/" "web"
 
       - name: Install web dependencies
         working-directory: web
@@ -60,17 +76,34 @@ jobs:
         env:
           PW_CHANNEL: chrome
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-          PLAYWRIGHT_BASE_URL: http://localhost:3000
-          PLAYWRIGHT_API_BASE_URL: http://localhost:8000
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+          PLAYWRIGHT_API_BASE_URL: http://127.0.0.1:8000
           ADMIN_BASIC_USERNAME: ${{ env.ADMIN_BASIC_USERNAME }}
           ADMIN_BASIC_PASSWORD: ${{ env.ADMIN_BASIC_PASSWORD }}
         run: |
           PW_CHANNEL=chrome PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
-          PLAYWRIGHT_BASE_URL=http://localhost:3000 \
-          PLAYWRIGHT_API_BASE_URL=http://localhost:8000 \
+          PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
+          PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:8000 \
           ADMIN_BASIC_USERNAME="$ADMIN_BASIC_USERNAME" \
           ADMIN_BASIC_PASSWORD="$ADMIN_BASIC_PASSWORD" \
           npx playwright test --config e2e/playwright.config.ts
+
+      - name: Collect compose diagnostics
+        if: failure()
+        run: |
+          {
+            echo "== docker compose ps =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps
+            echo ""
+            echo "== docker compose port api 8000 =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml port api 8000 || true
+            echo ""
+            echo "== docker compose logs api (tail) =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs api --tail=300 || true
+            echo ""
+            echo "== docker compose logs db (tail) =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs db --tail=200 || true
+          } > e2e-compose-diagnostics.log
 
       - name: Upload Playwright report
         if: always()
@@ -85,6 +118,13 @@ jobs:
         with:
           name: playwright-test-results
           path: web/test-results/**
+
+      - name: Upload compose diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-compose-diagnostics
+          path: e2e-compose-diagnostics.log
 
       - name: Compose down
         if: always()
