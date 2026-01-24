@@ -610,7 +610,7 @@ export default function HomePage() {
   const submitMessage = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed || !sessionReady) {
+      if (!trimmed || (!sessionReady && !isE2E)) {
         return;
       }
       setMessages((prev) => [...prev, { role: 'user', text: trimmed }]);
@@ -1085,9 +1085,13 @@ export default function HomePage() {
                     placeholder="Type your message..."
                     value={messageInput}
                     onChange={(event) => setMessageInput(event.target.value)}
-                    disabled={loading || !sessionReady}
+                    disabled={loading || (!sessionReady && !isE2E)}
                   />
-                  <button className="btn btn-primary" type="submit" disabled={loading || !sessionReady || !messageInput.trim()}>
+                  <button
+                    className="btn btn-primary"
+                    type="submit"
+                    disabled={loading || (!sessionReady && !isE2E) || !messageInput.trim()}
+                  >
                     {loading ? 'Sending...' : 'Send'}
                   </button>
                 </form>

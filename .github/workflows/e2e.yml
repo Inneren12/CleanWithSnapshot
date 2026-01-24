@@ -28,15 +28,11 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      - name: Generate CI-only admin credentials
-        run: |
-          echo "ADMIN_BASIC_USERNAME=e2e" >> "$GITHUB_ENV"
-          echo "ADMIN_BASIC_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')" >> "$GITHUB_ENV"
-
       - name: Generate CI env file with required prod secrets
         run: |
           cp backend/.env.example backend/.env.e2e.ci
           python - <<'PY'
+          import os
           import re
           import secrets
           from pathlib import Path
@@ -51,6 +47,9 @@ jobs:
               "CLIENT_PORTAL_SECRET",
               "WORKER_PORTAL_SECRET",
               "METRICS_TOKEN",
+              "ADMIN_BASIC_USERNAME",
+              "ADMIN_BASIC_PASSWORD",
+              "LEGACY_BASIC_AUTH_ENABLED",
             }
           )
           keys = sorted(keys)
@@ -59,17 +58,33 @@ jobs:
           filtered = [
             line for line in lines if not any(line.startswith(f"{key}=") for key in keys)
           ]
-          generated = [f"{key}=ci-{secrets.token_hex(32)}" for key in keys]
+          admin_username = "e2e"
+          admin_password = f"ci-{secrets.token_hex(32)}"
+          overrides = {
+            "ADMIN_BASIC_USERNAME": admin_username,
+            "ADMIN_BASIC_PASSWORD": admin_password,
+            "LEGACY_BASIC_AUTH_ENABLED": "true",
+          }
+          generated = [
+            f"{key}={overrides.get(key, f'ci-{secrets.token_hex(32)}')}" for key in keys
+          ]
           env_path.write_text("\n".join(filtered + generated) + "\n", encoding="utf-8")
-          Path("/tmp/e2e_secret_keys.txt").write_text("\n".join(keys), encoding="utf-8")
+
+          github_env = Path(os.environ["GITHUB_ENV"])
+          github_env.write_text(
+            github_env.read_text(encoding="utf-8")
+            + f"ADMIN_BASIC_USERNAME={admin_username}\n"
+            + f"ADMIN_BASIC_PASSWORD={admin_password}\n"
+            + "ENV_FILE=backend/.env.e2e.ci\n",
+            encoding="utf-8",
+          )
           PY
-          echo "ENV_FILE=backend/.env.e2e.ci" >> "$GITHUB_ENV"
 
       - name: Verify ENV_FILE secrets are present
         run: |
           echo "ENV_FILE=$ENV_FILE"
           grep -q '^AUTH_SECRET_KEY=' backend/.env.e2e.ci
-          grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN)=' backend/.env.e2e.ci \
+          grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN|ADMIN_BASIC_USERNAME|ADMIN_BASIC_PASSWORD|LEGACY_BASIC_AUTH_ENABLED)=' backend/.env.e2e.ci \
             | sed -E 's/=.*/=<redacted>/'
 
       - name: Compose up (E2E override)
@@ -117,6 +132,15 @@ jobs:
           wait_on "http://127.0.0.1:8000/healthz" "api healthz"
           wait_on "http://127.0.0.1:8000/readyz" "api readyz"
           wait_on "http://127.0.0.1:3000/" "web"
+
+      - name: Preflight admin auth
+        run: |
+          if ! curl -fsS -u "$ADMIN_BASIC_USERNAME:$ADMIN_BASIC_PASSWORD" http://127.0.0.1:8000/v1/admin/profile >/dev/null; then
+            echo "Admin auth preflight failed."
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
+            exit 1
+          fi
 
       - name: Install web dependencies
         working-directory: web
