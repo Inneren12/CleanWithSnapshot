@@ -35,7 +35,18 @@ jobs:
           echo "ADMIN_BASIC_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')" >> "$GITHUB_ENV"
 
       - name: Compose up (E2E override)
-        run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait
+        run: |
+          set +e
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300
+          status=$?
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 api || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
+          api_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q api)
+          if [ -n "$api_container_id" ]; then
+            docker inspect "$api_container_id" --format '{{json .State.Health}}' || true
+          fi
+          exit $status
 
       - name: Compose diagnostics (post-up)
         run: |
