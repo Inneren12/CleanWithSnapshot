@@ -18,7 +18,6 @@ jobs:
       POSTGRES_DB: cleaning
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      ENV_FILE: backend/.env.example
 
     steps:
       - name: Checkout code
@@ -34,12 +33,22 @@ jobs:
           echo "ADMIN_BASIC_USERNAME=e2e" >> "$GITHUB_ENV"
           echo "ADMIN_BASIC_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')" >> "$GITHUB_ENV"
 
-      - name: Generate CI auth secret
+      - name: Generate CI env file with required prod secrets
         run: |
-          python - <<'PY' >> "$GITHUB_ENV"
+          cp backend/.env.example backend/.env.e2e.ci
+          python - <<'PY' >> backend/.env.e2e.ci
+          import re
           import secrets
-          print(f"AUTH_SECRET_KEY=ci-{secrets.token_hex(32)}")
+          from pathlib import Path
+
+          text = Path("backend/app/settings.py").read_text(encoding="utf-8")
+          keys = sorted(set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", text)))
+          if not keys:
+            keys = ["AUTH_SECRET_KEY", "CLIENT_PORTAL_SECRET", "WORKER_PORTAL_SECRET"]
+          for key in keys:
+            print(f"{key}=ci-{secrets.token_hex(32)}")
           PY
+          echo "ENV_FILE=backend/.env.e2e.ci" >> "$GITHUB_ENV"
 
       - name: Compose up (E2E override)
         run: |
