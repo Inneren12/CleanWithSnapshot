@@ -148,6 +148,39 @@ jobs:
           # CI-safe environment variable for Next.js build
           NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000"
 
+  web-vitest:
+    name: Web - Vitest (Coverage, Soft Gate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install ephemeral Vitest deps
+        run: npm install --no-save vitest @testing-library/react @testing-library/jest-dom jsdom
+
+      - name: Run Vitest with coverage (soft gate)
+        continue-on-error: true
+        run: npx vitest run --coverage
+
+      - name: Upload Vitest coverage artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vitest-coverage
+          path: web/coverage/
+
   api-prod-config:
     name: API - Prod Config Validation
     runs-on: ubuntu-latest
