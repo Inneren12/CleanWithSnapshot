@@ -617,7 +617,7 @@ if (visibilityReady && !dashboardVisible) {
 return (
   <div className="admin-page">
     <AdminNav links={navLinks} activeKey="dashboard" />
-    <div className="admin-section">
+    <div className="admin-section" data-testid="admin-shell-ready">
       <h1>Admin / Dispatcher</h1>
       <p className="muted">Save credentials locally, then load leads, bookings, and exports.</p>
     </div>
