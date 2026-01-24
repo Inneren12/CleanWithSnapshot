@@ -1,0 +1,10 @@
+# E2E-specific compose override
+# Used only in CI E2E workflow to inject ephemeral admin credentials
+# These credentials are generated at runtime and never committed
+
+services:
+  api:
+    environment:
+      # Admin BasicAuth credentials (generated at CI runtime)
+      ADMIN_BASIC_USERNAME: ${ADMIN_BASIC_USERNAME:-e2e}
+      ADMIN_BASIC_PASSWORD: ${ADMIN_BASIC_PASSWORD:-e2e}

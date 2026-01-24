@@ -43,25 +43,77 @@ This prevents E2E test files from being copied into the production Docker image,
 - E2E tests run in CI on the GitHub Actions runner filesystem, not inside the Docker container
 - The running web service never needs test files
 
-### Required GitHub Secrets
+### Ephemeral Admin Credentials (No Secrets Required)
 
-The E2E workflow requires admin credentials to be configured as GitHub repository secrets:
+The E2E workflow generates **ephemeral admin credentials at runtime** and injects them into the stack. This approach:
+- ✅ Works for PRs from forks (GitHub doesn't pass secrets to fork PRs)
+- ✅ Requires zero configuration (no secrets to set up)
+- ✅ Credentials exist only during CI run (never committed or logged)
+- ✅ New random password generated for each test run
 
-- `E2E_ADMIN_BASIC_USERNAME`: Admin username for E2E tests (matches your API's admin basic auth)
-- `E2E_ADMIN_BASIC_PASSWORD`: Admin password for E2E tests
+**How it works:**
 
-**How to set secrets:**
-1. Go to your repository on GitHub
-2. Navigate to Settings → Secrets and variables → Actions
-3. Click "New repository secret"
-4. Add `E2E_ADMIN_BASIC_USERNAME` with your admin username value
-5. Add `E2E_ADMIN_BASIC_PASSWORD` with your admin password value
+1. **Generation** (after checkout):
+   ```bash
+   ADMIN_BASIC_USERNAME=e2e-admin
+   ADMIN_BASIC_PASSWORD=$(openssl rand -base64 24)  # Random 24-char password
+   ```
 
-**Important:** These credentials must match the basic auth credentials configured in your API/backend for the admin endpoints. The admin test verifies credentials by calling `GET /v1/admin/profile` with Basic Authentication.
+2. **Injection** (via `docker-compose.e2e.yml` override):
+   ```yaml
+   services:
+     api:
+       environment:
+         ADMIN_BASIC_USERNAME: ${ADMIN_BASIC_USERNAME}
+         ADMIN_BASIC_PASSWORD: ${ADMIN_BASIC_PASSWORD}
+   ```
 
-If secrets are not set, the admin E2E test will fail with:
-```
-E2E admin credentials not configured. Set ADMIN_BASIC_USERNAME and ADMIN_BASIC_PASSWORD environment variables.
+3. **Verification** (before Playwright tests):
+   ```bash
+   curl -u "$ADMIN_BASIC_USERNAME:$ADMIN_BASIC_PASSWORD" \
+     http://localhost:8000/v1/admin/profile
+   ```
+   If this fails, the workflow stops before running E2E tests.
+
+4. **Playwright tests** receive the same credentials via environment variables:
+   ```yaml
+   env:
+     ADMIN_BASIC_USERNAME: ${{ env.ADMIN_BASIC_USERNAME }}
+     ADMIN_BASIC_PASSWORD: ${{ env.ADMIN_BASIC_PASSWORD }}
+   ```
+
+**Security notes:**
+- Credentials are **never logged** (sanity check uses `-fsS` curl flags)
+- Credentials are **not in artifacts** (only in runner environment)
+- Each CI run uses a **different random password**
+- Credentials are **scoped to the CI job** (cleared after teardown)
+
+**Why no GitHub Secrets?**
+GitHub doesn't pass repository secrets to workflows triggered by PRs from forks (security measure). Using runtime-generated credentials ensures E2E tests work for **all PRs**, including external contributions.
+
+**Running locally with ephemeral credentials:**
+```bash
+# Set ephemeral admin credentials
+export ADMIN_BASIC_USERNAME=e2e-local
+export ADMIN_BASIC_PASSWORD=test123
+
+# Start stack with E2E override
+docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d
+
+# Verify admin auth works
+curl -u "e2e-local:test123" http://localhost:8000/v1/admin/profile
+
+# Run E2E tests (from web/ directory)
+cd web
+npm ci
+npm i -D --no-save --no-package-lock @playwright/test playwright
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+PW_CHANNEL=chrome \
+PLAYWRIGHT_BASE_URL=http://localhost:3000 \
+PLAYWRIGHT_API_BASE_URL=http://localhost:8000 \
+ADMIN_BASIC_USERNAME=e2e-local \
+ADMIN_BASIC_PASSWORD=test123 \
+npx playwright test --config e2e/playwright.config.ts
 ```
 
 ### Test Selector Strategy
@@ -92,17 +144,24 @@ E2E tests use **stable selectors** to avoid brittle failures:
 - **Checkout code** with `actions/checkout@v4`
 - **Node.js setup** using `.nvmrc` version
 - **Create CI `.env`** with test credentials (postgres, API URLs)
+- **Generate ephemeral admin credentials** (random 24-char password, username=`e2e-admin`)
 
 ### 2. Stack Orchestration
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait db redis api web
+docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml up -d --wait db redis api web
 ```
+
+**Compose overrides:**
+- `docker-compose.yml`: Base stack (db, redis, api, web, jobs, caddy)
+- `docker-compose.ci.yml`: CI ports and API URL overrides
+- `docker-compose.e2e.yml`: **Ephemeral admin credentials injection** (only for E2E)
 
 **Health checks:**
 - API: polls `http://localhost:8000/healthz` (60s timeout)
 - Web: polls `http://localhost:3000` (60s timeout)
+- **Admin auth:** verifies ephemeral credentials work via `GET /v1/admin/profile`
 
-If health checks fail, the workflow dumps service logs and exits.
+If health checks or admin auth verification fail, the workflow dumps service logs and exits.
 
 ### 3. Playwright Installation (Ephemeral)
 ```bash
@@ -131,8 +190,6 @@ PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
 PW_CHANNEL=chrome \
 PLAYWRIGHT_BASE_URL=http://localhost:3000 \
 PLAYWRIGHT_API_BASE_URL=http://localhost:8000 \
-ADMIN_BASIC_USERNAME=admin \
-ADMIN_BASIC_PASSWORD=admin123 \
 npx playwright test --config e2e/playwright.config.ts
 ```
 
@@ -141,7 +198,10 @@ npx playwright test --config e2e/playwright.config.ts
 - `PW_CHANNEL=chrome`: Force Chrome (not Chromium)
 - `PLAYWRIGHT_BASE_URL`: Web UI endpoint
 - `PLAYWRIGHT_API_BASE_URL`: API endpoint
-- `ADMIN_BASIC_USERNAME/PASSWORD`: Admin credentials for auth tests
+- `ADMIN_BASIC_USERNAME`: Ephemeral admin username (generated at runtime: `e2e-admin`)
+- `ADMIN_BASIC_PASSWORD`: Ephemeral admin password (random 24-char string per run)
+
+**Note:** Admin credentials are passed from the CI environment (generated earlier in the workflow), not hardcoded. This ensures tests work even for PRs from forks where GitHub Secrets are unavailable.
 
 **Test location:** `web/e2e/tests/`
 - `admin-critical.spec.ts`: Admin UI critical flows
@@ -235,7 +295,8 @@ Follow [docs/E2E_LOCAL.md](./E2E_LOCAL.md) to run tests locally against `docker 
 - ✅ Module resolution fixed: `@playwright/test` resolves correctly from `web/e2e/`
 - ✅ Production build isolation: `e2e/` excluded from TypeScript and Docker build
 - ✅ No browser/ffmpeg downloads: video/trace disabled, tests run with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
-- ✅ Admin auth uses GitHub secrets (`E2E_ADMIN_BASIC_USERNAME`, `E2E_ADMIN_BASIC_PASSWORD`)
+- ✅ **Ephemeral admin credentials**: Generated at runtime (no GitHub Secrets, works for fork PRs)
+- ✅ **Admin auth verification**: Pre-flight check before Playwright tests
 - ✅ Stable selectors: `data-testid` attributes for key E2E landmarks
 - ✅ Resilient timeouts: 30s for bot responses, 10s for DOM elements
 
@@ -248,34 +309,40 @@ Admin auth failed (401): {"detail":"Invalid authentication"}
 at helpers/adminAuth.ts:30
 ```
 
-**Root cause:** Either GitHub secrets are not configured, or the credentials don't match what the API expects.
+**Root cause:** The ephemeral admin credentials were not injected correctly into the API service, or the API is not configured to use them.
 
 **Solution:**
 
-1. **Verify secrets are set in GitHub:**
-   - Go to Settings → Secrets and variables → Actions
-   - Ensure `E2E_ADMIN_BASIC_USERNAME` and `E2E_ADMIN_BASIC_PASSWORD` exist
-   - Values must match the admin basic auth credentials in your API
+1. **Check the "Verify admin auth works" step in CI:**
+   - This step runs before Playwright tests and should pass
+   - If it fails, the problem is with credential injection, not Playwright
+   - Review logs from this step to see the curl response
 
-2. **Verify API endpoint is correct:**
-   - Test uses `PLAYWRIGHT_API_BASE_URL` (defaults to `http://localhost:8000`)
-   - In CI, workflow sets this to `http://localhost:8000` (API exposed on runner)
-   - Admin test calls `GET /v1/admin/profile` with Basic Auth
+2. **Verify `docker-compose.e2e.yml` is being used:**
+   - Workflow should use: `-f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml`
+   - This override injects `ADMIN_BASIC_USERNAME` and `ADMIN_BASIC_PASSWORD` into the API
 
-3. **Test locally to verify credentials:**
+3. **Check if API is reading the environment variables:**
+   - API must read admin credentials from `ADMIN_BASIC_USERNAME` and `ADMIN_BASIC_PASSWORD`
+   - Check API logs: `docker compose logs api` (credentials should NOT be logged)
+   - Verify API code reads these env vars for BasicAuth validation
+
+4. **Test locally with ephemeral credentials:**
    ```bash
-   # Replace with your actual credentials
-   curl -u "admin:admin123" http://localhost:8000/v1/admin/profile
+   export ADMIN_BASIC_USERNAME=e2e-local
+   export ADMIN_BASIC_PASSWORD=test123
+   docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d
+   curl -u "e2e-local:test123" http://localhost:8000/v1/admin/profile
    ```
-   Should return 200 with admin profile data, not 401.
+   Should return 200 with admin profile data.
 
-4. **Check if credentials are missing (better error):**
-   If secrets are not set, you'll now get:
+5. **Check if credentials are missing (better error):**
+   If environment variables are not set, you'll get:
    ```
    E2E admin credentials not configured. Set ADMIN_BASIC_USERNAME and ADMIN_BASIC_PASSWORD environment variables.
    ```
 
-**Prevention:** Always set required secrets before enabling E2E workflow on a new repository or branch.
+**Prevention:** Ensure `docker-compose.e2e.yml` is used in all compose commands during E2E workflow.
 
 ### "Cannot find module '@playwright/test'" Error
 **Symptom:** CI fails with `Cannot find module '@playwright/test'` when loading config.
