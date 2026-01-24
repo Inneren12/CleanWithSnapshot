@@ -37,21 +37,28 @@ jobs:
       - name: Compose up (E2E override)
         run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait
 
+      - name: Compose diagnostics (post-up)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml port api 8000 || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
+
       - name: Wait for stack readiness
         run: |
           wait_on() {
             local url=$1
             local name=$2
-            local ok=0
-            for i in {1..60}; do
-              if curl -fsS "$url" >/dev/null; then
-                ok=1
-                break
-              fi
-              sleep 2
-            done
-            if [ "$ok" -ne 1 ]; then
+            if ! curl -fsS --max-time 2 --retry 60 --retry-connrefused --retry-delay 2 "$url" >/dev/null; then
               echo "Timed out waiting for ${name} at ${url}"
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
               return 1
             fi
           }
@@ -95,14 +102,17 @@ jobs:
             echo "== docker compose ps =="
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps
             echo ""
+            echo "== docker compose config =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml config
+            echo ""
             echo "== docker compose port api 8000 =="
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml port api 8000 || true
             echo ""
             echo "== docker compose logs api (tail) =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs api --tail=300 || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=300 || true
             echo ""
             echo "== docker compose logs db (tail) =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs db --tail=200 || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=200 || true
           } > e2e-compose-diagnostics.log
 
       - name: Upload Playwright report
