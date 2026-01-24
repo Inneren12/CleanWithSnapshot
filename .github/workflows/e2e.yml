@@ -36,6 +36,19 @@ jobs:
       - name: Generate CI env file with required prod secrets
         run: |
           cp backend/.env.example backend/.env.e2e.ci
+          python - <<'PY' > /tmp/e2e_secret_keys.txt
+          import re
+          from pathlib import Path
+
+          text = Path("backend/app/settings.py").read_text(encoding="utf-8")
+          keys = sorted(set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", text)))
+          if not keys:
+            keys = ["AUTH_SECRET_KEY", "CLIENT_PORTAL_SECRET", "WORKER_PORTAL_SECRET"]
+          print("\n".join(keys))
+          PY
+          while read -r key; do
+            sed -i "/^${key}=/d" backend/.env.e2e.ci
+          done < /tmp/e2e_secret_keys.txt
           python - <<'PY' >> backend/.env.e2e.ci
           import re
           import secrets
@@ -49,6 +62,12 @@ jobs:
             print(f"{key}=ci-{secrets.token_hex(32)}")
           PY
           echo "ENV_FILE=backend/.env.e2e.ci" >> "$GITHUB_ENV"
+
+      - name: Verify ENV_FILE secrets are present
+        run: |
+          echo "ENV_FILE=$ENV_FILE"
+          grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET)=' backend/.env.e2e.ci \
+            | sed -E 's/=.*/=<redacted>/'
 
       - name: Compose up (E2E override)
         run: |
