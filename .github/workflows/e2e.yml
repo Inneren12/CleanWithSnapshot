@@ -97,11 +97,11 @@ jobs:
           PW_CHANNEL=chrome \
           PLAYWRIGHT_BASE_URL=http://localhost:3000 \
           PLAYWRIGHT_API_BASE_URL=http://localhost:8000 \
-          ADMIN_BASIC_USERNAME=admin \
-          ADMIN_BASIC_PASSWORD=admin123 \
           npx playwright test --config e2e/playwright.config.ts
         env:
           CI: true
+          ADMIN_BASIC_USERNAME: ${{ secrets.E2E_ADMIN_BASIC_USERNAME }}
+          ADMIN_BASIC_PASSWORD: ${{ secrets.E2E_ADMIN_BASIC_PASSWORD }}
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4

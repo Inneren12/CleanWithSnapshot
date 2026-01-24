@@ -10,10 +10,19 @@ test.describe('Public booking flow', () => {
     await chatInput.fill('2 bed 1 bath standard cleaning');
     await page.getByRole('button', { name: 'Send' }).click();
 
-    await expect(page.locator('.messages .message.bot').first()).toBeVisible();
-    await expect(page.getByText('Ready to book', { exact: true })).toBeVisible();
+    // Wait for bot response with increased timeout (CI can be slow)
+    await expect(page.getByTestId('bot-message').first()).toBeVisible({
+      timeout: 30000,
+    });
+
+    // Wait for "Ready to book" pill to appear (indicates estimate is ready)
+    await expect(page.getByTestId('ready-to-book-pill')).toBeVisible({
+      timeout: 30000,
+    });
+
+    // Verify booking details section appears
     await expect(
       page.getByRole('heading', { name: 'Share details to confirm your booking' })
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 10000 });
   });
 });

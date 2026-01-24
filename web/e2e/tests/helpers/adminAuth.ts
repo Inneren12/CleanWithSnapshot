@@ -9,11 +9,23 @@ export type AdminCredentials = {
   apiBaseUrl: string;
 };
 
-export const defaultAdminCredentials = (): AdminCredentials => ({
-  username: process.env.ADMIN_BASIC_USERNAME ?? 'admin',
-  password: process.env.ADMIN_BASIC_PASSWORD ?? 'admin123',
-  apiBaseUrl: process.env.PLAYWRIGHT_API_BASE_URL ?? 'http://localhost:8000',
-});
+export const defaultAdminCredentials = (): AdminCredentials => {
+  const username = process.env.ADMIN_BASIC_USERNAME;
+  const password = process.env.ADMIN_BASIC_PASSWORD;
+  const apiBaseUrl = process.env.PLAYWRIGHT_API_BASE_URL ?? 'http://localhost:8000';
+
+  if (!username || !password) {
+    throw new Error(
+      'E2E admin credentials not configured. Set ADMIN_BASIC_USERNAME and ADMIN_BASIC_PASSWORD environment variables.'
+    );
+  }
+
+  return {
+    username,
+    password,
+    apiBaseUrl,
+  };
+};
 
 export async function verifyAdminCredentials(
   request: APIRequestContext,

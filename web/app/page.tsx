@@ -1003,13 +1003,17 @@ export default function HomePage() {
               </div>
               <div className="card-body">
                 {error ? <p className="alert alert-error">{error}</p> : null}
-                <div className="chat-window">
+                <div className="chat-window" data-testid="booking-chat">
                   {messages.length === 0 ? (
                     <p className="empty-state">Ask anything about your home to get started.</p>
                   ) : (
-                    <ul className="messages">
+                    <ul className="messages" data-testid="chat-messages">
                       {messages.map((message, index) => (
-                        <li key={index} className={`message ${message.role}`}>
+                        <li
+                          key={index}
+                          className={`message ${message.role}`}
+                          data-testid={message.role === 'bot' ? 'bot-message' : 'user-message'}
+                        >
                           <span className="message-role">{message.role === 'user' ? 'You' : 'Bot'}</span>
                           <p className="message-text">{message.text}</p>
                         </li>
@@ -1116,7 +1120,13 @@ export default function HomePage() {
                     <p className="eyebrow">Estimate snapshot</p>
                     <h3>Invoice-style quote</h3>
                   </div>
-                  {estimate ? <span className="pill">Ready to book</span> : <span className="pill">Waiting for chat</span>}
+                  {estimate ? (
+                    <span className="pill" data-testid="ready-to-book-pill">
+                      Ready to book
+                    </span>
+                  ) : (
+                    <span className="pill">Waiting for chat</span>
+                  )}
                 </div>
                 {estimate ? (
                   <div className="card-body">

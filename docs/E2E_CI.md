@@ -43,6 +43,49 @@ This prevents E2E test files from being copied into the production Docker image,
 - E2E tests run in CI on the GitHub Actions runner filesystem, not inside the Docker container
 - The running web service never needs test files
 
+### Required GitHub Secrets
+
+The E2E workflow requires admin credentials to be configured as GitHub repository secrets:
+
+- `E2E_ADMIN_BASIC_USERNAME`: Admin username for E2E tests (matches your API's admin basic auth)
+- `E2E_ADMIN_BASIC_PASSWORD`: Admin password for E2E tests
+
+**How to set secrets:**
+1. Go to your repository on GitHub
+2. Navigate to Settings → Secrets and variables → Actions
+3. Click "New repository secret"
+4. Add `E2E_ADMIN_BASIC_USERNAME` with your admin username value
+5. Add `E2E_ADMIN_BASIC_PASSWORD` with your admin password value
+
+**Important:** These credentials must match the basic auth credentials configured in your API/backend for the admin endpoints. The admin test verifies credentials by calling `GET /v1/admin/profile` with Basic Authentication.
+
+If secrets are not set, the admin E2E test will fail with:
+```
+E2E admin credentials not configured. Set ADMIN_BASIC_USERNAME and ADMIN_BASIC_PASSWORD environment variables.
+```
+
+### Test Selector Strategy
+
+E2E tests use **stable selectors** to avoid brittle failures:
+
+**Preferred selectors (in order):**
+1. `data-testid` attributes for E2E landmarks
+2. Role-based selectors (`getByRole`)
+3. Text-based selectors for unique text
+4. Avoid: CSS class selectors (`.messages .message.bot`)
+
+**Test IDs added for E2E:**
+- `data-testid="booking-chat"`: Chat window container
+- `data-testid="chat-messages"`: Messages list
+- `data-testid="bot-message"`: Bot message bubbles
+- `data-testid="user-message"`: User message bubbles
+- `data-testid="ready-to-book-pill"`: Ready to book indicator
+
+**Timeouts:**
+- Bot message appearance: 30s (CI can be slow, chat requires API call)
+- "Ready to book" pill: 30s (estimate calculation + UI update)
+- Booking details heading: 10s (DOM element, no network)
+
 ## Workflow Steps
 
 ### 1. Environment Setup
@@ -192,8 +235,47 @@ Follow [docs/E2E_LOCAL.md](./E2E_LOCAL.md) to run tests locally against `docker 
 - ✅ Module resolution fixed: `@playwright/test` resolves correctly from `web/e2e/`
 - ✅ Production build isolation: `e2e/` excluded from TypeScript and Docker build
 - ✅ No browser/ffmpeg downloads: video/trace disabled, tests run with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
+- ✅ Admin auth uses GitHub secrets (`E2E_ADMIN_BASIC_USERNAME`, `E2E_ADMIN_BASIC_PASSWORD`)
+- ✅ Stable selectors: `data-testid` attributes for key E2E landmarks
+- ✅ Resilient timeouts: 30s for bot responses, 10s for DOM elements
 
 ## Troubleshooting
+
+### "Admin auth failed (401)" Error
+**Symptom:** Admin E2E test fails with error:
+```
+Admin auth failed (401): {"detail":"Invalid authentication"}
+at helpers/adminAuth.ts:30
+```
+
+**Root cause:** Either GitHub secrets are not configured, or the credentials don't match what the API expects.
+
+**Solution:**
+
+1. **Verify secrets are set in GitHub:**
+   - Go to Settings → Secrets and variables → Actions
+   - Ensure `E2E_ADMIN_BASIC_USERNAME` and `E2E_ADMIN_BASIC_PASSWORD` exist
+   - Values must match the admin basic auth credentials in your API
+
+2. **Verify API endpoint is correct:**
+   - Test uses `PLAYWRIGHT_API_BASE_URL` (defaults to `http://localhost:8000`)
+   - In CI, workflow sets this to `http://localhost:8000` (API exposed on runner)
+   - Admin test calls `GET /v1/admin/profile` with Basic Auth
+
+3. **Test locally to verify credentials:**
+   ```bash
+   # Replace with your actual credentials
+   curl -u "admin:admin123" http://localhost:8000/v1/admin/profile
+   ```
+   Should return 200 with admin profile data, not 401.
+
+4. **Check if credentials are missing (better error):**
+   If secrets are not set, you'll now get:
+   ```
+   E2E admin credentials not configured. Set ADMIN_BASIC_USERNAME and ADMIN_BASIC_PASSWORD environment variables.
+   ```
+
+**Prevention:** Always set required secrets before enabling E2E workflow on a new repository or branch.
 
 ### "Cannot find module '@playwright/test'" Error
 **Symptom:** CI fails with `Cannot find module '@playwright/test'` when loading config.
@@ -256,6 +338,54 @@ use: {
 - Tests run successfully with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` and `PW_CHANNEL=chrome`
 
 **Trade-off:** You lose video recordings and detailed traces for debugging, but still get screenshots on failure and test results. This is acceptable for CI where we prioritize speed and minimal dependencies.
+
+### "element(s) not found" / Selector Timeout Errors
+**Symptom:** Public booking test fails with:
+```
+expect(locator('.messages .message.bot').first()).toBeVisible() failed
+element(s) not found
+```
+
+**Root cause:** One of:
+1. Brittle CSS selectors broke due to UI changes
+2. Bot response timing out or not appearing
+3. CI slowness causing timeouts with default wait times
+
+**Solution:**
+
+1. **Use stable selectors (testids):** Tests now use `data-testid` attributes:
+   ```typescript
+   // Bad (brittle):
+   page.locator('.messages .message.bot')
+
+   // Good (stable):
+   page.getByTestId('bot-message')
+   ```
+
+2. **Increase timeouts for slow CI:**
+   ```typescript
+   await expect(page.getByTestId('bot-message').first()).toBeVisible({
+     timeout: 30000,  // 30s for bot response
+   });
+   ```
+
+3. **Check if chat endpoint is working:**
+   ```bash
+   curl http://localhost:8000/v1/chat/turn -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"session_id":"test","message":"2 bed 1 bath","brand":"economy","channel":"web"}'
+   ```
+   Should return bot reply and estimate.
+
+4. **Review screenshots in artifacts:**
+   - Download `playwright-report` artifact
+   - Check screenshot at failure point
+   - Verify UI reached expected state
+
+**Prevention:**
+- Always use `data-testid` for E2E landmarks
+- Set appropriate timeouts based on operation (30s for API calls, 10s for DOM)
+- Keep selectors simple and stable
 
 ## Related Documentation
 - [E2E_LOCAL.md](./E2E_LOCAL.md): Local E2E setup and manual testing
