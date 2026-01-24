@@ -36,52 +36,39 @@ jobs:
       - name: Generate CI env file with required prod secrets
         run: |
           cp backend/.env.example backend/.env.e2e.ci
-          python - <<'PY' > /tmp/e2e_secret_keys.txt
-          import re
-          from pathlib import Path
-
-          text = Path("backend/app/settings.py").read_text(encoding="utf-8")
-          keys = set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", text))
-          keys.update(re.findall(r"([A-Z0-9_]+) is required when", text))
-          keys.add("METRICS_TOKEN")
-          keys = sorted(keys)
-          if not keys:
-            keys = [
-              "AUTH_SECRET_KEY",
-              "CLIENT_PORTAL_SECRET",
-              "WORKER_PORTAL_SECRET",
-              "METRICS_TOKEN",
-            ]
-          print("\n".join(keys))
-          PY
-          while read -r key; do
-            sed -i "/^${key}=/d" backend/.env.e2e.ci
-          done < /tmp/e2e_secret_keys.txt
-          python - <<'PY' >> backend/.env.e2e.ci
+          python - <<'PY'
           import re
           import secrets
           from pathlib import Path
 
+          env_path = Path("backend/.env.e2e.ci")
           text = Path("backend/app/settings.py").read_text(encoding="utf-8")
           keys = set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", text))
-          keys.update(re.findall(r"([A-Z0-9_]+) is required when", text))
-          keys.add("METRICS_TOKEN")
-          keys = sorted(keys)
-          if not keys:
-            keys = [
+          keys.update(re.findall(r"([A-Z0-9_]+) is required when .* in prod", text))
+          keys.update(
+            {
               "AUTH_SECRET_KEY",
               "CLIENT_PORTAL_SECRET",
               "WORKER_PORTAL_SECRET",
               "METRICS_TOKEN",
-            ]
-          for key in keys:
-            print(f"{key}=ci-{secrets.token_hex(32)}")
+            }
+          )
+          keys = sorted(keys)
+
+          lines = env_path.read_text(encoding="utf-8").splitlines()
+          filtered = [
+            line for line in lines if not any(line.startswith(f"{key}=") for key in keys)
+          ]
+          generated = [f"{key}=ci-{secrets.token_hex(32)}" for key in keys]
+          env_path.write_text("\n".join(filtered + generated) + "\n", encoding="utf-8")
+          Path("/tmp/e2e_secret_keys.txt").write_text("\n".join(keys), encoding="utf-8")
           PY
           echo "ENV_FILE=backend/.env.e2e.ci" >> "$GITHUB_ENV"
 
       - name: Verify ENV_FILE secrets are present
         run: |
           echo "ENV_FILE=$ENV_FILE"
+          grep -q '^AUTH_SECRET_KEY=' backend/.env.e2e.ci
           grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN)=' backend/.env.e2e.ci \
             | sed -E 's/=.*/=<redacted>/'
 
@@ -110,6 +97,9 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
           echo ""
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api \
+            python -c "import os; print('AUTH_SECRET_KEY set:', bool(os.getenv('AUTH_SECRET_KEY')))" || true
 
       - name: Wait for stack readiness
         run: |
