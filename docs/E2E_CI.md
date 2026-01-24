@@ -19,6 +19,30 @@ The workflow orchestrates:
 ### Module Resolution
 Playwright is installed ephemerally in `web/node_modules/@playwright/test`, and tests are located in `web/e2e/`. This ensures Node.js module resolution works correctly: when `web/e2e/playwright.config.ts` imports `@playwright/test`, Node finds it in the nearest `node_modules/` (at `web/node_modules/`).
 
+### Production Build Isolation
+The `web/e2e/` directory is excluded from the production web Docker build:
+
+**TypeScript exclusion** (`web/tsconfig.json`):
+```json
+"exclude": ["node_modules", "e2e"]
+```
+This prevents Next.js build from typechecking `e2e/playwright.config.ts`, which would fail because `@playwright/test` is not installed in production.
+
+**Docker build exclusion** (`web/.dockerignore`):
+```
+e2e/
+**/*.spec.ts
+**/*.spec.tsx
+playwright.config.*
+```
+This prevents E2E test files from being copied into the production Docker image, reducing image size and avoiding build-time errors.
+
+**Why this matters:**
+- Production builds run `npm ci` (production deps only) then `npm run build`
+- If TypeScript tried to check `e2e/playwright.config.ts`, it would error: `Cannot find module '@playwright/test'`
+- E2E tests run in CI on the GitHub Actions runner filesystem, not inside the Docker container
+- The running web service never needs test files
+
 ## Workflow Steps
 
 ### 1. Environment Setup
@@ -158,6 +182,7 @@ Follow [docs/E2E_LOCAL.md](./E2E_LOCAL.md) to run tests locally against `docker 
 - ✅ Chrome-based tests via `PW_CHANNEL=chrome`
 - ✅ Logs captured on failure (compose + Playwright artifacts)
 - ✅ Module resolution fixed: `@playwright/test` resolves correctly from `web/e2e/`
+- ✅ Production build isolation: `e2e/` excluded from TypeScript and Docker build
 
 ## Troubleshooting
 
@@ -173,6 +198,27 @@ Follow [docs/E2E_LOCAL.md](./E2E_LOCAL.md) to run tests locally against `docker 
 cd web
 node -e "require.resolve('@playwright/test')"  # Should succeed
 ```
+
+### "Type error: Cannot find module '@playwright/test'" During Web Build
+**Symptom:** Docker build or `npm run build` fails with TypeScript error in `e2e/playwright.config.ts`.
+
+**Root cause:** Next.js build typechecks all `**/*.ts` files by default. If `e2e/playwright.config.ts` is included, TypeScript tries to resolve `@playwright/test`, which isn't installed in production builds (and shouldn't be).
+
+**Solution:** Exclude `e2e/` from both TypeScript and Docker build:
+
+1. **TypeScript exclusion** (`web/tsconfig.json`):
+   ```json
+   "exclude": ["node_modules", "e2e"]
+   ```
+
+2. **Docker build exclusion** (`web/.dockerignore`):
+   ```
+   e2e/
+   **/*.spec.ts
+   playwright.config.*
+   ```
+
+**Why this works:** E2E tests run on CI runner filesystem, not inside Docker containers. The production web image doesn't need test files, and excluding them prevents TypeScript from checking files that import dev-only dependencies.
 
 ## Related Documentation
 - [E2E_LOCAL.md](./E2E_LOCAL.md): Local E2E setup and manual testing

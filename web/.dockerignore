@@ -1,3 +1,11 @@
 node_modules
 .next
 .git
+
+# E2E tests (ephemeral in CI, not needed in production image)
+e2e/
+**/*.spec.ts
+**/*.spec.tsx
+playwright.config.*
+playwright-report/
+test-results/
