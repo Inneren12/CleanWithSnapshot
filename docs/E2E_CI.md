@@ -141,7 +141,8 @@ If package files changed, the workflow fails (ephemeral install leaked).
 
 ### Failure Handling
 - Logs are captured on failure (compose logs, container status)
-- Playwright reports are always uploaded (traces, screenshots, videos on failure)
+- Playwright reports are always uploaded (screenshots on failure)
+- **Note:** Video and trace are disabled to avoid ffmpeg dependency when using `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
 
 ## Configuration Files
 
@@ -151,7 +152,14 @@ If package files changed, the workflow fails (ephemeral install leaked).
 - **Parallelization:** `fullyParallel: true`
 - **Retries:** 1 retry in CI, 0 locally
 - **Reporters:** `list` (console output)
-- **Trace/Screenshot/Video:** Retained on failure
+- **Browser:** System Chrome via `PW_CHANNEL=chrome` (headless mode)
+- **Screenshot:** `only-on-failure` (saved to test-results)
+- **Video:** `off` (disabled to avoid ffmpeg dependency)
+- **Trace:** `off` (disabled to avoid ffmpeg dependency)
+- **Launch options:** `--no-sandbox`, `--disable-setuid-sandbox` (required for CI)
+
+**Why video/trace are disabled:**
+When using `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`, Playwright doesn't download its bundled browsers or ffmpeg. Video recording requires ffmpeg, so it must be disabled. Traces may also require ffmpeg in some configurations. Screenshots are retained as they don't require additional dependencies.
 
 ### `docker-compose.ci.yml`
 Overrides for CI:
@@ -179,10 +187,11 @@ Follow [docs/E2E_LOCAL.md](./E2E_LOCAL.md) to run tests locally against `docker 
 - ✅ No package manifest changes (ephemeral install verified)
 - ✅ Health checks with retries/timeouts (60s per service)
 - ✅ Full stack orchestration (db, redis, api, web)
-- ✅ Chrome-based tests via `PW_CHANNEL=chrome`
+- ✅ Chrome-based tests via `PW_CHANNEL=chrome` (system Chrome, no downloads)
 - ✅ Logs captured on failure (compose + Playwright artifacts)
 - ✅ Module resolution fixed: `@playwright/test` resolves correctly from `web/e2e/`
 - ✅ Production build isolation: `e2e/` excluded from TypeScript and Docker build
+- ✅ No browser/ffmpeg downloads: video/trace disabled, tests run with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
 
 ## Troubleshooting
 
@@ -219,6 +228,34 @@ node -e "require.resolve('@playwright/test')"  # Should succeed
    ```
 
 **Why this works:** E2E tests run on CI runner filesystem, not inside Docker containers. The production web image doesn't need test files, and excluding them prevents TypeScript from checking files that import dev-only dependencies.
+
+### "Executable doesn't exist ... ffmpeg" Error
+**Symptom:** Playwright fails with error about missing ffmpeg executable when using `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`.
+
+**Root cause:** Video recording and some trace features require ffmpeg, which is bundled with Playwright's browser downloads. When `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` is set, ffmpeg is not downloaded. Attempting to record video or traces will fail.
+
+**Solution:** Disable features that require ffmpeg in `web/e2e/playwright.config.ts`:
+
+```typescript
+use: {
+  video: 'off',           // Disable video recording
+  trace: 'off',           // Disable trace (or use carefully)
+  screenshot: 'only-on-failure',  // Screenshots work without ffmpeg
+  channel: 'chrome',      // Use system Chrome
+  headless: true,
+  launchOptions: {
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  },
+}
+```
+
+**Why this works:**
+- CI uses system Chrome from GitHub Actions runner (no download needed)
+- Screenshots don't require ffmpeg
+- Video and trace are disabled to avoid ffmpeg dependency
+- Tests run successfully with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` and `PW_CHANNEL=chrome`
+
+**Trade-off:** You lose video recordings and detailed traces for debugging, but still get screenshots on failure and test results. This is acceptable for CI where we prioritize speed and minimal dependencies.
 
 ## Related Documentation
 - [E2E_LOCAL.md](./E2E_LOCAL.md): Local E2E setup and manual testing

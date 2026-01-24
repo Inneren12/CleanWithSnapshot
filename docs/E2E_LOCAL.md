@@ -53,3 +53,4 @@ Tests are located in `web/e2e/tests/`:
 - The admin E2E verifies credentials via `/v1/admin/profile` and seeds local storage for the UI.
 - The public booking E2E sends a sample message (`2 bed 1 bath standard cleaning`) and asserts that the estimate and booking detail panel are visible.
 - E2E tests share `web/node_modules` to ensure proper module resolution for `@playwright/test`.
+- **Video and trace are disabled** to avoid ffmpeg dependency when using `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`. Screenshots are still captured on failure.

@@ -13,9 +13,15 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL,
-    trace: 'retain-on-failure',
+    // Disable video and trace to avoid ffmpeg dependency when using PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+    trace: 'off',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
-    channel: process.env.PW_CHANNEL,
+    video: 'off',
+    // Use system Chrome in CI (via PW_CHANNEL=chrome env var)
+    channel: process.env.PW_CHANNEL as 'chrome' | undefined,
+    headless: true,
+    launchOptions: {
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    },
   },
 });
