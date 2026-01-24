@@ -88,7 +88,9 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version-file: web/.nvmrc
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
 
       - name: Install web dependencies
         working-directory: web
