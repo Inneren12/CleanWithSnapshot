@@ -12,9 +12,12 @@ The E2E CI workflow runs Playwright tests against the full application stack in 
 ### Architecture
 The workflow orchestrates:
 1. **Docker Compose stack** (db, redis, api, web) via `docker-compose.yml` + `docker-compose.ci.yml`
-2. **Ephemeral Playwright installation** (no `package.json` changes)
-3. **Chrome-based E2E tests** from `e2e/` directory
+2. **Ephemeral Playwright installation** in `web/` (no `package.json` changes)
+3. **Chrome-based E2E tests** from `web/e2e/` directory
 4. **Artifact uploads** (test reports, failure logs)
+
+### Module Resolution
+Playwright is installed ephemerally in `web/node_modules/@playwright/test`, and tests are located in `web/e2e/`. This ensures Node.js module resolution works correctly: when `web/e2e/playwright.config.ts` imports `@playwright/test`, Node finds it in the nearest `node_modules/` (at `web/node_modules/`).
 
 ## Workflow Steps
 
@@ -46,16 +49,24 @@ npm i -D --no-save --no-package-lock @playwright/test playwright  # Ephemeral Pl
 - Prevents CI-only deps from polluting the project
 - Uses `--no-save` and `--no-package-lock` flags
 
+**Module resolution verification:**
+```bash
+cd web
+node -e "require.resolve('@playwright/test')"  # Ensures @playwright/test is resolvable
+```
+
+This step verifies that `@playwright/test` can be resolved from the `web/` directory, preventing the "Cannot find module '@playwright/test'" error.
+
 ### 4. Test Execution
 ```bash
-cd e2e
+cd web
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
 PW_CHANNEL=chrome \
 PLAYWRIGHT_BASE_URL=http://localhost:3000 \
 PLAYWRIGHT_API_BASE_URL=http://localhost:8000 \
 ADMIN_BASIC_USERNAME=admin \
 ADMIN_BASIC_PASSWORD=admin123 \
-npx --prefix ../web playwright test --config=playwright.config.ts
+npx playwright test --config e2e/playwright.config.ts
 ```
 
 **Environment variables:**
@@ -65,7 +76,7 @@ npx --prefix ../web playwright test --config=playwright.config.ts
 - `PLAYWRIGHT_API_BASE_URL`: API endpoint
 - `ADMIN_BASIC_USERNAME/PASSWORD`: Admin credentials for auth tests
 
-**Test location:** `e2e/tests/`
+**Test location:** `web/e2e/tests/`
 - `admin-critical.spec.ts`: Admin UI critical flows
 - `public-booking.spec.ts`: Public booking estimate flow
 
@@ -95,7 +106,7 @@ If package files changed, the workflow fails (ephemeral install leaked).
 ## Stabilization Features
 
 ### Retries
-- **Playwright retries:** Configured in `e2e/playwright.config.ts` (`retries: process.env.CI ? 1 : 0`)
+- **Playwright retries:** Configured in `web/e2e/playwright.config.ts` (`retries: process.env.CI ? 1 : 0`)
 - **Health check retries:** 60s timeout with 2s polling interval
 
 ### Timeouts
@@ -110,8 +121,8 @@ If package files changed, the workflow fails (ephemeral install leaked).
 
 ## Configuration Files
 
-### `e2e/playwright.config.ts`
-- **Test directory:** `./tests`
+### `web/e2e/playwright.config.ts`
+- **Test directory:** `./tests` (relative to config location: `web/e2e/tests/`)
 - **Timeouts:** 60s test, 10s expect
 - **Parallelization:** `fullyParallel: true`
 - **Retries:** 1 retry in CI, 0 locally
@@ -146,6 +157,22 @@ Follow [docs/E2E_LOCAL.md](./E2E_LOCAL.md) to run tests locally against `docker 
 - ✅ Full stack orchestration (db, redis, api, web)
 - ✅ Chrome-based tests via `PW_CHANNEL=chrome`
 - ✅ Logs captured on failure (compose + Playwright artifacts)
+- ✅ Module resolution fixed: `@playwright/test` resolves correctly from `web/e2e/`
+
+## Troubleshooting
+
+### "Cannot find module '@playwright/test'" Error
+**Symptom:** CI fails with `Cannot find module '@playwright/test'` when loading config.
+
+**Root cause:** Node.js module resolution looks for `node_modules` starting from the config file location and walking up. If Playwright is installed in `web/node_modules` but config is in a sibling directory (e.g., `/e2e`), Node won't find it.
+
+**Solution:** E2E tests are located in `web/e2e/`, sharing the same `node_modules` where Playwright is installed. Tests run from `web/` directory with `--config e2e/playwright.config.ts`.
+
+**Verification:**
+```bash
+cd web
+node -e "require.resolve('@playwright/test')"  # Should succeed
+```
 
 ## Related Documentation
 - [E2E_LOCAL.md](./E2E_LOCAL.md): Local E2E setup and manual testing
