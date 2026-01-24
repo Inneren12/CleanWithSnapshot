@@ -18,7 +18,7 @@ test.describe('Admin critical flow', () => {
     await expect(
       page.getByRole('heading', { name: 'Admin / Dispatcher' })
     ).toBeVisible();
-    await expect(page.getByText('Signed in as')).toBeVisible();
+    await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
 
     await page.goto('/admin/leads');
     await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible();

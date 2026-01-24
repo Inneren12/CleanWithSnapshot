@@ -12,7 +12,10 @@ export type AdminCredentials = {
 export const defaultAdminCredentials = (): AdminCredentials => ({
   username: process.env.ADMIN_BASIC_USERNAME ?? 'admin',
   password: process.env.ADMIN_BASIC_PASSWORD ?? 'admin123',
-  apiBaseUrl: process.env.PLAYWRIGHT_API_BASE_URL ?? 'http://localhost:8000',
+  apiBaseUrl:
+    process.env.PLAYWRIGHT_API_BASE_URL ??
+    process.env.E2E_API_BASE_URL ??
+    'http://127.0.0.1:8000',
 });
 
 export async function verifyAdminCredentials(

@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test';
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3000';
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000';
 
 export default defineConfig({
   testDir: './tests',
@@ -13,9 +13,13 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL,
-    trace: 'retain-on-failure',
+    trace: 'off',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
-    channel: process.env.PW_CHANNEL,
+    video: 'off',
+    channel: process.env.PW_CHANNEL ?? 'chrome',
+    headless: true,
+    launchOptions: {
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    },
   },
 });

@@ -1,0 +1,217 @@
+name: E2E
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_DB: cleaning
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Generate CI env file with required prod secrets
+        run: |
+          cp backend/.env.example backend/.env.e2e.ci
+          python - <<'PY'
+          import os
+          import re
+          import secrets
+          from pathlib import Path
+
+          env_path = Path("backend/.env.e2e.ci")
+          text = Path("backend/app/settings.py").read_text(encoding="utf-8")
+          keys = set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", text))
+          keys.update(re.findall(r"([A-Z0-9_]+) is required when .* in prod", text))
+          keys.update(
+            {
+              "AUTH_SECRET_KEY",
+              "CLIENT_PORTAL_SECRET",
+              "WORKER_PORTAL_SECRET",
+              "METRICS_TOKEN",
+              "ADMIN_BASIC_USERNAME",
+              "ADMIN_BASIC_PASSWORD",
+              "LEGACY_BASIC_AUTH_ENABLED",
+            }
+          )
+          keys = sorted(keys)
+
+          lines = env_path.read_text(encoding="utf-8").splitlines()
+          filtered = [
+            line for line in lines if not any(line.startswith(f"{key}=") for key in keys)
+          ]
+          admin_username = "e2e"
+          admin_password = f"ci-{secrets.token_hex(32)}"
+          overrides = {
+            "ADMIN_BASIC_USERNAME": admin_username,
+            "ADMIN_BASIC_PASSWORD": admin_password,
+            "LEGACY_BASIC_AUTH_ENABLED": "true",
+          }
+          generated = [
+            f"{key}={overrides.get(key, f'ci-{secrets.token_hex(32)}')}" for key in keys
+          ]
+          env_path.write_text("\n".join(filtered + generated) + "\n", encoding="utf-8")
+
+          github_env = Path(os.environ["GITHUB_ENV"])
+          github_env.write_text(
+            github_env.read_text(encoding="utf-8")
+            + f"ADMIN_BASIC_USERNAME={admin_username}\n"
+            + f"ADMIN_BASIC_PASSWORD={admin_password}\n"
+            + "ENV_FILE=backend/.env.e2e.ci\n",
+            encoding="utf-8",
+          )
+          PY
+
+      - name: Verify ENV_FILE secrets are present
+        run: |
+          echo "ENV_FILE=$ENV_FILE"
+          grep -q '^AUTH_SECRET_KEY=' backend/.env.e2e.ci
+          grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN|ADMIN_BASIC_USERNAME|ADMIN_BASIC_PASSWORD|LEGACY_BASIC_AUTH_ENABLED)=' backend/.env.e2e.ci \
+            | sed -E 's/=.*/=<redacted>/'
+
+      - name: Compose up (E2E override)
+        run: |
+          set +e
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 db redis api web jobs
+          status=$?
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 api || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
+          api_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q api)
+          if [ -n "$api_container_id" ]; then
+            docker inspect "$api_container_id" --format '{{json .State.Health}}' || true
+          fi
+          exit $status
+
+      - name: Compose diagnostics (post-up)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml port api 8000 || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api \
+            python -c "import os; print('AUTH_SECRET_KEY set:', bool(os.getenv('AUTH_SECRET_KEY')))" || true
+
+      - name: Wait for stack readiness
+        run: |
+          wait_on() {
+            local url=$1
+            local name=$2
+            if ! curl -fsS --max-time 2 --retry 60 --retry-connrefused --retry-delay 2 "$url" >/dev/null; then
+              echo "Timed out waiting for ${name} at ${url}"
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
+              return 1
+            fi
+          }
+          wait_on "http://127.0.0.1:8000/healthz" "api healthz"
+          wait_on "http://127.0.0.1:8000/readyz" "api readyz"
+          wait_on "http://127.0.0.1:3000/" "web"
+
+      - name: Preflight admin auth
+        run: |
+          if ! curl -fsS -u "$ADMIN_BASIC_USERNAME:$ADMIN_BASIC_PASSWORD" http://127.0.0.1:8000/v1/admin/profile >/dev/null; then
+            echo "Admin auth preflight failed."
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
+            exit 1
+          fi
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Install Playwright deps (ephemeral)
+        working-directory: web
+        run: npm i -D --no-save --no-package-lock @playwright/test playwright
+
+      - name: Sanity check Playwright module resolution
+        working-directory: web
+        run: node -e "require.resolve('@playwright/test')"
+
+      - name: Run Playwright tests
+        working-directory: web
+        env:
+          PW_CHANNEL: chrome
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+          PLAYWRIGHT_API_BASE_URL: http://127.0.0.1:8000
+          ADMIN_BASIC_USERNAME: ${{ env.ADMIN_BASIC_USERNAME }}
+          ADMIN_BASIC_PASSWORD: ${{ env.ADMIN_BASIC_PASSWORD }}
+        run: |
+          PW_CHANNEL=chrome PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+          PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
+          PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:8000 \
+          ADMIN_BASIC_USERNAME="$ADMIN_BASIC_USERNAME" \
+          ADMIN_BASIC_PASSWORD="$ADMIN_BASIC_PASSWORD" \
+          npx playwright test --config e2e/playwright.config.ts
+
+      - name: Collect compose diagnostics
+        if: failure()
+        run: |
+          {
+            echo "== docker compose ps =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps
+            echo ""
+            echo "== docker compose config =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml config
+            echo ""
+            echo "== docker compose port api 8000 =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml port api 8000 || true
+            echo ""
+            echo "== docker compose logs api (tail) =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=300 || true
+            echo ""
+            echo "== docker compose logs db (tail) =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=200 || true
+          } > e2e-compose-diagnostics.log
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/playwright-report/**
+
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: web/test-results/**
+
+      - name: Upload compose diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-compose-diagnostics
+          path: e2e-compose-diagnostics.log
+
+      - name: Compose down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v
