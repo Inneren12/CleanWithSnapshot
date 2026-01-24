@@ -34,10 +34,17 @@ jobs:
           echo "ADMIN_BASIC_USERNAME=e2e" >> "$GITHUB_ENV"
           echo "ADMIN_BASIC_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')" >> "$GITHUB_ENV"
 
+      - name: Generate CI auth secret
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import secrets
+          print(f"AUTH_SECRET_KEY=ci-{secrets.token_hex(32)}")
+          PY
+
       - name: Compose up (E2E override)
         run: |
           set +e
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 db redis api web jobs
           status=$?
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 api || true

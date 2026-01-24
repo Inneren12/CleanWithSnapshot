@@ -4,6 +4,7 @@ services:
       ADMIN_BASIC_USERNAME: ${ADMIN_BASIC_USERNAME}
       ADMIN_BASIC_PASSWORD: ${ADMIN_BASIC_PASSWORD}
       DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/cleaning
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY}
     command:
       [
         "sh",
