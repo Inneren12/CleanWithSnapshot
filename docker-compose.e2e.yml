@@ -1,0 +1,18 @@
+services:
+  api:
+    environment:
+      ADMIN_BASIC_USERNAME: ${ADMIN_BASIC_USERNAME}
+      ADMIN_BASIC_PASSWORD: ${ADMIN_BASIC_PASSWORD}
+    ports:
+      - "8000:8000"
+
+  web:
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000"
+      NEXT_PUBLIC_E2E_MODE: "true"
+    build:
+      args:
+        NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000"
+        NEXT_PUBLIC_E2E_MODE: "true"
+    ports:
+      - "3000:3000"

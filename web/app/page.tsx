@@ -302,6 +302,7 @@ function TurnstileWidget({
 
 export default function HomePage() {
   const showAdminLink = process.env.NEXT_PUBLIC_SHOW_ADMIN_LINK === 'true';
+  const isE2E = process.env.NEXT_PUBLIC_E2E_MODE === 'true';
   const [sessionId, setSessionId] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
@@ -358,6 +359,39 @@ export default function HomePage() {
   const [pricingSettings, setPricingSettings] = useState<PricingSettingsPublic | null>(null);
   const [bookingPolicies, setBookingPolicies] = useState<BookingPoliciesPublic | null>(null);
   const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
+  const e2eEstimate = useMemo<EstimateResponse>(
+    () => ({
+      pricing_config_id: 'e2e',
+      pricing_config_version: 'ci',
+      config_hash: 'e2e-ci-estimate',
+      rate: 45,
+      team_size: 2,
+      time_on_site_hours: 2,
+      billed_cleaner_hours: 4,
+      labor_cost: 180,
+      discount_amount: 0,
+      add_ons_cost: 0,
+      total_before_tax: 180,
+      assumptions: ['E2E mode estimate'],
+      missing_info: [],
+      confidence: 1,
+      breakdown: {
+        base_hours: 2,
+        multiplier: 1,
+        extra_hours: 0,
+        total_cleaner_hours: 4,
+        min_cleaner_hours_applied: 0,
+        team_size: 2,
+        time_on_site_hours: 2,
+        billed_cleaner_hours: 4,
+        labor_cost: 180,
+        add_ons_cost: 0,
+        discount_amount: 0,
+        total_before_tax: 180
+      }
+    }),
+    []
+  );
 
   const apiBaseUrl = useMemo(
     () => process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000',
@@ -583,6 +617,23 @@ export default function HomePage() {
       setMessageInput('');
       setLoading(true);
       setError(null);
+
+      if (isE2E) {
+        setMessages((prev) => [...prev, { role: 'bot', text: 'E2E mode: Ready to book.' }]);
+        setProposedQuestions([]);
+        setEstimate(e2eEstimate);
+        setStructuredInputs({});
+        setChoices(null);
+        setStepInfo(null);
+        setSummaryPatch(null);
+        setUIHint(null);
+        setSelectedChoices([]);
+        setLeadSuccess(false);
+        setLeadError(null);
+        setLeadSubmitAttempted(false);
+        setLoading(false);
+        return;
+      }
 
       try {
         const response = await fetch(`${apiBaseUrl}/v1/chat/turn`, {
@@ -999,7 +1050,14 @@ export default function HomePage() {
                   <p className="eyebrow">Conversation</p>
                   <h3>Chat with the estimator</h3>
                 </div>
-                <span className="pill">Session live</span>
+                <div className="pill-group">
+                  <span className="pill">Session live</span>
+                  {isE2E ? (
+                    <span className="pill" data-testid="e2e-mode-on">
+                      E2E mode
+                    </span>
+                  ) : null}
+                </div>
               </div>
               <div className="card-body">
                 {error ? <p className="alert alert-error">{error}</p> : null}
@@ -1009,7 +1067,11 @@ export default function HomePage() {
                   ) : (
                     <ul className="messages">
                       {messages.map((message, index) => (
-                        <li key={index} className={`message ${message.role}`}>
+                        <li
+                          key={index}
+                          className={`message ${message.role}`}
+                          data-testid={message.role === 'bot' ? 'bot-message' : undefined}
+                        >
                           <span className="message-role">{message.role === 'user' ? 'You' : 'Bot'}</span>
                           <p className="message-text">{message.text}</p>
                         </li>

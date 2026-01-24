@@ -13,9 +13,13 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL,
-    trace: 'retain-on-failure',
+    trace: 'off',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
-    channel: process.env.PW_CHANNEL,
+    video: 'off',
+    channel: process.env.PW_CHANNEL ?? 'chrome',
+    headless: true,
+    launchOptions: {
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    },
   },
 });

@@ -1,0 +1,91 @@
+name: E2E
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_DB: cleaning
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      ENV_FILE: backend/.env.example
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Generate CI-only admin credentials
+        run: |
+          echo "ADMIN_BASIC_USERNAME=e2e" >> "$GITHUB_ENV"
+          echo "ADMIN_BASIC_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')" >> "$GITHUB_ENV"
+
+      - name: Compose up (E2E override)
+        run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait
+
+      - name: Wait for stack readiness
+        run: |
+          for i in {1..60}; do curl -fsS http://localhost:8000/healthz && break || sleep 2; done
+          for i in {1..60}; do curl -fsS http://localhost:8000/readyz && break || sleep 2; done
+          for i in {1..60}; do curl -fsS http://localhost:3000/ >/dev/null && break || sleep 2; done
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Install Playwright deps (ephemeral)
+        working-directory: web
+        run: npm i -D --no-save --no-package-lock @playwright/test playwright
+
+      - name: Sanity check Playwright module resolution
+        working-directory: web
+        run: node -e "require.resolve('@playwright/test')"
+
+      - name: Run Playwright tests
+        working-directory: web
+        env:
+          PW_CHANNEL: chrome
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          PLAYWRIGHT_API_BASE_URL: http://localhost:8000
+          ADMIN_BASIC_USERNAME: ${{ env.ADMIN_BASIC_USERNAME }}
+          ADMIN_BASIC_PASSWORD: ${{ env.ADMIN_BASIC_PASSWORD }}
+        run: |
+          PW_CHANNEL=chrome PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+          PLAYWRIGHT_BASE_URL=http://localhost:3000 \
+          PLAYWRIGHT_API_BASE_URL=http://localhost:8000 \
+          ADMIN_BASIC_USERNAME="$ADMIN_BASIC_USERNAME" \
+          ADMIN_BASIC_PASSWORD="$ADMIN_BASIC_PASSWORD" \
+          npx playwright test --config e2e/playwright.config.ts
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/playwright-report/**
+
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: web/test-results/**
+
+      - name: Compose down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v
