@@ -352,8 +352,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
-      TRIVY_IGNORE_UNFIXED: "true"
-      TRIVY_SEVERITY: "CRITICAL,HIGH"
+      TRIVY_SEVERITY: "CRITICAL"
 
     steps:
       - name: Checkout code
@@ -398,7 +397,8 @@ jobs:
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
-      - name: Scan api image (Trivy)
+      - name: Scan api image (Trivy JSON)
+        id: trivy_api_json
         continue-on-error: true
         run: |
           trivy image \
@@ -406,10 +406,23 @@ jobs:
             --output trivy-cleanwithsnapshot-api.json \
             --scanners vuln \
             --severity "${TRIVY_SEVERITY}" \
-            --ignore-unfixed \
+            --exit-code 1 \
             cleanwithsnapshot-api:ci
 
-      - name: Scan web image (Trivy)
+      - name: Scan api image (Trivy SARIF)
+        id: trivy_api_sarif
+        continue-on-error: true
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-cleanwithsnapshot-api.sarif \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --exit-code 1 \
+            cleanwithsnapshot-api:ci
+
+      - name: Scan web image (Trivy JSON)
+        id: trivy_web_json
         continue-on-error: true
         run: |
           trivy image \
@@ -417,92 +430,21 @@ jobs:
             --output trivy-cleanwithsnapshot-web.json \
             --scanners vuln \
             --severity "${TRIVY_SEVERITY}" \
-            --ignore-unfixed \
+            --exit-code 1 \
             cleanwithsnapshot-web:ci
-      
-      - name: Dump API Trivy HIGH/CRITICAL (top)
-        if: always()
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          p = Path("trivy-cleanwithsnapshot-api.json")
-          if not p.exists():
-              print("missing report", p)
-              raise SystemExit(0)
-          d = json.loads(p.read_text())
-          vulns = []
-          for r in d.get("Results", []) or []:
-              for v in (r.get("Vulnerabilities") or []):
-                  vulns.append({
-                      "Target": r.get("Target"),
-                      "Pkg": v.get("PkgName"),
-                      "Installed": v.get("InstalledVersion"),
-                      "Fixed": v.get("FixedVersion"),
-                      "Severity": v.get("Severity"),
-                      "VulnID": v.get("VulnerabilityID"),
-                      "Title": v.get("Title"),
-                  })
-          vulns = [x for x in vulns if x["Severity"] in ("CRITICAL","HIGH")]
-          vulns.sort(key=lambda x: (x["Severity"]!="CRITICAL", x["Pkg"] or "", x["VulnID"] or ""))
-          print(f"HIGH/CRITICAL count: {len(vulns)}")
-          for x in vulns[:30]:
-              print(f'{x["Severity"]} {x["VulnID"]} {x["Pkg"]} {x["Installed"]} -> {x["Fixed"]} target={x["Target"]}')
-          PY
 
-      - name: Summarize Trivy results
-        if: always()
+      - name: Scan web image (Trivy SARIF)
+        id: trivy_web_sarif
         continue-on-error: true
         run: |
-          python - <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-          from collections import Counter
-
-          reports = {
-              "api": Path("trivy-cleanwithsnapshot-api.json"),
-              "web": Path("trivy-cleanwithsnapshot-web.json"),
-          }
-          missing = []
-
-          def count_by_severity(data):
-              counts = {sev: 0 for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]}
-              for result in data.get("Results", []):
-                  for vuln in result.get("Vulnerabilities", []) or []:
-                      severity = vuln.get("Severity")
-                      if severity in counts:
-                          counts[severity] += 1
-              return counts
-
-          for label, path in reports.items():
-              if not path.exists():
-                  print(f"Error: no Trivy report found for {label} at {path}.")
-                  missing.append(label)
-                  continue
-              with path.open() as handle:
-                  data = json.load(handle)
-              counts = count_by_severity(data)
-              print(f"Trivy summary for {label}:")
-              for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]:
-                  print(f"{severity}: {counts[severity]}")
-              packages = Counter()
-              for result in data.get("Results", []):
-                  for vuln in result.get("Vulnerabilities", []) or []:
-                      pkg = vuln.get("PkgName")
-                      if pkg:
-                          packages[pkg] += 1
-              if packages:
-                  print("Top 10 packages by vulnerability count:")
-                  for name, count in packages.most_common(10):
-                      print(f"{name}: {count}")
-              else:
-                  print("Top 10 packages by vulnerability count: none found")
-          if missing:
-              sys.exit(2)
-          sys.exit(0)
-          PY
-
+          trivy image \
+            --format sarif \
+            --output trivy-cleanwithsnapshot-web.sarif \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --exit-code 1 \
+            cleanwithsnapshot-web:ci
+      
       - name: Upload Trivy reports
         uses: actions/upload-artifact@v4
         if: always()
@@ -510,93 +452,20 @@ jobs:
           name: trivy-reports
           path: |
             trivy-cleanwithsnapshot-*.json
+            trivy-cleanwithsnapshot-*.sarif
             built-image-ids.txt
 
-      - name: Fail if Trivy gate hit (HIGH/CRITICAL)
+      - name: Enforce Trivy CRITICAL gate
         if: always()
         run: |
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          reports = [
-              Path("trivy-cleanwithsnapshot-api.json"),
-              Path("trivy-cleanwithsnapshot-web.json"),
-          ]
-
-          truthy = {"1", "true", "yes", "on"}
-          ignore_unfixed = os.getenv("TRIVY_IGNORE_UNFIXED", "false").strip().lower() in truthy
-
-          def status_indicates_fix(status: str) -> bool:
-              if not status:
-                  return False
-              return status.strip().lower() == "fixed"
-
-          def status_indicates_no_fix(status: str) -> bool:
-              if not status:
-                  return False
-              return status.strip().lower() in {"affected", "will_not_fix", "unfixed", "not_fixed", "unknown"}
-
-          def summarize_report(report: Path) -> tuple[int, int, list[dict]]:
-              if not report.exists():
-                  print(f"Error: missing Trivy report {report}")
-                  return 0, 0, []
-              data = json.loads(report.read_text())
-              total = 0
-              fixable = 0
-              details = []
-              for result in data.get("Results", []) or []:
-                  for vuln in (result.get("Vulnerabilities") or []):
-                      severity = vuln.get("Severity")
-                      if severity not in ("CRITICAL", "HIGH"):
-                          continue
-                      total += 1
-                      fixed = (vuln.get("FixedVersion") or "").strip()
-                      status = (vuln.get("Status") or "").strip()
-                      fixable_hit = True
-                      if ignore_unfixed:
-                          if status_indicates_no_fix(status):
-                              fixable_hit = False
-                          else:
-                              fixable_hit = bool(fixed or status_indicates_fix(status))
-                      if fixable_hit:
-                          fixable += 1
-                      details.append(
-                          {
-                              "PkgName": vuln.get("PkgName"),
-                              "InstalledVersion": vuln.get("InstalledVersion"),
-                              "FixedVersion": vuln.get("FixedVersion"),
-                              "VulnerabilityID": vuln.get("VulnerabilityID"),
-                              "Severity": severity,
-                          }
-                      )
-              return total, fixable, details
-
-          missing_reports = [p for p in reports if not p.exists()]
-          if missing_reports:
-              print("Missing Trivy reports:", ", ".join(str(p) for p in missing_reports))
-              raise SystemExit(2)
-
-          overall_fixable = 0
-          for report in reports:
-              total, fixable, details = summarize_report(report)
-              overall_fixable += fixable
-              print(f"Trivy gate summary for {report}:")
-              print(f"  HIGH/CRITICAL total: {total}")
-              print(f"  Fixable HIGH/CRITICAL (gate): {fixable}")
-              for entry in sorted(
-                  details,
-                  key=lambda d: (d["Severity"] != "CRITICAL", d["PkgName"] or "", d["VulnerabilityID"] or ""),
-              )[:10]:
-                  print(
-                      "  "
-                      f'{entry["Severity"]} {entry["VulnerabilityID"]} '
-                      f'{entry["PkgName"]} {entry["InstalledVersion"]} -> {entry["FixedVersion"]}'
-                  )
-
-          raise SystemExit(1 if overall_fixable else 0)
-          PY
+          if [ "${{ steps.trivy_api_json.outcome }}" = "failure" ] || [ "${{ steps.trivy_api_sarif.outcome }}" = "failure" ]; then
+            echo "Trivy API scan reported CRITICAL vulnerabilities."
+            exit 1
+          fi
+          if [ "${{ steps.trivy_web_json.outcome }}" = "failure" ] || [ "${{ steps.trivy_web_sarif.outcome }}" = "failure" ]; then
+            echo "Trivy web scan reported CRITICAL vulnerabilities."
+            exit 1
+          fi
 
 
   secrets-scan:
