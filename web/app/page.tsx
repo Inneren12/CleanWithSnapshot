@@ -302,6 +302,7 @@ function TurnstileWidget({
 
 export default function HomePage() {
   const showAdminLink = process.env.NEXT_PUBLIC_SHOW_ADMIN_LINK === 'true';
+  const e2eMode = process.env.NEXT_PUBLIC_E2E_MODE === 'true';
   const [sessionId, setSessionId] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
@@ -584,6 +585,48 @@ export default function HomePage() {
       setLoading(true);
       setError(null);
 
+      // E2E Mode: Deterministic bot response for CI testing (no API call)
+      if (e2eMode) {
+        // Simulate brief loading delay
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        const botMessage: ChatMessage = {
+          role: 'bot',
+          text: 'Your estimate is ready! Based on your 2 bed 1 bath standard cleaning request, we have calculated the details below. You can now proceed to book your preferred time slot.',
+        };
+
+        const deterministicEstimate: EstimateResponse = {
+          pricing_config_id: 'economy_v1',
+          pricing_config_version: 'e2e',
+          config_hash: 'e2e-deterministic',
+          rate: 35,
+          team_size: 2,
+          time_on_site_hours: 3.0,
+          billed_cleaner_hours: 3.0,
+          labor_cost: 105.0,
+          discount_amount: 0,
+          add_ons_cost: 0,
+          total_before_tax: 105.0,
+          assumptions: ['Standard cleaning', '2 bedrooms', '1 bathroom'],
+          missing_info: [],
+          confidence: 1.0,
+        };
+
+        setMessages((prev) => [...prev, botMessage]);
+        setEstimate(deterministicEstimate);
+        setProposedQuestions([]);
+        setChoices(null);
+        setStepInfo(null);
+        setSummaryPatch(null);
+        setUIHint(null);
+        setSelectedChoices([]);
+        setLeadSuccess(false);
+        setLeadError(null);
+        setLeadSubmitAttempted(false);
+        setLoading(false);
+        return;
+      }
+
       try {
         const response = await fetch(`${apiBaseUrl}/v1/chat/turn`, {
           method: 'POST',
@@ -632,7 +675,7 @@ export default function HomePage() {
         setLoading(false);
       }
     },
-    [apiBaseUrl, sessionId, sessionReady]
+    [apiBaseUrl, sessionId, sessionReady, e2eMode]
   );
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -753,6 +796,9 @@ export default function HomePage() {
 
   return (
     <div className="page">
+      {/* E2E Mode indicator (hidden, for test verification) */}
+      {e2eMode ? <div data-testid="e2e-mode-on" style={{ display: 'none' }} aria-hidden="true" /> : null}
+
       <header className="site-header">
         <div className="brand">
           <p className="eyebrow">Economy Cleaning</p>

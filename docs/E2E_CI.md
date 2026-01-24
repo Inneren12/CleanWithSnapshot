@@ -91,6 +91,50 @@ The E2E workflow generates **ephemeral admin credentials at runtime** and inject
 **Why no GitHub Secrets?**
 GitHub doesn't pass repository secrets to workflows triggered by PRs from forks (security measure). Using runtime-generated credentials ensures E2E tests work for **all PRs**, including external contributions.
 
+### Deterministic E2E Mode (Public Booking Test)
+
+The E2E workflow enables **`NEXT_PUBLIC_E2E_MODE=true`** for the web service to make public booking tests deterministic and fast:
+
+**Problem it solves:**
+- Public booking flow relies on chat/bot API which may be unavailable, slow, or non-deterministic in CI
+- External integrations, seed data, or timing issues can cause test flakiness
+- Real bot responses require backend services and can fail due to network/rate limits
+
+**How it works:**
+
+When `NEXT_PUBLIC_E2E_MODE=true`:
+1. User submits chat message (e.g., "2 bed 1 bath standard cleaning")
+2. **Bypasses API call** to `/v1/chat/turn` entirely
+3. **Injects deterministic bot message** after 500ms delay:
+   ```
+   "Your estimate is ready! Based on your 2 bed 1 bath standard cleaning..."
+   ```
+4. **Sets deterministic estimate**:
+   ```json
+   {
+     "rate": 35,
+     "team_size": 2,
+     "time_on_site_hours": 3.0,
+     "total_before_tax": 105.0,
+     ...
+   }
+   ```
+5. Triggers "Ready to book" UI state (pill appears, booking form shown)
+
+**Where it's enabled:**
+- `docker-compose.e2e.yml` sets `NEXT_PUBLIC_E2E_MODE: "true"` for web service
+- **Only used in CI** (not in production, not in docker-compose.yml)
+
+**Test verification:**
+- Test checks for `data-testid="e2e-mode-on"` (hidden div) to ensure mode is active
+- Bot message appears within ~10s (much faster than real API: ~30s)
+- "Ready to book" pill appears within ~5s
+
+**Production safety:**
+- Normal production behavior unchanged (env var not set)
+- E2E mode code gated behind `if (process.env.NEXT_PUBLIC_E2E_MODE === 'true')`
+- Mode indicator hidden from users (display: none, aria-hidden)
+
 **Running locally with ephemeral credentials:**
 ```bash
 # Set ephemeral admin credentials
@@ -297,8 +341,9 @@ Follow [docs/E2E_LOCAL.md](./E2E_LOCAL.md) to run tests locally against `docker 
 - ✅ No browser/ffmpeg downloads: video/trace disabled, tests run with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
 - ✅ **Ephemeral admin credentials**: Generated at runtime (no GitHub Secrets, works for fork PRs)
 - ✅ **Admin auth verification**: Pre-flight check before Playwright tests
+- ✅ **Deterministic E2E mode**: Public booking test uses `NEXT_PUBLIC_E2E_MODE=true` (bypasses chat API, fast bot responses)
 - ✅ Stable selectors: `data-testid` attributes for key E2E landmarks
-- ✅ Resilient timeouts: 30s for bot responses, 10s for DOM elements
+- ✅ Resilient timeouts: 10s for E2E mode bot responses, 5s for estimate pill
 
 ## Troubleshooting
 
@@ -453,6 +498,64 @@ element(s) not found
 - Always use `data-testid` for E2E landmarks
 - Set appropriate timeouts based on operation (30s for API calls, 10s for DOM)
 - Keep selectors simple and stable
+
+### "Bot message never appears" / Public Booking Test Timeout
+**Symptom:** Public booking test times out waiting for bot message:
+```
+expect(page.getByTestId('bot-message').first()).toBeVisible() timeout
+```
+
+**Root cause:** One of:
+1. E2E deterministic mode not enabled (`NEXT_PUBLIC_E2E_MODE` not set)
+2. `docker-compose.e2e.yml` not used when starting web service
+3. Web service didn't rebuild with new env var
+
+**Solution:**
+
+1. **Verify E2E mode is enabled:**
+   - Test should check `data-testid="e2e-mode-on"` exists
+   - If this assertion fails, E2E mode is not active
+   - Check workflow uses all three compose files:
+     ```bash
+     docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml up -d
+     ```
+
+2. **Check docker-compose.e2e.yml includes web env:**
+   ```yaml
+   services:
+     web:
+       environment:
+         NEXT_PUBLIC_E2E_MODE: "true"
+   ```
+
+3. **Verify web container sees the env var:**
+   ```bash
+   docker compose exec web env | grep E2E_MODE
+   # Should show: NEXT_PUBLIC_E2E_MODE=true
+   ```
+
+4. **Test locally with E2E mode:**
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d
+   # Visit http://localhost:3000
+   # Open browser console: document.querySelector('[data-testid="e2e-mode-on"]')
+   # Should return hidden div element
+   ```
+
+5. **Check browser console for errors:**
+   - E2E mode code might be throwing JavaScript errors
+   - Check page.tsx submitMessage E2E conditional branch
+
+**Expected behavior with E2E mode:**
+- Bot message appears within ~1 second (500ms + render)
+- "Ready to book" pill appears immediately after
+- No network calls to `/v1/chat/turn`
+- Test completes in ~10 seconds total
+
+**Prevention:**
+- Always verify `e2e-mode-on` testid at start of test
+- Use `docker-compose.e2e.yml` consistently in all CI steps
+- Keep E2E mode logic simple and side-effect free
 
 ## Related Documentation
 - [E2E_LOCAL.md](./E2E_LOCAL.md): Local E2E setup and manual testing

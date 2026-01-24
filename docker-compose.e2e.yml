@@ -1,5 +1,6 @@
 # E2E-specific compose override
 # Used only in CI E2E workflow to inject ephemeral admin credentials
+# and enable deterministic E2E mode for the web UI
 # These credentials are generated at runtime and never committed
 
 services:
@@ -8,3 +9,8 @@ services:
       # Admin BasicAuth credentials (generated at CI runtime)
       ADMIN_BASIC_USERNAME: ${ADMIN_BASIC_USERNAME:-e2e}
       ADMIN_BASIC_PASSWORD: ${ADMIN_BASIC_PASSWORD:-e2e}
+
+  web:
+    environment:
+      # Enable deterministic E2E mode (bypasses chat API, renders bot messages)
+      NEXT_PUBLIC_E2E_MODE: "true"
