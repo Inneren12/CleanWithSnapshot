@@ -8,12 +8,14 @@ binaries ephemeral (no package manifest changes).
 
 1. Creates a minimal `.env` for Docker Compose (CI-safe defaults).
 2. Starts the stack with `docker compose up -d --wait`.
-3. Waits for the API `GET /healthz` and `GET /readyz` endpoints.
-4. Installs web dependencies with `npm ci`.
-5. Installs Playwright packages ephemerally (`npm i -D --no-save --no-package-lock`).
-6. Runs Playwright tests with `PW_CHANNEL=chrome` and `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`.
-7. Uploads the Playwright HTML report as an artifact.
-8. Tears down the compose stack and cleans up the `.env` file.
+3. Waits for the API `GET /healthz` endpoint.
+4. Runs Alembic migrations inside the API container.
+5. Waits for the API `GET /readyz` endpoint, printing truncated diagnostics every ~30s.
+6. Installs web dependencies with `npm ci`.
+7. Installs Playwright packages ephemerally (`npm i -D --no-save --no-package-lock`).
+8. Runs Playwright tests with `PW_CHANNEL=chrome` and `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`.
+9. Uploads the Playwright HTML report as an artifact.
+10. Tears down the compose stack and cleans up the `.env` file.
 
 ## Local reproduction (optional)
 
@@ -33,6 +35,7 @@ docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait db re
 
 # Verify health
 curl -f http://localhost:8000/healthz
+docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T api alembic upgrade head
 curl -f http://localhost:8000/readyz
 
 cd web

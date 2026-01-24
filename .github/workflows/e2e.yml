@@ -45,16 +45,43 @@ jobs:
           echo "Timed out waiting for /healthz"
           exit 1
 
+      - name: Apply migrations
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T api alembic upgrade head
+
       - name: Wait for API readyz
         run: |
+          diagnostics() {
+            echo "==== /readyz (truncated) ===="
+            curl -sS http://localhost:8000/readyz | head -c 2000 || true
+            echo
+            echo "==== docker compose ps ===="
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml ps || true
+            echo "==== api logs (tail 300) ===="
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color --tail=300 api || true
+            echo "==== db logs (tail 300) ===="
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color --tail=300 db || true
+            echo "==== jobs logs (tail 300) ===="
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color --tail=300 jobs || true
+            echo "==== db pg_isready ===="
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T db pg_isready -U postgres || true
+            echo "==== api env ===="
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T api python -c \"import os; print('APP_ENV', os.getenv('APP_ENV'))\" || true
+          }
           for i in {1..30}; do
             if curl -fsS --max-time 5 http://localhost:8000/readyz > /dev/null; then
               echo "API /readyz is ready"
               exit 0
             fi
+            if (( i % 6 == 0 )); then
+              echo "Still waiting for /readyz... attempt ${i}"
+              curl -sS http://localhost:8000/readyz | head -c 2000 || true
+              echo
+            fi
             sleep 5
           done
           echo "Timed out waiting for /readyz"
+          diagnostics
           exit 1
 
       - name: Set up Node.js
