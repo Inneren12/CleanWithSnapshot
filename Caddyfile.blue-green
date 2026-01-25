@@ -1,0 +1,76 @@
+# Blue/Green Deployment Caddyfile
+#
+# This Caddyfile supports zero-downtime blue/green deployments.
+# The active upstream is determined by config/caddy/active-upstream.caddy
+# which is managed by ops/blue-green-deploy.sh
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.blue-green.yml up -d
+
+{
+  log {
+    output file /var/log/caddy/caddy.log {
+      roll_size 50MiB
+      roll_keep 10
+      roll_keep_for 168h
+    }
+  }
+}
+
+# Import the active upstream configuration (blue or green)
+import /etc/caddy/upstream/active-upstream.caddy
+
+panidobro.com, www.panidobro.com {
+  encode zstd gzip
+
+  log {
+    output file /var/log/caddy/access_web.log {
+      roll_size 50MiB
+      roll_keep 10
+      roll_keep_for 168h
+    }
+    format json
+  }
+
+  handle_path /admin {
+    header Cache-Control "no-store"
+    redir https://api.panidobro.com/v1/admin 302
+  }
+
+  handle_path /admin/* {
+    header Cache-Control "no-store"
+    redir https://api.panidobro.com/v1/admin{path} 302
+  }
+
+  handle_path /grafana/* {
+    @grafana_allowlist remote_ip 127.0.0.1 ::1 {env.GRAFANA_ALLOWED_IPS}
+    handle @grafana_allowlist {
+      reverse_proxy grafana:3000
+    }
+    handle {
+      respond "Grafana access denied." 403
+    }
+  }
+
+  # Use the imported web_upstream snippet
+  import web_upstream
+}
+
+api.panidobro.com {
+  encode zstd gzip
+
+  log {
+    output file /var/log/caddy/access_api.log {
+      roll_size 50MiB
+      roll_keep 10
+      roll_keep_for 168h
+    }
+    format json
+  }
+
+  @docs path /docs* /openapi.json
+  header @docs -Content-Security-Policy
+  header @docs Content-Security-Policy "default-src 'self'; img-src 'self' data: https://fastapi.tiangolo.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;"
+
+  # Use the imported api_upstream snippet
+  import api_upstream
+}

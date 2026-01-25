@@ -1,0 +1,179 @@
+# Blue/Green Deployment Override
+#
+# This file extends the base docker-compose.yml to support blue/green deployments.
+# It defines color-specific API and Web services that can be deployed independently.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.blue-green.yml up -d api-blue web-blue
+#   docker compose -f docker-compose.yml -f docker-compose.blue-green.yml up -d api-green web-green
+#
+# The active color is determined by ops/state/active_color (default: blue)
+
+services:
+  # Blue API service
+  api-blue:
+    volumes:
+      - /opt/backups/postgres:/opt/backups/postgres:ro
+      - ./var/uploads:/app/var/uploads
+    image: cleanwithsnapshot-api:blue
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
+      OTEL_SERVICE_NAME: api-blue
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-local}
+      DEPLOYMENT_COLOR: blue
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz').read()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "promtail=true"
+      - "service=api"
+      - "deployment.color=blue"
+
+  # Green API service
+  api-green:
+    volumes:
+      - /opt/backups/postgres:/opt/backups/postgres:ro
+      - ./var/uploads:/app/var/uploads
+    image: cleanwithsnapshot-api:green
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
+      OTEL_SERVICE_NAME: api-green
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-local}
+      DEPLOYMENT_COLOR: green
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz').read()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "promtail=true"
+      - "service=api"
+      - "deployment.color=green"
+
+  # Blue Web service
+  web-blue:
+    image: cleanwithsnapshot-web:blue
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_SHOW_ADMIN_LINK: ${NEXT_PUBLIC_SHOW_ADMIN_LINK:-false}
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: "https://api.panidobro.com"
+      DEPLOYMENT_COLOR: blue
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "promtail=true"
+      - "service=web"
+      - "deployment.color=blue"
+
+  # Green Web service
+  web-green:
+    image: cleanwithsnapshot-web:green
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_SHOW_ADMIN_LINK: ${NEXT_PUBLIC_SHOW_ADMIN_LINK:-false}
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: "https://api.panidobro.com"
+      DEPLOYMENT_COLOR: green
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "promtail=true"
+      - "service=web"
+      - "deployment.color=green"
+
+  # Override Caddy to mount the blue-green Caddyfile and upstream configs
+  caddy:
+    volumes:
+      - ./Caddyfile.blue-green:/etc/caddy/Caddyfile:ro
+      - ./config/caddy:/etc/caddy/upstream:ro
+      - ./ops/state:/etc/caddy/state:ro
+      - ./logs:/var/log/caddy
+      - caddy_data:/data
+      - caddy_config:/config

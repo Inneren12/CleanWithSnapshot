@@ -1,0 +1,29 @@
+# Blue upstream configuration
+# This file is imported by Caddyfile.blue-green when blue is the active color
+
+(api_upstream) {
+  reverse_proxy api-blue:8000 {
+    header_up Authorization {header.Authorization}
+    transport http {
+      dial_timeout 10s
+      read_timeout 90s
+      write_timeout 90s
+    }
+    health_uri /healthz
+    health_interval 5s
+    health_timeout 3s
+  }
+}
+
+(web_upstream) {
+  reverse_proxy web-blue:3000 {
+    transport http {
+      dial_timeout 10s
+      read_timeout 60s
+      write_timeout 60s
+    }
+    health_uri /healthz
+    health_interval 5s
+    health_timeout 3s
+  }
+}
