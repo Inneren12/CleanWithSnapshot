@@ -242,6 +242,144 @@ Follow-up actions:
 
 ---
 
+## Automated PITR Restore Drill (Staging)
+
+The automated PITR restore drill script (`ops/pitr_restore_drill.sh`) provides a fully automated way to
+validate PITR capability on staging environments. It performs all steps of a PITR restore and generates
+a detailed report.
+
+### Quick Start
+
+```bash
+# Full automated drill (creates backup, restores, verifies)
+cd /opt/cleaning
+TARGET_ENV=staging CONFIRM_DRILL=YES ./ops/pitr_restore_drill.sh
+```
+
+### What the Drill Does
+
+1. **Pre-drill health check** - Captures current API/DB health status
+2. **Insert marker record** - Creates a test record to verify PITR recovery point
+3. **Create base backup** - Runs `backup_basebackup.sh` (or uses existing)
+4. **Perform PITR restore** - Restores to target timestamp using WAL
+5. **Wait for services** - Monitors service stabilization
+6. **Post-restore health checks** - Validates `/healthz` and `/readyz`
+7. **Data integrity verification** - Compares record counts, checks marker
+8. **Run smoke tests** - Executes `smoke.sh` for end-to-end validation
+9. **Generate report** - Creates markdown report in `ops/drill-reports/`
+
+### Usage Options
+
+```bash
+# Full automated drill (recommended for quarterly drills)
+TARGET_ENV=staging \
+CONFIRM_DRILL=YES \
+./ops/pitr_restore_drill.sh
+
+# Drill with specific backup files
+TARGET_ENV=staging \
+CONFIRM_DRILL=YES \
+BASE_BACKUP=/opt/backups/postgres/basebackup_20260125T120000Z.tar.gz \
+WAL_ARCHIVE=/opt/backups/postgres/wal_archive_20260125T120000Z.tar.gz \
+TARGET_TIME="2026-01-25 14:30:00 UTC" \
+./ops/pitr_restore_drill.sh
+
+# Skip backup creation (use most recent existing backup)
+TARGET_ENV=staging \
+CONFIRM_DRILL=YES \
+SKIP_BACKUP=true \
+./ops/pitr_restore_drill.sh
+```
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TARGET_ENV` | Yes | - | Must be "staging" (safety check) |
+| `CONFIRM_DRILL` | Yes | - | Must be "YES" to proceed |
+| `BASE_BACKUP` | No | auto | Path to base backup tarball |
+| `WAL_ARCHIVE` | No | auto | Path to WAL archive tarball |
+| `TARGET_TIME` | No | 1 min ago | Recovery target time |
+| `ENV_FILE` | No | `.env` | Path to environment file |
+| `API_BASE_URL` | No | `http://localhost:8000` | API endpoint for health checks |
+| `SKIP_BACKUP` | No | `false` | Skip creating fresh backup |
+| `DRILL_REPORT_DIR` | No | `ops/drill-reports` | Report output directory |
+
+### Safety Guards
+
+The drill script includes multiple safety checks to prevent accidental production impact:
+
+1. **Environment check**: `TARGET_ENV` must be explicitly set to "staging"
+2. **Confirmation required**: `CONFIRM_DRILL=YES` must be set
+3. **Production detection**: Refuses to run if `.env` contains `APP_ENV=prod`
+4. **Pre-restore backup**: Current data is backed up before restore
+
+### Post-Drill Verification
+
+Run the standalone verification script to validate the restore:
+
+```bash
+./ops/pitr_verify.sh
+```
+
+This checks:
+- Docker services running (db, api, web, jobs)
+- PostgreSQL recovery status (not in recovery mode)
+- WAL archiving enabled
+- `/healthz` endpoint (status, db_connected)
+- `/readyz` endpoint (status, migrations_current)
+- Database queries (record counts, data timestamps)
+
+### Drill Reports
+
+Reports are saved to `ops/drill-reports/` with the naming convention:
+`pitr_drill_YYYYMMDDTHHMMSSZ.md`
+
+Each report includes:
+- Configuration parameters
+- Step-by-step execution log
+- Pre/post health check results
+- Data integrity verification
+- RTO measurement
+- Pass/fail summary
+- Troubleshooting guidance (if failed)
+
+### Recommended Drill Schedule
+
+| Frequency | Type | Purpose |
+|-----------|------|---------|
+| Quarterly | Full automated drill | Validate PITR capability |
+| After infrastructure changes | Targeted drill | Verify backup/restore still works |
+| After PostgreSQL upgrades | Full drill | Confirm compatibility |
+
+### CI/CD Integration
+
+For automated scheduled drills, add to your CI pipeline:
+
+```yaml
+# Example: GitHub Actions scheduled PITR drill
+pitr-drill:
+  runs-on: ubuntu-latest
+  environment: staging
+  schedule:
+    - cron: '0 3 1 */3 *'  # Quarterly on the 1st at 3 AM
+  steps:
+    - uses: actions/checkout@v4
+    - name: Run PITR drill
+      run: |
+        TARGET_ENV=staging \
+        CONFIRM_DRILL=YES \
+        API_BASE_URL=${{ secrets.STAGING_API_URL }} \
+        ./ops/pitr_restore_drill.sh
+    - name: Upload drill report
+      uses: actions/upload-artifact@v4
+      with:
+        name: pitr-drill-report
+        path: ops/drill-reports/*.md
+```
+
+---
+
 ## Notes & Escalation
 
 - If `/readyz` returns non-200 after restore, run `docker compose exec -T api alembic upgrade head`
