@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 
 import sqlalchemy as sa
-from sqlalchemy import BigInteger, DateTime, String
+from sqlalchemy import BigInteger, Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db import Base
@@ -23,6 +23,9 @@ class FeatureFlagDefinition(Base):
     key: Mapped[str] = mapped_column(String(255), primary_key=True)
     owner: Mapped[str] = mapped_column(String(255), nullable=False)
     purpose: Mapped[str] = mapped_column(String(1024), nullable=False)
+    pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=sa.text("false"), default=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

@@ -47,6 +47,7 @@ Every feature flag definition includes:
 - **Created at**: server-generated timestamp.
 - **Expires at**: required for new flags; legacy flags may be null until backfilled.
 - **Lifecycle state**: `draft`, `active`, `expired`, or `retired`.
+- **Pinned**: optional safeguard to prevent automated retirement.
 
 New flags **cannot** be created without `owner`, `purpose`, and `expires_at`.
 
@@ -55,6 +56,70 @@ New flags **cannot** be created without `owner`, `purpose`, and `expires_at`.
 - Expired or retired flags **auto-disable** during evaluation.
 - Expired or retired flags **cannot** be modified or rolled out without an explicit override.
 - Overrides require `override_reason` and are audited as `override`.
+
+## Retirement automation (scheduled + manual)
+
+Feature flag retirement is automated to ensure expired/stale flags are safely disabled and audited.
+
+### Policy controls
+
+Retirement behavior is controlled by environment settings:
+
+- `FLAG_RETIRE_EXPIRED` (default: `true`): retire flags whose `expires_at` is in the past.
+- `FLAG_RETIRE_STALE_DAYS` (default: `90`): retire flags that are stale for N days (set to `0` to disable).
+- `FLAG_RETIRE_DRY_RUN` (default: `false`): log candidates without mutating data.
+- `FLAG_RETIRE_RECENT_EVALUATION_DAYS` (default: `7`): protect flags evaluated recently (set to `0` to allow).
+
+Stale retirement reuses the same evaluation telemetry gates as the stale report, including
+`feature_flag_stale_max_evaluate_count`.
+
+### Safety gates
+
+- **Pinned flags** (`pinned=true`) are never auto-retired.
+- **Recently evaluated flags** (within `FLAG_RETIRE_RECENT_EVALUATION_DAYS`) are excluded unless the
+  policy is explicitly relaxed.
+- Retirement is idempotent; already retired flags are skipped.
+
+### Scheduled job
+
+The scheduled job `feature-flag-retirement` runs daily (via the jobs runner) and:
+
+1. Selects expired flags and (optionally) stale flags.
+2. Sets `lifecycle_state=retired` and disables evaluation.
+3. Writes an audit entry for each retired flag.
+
+### Operator tooling
+
+Preview candidates (non-mutating):
+
+```
+GET /v1/admin/settings/feature-flags/retirement/preview
+```
+
+Trigger a manual run (supports dry-run and policy overrides):
+
+```
+POST /v1/admin/settings/feature-flags/retirement/run
+{
+  "dry_run": true,
+  "retire_expired": true,
+  "retire_stale_days": 90,
+  "recent_evaluation_days": 7
+}
+```
+
+### Un-retire process
+
+If a flag is retired in error, an owner can update the definition via:
+
+```
+PATCH /v1/admin/settings/feature-flags/{flag_key}
+{
+  "lifecycle_state": "active"
+}
+```
+
+This action is audited and should include a governance review to avoid re-enabling deprecated flags.
 
 ## Policy gates
 
