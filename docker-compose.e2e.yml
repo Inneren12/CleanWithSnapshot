@@ -19,12 +19,12 @@ services:
 
   api:
     environment:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/cleaning
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     command:
       [
         "sh",
         "-lc",
-        "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000",
+        "set -euo pipefail; echo 'Running alembic upgrade head'; alembic upgrade head || { echo 'Alembic upgrade failed'; alembic current || true; alembic heads || true; exit 1; }; exec uvicorn app.main:app --host 0.0.0.0 --port 8000",
       ]
     ports:
       - "8000:8000"
