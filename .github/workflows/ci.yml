@@ -467,6 +467,59 @@ jobs:
             exit 1
           fi
 
+  grype-scan:
+    name: Security - Grype Image Scan
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: cleanwithsnapshot
+      GRYPE_FAIL_ON: "critical"
+      SBOM_ENABLED: "false"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build api and web images
+        run: docker compose build api web
+
+      - name: Install Grype CLI
+        run: |
+          curl -sfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Scan api image (Grype JSON)
+        run: |
+          grype cleanwithsnapshot-api:ci \
+            --fail-on "${GRYPE_FAIL_ON}" \
+            -o json \
+            --file grype-cleanwithsnapshot-api.json
+
+      - name: Scan web image (Grype JSON)
+        run: |
+          grype cleanwithsnapshot-web:ci \
+            --fail-on "${GRYPE_FAIL_ON}" \
+            -o json \
+            --file grype-cleanwithsnapshot-web.json
+
+      - name: Install Syft CLI (optional)
+        if: env.SBOM_ENABLED == 'true'
+        run: |
+          curl -sfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM (optional)
+        if: env.SBOM_ENABLED == 'true'
+        run: |
+          syft cleanwithsnapshot-api:ci -o spdx-json > sbom-cleanwithsnapshot-api.json
+          syft cleanwithsnapshot-web:ci -o spdx-json > sbom-cleanwithsnapshot-web.json
+
+      - name: Upload Grype reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grype-reports
+          path: |
+            grype-cleanwithsnapshot-*.json
+            sbom-cleanwithsnapshot-*.json
+
 
   secrets-scan:
     name: Security - Secrets Scan (Gitleaks)
