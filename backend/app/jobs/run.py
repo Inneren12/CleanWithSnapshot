@@ -17,6 +17,7 @@ from app.infra.tracing import configure_tracing, shutdown_tracing
 from app.jobs.heartbeat import _resolve_runner_id, record_heartbeat
 from app.jobs import (
     accounting_export,
+    audit_retention,
     dlq_auto_replay,
     email_jobs,
     gcal_sync,
@@ -155,6 +156,8 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         return lambda session: storage_quota.run_storage_quota_cleanup(session)
     if name == "storage-quota-reconcile":
         return lambda session: storage_quota.run_storage_quota_reconciliation(session)
+    if name == "audit-retention":
+        return lambda session: audit_retention.run_audit_retention(session)
     if name == "notifications-digest-daily":
         return lambda session: notifications_digests.run_notifications_digest(
             session, _ADAPTER, schedule="daily"
@@ -205,6 +208,7 @@ async def run(argv: list[str] | None = None) -> None:
             "storage-janitor",
             "storage-quota-cleanup",
             "storage-quota-reconcile",
+            "audit-retention",
             "notifications-digest-daily",
             "notifications-digest-weekly",
             "notifications-digest-monthly",
