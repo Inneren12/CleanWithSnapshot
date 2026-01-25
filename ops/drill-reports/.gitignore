@@ -1,0 +1,5 @@
+# Ignore drill report files (generated during PITR drills)
+# Keep this directory in git but exclude actual reports
+*.md
+!.gitignore
+!.gitkeep
