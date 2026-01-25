@@ -14,6 +14,25 @@ traditional backup restore and Point-in-Time Recovery (PITR) using WAL archiving
 **RTO** = time to restore service to healthy `/readyz` status.
 **RPO** = maximum tolerable data loss based on last successful backup/WAL sync.
 
+### Formal RPO/RTO Targets
+
+The following targets are the formal objectives for incident response planning:
+
+| Scope | Target RTO | Target RPO | Notes |
+| --- | --- | --- | --- |
+| Production (PITR path) | **2 hours** | **5 minutes** | Use WAL archive restore when data integrity is compromised. |
+| Production (backup path) | **4 hours** | **24 hours** | Use daily backup restore when PITR is unavailable. |
+| Staging drills | **90 minutes** | **24 hours** | Quarterly verification for operational readiness. |
+
+### Recovery Matrix
+
+| Scenario | Primary Impact | Target RTO/RPO | Recovery Mechanism | Notes |
+| --- | --- | --- | --- | --- |
+| Data corruption | Invalid data or schema state in Postgres | **2h / 5m** | **PITR** | Recover to last known-good timestamp after corruption event. |
+| Operator error | Accidental delete/update or misconfiguration | **2h / 5m** | **PITR** | Roll back to pre-change point-in-time; validate via targeted queries. |
+| Infra outage (single host/zone) | Lost containers, disks, or VM | **4h / 24h** (backup path) or **2h / 5m** (PITR path) | **Redeploy + restore** | Redeploy stack, then restore from daily backup or PITR depending on archive availability. |
+| Region outage | Full region loss | **4h / 24h** (backup path) or **2h / 5m** (PITR path) | **Redeploy + restore** | Bring up stack in alternate region, restore offsite backups/WAL archives. |
+
 ## Backup Artifacts
 
 ### Traditional Backups (Phase 0)
