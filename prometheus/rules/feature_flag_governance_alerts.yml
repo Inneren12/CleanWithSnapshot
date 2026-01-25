@@ -1,0 +1,27 @@
+groups:
+  - name: feature-flag-governance
+    rules:
+      - alert: FeatureFlagsNeverEvaluated
+        expr: feature_flags_stale_total{category="never"} > 0
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Feature flags have never been evaluated"
+          description: "One or more feature flags have never been evaluated. Review the stale flag report and retire unused flags."
+      - alert: FeatureFlagsInactive
+        expr: feature_flags_stale_total{category="inactive"} > 5
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Feature flags inactive for configured window"
+          description: "More than 5 feature flags have not been evaluated within the configured stale window."
+      - alert: FeatureFlagsExpiredStillEvaluated
+        expr: feature_flags_stale_total{category="expired_evaluated"} > 0
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: "Expired or retired flags are still evaluated"
+          description: "Expired or retired flags continue to receive evaluations. Investigate callers using deprecated flags."

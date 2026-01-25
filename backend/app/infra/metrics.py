@@ -60,6 +60,7 @@ class Metrics:
             self.storage_reservations_pending = None
             self.audit_records_purged_total = None
             self.audit_records_on_legal_hold_total = None
+            self.feature_flags_stale_total = None
             return
 
         self.webhook_events = Counter(
@@ -243,6 +244,12 @@ class Metrics:
         self.audit_records_on_legal_hold_total = Counter(
             "audit_records_on_legal_hold_total",
             "Audit records prevented from purge due to legal hold.",
+            registry=self.registry,
+        )
+        self.feature_flags_stale_total = Gauge(
+            "feature_flags_stale_total",
+            "Count of stale or policy-mismatched feature flags by category.",
+            ["category"],
             registry=self.registry,
         )
         self.circuit_state = Gauge(
@@ -532,6 +539,13 @@ class Metrics:
             return
         value = {"closed": 0, "half_open": 0.5, "open": 1}.get(state, -1)
         self.circuit_state.labels(circuit=circuit).set(value)
+
+    def record_feature_flag_stale_counts(self, counts: dict[str, int]) -> None:
+        if not self.enabled or self.feature_flags_stale_total is None:
+            return
+        for category, value in counts.items():
+            safe_category = category or "unknown"
+            self.feature_flags_stale_total.labels(category=safe_category).set(max(0, int(value)))
 
     def render(self) -> tuple[bytes, str]:
         if not self.enabled:

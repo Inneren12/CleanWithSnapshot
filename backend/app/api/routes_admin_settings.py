@@ -187,6 +187,67 @@ async def list_feature_flag_definitions(
     return feature_flag_schemas.FeatureFlagDefinitionListResponse(items=items)
 
 
+@router.get(
+    "/v1/admin/settings/feature-flags/stale",
+    response_model=feature_flag_schemas.FeatureFlagStaleListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_stale_feature_flags(
+    request: Request,
+    include_never: bool = Query(default=True),
+    inactive_days: int = Query(default=settings.feature_flag_stale_inactive_days, ge=0),
+    max_evaluate_count: int = Query(default=settings.feature_flag_stale_max_evaluate_count, ge=0),
+    lifecycle_state: feature_flag_schemas.FeatureFlagLifecycleState | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    _identity: AdminIdentity = Depends(require_viewer),
+    session: AsyncSession = Depends(get_db_session),
+) -> feature_flag_schemas.FeatureFlagStaleListResponse:
+    resolved_inactive_days = inactive_days or None
+    records, total, cutoff = await feature_flag_service.list_stale_feature_flag_definitions(
+        session,
+        include_never=include_never,
+        inactive_days=resolved_inactive_days,
+        max_evaluate_count=max_evaluate_count,
+        lifecycle_state=lifecycle_state,
+        limit=limit,
+        offset=offset,
+    )
+    if getattr(request.app.state, "metrics", None):
+        metrics_snapshot = await feature_flag_service.stale_feature_flag_metrics_snapshot(
+            session,
+            inactive_days=settings.feature_flag_stale_inactive_days,
+            max_evaluate_count=settings.feature_flag_stale_max_evaluate_count,
+            expired_recent_days=settings.feature_flag_expired_recent_days,
+        )
+        request.app.state.metrics.record_feature_flag_stale_counts(metrics_snapshot)
+    items = []
+    for record in records:
+        if record.last_evaluated_at is None:
+            category = feature_flag_schemas.FeatureFlagStaleCategory.NEVER
+        else:
+            category = feature_flag_schemas.FeatureFlagStaleCategory.INACTIVE
+            if cutoff is not None and record.last_evaluated_at >= cutoff:
+                category = feature_flag_schemas.FeatureFlagStaleCategory.INACTIVE
+        items.append(
+            feature_flag_schemas.FeatureFlagStaleItem(
+                key=record.key,
+                owner=record.owner,
+                purpose=record.purpose,
+                created_at=record.created_at,
+                expires_at=record.expires_at,
+                lifecycle_state=feature_flag_schemas.FeatureFlagLifecycleState(record.lifecycle_state),
+                last_evaluated_at=record.last_evaluated_at,
+                evaluate_count=record.evaluate_count,
+                stale_category=category,
+            )
+        )
+    next_offset = offset + limit if offset + limit < total else None
+    return feature_flag_schemas.FeatureFlagStaleListResponse(
+        items=items, limit=limit, offset=offset, next_offset=next_offset
+    )
+
+
 @router.post(
     "/v1/admin/settings/feature-flags",
     response_model=feature_flag_schemas.FeatureFlagDefinitionBase,

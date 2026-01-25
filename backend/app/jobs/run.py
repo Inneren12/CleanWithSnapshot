@@ -20,6 +20,7 @@ from app.jobs import (
     audit_retention,
     dlq_auto_replay,
     email_jobs,
+    feature_flag_governance,
     gcal_sync,
     leads_nurture_runner,
     nps_send_runner,
@@ -158,6 +159,8 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         return lambda session: storage_quota.run_storage_quota_reconciliation(session)
     if name == "audit-retention":
         return lambda session: audit_retention.run_audit_retention(session)
+    if name == "feature-flag-governance":
+        return lambda session: feature_flag_governance.run_feature_flag_governance(session)
     if name == "notifications-digest-daily":
         return lambda session: notifications_digests.run_notifications_digest(
             session, _ADAPTER, schedule="daily"
@@ -209,6 +212,7 @@ async def run(argv: list[str] | None = None) -> None:
             "storage-quota-cleanup",
             "storage-quota-reconcile",
             "audit-retention",
+            "feature-flag-governance",
             "notifications-digest-daily",
             "notifications-digest-weekly",
             "notifications-digest-monthly",
