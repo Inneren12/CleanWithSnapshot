@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import qbo_service
 from app.domain.integrations.db_models import AccountingSyncState, IntegrationsAccountingAccount
@@ -16,6 +17,8 @@ async def _enable_qbo(session, org_id):
         session,
         org_id,
         {"module.integrations": True, "integrations.accounting.quickbooks": True},
+        audit_actor=config_audit_service.system_actor("tests"),
+        request_id=None,
     )
 
 

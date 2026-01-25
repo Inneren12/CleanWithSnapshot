@@ -5,6 +5,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import selectinload
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import qbo_service
 from app.domain.integrations.db_models import AccountingInvoiceMap, IntegrationsAccountingAccount
@@ -20,6 +21,8 @@ async def _enable_quickbooks(session, org_id):
         session,
         org_id,
         {"module.integrations": True, "integrations.accounting.quickbooks": True},
+        audit_actor=config_audit_service.system_actor("tests"),
+        request_id=None,
     )
 
 

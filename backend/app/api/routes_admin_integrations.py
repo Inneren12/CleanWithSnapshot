@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, require_permissions, require_viewer
+from app.api.break_glass import BREAK_GLASS_HEADER
 from app.api.org_context import require_org_context
 from app.api.problem_details import PROBLEM_TYPE_DOMAIN, PROBLEM_TYPE_RATE_LIMIT, problem_details
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import gcal_service, maps_service, qbo_service, schemas as integrations_schemas
 from app.infra.db import get_db_session
@@ -23,6 +25,15 @@ async def require_owner(
     if identity.role != AdminRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return identity
+
+
+def _resolve_auth_method(request: Request) -> str:
+    if getattr(request.state, "break_glass", False) or request.headers.get(BREAK_GLASS_HEADER):
+        return "break_glass"
+    authorization = request.headers.get("Authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return "token"
+    return "basic"
 
 
 async def _require_google_calendar_enabled(
@@ -114,7 +125,7 @@ async def finish_quickbooks_connect(
     payload: integrations_schemas.QboConnectCallbackRequest,
     request: Request,
     org_id: uuid.UUID = Depends(require_org_context),
-    _identity: AdminIdentity = Depends(require_owner),
+    identity: AdminIdentity = Depends(require_owner),
     session: AsyncSession = Depends(get_db_session),
 ) -> integrations_schemas.QboConnectCallbackResponse:
     await _require_quickbooks_enabled(session, org_id)
@@ -144,7 +155,14 @@ async def finish_quickbooks_connect(
             detail="Unable to exchange authorization code.",
             type_=PROBLEM_TYPE_DOMAIN,
         )
-    await qbo_service.upsert_account(session, org_id, refresh_token, payload.realm_id)
+    await qbo_service.upsert_account(
+        session,
+        org_id,
+        refresh_token,
+        payload.realm_id,
+        audit_actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+        request_id=getattr(request.state, "request_id", None),
+    )
     await session.commit()
     return integrations_schemas.QboConnectCallbackResponse(
         connected=True,
@@ -158,12 +176,18 @@ async def finish_quickbooks_connect(
     status_code=status.HTTP_200_OK,
 )
 async def disconnect_quickbooks(
+    request: Request,
     org_id: uuid.UUID = Depends(require_org_context),
-    _identity: AdminIdentity = Depends(require_owner),
+    identity: AdminIdentity = Depends(require_owner),
     session: AsyncSession = Depends(get_db_session),
 ) -> integrations_schemas.QboConnectCallbackResponse:
     await _require_quickbooks_enabled(session, org_id)
-    await qbo_service.disconnect_quickbooks(session, org_id)
+    await qbo_service.disconnect_quickbooks(
+        session,
+        org_id,
+        audit_actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+        request_id=getattr(request.state, "request_id", None),
+    )
     await session.commit()
     return integrations_schemas.QboConnectCallbackResponse(connected=False, realm_id=None)
 
@@ -486,7 +510,7 @@ async def finish_google_calendar_connect(
     payload: integrations_schemas.GcalConnectCallbackRequest,
     request: Request,
     org_id: uuid.UUID = Depends(require_org_context),
-    _identity: AdminIdentity = Depends(require_owner),
+    identity: AdminIdentity = Depends(require_owner),
     session: AsyncSession = Depends(get_db_session),
 ) -> integrations_schemas.GcalConnectCallbackResponse:
     await _require_google_calendar_enabled(session, org_id)
@@ -508,7 +532,14 @@ async def finish_google_calendar_connect(
             detail="Unable to exchange authorization code.",
             type_=PROBLEM_TYPE_DOMAIN,
         )
-    await gcal_service.upsert_google_account(session, org_id, refresh_token, scopes)
+    await gcal_service.upsert_google_account(
+        session,
+        org_id,
+        refresh_token,
+        scopes,
+        audit_actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+        request_id=getattr(request.state, "request_id", None),
+    )
     await session.commit()
     calendar_id = await gcal_service.get_primary_calendar_id(session, org_id)
     return integrations_schemas.GcalConnectCallbackResponse(
@@ -523,12 +554,18 @@ async def finish_google_calendar_connect(
     status_code=status.HTTP_200_OK,
 )
 async def disconnect_google_calendar(
+    request: Request,
     org_id: uuid.UUID = Depends(require_org_context),
-    _identity: AdminIdentity = Depends(require_owner),
+    identity: AdminIdentity = Depends(require_owner),
     session: AsyncSession = Depends(get_db_session),
 ) -> integrations_schemas.GcalConnectCallbackResponse:
     await _require_google_calendar_enabled(session, org_id)
-    await gcal_service.disconnect_google_calendar(session, org_id)
+    await gcal_service.disconnect_google_calendar(
+        session,
+        org_id,
+        audit_actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+        request_id=getattr(request.state, "request_id", None),
+    )
     await session.commit()
     return integrations_schemas.GcalConnectCallbackResponse(connected=False, calendar_id=None)
 

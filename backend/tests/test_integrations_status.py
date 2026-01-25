@@ -1,5 +1,6 @@
 import pytest
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import MembershipRole
@@ -16,6 +17,8 @@ async def test_owner_can_read_integrations_status_masked(async_session_maker, cl
             session,
             org.org_id,
             {"module.integrations": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 
@@ -64,6 +67,8 @@ async def test_integrations_status_requires_owner(async_session_maker, client):
             session,
             org.org_id,
             {"module.integrations": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 
@@ -93,6 +98,8 @@ async def test_integrations_status_respects_feature_flag(async_session_maker, cl
             session,
             org.org_id,
             {"module.integrations": False},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 

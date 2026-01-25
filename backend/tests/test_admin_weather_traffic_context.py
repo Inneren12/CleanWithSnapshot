@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.dashboard import schemas as dashboard_schemas
 from app.domain.dashboard import weather_traffic as dashboard_weather_traffic
 from app.domain.feature_modules import service as feature_service
@@ -20,6 +21,8 @@ async def test_weather_traffic_provider_disabled_returns_warning(async_session_m
             session,
             org.org_id,
             {"dashboard.weather_traffic": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 
@@ -52,6 +55,8 @@ async def test_weather_traffic_preserves_zero_values(async_session_maker, client
             session,
             org.org_id,
             {"dashboard.weather_traffic": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 

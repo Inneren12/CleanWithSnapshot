@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.settings import settings
 
@@ -48,6 +49,8 @@ def _enable_attribution(async_session_maker, org_id: uuid.UUID) -> None:
                 session,
                 org_id,
                 {"analytics.attribution_multitouch": True},
+                audit_actor=config_audit_service.system_actor("tests"),
+                request_id=None,
             )
             await session.commit()
 

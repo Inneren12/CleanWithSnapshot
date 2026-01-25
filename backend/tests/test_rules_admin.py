@@ -2,6 +2,7 @@ import asyncio
 import base64
 import uuid
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.saas.db_models import Organization
 from app.settings import settings
@@ -23,7 +24,13 @@ async def _enable_rules_features(async_session_maker, org_id: uuid.UUID) -> None
         overrides = await feature_service.get_org_feature_overrides(session, org_id)
         overrides["module.notifications_center"] = True
         overrides["notifications.rules_builder"] = True
-        await feature_service.upsert_org_feature_overrides(session, org_id, overrides)
+        await feature_service.upsert_org_feature_overrides(
+            session,
+            org_id,
+            overrides,
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
+        )
         await session.commit()
 
 

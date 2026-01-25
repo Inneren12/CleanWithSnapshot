@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.leads import statuses as lead_statuses
 from app.domain.leads.db_models import Lead
@@ -39,6 +40,8 @@ async def _enable_nurture(session, org_id: uuid.UUID) -> None:
         session,
         org_id,
         {"module.leads": True, "leads.nurture": True},
+        audit_actor=config_audit_service.system_actor("tests"),
+        request_id=None,
     )
 
 

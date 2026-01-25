@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.org_settings import service as org_settings_service
 from app.domain.saas import service as saas_service
@@ -127,6 +128,8 @@ async def test_ops_dashboard_critical_alerts_reflect_notifications(async_session
             session,
             org.org_id,
             {"module.notifications_center": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
 
         alert_event = NotificationEvent(
@@ -185,6 +188,8 @@ async def test_ops_dashboard_critical_alerts_respect_notifications_module(async_
             session,
             org.org_id,
             {"module.notifications_center": False},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         session.add(
             NotificationEvent(

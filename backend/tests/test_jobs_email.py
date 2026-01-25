@@ -5,6 +5,7 @@ import sqlalchemy as sa
 
 import uuid
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.bookings.db_models import Booking, EmailEvent
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment
@@ -193,7 +194,11 @@ def test_nps_outbox_runner_dedupes_and_skips_duplicates(async_session_maker):
             await session.commit()
             await session.refresh(lead)
             await feature_service.upsert_org_feature_overrides(
-                session, settings.default_org_id, {"quality.nps": True}
+                session,
+                settings.default_org_id,
+                {"quality.nps": True},
+                audit_actor=config_audit_service.system_actor("tests"),
+                request_id=None,
             )
             booking = Booking(
                 team_id=1,
