@@ -105,7 +105,11 @@ async def _resolve_orgs(session: AsyncSession, scope: AccessReviewScope, org_id:
     return list(result.scalars().all())
 
 
-async def _fetch_last_login_map(session: AsyncSession, org_ids: list[uuid.UUID]) -> dict[tuple[uuid.UUID, uuid.UUID], datetime]:
+async def _fetch_last_login_map(
+    session: AsyncSession,
+    org_ids: list[uuid.UUID],
+    as_of: datetime,
+) -> dict[tuple[uuid.UUID, uuid.UUID], datetime]:
     if not org_ids:
         return {}
     stmt = (
@@ -114,7 +118,10 @@ async def _fetch_last_login_map(session: AsyncSession, org_ids: list[uuid.UUID])
             SaaSSession.user_id,
             sa.func.max(SaaSSession.created_at).label("last_login_at"),
         )
-        .where(SaaSSession.org_id.in_(org_ids))
+        .where(
+            SaaSSession.org_id.in_(org_ids),
+            SaaSSession.created_at <= as_of,
+        )
         .group_by(SaaSSession.org_id, SaaSSession.user_id)
     )
     rows = (await session.execute(stmt)).all()
@@ -122,13 +129,17 @@ async def _fetch_last_login_map(session: AsyncSession, org_ids: list[uuid.UUID])
 
 
 async def _fetch_break_glass_usage(
-    session: AsyncSession, org_ids: list[uuid.UUID], cutoff: datetime
+    session: AsyncSession,
+    org_ids: list[uuid.UUID],
+    cutoff: datetime,
+    as_of: datetime,
 ) -> tuple[set[tuple[uuid.UUID, str]], dict[uuid.UUID, list[datetime]]]:
     if not org_ids:
         return set(), {}
     stmt = sa.select(BreakGlassSession.org_id, BreakGlassSession.actor, BreakGlassSession.created_at).where(
         BreakGlassSession.org_id.in_(org_ids),
         BreakGlassSession.created_at >= cutoff,
+        BreakGlassSession.created_at <= as_of,
     )
     rows = (await session.execute(stmt)).all()
     actor_map: set[tuple[uuid.UUID, str]] = set()
@@ -142,7 +153,10 @@ async def _fetch_break_glass_usage(
 
 
 async def _fetch_role_change_events(
-    session: AsyncSession, org_ids: list[uuid.UUID], cutoff: datetime
+    session: AsyncSession,
+    org_ids: list[uuid.UUID],
+    cutoff: datetime,
+    as_of: datetime,
 ) -> dict[tuple[uuid.UUID, uuid.UUID], list[datetime]]:
     if not org_ids:
         return {}
@@ -151,6 +165,7 @@ async def _fetch_role_change_events(
         .where(
             AdminAuditLog.org_id.in_(org_ids),
             AdminAuditLog.created_at >= cutoff,
+            AdminAuditLog.created_at <= as_of,
             AdminAuditLog.action_type == "WRITE",
             AdminAuditLog.action.like("PATCH /v1/admin/iam/users/%/role%"),
         )
@@ -297,11 +312,11 @@ async def build_access_review_snapshot(
     break_glass_cutoff = as_of - timedelta(days=resolved_config.break_glass_lookback_days)
     role_change_cutoff = as_of - timedelta(days=resolved_config.role_change_lookback_days)
 
-    last_login_map = await _fetch_last_login_map(session, org_ids)
+    last_login_map = await _fetch_last_login_map(session, org_ids, as_of)
     break_glass_actor_map, break_glass_org_map = await _fetch_break_glass_usage(
-        session, org_ids, break_glass_cutoff
+        session, org_ids, break_glass_cutoff, as_of
     )
-    role_change_map = await _fetch_role_change_events(session, org_ids, role_change_cutoff)
+    role_change_map = await _fetch_role_change_events(session, org_ids, role_change_cutoff, as_of)
 
     stmt = (
         sa.select(Membership, User, IamRole)

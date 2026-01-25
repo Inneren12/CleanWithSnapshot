@@ -24,6 +24,12 @@ python backend/scripts/access_review_snapshot.py \
   --output-dir ./access-review
 ```
 
+### About `--as-of`
+The `--as-of` timestamp defines the evidence cutoff for the snapshot. Only activity **at or before** the timestamp
+is included. Lookback windows (inactive thresholds, break-glass, role-change checks) are computed as
+`[as_of - lookback_days, as_of]`, preventing evidence drift when you regenerate the report later with the same
+`--as-of` value.
+
 ### Optional: Persist run metadata
 ```bash
 python backend/scripts/access_review_snapshot.py \

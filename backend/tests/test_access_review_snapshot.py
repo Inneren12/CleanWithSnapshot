@@ -166,3 +166,111 @@ async def test_access_review_anomalies_and_no_sensitive_data(async_session_maker
     assert "totp_secret_base32" not in snapshot_json
     assert "refresh_token_hash" not in snapshot_json
     assert "token_hash" not in snapshot_json
+
+
+@pytest.mark.anyio
+async def test_access_review_as_of_bounds_and_stability(async_session_maker):
+    settings.admin_mfa_required = True
+    settings.admin_mfa_required_roles = ["owner", "admin"]
+    as_of = datetime(2024, 3, 1, 12, 0, tzinfo=timezone.utc)
+    config = access_review.AccessReviewConfig(
+        inactive_days=30,
+        break_glass_lookback_days=90,
+        role_change_lookback_days=90,
+        owner_admin_allowlist=["owner@example.com"],
+    )
+
+    async with async_session_maker() as session:
+        org = Organization(org_id=uuid.uuid4(), name="AsOf Org")
+        session.add(org)
+        user = await saas_service.create_user(session, "owner@example.com", "SecretPass123!")
+        await saas_service.create_membership(session, org, user, MembershipRole.OWNER)
+
+        session.add(
+            SaaSSession(
+                session_id=uuid.uuid4(),
+                user_id=user.user_id,
+                org_id=org.org_id,
+                role=MembershipRole.OWNER,
+                refresh_token_hash="hash",
+                created_at=as_of - timedelta(days=10),
+                expires_at=as_of + timedelta(days=1),
+                refresh_expires_at=as_of + timedelta(days=2),
+                mfa_verified=True,
+            )
+        )
+
+        session.add(
+            SaaSSession(
+                session_id=uuid.uuid4(),
+                user_id=user.user_id,
+                org_id=org.org_id,
+                role=MembershipRole.OWNER,
+                refresh_token_hash="hash",
+                created_at=as_of + timedelta(days=1),
+                expires_at=as_of + timedelta(days=2),
+                refresh_expires_at=as_of + timedelta(days=3),
+                mfa_verified=True,
+            )
+        )
+
+        session.add(
+            BreakGlassSession(
+                session_id=uuid.uuid4(),
+                org_id=org.org_id,
+                actor=user.email,
+                reason="after as_of",
+                token_hash="hash",
+                expires_at=as_of + timedelta(days=2),
+                created_at=as_of + timedelta(days=1),
+            )
+        )
+
+        session.add(
+            AdminAuditLog(
+                audit_id=str(uuid.uuid4()),
+                org_id=org.org_id,
+                admin_id=str(user.user_id),
+                action=f"PATCH /v1/admin/iam/users/{user.user_id}/role",
+                action_type="WRITE",
+                sensitivity_level="normal",
+                actor=user.email,
+                role="owner",
+                auth_method="token",
+                resource_type=None,
+                resource_id=None,
+                context=None,
+                before=None,
+                after=None,
+                created_at=as_of + timedelta(days=1),
+            )
+        )
+
+        await session.commit()
+
+        snapshot = await access_review.build_access_review_snapshot(
+            session,
+            scope=access_review.AccessReviewScope.ORG,
+            org_id=org.org_id,
+            as_of=as_of,
+            config=config,
+            generated_by="tester",
+        )
+
+        snapshot_later = await access_review.build_access_review_snapshot(
+            session,
+            scope=access_review.AccessReviewScope.ORG,
+            org_id=org.org_id,
+            as_of=as_of,
+            config=config,
+            generated_by="tester",
+        )
+
+    assert snapshot == snapshot_later
+
+    admin_user = snapshot["orgs"][0]["admin_users"][0]
+    assert admin_user["last_login_at"] == (as_of - timedelta(days=10)).isoformat().replace("+00:00", "Z")
+
+    anomaly_rules = {entry["rule"] for entry in snapshot["orgs"][0]["anomalies"]}
+    assert "break_glass_recent_use" not in anomaly_rules
+    assert "recent_role_change" not in anomaly_rules
