@@ -14,9 +14,10 @@ import sqlalchemy as sa
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.config_audit import ConfigAuditAction, ConfigAuditActor, ConfigScope
-from app.domain.config_audit import service as config_audit_service
+from app.domain.config_audit import ConfigAuditActor
 from app.domain.integrations.db_models import AccountingInvoiceMap, AccountingSyncState, IntegrationsAccountingAccount
+from app.domain.integration_audit import IntegrationAuditContext, IntegrationScope
+from app.domain.integration_audit import service as integration_audit_service
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices import service as invoice_service
 from app.domain.invoices.db_models import Invoice, Payment
@@ -157,21 +158,21 @@ async def upsert_account(
 ) -> IntegrationsAccountingAccount:
     account = await get_account(session, org_id)
     before_snapshot = await _snapshot_quickbooks_integration(session, org_id)
-    action = ConfigAuditAction.UPDATE if account else ConfigAuditAction.CREATE
     if account:
         account.encrypted_refresh_token = refresh_token
         account.realm_id = realm_id
         await session.flush()
         after_snapshot = await _snapshot_quickbooks_integration(session, org_id)
-        await config_audit_service.record_config_change(
+        await integration_audit_service.audit_integration_config_change(
             session,
             actor=audit_actor,
             org_id=org_id,
-            config_scope=ConfigScope.INTEGRATION,
-            config_key="integrations.accounting.quickbooks",
-            action=action,
-            before_value=before_snapshot,
-            after_value=after_snapshot,
+            context=IntegrationAuditContext(
+                integration_type="quickbooks",
+                integration_scope=IntegrationScope.ORG,
+            ),
+            before_state=before_snapshot,
+            after_state=after_snapshot,
             request_id=request_id,
         )
         return account
@@ -184,15 +185,16 @@ async def upsert_account(
     session.add(account)
     await session.flush()
     after_snapshot = await _snapshot_quickbooks_integration(session, org_id)
-    await config_audit_service.record_config_change(
+    await integration_audit_service.audit_integration_config_change(
         session,
         actor=audit_actor,
         org_id=org_id,
-        config_scope=ConfigScope.INTEGRATION,
-        config_key="integrations.accounting.quickbooks",
-        action=action,
-        before_value=None,
-        after_value=after_snapshot,
+        context=IntegrationAuditContext(
+            integration_type="quickbooks",
+            integration_scope=IntegrationScope.ORG,
+        ),
+        before_state=before_snapshot,
+        after_state=after_snapshot,
         request_id=request_id,
     )
     return account
@@ -228,15 +230,16 @@ async def disconnect_quickbooks(
         )
     )
     await session.flush()
-    await config_audit_service.record_config_change(
+    await integration_audit_service.audit_integration_config_change(
         session,
         actor=audit_actor,
         org_id=org_id,
-        config_scope=ConfigScope.INTEGRATION,
-        config_key="integrations.accounting.quickbooks",
-        action=ConfigAuditAction.DELETE,
-        before_value=before_snapshot,
-        after_value=None,
+        context=IntegrationAuditContext(
+            integration_type="quickbooks",
+            integration_scope=IntegrationScope.ORG,
+        ),
+        before_state=before_snapshot,
+        after_state=None,
         request_id=request_id,
     )
 
