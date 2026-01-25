@@ -16,6 +16,7 @@ from app.domain.iam import permissions as iam_permissions
 from app.domain.iam.db_models import IamRole
 from app.infra.auth import decode_access_token
 from app.infra.logging import update_log_context
+from app.infra.metrics import metrics
 from app.infra.org_context import set_current_org_id
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ async def _load_identity(request: Request, token: str | None, *, strict: bool = 
         payload = decode_access_token(token, request.app.state.app_settings.auth_secret_key)
     except Exception:  # noqa: BLE001
         logger.info("saas_token_invalid")
+        metrics.record_auth_failure("saas", "invalid_token")
         if strict:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid SaaS token")
         return None
@@ -87,6 +89,7 @@ async def _load_identity(request: Request, token: str | None, *, strict: bool = 
         mfa_verified = bool(payload.get("mfa", False))
     except Exception:  # noqa: BLE001
         logger.info("saas_token_payload_invalid")
+        metrics.record_auth_failure("saas", "invalid_payload")
         if strict:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid SaaS token payload")
         return None

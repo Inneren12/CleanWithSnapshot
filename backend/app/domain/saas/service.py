@@ -5,6 +5,7 @@ import string
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import logging
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql, sqlite
@@ -31,6 +32,7 @@ from app.infra.totp import build_otpauth_uri, generate_totp_code, generate_totp_
 from app.settings import settings
 
 DEFAULT_ORG_NAME = "Default Org"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -262,7 +264,18 @@ async def enforce_org_user_quota(
                     "max_users": snapshot.max_users,
                 },
             )
-        metrics.record_org_user_quota_rejection()
+        logger.warning(
+            "org_user_quota_rejected",
+            extra={
+                "extra": {
+                    "org_id": str(org_id),
+                    "attempted_action": attempted_action,
+                    "current_users_count": snapshot.current_users_count,
+                    "max_users": snapshot.max_users,
+                }
+            },
+        )
+        metrics.record_org_user_quota_rejection("max_users")
         raise OrgUserQuotaExceeded(snapshot)
     return snapshot
 

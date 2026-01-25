@@ -115,6 +115,29 @@ def _resolve_log_identity(request: Request) -> dict[str, str]:
     return context
 
 
+def _bucket_for_path(path: str) -> str:
+    normalized = path or ""
+    if normalized.startswith("/v1/admin"):
+        return "admin"
+    if normalized.startswith("/v1/auth"):
+        return "auth"
+    if normalized.startswith("/v1/iam"):
+        return "iam"
+    if normalized.startswith("/v1/worker"):
+        return "worker"
+    if normalized.startswith("/v1/client"):
+        return "client"
+    if normalized.startswith("/v1/bookings"):
+        return "bookings"
+    if normalized.startswith("/v1/orders"):
+        return "orders"
+    if normalized.startswith("/v1/payments"):
+        return "payments"
+    if normalized.startswith("/v1/public"):
+        return "public"
+    return "other"
+
+
 class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable):
         request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
@@ -189,6 +212,8 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             duration = time.perf_counter() - start
             self.metrics.record_http_latency(request.method, route_label, status_code, duration)
             self.metrics.record_http_request(request.method, route_label, status_code)
+            if status_code == 429:
+                self.metrics.record_http_429(_bucket_for_path(request.url.path))
         if status_code >= 500:
             self.metrics.record_http_5xx(request.method, route_label)
         return response
@@ -217,6 +242,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             trusted_proxy_cidrs=self.app_settings.trusted_proxy_cidrs,
         )
         if not await self.limiter.allow(client):
+            bucket = _bucket_for_path(path)
+            request_id = getattr(request.state, "request_id", None)
+            org_id = getattr(request.state, "current_org_id", None)
+            metrics.record_rate_limit_block(bucket)
+            metrics.record_http_429(bucket)
+            logger.warning(
+                "rate_limit_blocked",
+                extra={
+                    "extra": {
+                        "org_id": str(org_id) if org_id else None,
+                        "request_id": str(request_id) if request_id else None,
+                        "bucket": bucket,
+                        "limit_per_minute": self.app_settings.rate_limit_per_minute,
+                    }
+                },
+            )
             return problem_details(
                 request=request,
                 status=429,

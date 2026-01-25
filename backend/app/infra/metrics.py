@@ -50,7 +50,12 @@ class Metrics:
             self.outbox_lag_seconds = None
             self.circuit_state = None
             self.org_user_quota_rejections = None
-            self.storage_quota_rejections = None
+            self.org_active_bookings_quota_rejections = None
+            self.org_storage_quota_rejections = None
+            self.org_rate_limit_blocks = None
+            self.http_429_total = None
+            self.auth_failures_total = None
+            self.outbox_failures_total = None
             self.storage_bytes_used = None
             self.storage_reservations_pending = None
             return
@@ -200,11 +205,6 @@ class Metrics:
             ["type"],
             registry=self.registry,
         )
-        self.storage_quota_rejections = Counter(
-            "storage_quota_rejections_total",
-            "Storage quota rejections.",
-            registry=self.registry,
-        )
         self.storage_bytes_used = Gauge(
             "storage_bytes_used",
             "Total storage bytes used across orgs.",
@@ -219,6 +219,12 @@ class Metrics:
             "outbox_deliver_total",
             "Outbox delivery attempts by type and result.",
             ["type", "result"],
+            registry=self.registry,
+        )
+        self.outbox_failures_total = Counter(
+            "outbox_failures_total",
+            "Outbox delivery failures by type.",
+            ["type"],
             registry=self.registry,
         )
         self.outbox_lag_seconds = Gauge(
@@ -236,6 +242,37 @@ class Metrics:
         self.org_user_quota_rejections = Counter(
             "org_user_quota_rejections_total",
             "Organization user quota rejections.",
+            ["reason"],
+            registry=self.registry,
+        )
+        self.org_active_bookings_quota_rejections = Counter(
+            "org_active_bookings_quota_rejections_total",
+            "Organization booking quota rejections.",
+            ["reason"],
+            registry=self.registry,
+        )
+        self.org_storage_quota_rejections = Counter(
+            "org_storage_quota_rejections_total",
+            "Organization storage quota rejections.",
+            ["reason"],
+            registry=self.registry,
+        )
+        self.org_rate_limit_blocks = Counter(
+            "org_rate_limit_blocks_total",
+            "Rate limit blocks by request bucket.",
+            ["bucket"],
+            registry=self.registry,
+        )
+        self.http_429_total = Counter(
+            "http_429_total",
+            "HTTP 429 responses by bucket.",
+            ["bucket"],
+            registry=self.registry,
+        )
+        self.auth_failures_total = Counter(
+            "auth_failures_total",
+            "Authentication failures by source and reason.",
+            ["source", "reason"],
             registry=self.registry,
         )
 
@@ -386,16 +423,51 @@ class Metrics:
         safe_kind = kind or "unknown"
         safe_result = result or "unknown"
         self.outbox_deliver_total.labels(type=safe_kind, result=safe_result).inc()
+        if safe_result == "error" and self.outbox_failures_total is not None:
+            self.outbox_failures_total.labels(type=safe_kind).inc()
 
-    def record_org_user_quota_rejection(self) -> None:
+    def record_org_user_quota_rejection(self, reason: str) -> None:
         if not self.enabled or self.org_user_quota_rejections is None:
             return
-        self.org_user_quota_rejections.inc()
+        safe_reason = reason or "unknown"
+        self.org_user_quota_rejections.labels(reason=safe_reason).inc()
 
-    def record_storage_quota_rejection(self) -> None:
-        if not self.enabled or self.storage_quota_rejections is None:
+    def record_org_active_bookings_quota_rejection(self, reason: str) -> None:
+        if not self.enabled or self.org_active_bookings_quota_rejections is None:
             return
-        self.storage_quota_rejections.inc()
+        safe_reason = reason or "unknown"
+        self.org_active_bookings_quota_rejections.labels(reason=safe_reason).inc()
+
+    def record_org_storage_quota_rejection(self, reason: str) -> None:
+        if not self.enabled or self.org_storage_quota_rejections is None:
+            return
+        safe_reason = reason or "unknown"
+        self.org_storage_quota_rejections.labels(reason=safe_reason).inc()
+
+    def record_rate_limit_block(self, bucket: str) -> None:
+        if not self.enabled or self.org_rate_limit_blocks is None:
+            return
+        safe_bucket = bucket or "unknown"
+        self.org_rate_limit_blocks.labels(bucket=safe_bucket).inc()
+
+    def record_http_429(self, bucket: str) -> None:
+        if not self.enabled or self.http_429_total is None:
+            return
+        safe_bucket = bucket or "unknown"
+        self.http_429_total.labels(bucket=safe_bucket).inc()
+
+    def record_auth_failure(self, source: str, reason: str) -> None:
+        if not self.enabled or self.auth_failures_total is None:
+            return
+        safe_source = source or "unknown"
+        safe_reason = reason or "unknown"
+        self.auth_failures_total.labels(source=safe_source, reason=safe_reason).inc()
+
+    def record_storage_quota_rejection(self, reason: str) -> None:
+        self.record_org_storage_quota_rejection(reason)
+
+    def record_booking_quota_rejection(self, reason: str) -> None:
+        self.record_org_active_bookings_quota_rejection(reason)
 
     def set_storage_bytes_used(self, total_bytes: int) -> None:
         if not self.enabled or self.storage_bytes_used is None:

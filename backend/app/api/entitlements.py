@@ -9,11 +9,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import saas_auth
 from app.api.saas_auth import _get_saas_token
+from app.api.admin_auth import AdminIdentity, AdminRole
+from app.domain.admin_audit import service as admin_audit_service
 from app.domain.saas import billing_service
 from app.domain.saas.plans import Plan, get_plan
 from app.infra.db import get_db_session
 from app.infra.org_context import set_current_org_id
+from app.infra.metrics import metrics
 from app.settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_request_id(request: Request) -> str | None:
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        return str(request_id)
+    return request.headers.get("X-Request-ID")
+
+
+def _system_identity(org_id: uuid.UUID) -> AdminIdentity:
+    return AdminIdentity(username="system", role=AdminRole.ADMIN, org_id=org_id)
 
 
 def resolve_org_id(request: Request) -> uuid.UUID:
@@ -103,6 +119,34 @@ async def require_booking_entitlement(
     org_id = getattr(request.state, "current_org_id", None) or settings.default_org_id
     plan, usage = await _plan_and_usage(session, org_id)
     if usage["bookings_this_month"] >= plan.limits.max_bookings_per_month:
+        request_id = _resolve_request_id(request)
+        logger.warning(
+            "org_booking_quota_rejected",
+            extra={
+                "extra": {
+                    "org_id": str(org_id),
+                    "request_id": request_id,
+                    "quota_type": "bookings_per_month",
+                    "bookings_this_month": usage["bookings_this_month"],
+                    "max_bookings_per_month": plan.limits.max_bookings_per_month,
+                }
+            },
+        )
+        await admin_audit_service.record_action(
+            session,
+            identity=_system_identity(org_id),
+            org_id=org_id,
+            action="org_booking_quota_rejected",
+            resource_type="org_booking_quota",
+            resource_id=str(org_id),
+            before=None,
+            after={
+                "bookings_this_month": usage["bookings_this_month"],
+                "max_bookings_per_month": plan.limits.max_bookings_per_month,
+                "request_id": request_id,
+            },
+        )
+        metrics.record_org_active_bookings_quota_rejection("monthly_limit")
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="Monthly booking limit reached for current plan",
@@ -122,6 +166,36 @@ async def enforce_storage_entitlement(
     plan, usage = await _plan_and_usage(session, org_id)
     limit_bytes = plan.limits.storage_gb * 1024 * 1024 * 1024
     if usage["storage_bytes"] + bytes_to_add > limit_bytes:
+        request_id = _resolve_request_id(request)
+        logger.warning(
+            "org_storage_quota_rejected",
+            extra={
+                "extra": {
+                    "org_id": str(org_id),
+                    "request_id": request_id,
+                    "quota_type": "plan_storage_gb",
+                    "bytes_requested": bytes_to_add,
+                    "storage_bytes_used": usage["storage_bytes"],
+                    "max_storage_bytes": limit_bytes,
+                }
+            },
+        )
+        await admin_audit_service.record_action(
+            session,
+            identity=_system_identity(org_id),
+            org_id=org_id,
+            action="org_storage_plan_quota_rejected",
+            resource_type="org_storage_quota",
+            resource_id=str(org_id),
+            before=None,
+            after={
+                "bytes_requested": bytes_to_add,
+                "storage_bytes_used": usage["storage_bytes"],
+                "max_storage_bytes": limit_bytes,
+                "request_id": request_id,
+            },
+        )
+        metrics.record_org_storage_quota_rejection("plan_limit")
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="Storage limit reached for current plan",

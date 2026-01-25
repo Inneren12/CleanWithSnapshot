@@ -7,6 +7,13 @@ from app.domain.saas import service as saas_service
 from app.domain.storage_quota import service as storage_quota_service
 from app.domain.storage_quota.db_models import OrgStorageReservation
 from app.jobs import storage_quota as storage_quota_job
+from app.infra.metrics import metrics
+
+
+def _counter_value(counter, **labels) -> float:
+    if labels:
+        return counter.labels(**labels)._value.get()
+    return counter._value.get()
 
 
 @pytest.mark.anyio
@@ -48,8 +55,10 @@ async def test_storage_quota_allows_remaining_rejects_over(async_session_maker):
         await session.commit()
 
     async with async_session_maker() as session:
+        baseline = _counter_value(metrics.org_storage_quota_rejections, reason="hard_limit")
         with pytest.raises(storage_quota_service.OrgStorageQuotaExceeded):
             await storage_quota_service.reserve_bytes(session, org.org_id, 50)
+        assert _counter_value(metrics.org_storage_quota_rejections, reason="hard_limit") == baseline + 1
 
 
 @pytest.mark.anyio

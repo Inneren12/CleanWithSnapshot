@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+import logging
 from typing import Any
 
 import sqlalchemy as sa
@@ -16,6 +17,8 @@ from app.domain.org_settings.db_models import OrganizationSettings
 from app.domain.storage_quota.db_models import OrgStorageReservation
 from app.infra.metrics import metrics
 from app.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class StorageReservationStatus(str, Enum):
@@ -171,7 +174,23 @@ async def reserve_bytes(
                     "remaining_bytes": snapshot.remaining_bytes,
                 },
             )
-            metrics.record_storage_quota_rejection()
+            logger.warning(
+                "org_storage_quota_rejected",
+                extra={
+                    "extra": {
+                        "org_id": str(org_id),
+                        "reason": "hard_limit",
+                        "resource_type": resource_type or "storage",
+                        "resource_id": resource_id,
+                        "bytes_requested": bytes_requested,
+                        "storage_bytes_used": snapshot.storage_bytes_used,
+                        "storage_bytes_pending": snapshot.storage_bytes_pending,
+                        "max_storage_bytes": snapshot.max_storage_bytes,
+                        "remaining_bytes": snapshot.remaining_bytes,
+                    }
+                },
+            )
+            metrics.record_org_storage_quota_rejection("hard_limit")
             raise OrgStorageQuotaExceeded(snapshot, bytes_requested)
 
     expires_in = expires_in_seconds or settings.storage_quota_reservation_ttl_seconds
@@ -261,7 +280,24 @@ async def finalize_reservation(
                     "remaining_bytes": snapshot.remaining_bytes,
                 },
             )
-            metrics.record_storage_quota_rejection()
+            logger.warning(
+                "org_storage_quota_rejected",
+                extra={
+                    "extra": {
+                        "org_id": str(reservation.org_id),
+                        "reason": "finalize_limit",
+                        "resource_type": reservation.resource_type or "storage",
+                        "resource_id": reservation.resource_id,
+                        "bytes_reserved": reservation.bytes_reserved,
+                        "actual_bytes": actual_bytes,
+                        "storage_bytes_used": snapshot.storage_bytes_used,
+                        "storage_bytes_pending": snapshot.storage_bytes_pending,
+                        "max_storage_bytes": snapshot.max_storage_bytes,
+                        "remaining_bytes": snapshot.remaining_bytes,
+                    }
+                },
+            )
+            metrics.record_org_storage_quota_rejection("finalize_limit")
             raise OrgStorageQuotaExceeded(snapshot, actual_bytes)
 
     if reservation.status in {StorageReservationStatus.PENDING.value, StorageReservationStatus.EXPIRED.value}:

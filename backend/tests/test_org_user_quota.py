@@ -5,6 +5,13 @@ import pytest
 from app.domain.org_settings import service as org_settings_service
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import MembershipRole, Organization
+from app.infra.metrics import metrics
+
+
+def _counter_value(counter, **labels) -> float:
+    if labels:
+        return counter.labels(**labels)._value.get()
+    return counter._value.get()
 
 
 @pytest.mark.anyio
@@ -53,6 +60,8 @@ async def test_org_user_quota_allows_n_rejects_n_plus_one(async_session_maker, c
     )
     assert first.status_code == 200
 
+    baseline = _counter_value(metrics.org_user_quota_rejections, reason="max_users")
+
     second = client.post(
         "/v1/iam/users",
         json={"email": "user2@quota.com", "role": "viewer"},
@@ -61,6 +70,7 @@ async def test_org_user_quota_allows_n_rejects_n_plus_one(async_session_maker, c
     assert second.status_code == 409
     payload = second.json()
     assert payload["errors"][0]["code"] == "ORG_USER_QUOTA_EXCEEDED"
+    assert _counter_value(metrics.org_user_quota_rejections, reason="max_users") == baseline + 1
 
 
 @pytest.mark.anyio
