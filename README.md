@@ -52,6 +52,7 @@ cd /opt/cleaning
 | [DB_MIGRATIONS.md](./DB_MIGRATIONS.md) | Database migration management with Alembic |
 | [API_ENTRYPOINTS.md](./API_ENTRYPOINTS.md) | API reference - endpoints, auth, usage examples |
 | [OPERATIONS.md](./OPERATIONS.md) | Deployment, monitoring, troubleshooting |
+| [docs/SECURITY_VULN_POLICY.md](./docs/SECURITY_VULN_POLICY.md) | Vulnerability gating policy and waiver process |
 
 ### Additional Documentation
 
