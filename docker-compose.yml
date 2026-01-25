@@ -71,6 +71,7 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       OTEL_SERVICE_NAME: api
+      APP_NAME: api
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-local}
     depends_on:
       db:

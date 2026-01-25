@@ -20,6 +20,7 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       OTEL_SERVICE_NAME: api-canary
+      APP_NAME: api-canary
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-local}
       # Canary-specific label for metrics differentiation
       DEPLOYMENT_VARIANT: canary

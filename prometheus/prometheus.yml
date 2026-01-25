@@ -17,3 +17,8 @@ scrape_configs:
     bearer_token_file: /run/secrets/prom_metrics_token
     static_configs:
       - targets: ["api:8000"]
+  - job_name: "api-canary"
+    metrics_path: /metrics
+    bearer_token_file: /run/secrets/prom_metrics_token
+    static_configs:
+      - targets: ["api-canary:8000"]

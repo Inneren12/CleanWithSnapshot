@@ -114,6 +114,12 @@ CANARY_AVAILABILITY_THRESHOLD=99.0   # Percentage
 
 # Enable automatic rollback on SLO violation
 CANARY_AUTO_ROLLBACK=true
+
+# Require metrics for gate decisions (default true)
+CANARY_REQUIRE_METRICS=true
+
+# Allow UNKNOWN gate results to proceed (default false)
+CANARY_ALLOW_UNKNOWN=false
 ```
 
 ### Traffic Stages
@@ -145,7 +151,7 @@ Options:
 Adjusts traffic percentage to the canary.
 
 ```bash
-./ops/deploy_canary.sh set-weight PERCENT
+./ops/deploy_canary.sh set-weight PERCENT [--require-metrics|--no-require-metrics] [--allow-unknown]
 ```
 
 ### `deploy_canary.sh status`
@@ -153,7 +159,7 @@ Adjusts traffic percentage to the canary.
 Shows current canary deployment status and SLO metrics.
 
 ```bash
-./ops/deploy_canary.sh status
+./ops/deploy_canary.sh status [--require-metrics|--no-require-metrics] [--allow-unknown]
 ```
 
 Output includes:
@@ -168,7 +174,7 @@ Output includes:
 Promotes the canary to stable after successful validation.
 
 ```bash
-./ops/deploy_canary.sh promote
+./ops/deploy_canary.sh promote [--force]
 ```
 
 This will:
@@ -198,6 +204,19 @@ Use this when you need the fastest possible rollback without prompts.
 
 ## Monitoring
 
+### Prometheus Metrics Auth
+
+In production, `/metrics` requires a bearer token. Prometheus reads it from
+`/run/secrets/prom_metrics_token` (mounted via `PROM_METRICS_TOKEN_FILE` in
+`docker-compose.observability.yml`). Set the token without committing it:
+
+```bash
+mkdir -p ./secrets
+export PROM_METRICS_TOKEN_FILE=./secrets/prom_metrics_token
+echo "${METRICS_TOKEN}" > "${PROM_METRICS_TOKEN_FILE}"
+chmod 600 "${PROM_METRICS_TOKEN_FILE}"
+```
+
 ### Canary Identification Header
 
 Caddy adds an `X-Canary-Upstream` response header to API traffic in canary mode.
@@ -226,6 +245,9 @@ Pre-computed metrics for dashboards:
 - `canary:latency_p95:5m` - Canary p95 latency
 - `stable:latency_p95:5m` - Stable p95 latency
 - `canary:traffic_ratio:5m` - Percentage of traffic going to canary
+- `sli:canary_success_rate5m` - Canary success rate for gate checks
+- `sli:canary_error_rate5m` - Canary error rate for gate checks
+- `sli:canary_latency_p95_5m` - Canary p95 latency for gate checks
 
 ### Grafana Dashboard Queries
 
@@ -327,6 +349,14 @@ docker compose logs api-canary --tail 100
    docker compose exec api-canary curl -s http://localhost:8000/metrics
    ```
 
+3. Ensure Prometheus has the metrics token mounted:
+   ```bash
+   export PROM_METRICS_TOKEN_FILE=./secrets/prom_metrics_token
+   echo "${METRICS_TOKEN}" > "${PROM_METRICS_TOKEN_FILE}"
+   ```
+
+4. Confirm the API is configured with `METRICS_TOKEN` and `METRICS_ENABLED=true` in prod.
+
 ### Rollback Fails
 
 1. Use emergency rollback:
@@ -352,3 +382,32 @@ docker compose logs api-canary --tail 100
 5. **Test during low-traffic periods**: Minimize blast radius
 6. **Review SLO thresholds**: Adjust based on your service's normal variance
 7. **Don't skip stages**: Gradual advancement catches more issues
+
+## Validation
+
+### Confirm Prometheus Targets Are Up
+
+```bash
+curl -s http://localhost:9090/api/v1/targets | jq -r '.data.activeTargets[] | "\(.labels.job) \(.health) \(.lastError)"'
+```
+
+### Query Canary SLI Series
+
+```bash
+curl -s "http://localhost:9090/api/v1/query?query=sli:canary_success_rate5m"
+curl -s "http://localhost:9090/api/v1/query?query=sli:canary_error_rate5m"
+curl -s "http://localhost:9090/api/v1/query?query=sli:canary_latency_p95_5m"
+```
+
+### Simulate a Failure and Verify Auto-Rollback
+
+```bash
+# Start canary at 10% traffic
+./ops/deploy_canary.sh start --weight 10
+
+# Simulate failure
+docker compose -f docker-compose.yml -f docker-compose.canary.yml stop api-canary
+
+# Increase traffic to trigger gate + rollback
+./ops/deploy_canary.sh set-weight 25
+```

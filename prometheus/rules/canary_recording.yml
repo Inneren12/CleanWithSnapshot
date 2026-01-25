@@ -1,0 +1,20 @@
+groups:
+  - name: canary.sli.recording.rules
+    interval: 30s
+    rules:
+      - record: sli:canary_success_rate5m
+        expr: |
+          sum(rate(http_requests_total{service="api-canary",status_class=~"2xx|3xx"}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total{service="api-canary"}[5m])), 1)
+      - record: sli:canary_error_rate5m
+        expr: |
+          sum(rate(http_requests_total{service="api-canary",status_class="5xx"}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total{service="api-canary"}[5m])), 1)
+      - record: sli:canary_latency_p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(http_request_latency_seconds_bucket{service="api-canary"}[5m])) by (le)
+          )
