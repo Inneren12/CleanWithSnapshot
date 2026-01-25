@@ -16,6 +16,8 @@ from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_flag_audit import schemas as feature_flag_audit_schemas
 from app.domain.feature_flag_audit import service as feature_flag_audit_service
 from app.domain.feature_flag_audit.db_models import FeatureFlagAuditAction
+from app.domain.feature_flags import schemas as feature_flag_schemas
+from app.domain.feature_flags import service as feature_flag_service
 from app.domain.feature_modules import schemas as feature_schemas
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import schemas as integrations_schemas
@@ -129,14 +131,19 @@ async def update_feature_config(
     session: AsyncSession = Depends(get_db_session),
 ) -> feature_schemas.FeatureConfigResponse:
     overrides = feature_service.normalize_feature_overrides(payload.overrides)
-    await feature_service.upsert_org_feature_overrides(
-        session,
-        org_id,
-        overrides,
-        audit_actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
-        rollout_reason=payload.reason,
-        request_id=getattr(request.state, "request_id", None),
-    )
+    try:
+        await feature_service.upsert_org_feature_overrides(
+            session,
+            org_id,
+            overrides,
+            audit_actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+            rollout_reason=payload.reason,
+            allow_expired_override=payload.allow_expired_override,
+            override_reason=payload.override_reason,
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     await session.commit()
     defaults = feature_service.default_feature_map()
     effective = feature_service.resolve_effective_features(overrides)
@@ -146,6 +153,100 @@ async def update_feature_config(
         defaults=defaults,
         effective=effective,
         keys=feature_service.FEATURE_KEYS,
+    )
+
+
+@router.get(
+    "/v1/admin/settings/feature-flags",
+    response_model=feature_flag_schemas.FeatureFlagDefinitionListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_feature_flag_definitions(
+    state: feature_flag_schemas.FeatureFlagLifecycleState | None = Query(default=None),
+    expiring_within_days: int | None = Query(default=None, ge=1),
+    _identity: AdminIdentity = Depends(require_viewer),
+    session: AsyncSession = Depends(get_db_session),
+) -> feature_flag_schemas.FeatureFlagDefinitionListResponse:
+    records = await feature_flag_service.list_feature_flag_definitions(
+        session,
+        state=state,
+        expiring_within_days=expiring_within_days,
+    )
+    items = [
+        feature_flag_schemas.FeatureFlagDefinitionBase(
+            key=record.key,
+            owner=record.owner,
+            purpose=record.purpose,
+            created_at=record.created_at,
+            expires_at=record.expires_at,
+            lifecycle_state=feature_flag_schemas.FeatureFlagLifecycleState(record.lifecycle_state),
+            effective_state=feature_flag_service.resolve_effective_state(record),
+        )
+        for record in records
+    ]
+    return feature_flag_schemas.FeatureFlagDefinitionListResponse(items=items)
+
+
+@router.post(
+    "/v1/admin/settings/feature-flags",
+    response_model=feature_flag_schemas.FeatureFlagDefinitionBase,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_feature_flag_definition(
+    payload: feature_flag_schemas.FeatureFlagDefinitionCreateRequest,
+    request: Request,
+    identity: AdminIdentity = Depends(require_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> feature_flag_schemas.FeatureFlagDefinitionBase:
+    record = await feature_flag_service.create_feature_flag_definition(
+        session,
+        payload=payload,
+        actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+        request_id=getattr(request.state, "request_id", None),
+    )
+    await session.commit()
+    return feature_flag_schemas.FeatureFlagDefinitionBase(
+        key=record.key,
+        owner=record.owner,
+        purpose=record.purpose,
+        created_at=record.created_at,
+        expires_at=record.expires_at,
+        lifecycle_state=feature_flag_schemas.FeatureFlagLifecycleState(record.lifecycle_state),
+        effective_state=feature_flag_service.resolve_effective_state(record),
+    )
+
+
+@router.patch(
+    "/v1/admin/settings/feature-flags/{flag_key}",
+    response_model=feature_flag_schemas.FeatureFlagDefinitionBase,
+    status_code=status.HTTP_200_OK,
+)
+async def update_feature_flag_definition(
+    flag_key: str,
+    payload: feature_flag_schemas.FeatureFlagDefinitionUpdateRequest,
+    request: Request,
+    identity: AdminIdentity = Depends(require_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> feature_flag_schemas.FeatureFlagDefinitionBase:
+    record = await feature_flag_service.get_feature_flag_definition(session, flag_key)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature flag not found")
+    record = await feature_flag_service.update_feature_flag_definition(
+        session,
+        record=record,
+        payload=payload,
+        actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+        request_id=getattr(request.state, "request_id", None),
+    )
+    await session.commit()
+    return feature_flag_schemas.FeatureFlagDefinitionBase(
+        key=record.key,
+        owner=record.owner,
+        purpose=record.purpose,
+        created_at=record.created_at,
+        expires_at=record.expires_at,
+        lifecycle_state=feature_flag_schemas.FeatureFlagLifecycleState(record.lifecycle_state),
+        effective_state=feature_flag_service.resolve_effective_state(record),
     )
 
 

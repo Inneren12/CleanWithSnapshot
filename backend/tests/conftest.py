@@ -78,6 +78,8 @@ from app.domain.rules import db_models as rules_db_models  # noqa: F401
 from app.domain.leads_nurture import db_models as leads_nurture_db_models  # noqa: F401
 from app.domain.config_audit import db_models as config_audit_db_models  # noqa: F401
 from app.domain.feature_flag_audit import db_models as feature_flag_audit_db_models  # noqa: F401
+from app.domain.feature_flags import db_models as feature_flags_db_models  # noqa: F401
+from app.domain.feature_modules import service as feature_service
 from app.domain.audit_retention import db_models as audit_retention_db_models  # noqa: F401
 from app.infra.bot_store import InMemoryBotStore
 from app.infra.db import Base, get_db_session
@@ -132,6 +134,18 @@ def test_engine():
                         "end_time": time(hour=WORK_END_HOUR, minute=0),
                     }
                     for day in range(7)
+                ],
+            )
+            await session.execute(
+                sa.insert(feature_flags_db_models.FeatureFlagDefinition),
+                [
+                    {
+                        "key": key,
+                        "owner": "test-suite",
+                        "purpose": "Seeded for tests.",
+                        "lifecycle_state": "active",
+                    }
+                    for key in feature_service.FEATURE_KEYS
                 ],
             )
             await session.commit()

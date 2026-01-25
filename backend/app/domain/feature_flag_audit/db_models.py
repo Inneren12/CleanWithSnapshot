@@ -19,7 +19,10 @@ class FeatureFlagAuditAction(str, Enum):
     ENABLE = "enable"
     DISABLE = "disable"
     ROLLOUT_CHANGE = "rollout_change"
+    ACTIVATE = "activate"
+    EXPIRE = "expire"
     RETIRE = "retire"
+    OVERRIDE = "override"
 
 
 JSON_TYPE = sa.JSON().with_variant(JSONB, "postgresql")
