@@ -177,6 +177,7 @@ async def list_feature_flag_definitions(
             key=record.key,
             owner=record.owner,
             purpose=record.purpose,
+            pinned=record.pinned,
             created_at=record.created_at,
             expires_at=record.expires_at,
             lifecycle_state=feature_flag_schemas.FeatureFlagLifecycleState(record.lifecycle_state),
@@ -248,6 +249,127 @@ async def list_stale_feature_flags(
     )
 
 
+def _resolve_retirement_policy(
+    *,
+    retire_expired: bool | None,
+    retire_stale_days: int | None,
+    recent_evaluation_days: int | None,
+) -> feature_flag_schemas.FeatureFlagRetirementPolicy:
+    resolved_stale_days = (
+        settings.flag_retire_stale_days if retire_stale_days is None else retire_stale_days
+    )
+    if resolved_stale_days is not None and resolved_stale_days <= 0:
+        resolved_stale_days = None
+    resolved_recent = (
+        settings.flag_retire_recent_evaluation_days
+        if recent_evaluation_days is None
+        else recent_evaluation_days
+    )
+    if resolved_recent is not None and resolved_recent <= 0:
+        resolved_recent = None
+    return feature_flag_schemas.FeatureFlagRetirementPolicy(
+        retire_expired=settings.flag_retire_expired if retire_expired is None else retire_expired,
+        retire_stale_days=resolved_stale_days,
+        recent_evaluation_days=resolved_recent,
+        max_evaluate_count=settings.feature_flag_stale_max_evaluate_count,
+    )
+
+
+@router.get(
+    "/v1/admin/settings/feature-flags/retirement/preview",
+    response_model=feature_flag_schemas.FeatureFlagRetirementPreviewResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def preview_feature_flag_retirement(
+    retire_expired: bool | None = Query(default=None),
+    retire_stale_days: int | None = Query(default=None, ge=0),
+    recent_evaluation_days: int | None = Query(default=None, ge=0),
+    _identity: AdminIdentity = Depends(require_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> feature_flag_schemas.FeatureFlagRetirementPreviewResponse:
+    policy = _resolve_retirement_policy(
+        retire_expired=retire_expired,
+        retire_stale_days=retire_stale_days,
+        recent_evaluation_days=recent_evaluation_days,
+    )
+    candidates = await feature_flag_service.list_retirement_candidates(
+        session,
+        retire_expired=policy.retire_expired,
+        retire_stale_days=policy.retire_stale_days,
+        recent_evaluation_days=policy.recent_evaluation_days,
+        max_evaluate_count=policy.max_evaluate_count,
+    )
+    items = [
+        feature_flag_schemas.FeatureFlagRetirementCandidate(
+            key=candidate.record.key,
+            owner=candidate.record.owner,
+            purpose=candidate.record.purpose,
+            pinned=candidate.record.pinned,
+            created_at=candidate.record.created_at,
+            expires_at=candidate.record.expires_at,
+            lifecycle_state=feature_flag_schemas.FeatureFlagLifecycleState(
+                candidate.record.lifecycle_state
+            ),
+            last_evaluated_at=candidate.record.last_evaluated_at,
+            evaluate_count=candidate.record.evaluate_count,
+            retirement_reason=feature_flag_schemas.FeatureFlagRetirementReason(candidate.reason),
+            eligible_since=candidate.eligible_since,
+        )
+        for candidate in candidates
+    ]
+    return feature_flag_schemas.FeatureFlagRetirementPreviewResponse(
+        items=items,
+        count=len(items),
+        policy=policy,
+        dry_run=True,
+    )
+
+
+@router.post(
+    "/v1/admin/settings/feature-flags/retirement/run",
+    response_model=feature_flag_schemas.FeatureFlagRetirementRunResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def run_feature_flag_retirement(
+    payload: feature_flag_schemas.FeatureFlagRetirementRunRequest,
+    request: Request,
+    identity: AdminIdentity = Depends(require_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> feature_flag_schemas.FeatureFlagRetirementRunResponse:
+    policy = _resolve_retirement_policy(
+        retire_expired=payload.retire_expired,
+        retire_stale_days=payload.retire_stale_days,
+        recent_evaluation_days=payload.recent_evaluation_days,
+    )
+    dry_run = settings.flag_retire_dry_run if payload.dry_run is None else payload.dry_run
+    candidates = await feature_flag_service.list_retirement_candidates(
+        session,
+        retire_expired=policy.retire_expired,
+        retire_stale_days=policy.retire_stale_days,
+        recent_evaluation_days=policy.recent_evaluation_days,
+        max_evaluate_count=policy.max_evaluate_count,
+    )
+    expired_count = sum(1 for candidate in candidates if candidate.reason == "expired")
+    stale_count = len(candidates) - expired_count
+    retired_count = 0
+    if not dry_run and candidates:
+        retired = await feature_flag_service.retire_feature_flags(
+            session,
+            candidates=candidates,
+            actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+            request_id=getattr(request.state, "request_id", None),
+        )
+        await session.commit()
+        retired_count = len(retired)
+    return feature_flag_schemas.FeatureFlagRetirementRunResponse(
+        dry_run=dry_run,
+        retired_count=retired_count,
+        candidate_count=len(candidates),
+        expired_candidates=expired_count,
+        stale_candidates=stale_count,
+    )
+
+
 @router.post(
     "/v1/admin/settings/feature-flags",
     response_model=feature_flag_schemas.FeatureFlagDefinitionBase,
@@ -270,6 +392,7 @@ async def create_feature_flag_definition(
         key=record.key,
         owner=record.owner,
         purpose=record.purpose,
+        pinned=record.pinned,
         created_at=record.created_at,
         expires_at=record.expires_at,
         lifecycle_state=feature_flag_schemas.FeatureFlagLifecycleState(record.lifecycle_state),
@@ -304,6 +427,7 @@ async def update_feature_flag_definition(
         key=record.key,
         owner=record.owner,
         purpose=record.purpose,
+        pinned=record.pinned,
         created_at=record.created_at,
         expires_at=record.expires_at,
         lifecycle_state=feature_flag_schemas.FeatureFlagLifecycleState(record.lifecycle_state),

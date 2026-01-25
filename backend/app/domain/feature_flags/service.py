@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
@@ -19,6 +20,13 @@ from app.settings import settings
 
 ALLOWED_EXPIRING_WINDOWS = {7, 14, 30}
 _EVALUATION_CACHE: dict[str, datetime] = {}
+
+
+@dataclass(frozen=True)
+class FeatureFlagRetirementCandidate:
+    record: FeatureFlagDefinition
+    reason: str
+    eligible_since: datetime | None
 
 
 def _ensure_timezone(value: datetime) -> datetime:
@@ -73,6 +81,7 @@ def _definition_snapshot(definition: FeatureFlagDefinition) -> dict[str, object]
         "key": definition.key,
         "owner": definition.owner,
         "purpose": definition.purpose,
+        "pinned": definition.pinned,
         "created_at": definition.created_at,
         "expires_at": definition.expires_at,
         "lifecycle_state": definition.lifecycle_state,
@@ -217,6 +226,7 @@ async def create_feature_flag_definition(
         key=payload.key,
         owner=payload.owner,
         purpose=payload.purpose,
+        pinned=payload.pinned,
         expires_at=_ensure_timezone(payload.expires_at),
         lifecycle_state=payload.lifecycle_state.value,
     )
@@ -273,6 +283,8 @@ async def update_feature_flag_definition(
         record.owner = payload.owner
     if payload.purpose is not None:
         record.purpose = payload.purpose
+    if payload.pinned is not None:
+        record.pinned = payload.pinned
     transition_action: FeatureFlagAuditAction | None = None
     if payload.lifecycle_state is not None and payload.lifecycle_state.value != record.lifecycle_state:
         record.lifecycle_state = payload.lifecycle_state.value
@@ -423,3 +435,110 @@ def is_flag_mutable(definition: FeatureFlagDefinition, *, now: datetime | None =
         FeatureFlagLifecycleState.EXPIRED,
         FeatureFlagLifecycleState.RETIRED,
     }
+
+
+def _recent_evaluation_cutoff(now: datetime, recent_evaluation_days: int | None) -> datetime | None:
+    if recent_evaluation_days is None or recent_evaluation_days <= 0:
+        return None
+    return now - timedelta(days=recent_evaluation_days)
+
+
+async def list_retirement_candidates(
+    session: AsyncSession,
+    *,
+    retire_expired: bool,
+    retire_stale_days: int | None,
+    recent_evaluation_days: int | None,
+    max_evaluate_count: int,
+    now: datetime | None = None,
+) -> list[FeatureFlagRetirementCandidate]:
+    now = now or datetime.now(tz=timezone.utc)
+    recent_cutoff = _recent_evaluation_cutoff(now, recent_evaluation_days)
+    candidates: dict[str, FeatureFlagRetirementCandidate] = {}
+
+    if retire_expired:
+        expired_stmt = select(FeatureFlagDefinition).where(
+            FeatureFlagDefinition.lifecycle_state != FeatureFlagLifecycleState.RETIRED.value,
+            FeatureFlagDefinition.expires_at.is_not(None),
+            FeatureFlagDefinition.expires_at <= now,
+            FeatureFlagDefinition.pinned.is_(False),
+        )
+        if recent_cutoff is not None:
+            expired_stmt = expired_stmt.where(
+                sa.or_(
+                    FeatureFlagDefinition.last_evaluated_at.is_(None),
+                    FeatureFlagDefinition.last_evaluated_at < recent_cutoff,
+                )
+            )
+        expired_result = await session.execute(expired_stmt)
+        for record in expired_result.scalars().all():
+            candidates[record.key] = FeatureFlagRetirementCandidate(
+                record=record,
+                reason="expired",
+                eligible_since=record.expires_at,
+            )
+
+    if retire_stale_days is not None and retire_stale_days > 0:
+        condition, cutoff = _stale_condition(
+            now=now, include_never=True, inactive_days=retire_stale_days
+        )
+        if condition is not None:
+            stale_stmt = select(FeatureFlagDefinition).where(
+                condition,
+                FeatureFlagDefinition.lifecycle_state != FeatureFlagLifecycleState.RETIRED.value,
+                FeatureFlagDefinition.lifecycle_state != FeatureFlagLifecycleState.DRAFT.value,
+                FeatureFlagDefinition.pinned.is_(False),
+                FeatureFlagDefinition.evaluate_count <= max_evaluate_count,
+            )
+            if recent_cutoff is not None:
+                stale_stmt = stale_stmt.where(
+                    sa.or_(
+                        FeatureFlagDefinition.last_evaluated_at.is_(None),
+                        FeatureFlagDefinition.last_evaluated_at < recent_cutoff,
+                    )
+                )
+            stale_result = await session.execute(stale_stmt)
+            for record in stale_result.scalars().all():
+                if record.key in candidates:
+                    continue
+                candidates[record.key] = FeatureFlagRetirementCandidate(
+                    record=record,
+                    reason="stale",
+                    eligible_since=cutoff,
+                )
+
+    return list(candidates.values())
+
+
+async def retire_feature_flags(
+    session: AsyncSession,
+    *,
+    candidates: list[FeatureFlagRetirementCandidate],
+    actor: ConfigAuditActor,
+    request_id: str | None = None,
+) -> list[FeatureFlagDefinition]:
+    retired: list[FeatureFlagDefinition] = []
+    for candidate in candidates:
+        record = candidate.record
+        if record.lifecycle_state == FeatureFlagLifecycleState.RETIRED.value or record.pinned:
+            continue
+        before_state = _definition_snapshot(record)
+        record.lifecycle_state = FeatureFlagLifecycleState.RETIRED.value
+        await session.flush()
+        await feature_flag_audit_service.audit_feature_flag_change(
+            session,
+            actor=actor,
+            org_id=None,
+            flag_key=record.key,
+            action=FeatureFlagAuditAction.RETIRE,
+            before_state=before_state,
+            after_state=_definition_snapshot(record),
+            rollout_context=feature_flag_audit_service.build_rollout_context(
+                enabled=False,
+                targeting_rules=None,
+                reason=f"automation:{candidate.reason}",
+            ),
+            request_id=request_id,
+        )
+        retired.append(record)
+    return retired
