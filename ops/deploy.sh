@@ -4,6 +4,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
+STATE_DIR="$REPO_ROOT/ops/state"
+LAST_GOOD_FILE="$STATE_DIR/last_good.env"
+
+record_last_good() {
+  local sha="$1"
+  local mode="$2"
+  local timestamp
+  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  mkdir -p "$STATE_DIR"
+  cat > "$LAST_GOOD_FILE" <<EOF
+LAST_GOOD_SHA=$sha
+LAST_GOOD_MODE=$mode
+LAST_GOOD_COLOR=
+LAST_GOOD_TIMESTAMP=$timestamp
+EOF
+}
 
 echo "== CleanWithSnapshot deploy =="
 
@@ -29,7 +46,8 @@ git clean -xfd \
   -e "tmp/" \
   -e "pg_data/" \
   -e "caddy_data/" \
-  -e "caddy_config/"
+  -e "caddy_config/" \
+  -e "ops/state/last_good.env"
 
 updated_sha="$(git rev-parse HEAD)"
 echo "Updated revision: $updated_sha"
@@ -64,5 +82,8 @@ echo "Migrations completed. No API restart required beyond compose up."
 
 echo "Running smoke tests..."
 "$REPO_ROOT/ops/smoke.sh"
+
+record_last_good "$updated_sha" "standard"
+echo "Recorded last known good deploy: $updated_sha"
 
 echo "Deploy completed successfully."
