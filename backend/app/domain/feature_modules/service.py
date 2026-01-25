@@ -6,6 +6,8 @@ from typing import Iterable
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.config_audit import ConfigAuditAction, ConfigAuditActor, ConfigScope
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules.db_models import OrgFeatureConfig, UserUiPreference
 from app.domain.iam import permissions as iam_permissions
 
@@ -213,15 +215,33 @@ async def get_org_feature_overrides(
 
 
 async def upsert_org_feature_overrides(
-    session: AsyncSession, org_id: uuid.UUID, overrides: dict[str, bool]
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    overrides: dict[str, bool],
+    *,
+    audit_actor: ConfigAuditActor,
+    request_id: str | None,
 ) -> OrgFeatureConfig:
     record = await session.get(OrgFeatureConfig, org_id)
+    before_snapshot = record.feature_overrides if record else None
+    action = ConfigAuditAction.UPDATE if record else ConfigAuditAction.CREATE
     if record:
         record.feature_overrides = overrides
     else:
         record = OrgFeatureConfig(org_id=org_id, feature_overrides=overrides)
         session.add(record)
     await session.flush()
+    await config_audit_service.record_config_change(
+        session,
+        actor=audit_actor,
+        org_id=org_id,
+        config_scope=ConfigScope.FEATURE_FLAG,
+        config_key="feature_overrides",
+        action=action,
+        before_value=before_snapshot,
+        after_value=record.feature_overrides,
+        request_id=request_id,
+    )
     return record
 
 

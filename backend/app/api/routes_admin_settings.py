@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, require_permissions, require_viewer
+from app.api.break_glass import BREAK_GLASS_HEADER
 from app.api.org_context import require_org_context
+from app.domain.config_audit import ConfigAuditAction, ConfigActorType, ConfigScope
+from app.domain.config_audit import schemas as config_audit_schemas
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import schemas as feature_schemas
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import schemas as integrations_schemas
@@ -36,6 +41,24 @@ def _resolve_user_key(request: Request, identity: AdminIdentity) -> str:
     if saas_identity and getattr(saas_identity, "user_id", None):
         return f"saas:{saas_identity.user_id}"
     return f"basic:{identity.username}"
+
+
+def _resolve_auth_method(request: Request) -> str:
+    if getattr(request.state, "break_glass", False) or request.headers.get(BREAK_GLASS_HEADER):
+        return "break_glass"
+    authorization = request.headers.get("Authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return "token"
+    return "basic"
+
+
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timestamp") from exc
 
 
 def _mask_secret(value: str | None, *, prefix: int = 2, suffix: int = 2) -> str | None:
@@ -97,12 +120,19 @@ async def get_feature_config(
 )
 async def update_feature_config(
     payload: feature_schemas.FeatureConfigUpdateRequest,
+    request: Request,
     org_id: uuid.UUID = Depends(require_org_context),
-    _identity: AdminIdentity = Depends(require_owner),
+    identity: AdminIdentity = Depends(require_owner),
     session: AsyncSession = Depends(get_db_session),
 ) -> feature_schemas.FeatureConfigResponse:
     overrides = feature_service.normalize_feature_overrides(payload.overrides)
-    await feature_service.upsert_org_feature_overrides(session, org_id, overrides)
+    await feature_service.upsert_org_feature_overrides(
+        session,
+        org_id,
+        overrides,
+        audit_actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+        request_id=getattr(request.state, "request_id", None),
+    )
     await session.commit()
     defaults = feature_service.default_feature_map()
     effective = feature_service.resolve_effective_features(overrides)
@@ -160,11 +190,18 @@ async def get_org_settings(
 )
 async def update_org_settings(
     payload: org_settings_schemas.OrgSettingsUpdateRequest,
+    request: Request,
     org_id: uuid.UUID = Depends(require_org_context),
-    _identity: AdminIdentity = Depends(require_owner),
+    identity: AdminIdentity = Depends(require_owner),
     session: AsyncSession = Depends(get_db_session),
 ) -> org_settings_schemas.OrgSettingsResponse:
-    record = await org_settings_service.apply_org_settings_update(session, org_id, payload=payload)
+    record = await org_settings_service.apply_org_settings_update(
+        session,
+        org_id,
+        payload=payload,
+        audit_actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+        request_id=getattr(request.state, "request_id", None),
+    )
     quota_snapshot = await saas_service.get_org_user_quota_snapshot(session, org_id)
     storage_snapshot = await storage_quota_service.get_org_storage_quota_snapshot(session, org_id)
     await session.commit()
@@ -190,6 +227,66 @@ async def update_org_settings(
         max_storage_bytes=storage_snapshot.max_storage_bytes,
         storage_bytes_used=storage_snapshot.storage_bytes_used,
         storage_usage_percent=_usage_percent(storage_snapshot.storage_bytes_used, storage_snapshot.max_storage_bytes),
+    )
+
+
+@router.get(
+    "/v1/admin/settings/audit/config",
+    response_model=config_audit_schemas.ConfigAuditLogListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_config_audit_logs(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
+    session: AsyncSession = Depends(get_db_session),
+    org_id_filter: uuid.UUID | None = Query(None, alias="org_id"),
+    config_scope: ConfigScope | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> config_audit_schemas.ConfigAuditLogListResponse:
+    if org_id_filter is not None and org_id_filter != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    resolved_limit = max(1, min(limit, 200))
+    resolved_offset = max(0, offset)
+    start_ts = _parse_iso_timestamp(start)
+    end_ts = _parse_iso_timestamp(end)
+    logs = await config_audit_service.list_config_audit_logs(
+        session,
+        org_id=org_id_filter or org_id,
+        config_scope=config_scope,
+        from_ts=start_ts,
+        to_ts=end_ts,
+        limit=resolved_limit,
+        offset=resolved_offset,
+    )
+    items = [
+        config_audit_schemas.ConfigAuditLogEntry(
+            audit_id=log.audit_id,
+            occurred_at=log.occurred_at,
+            actor_type=ConfigActorType(log.actor_type),
+            actor_id=log.actor_id,
+            actor_role=log.actor_role,
+            auth_method=log.auth_method,
+            actor_source=log.actor_source,
+            org_id=log.org_id,
+            config_scope=ConfigScope(log.config_scope),
+            config_key=log.config_key,
+            action=ConfigAuditAction(log.action),
+            before_value=log.before_value,
+            after_value=log.after_value,
+            request_id=log.request_id,
+        )
+        for log in logs
+    ]
+    next_offset = resolved_offset + resolved_limit if len(items) == resolved_limit else None
+    return config_audit_schemas.ConfigAuditLogListResponse(
+        items=items,
+        limit=resolved_limit,
+        offset=resolved_offset,
+        next_offset=next_offset,
     )
 
 

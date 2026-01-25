@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pytest
 import sqlalchemy as sa
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.bookings.db_models import Booking, BookingPhoto
 from app.domain.feature_modules import service as feature_service
 from app.domain.leads.db_models import Lead
@@ -59,14 +60,22 @@ async def test_quality_photo_evidence_org_scoping(async_session_maker, client):
         owner_a = await saas_service.create_user(session, "photo-a@org.com", "secret")
         membership_a = await saas_service.create_membership(session, org_a, owner_a, MembershipRole.OWNER)
         await feature_service.upsert_org_feature_overrides(
-            session, org_a.org_id, {"quality.photo_evidence": True}
+            session,
+            org_a.org_id,
+            {"quality.photo_evidence": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
 
         org_b = await saas_service.create_organization(session, "Photo Org B")
         owner_b = await saas_service.create_user(session, "photo-b@org.com", "secret")
         membership_b = await saas_service.create_membership(session, org_b, owner_b, MembershipRole.OWNER)
         await feature_service.upsert_org_feature_overrides(
-            session, org_b.org_id, {"quality.photo_evidence": True}
+            session,
+            org_b.org_id,
+            {"quality.photo_evidence": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 
@@ -119,7 +128,11 @@ async def test_quality_photo_evidence_consent_persisted(async_session_maker, cli
         owner = await saas_service.create_user(session, "consent-owner@org.com", "secret")
         membership = await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
         await feature_service.upsert_org_feature_overrides(
-            session, org.org_id, {"quality.photo_evidence": True}
+            session,
+            org.org_id,
+            {"quality.photo_evidence": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 
@@ -157,7 +170,11 @@ async def test_quality_photo_evidence_rbac_blocks_viewer(async_session_maker, cl
         viewer = await saas_service.create_user(session, "rbac-viewer@org.com", "secret")
         membership = await saas_service.create_membership(session, org, viewer, MembershipRole.VIEWER)
         await feature_service.upsert_org_feature_overrides(
-            session, org.org_id, {"quality.photo_evidence": True}
+            session,
+            org.org_id,
+            {"quality.photo_evidence": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 

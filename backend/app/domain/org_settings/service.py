@@ -4,6 +4,8 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.config_audit import ConfigAuditAction, ConfigAuditActor, ConfigScope
+from app.domain.config_audit import service as config_audit_service
 from app.domain.org_settings.db_models import OrganizationSettings
 
 DEFAULT_TIMEZONE = "America/Edmonton"
@@ -98,9 +100,15 @@ def resolve_finance_ready(record: OrganizationSettings) -> bool:
 
 
 async def apply_org_settings_update(
-    session: AsyncSession, org_id: uuid.UUID, *, payload
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    payload,
+    audit_actor: ConfigAuditActor,
+    request_id: str | None,
 ) -> OrganizationSettings:
     record = await get_or_create_org_settings(session, org_id)
+    before_snapshot = snapshot_org_settings(record)
     if payload.timezone is not None:
         record.timezone = payload.timezone
     if payload.currency is not None:
@@ -142,4 +150,39 @@ async def apply_org_settings_update(
     if "max_storage_bytes" in getattr(payload, "model_fields_set", set()):
         record.max_storage_bytes = payload.max_storage_bytes
     await session.flush()
+    after_snapshot = snapshot_org_settings(record)
+    await config_audit_service.record_config_change(
+        session,
+        actor=audit_actor,
+        org_id=org_id,
+        config_scope=ConfigScope.ORG_SETTINGS,
+        config_key="org_settings",
+        action=ConfigAuditAction.UPDATE,
+        before_value=before_snapshot,
+        after_value=after_snapshot,
+        request_id=request_id,
+    )
     return record
+
+
+def snapshot_org_settings(record: OrganizationSettings) -> dict[str, object | None]:
+    return {
+        "timezone": record.timezone,
+        "currency": record.currency,
+        "language": record.language,
+        "business_hours": record.business_hours,
+        "holidays": record.holidays,
+        "legal_name": record.legal_name,
+        "legal_bn": record.legal_bn,
+        "legal_gst_hst": record.legal_gst_hst,
+        "legal_address": record.legal_address,
+        "legal_phone": record.legal_phone,
+        "legal_email": record.legal_email,
+        "legal_website": record.legal_website,
+        "branding": record.branding,
+        "referral_credit_trigger": record.referral_credit_trigger,
+        "finance_ready": record.finance_ready,
+        "max_users": record.max_users,
+        "max_storage_bytes": record.max_storage_bytes,
+        "storage_bytes_used": record.storage_bytes_used,
+    }

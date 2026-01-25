@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 import sqlalchemy as sa
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.bookings.db_models import Booking, Team
 from app.domain.clients.db_models import ClientUser
 from app.domain.feature_modules import service as feature_service
@@ -117,7 +118,11 @@ def test_nps_token_validation_and_single_response(client, async_session_maker):
     async def _create_token():
         async with async_session_maker() as session:
             await feature_service.upsert_org_feature_overrides(
-                session, settings.default_org_id, {"quality.nps": True}
+                session,
+                settings.default_org_id,
+                {"quality.nps": True},
+                audit_actor=config_audit_service.system_actor("tests"),
+                request_id=None,
             )
             booking = await session.get(Booking, order_id)
             token_record = await nps_service.issue_nps_token(session, booking=booking)
@@ -158,7 +163,11 @@ def test_nps_token_expired(client, async_session_maker):
     async def _expire_token():
         async with async_session_maker() as session:
             await feature_service.upsert_org_feature_overrides(
-                session, settings.default_org_id, {"quality.nps": True}
+                session,
+                settings.default_org_id,
+                {"quality.nps": True},
+                audit_actor=config_audit_service.system_actor("tests"),
+                request_id=None,
             )
             booking = await session.get(Booking, order_id)
             token_record = await nps_service.issue_nps_token(session, booking=booking)
@@ -188,7 +197,11 @@ def test_nps_token_org_scoping(client, async_session_maker):
     async def _mutate_token():
         async with async_session_maker() as session:
             await feature_service.upsert_org_feature_overrides(
-                session, org_id, {"quality.nps": True}
+                session,
+                org_id,
+                {"quality.nps": True},
+                audit_actor=config_audit_service.system_actor("tests"),
+                request_id=None,
             )
             booking = await session.get(Booking, order_id)
             token_record = await nps_service.issue_nps_token(session, booking=booking)
@@ -211,7 +224,11 @@ def test_low_score_creates_ticket_and_admin_api(client, async_session_maker, adm
     async def _create_token():
         async with async_session_maker() as session:
             await feature_service.upsert_org_feature_overrides(
-                session, settings.default_org_id, {"quality.nps": True}
+                session,
+                settings.default_org_id,
+                {"quality.nps": True},
+                audit_actor=config_audit_service.system_actor("tests"),
+                request_id=None,
             )
             booking = await session.get(Booking, order_id)
             token_record = await nps_service.issue_nps_token(session, booking=booking)
@@ -265,7 +282,11 @@ def test_admin_nps_segments_classification(client, async_session_maker, admin_cr
     async def _create_responses():
         async with async_session_maker() as session:
             await feature_service.upsert_org_feature_overrides(
-                session, settings.default_org_id, {"quality.nps": True}
+                session,
+                settings.default_org_id,
+                {"quality.nps": True},
+                audit_actor=config_audit_service.system_actor("tests"),
+                request_id=None,
             )
             bookings = [await session.get(Booking, order_id) for order_id in order_ids]
             tokens = [

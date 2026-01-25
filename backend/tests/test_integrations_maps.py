@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
+from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import maps_service
 from app.domain.integrations.db_models import MapsUsage
@@ -23,6 +24,8 @@ async def test_maps_distance_matrix_missing_key_returns_heuristic(async_session_
             session,
             org.org_id,
             {"module.integrations": True, "integrations.maps": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 
@@ -54,6 +57,8 @@ async def test_maps_distance_matrix_tracks_quota(async_session_maker, client, mo
             session,
             org.org_id,
             {"module.integrations": True, "integrations.maps": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 
@@ -125,11 +130,15 @@ async def test_maps_quota_scoped_to_org(async_session_maker, client, monkeypatch
             session,
             org.org_id,
             {"module.integrations": True, "integrations.maps": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await feature_service.upsert_org_feature_overrides(
             session,
             org_b.org_id,
             {"module.integrations": True, "integrations.maps": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         session.add(
             MapsUsage(
@@ -166,6 +175,8 @@ async def test_maps_test_key_requires_owner(async_session_maker, client, monkeyp
             session,
             org.org_id,
             {"module.integrations": True, "integrations.maps": True},
+            audit_actor=config_audit_service.system_actor("tests"),
+            request_id=None,
         )
         await session.commit()
 
