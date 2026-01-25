@@ -37,6 +37,14 @@ Each runbook follows a standard structure:
 | [Outbox Backlog High](./OUTBOX_BACKLOG.md) | Outbox lag, delivery errors | **High** |
 | [High Resource Usage](./high-resource-usage.md) | CPU > 80%, Memory > 85%, OOM kills | **Medium** |
 
+### Abuse & Quota Management
+
+| Runbook | Alert Signal | Severity |
+|---------|-------------|----------|
+| [Org Abuse Triage](./ORG_ABUSE_TRIAGE.md) | Quota rejections, 429 spikes, auth failures | **Medium** |
+| [Quota Blocks](./QUOTA_BLOCKS.md) | Org quota rejections spiking | **Medium** |
+| [Rate Limit Abuse](./RATE_LIMIT_ABUSE.md) | 429s or rate limit blocks | **Medium** |
+
 ### External Integrations
 
 | Runbook | Alert Signal | Severity |

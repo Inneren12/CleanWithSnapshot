@@ -13,6 +13,18 @@ route:
     - matchers: [severity="ticket"]
       receiver: slo-paging
 
+inhibit_rules:
+  - source_matchers:
+      - alertname="ApiScrapeDown"
+    target_matchers:
+      - alertname=~"Org.*|Sustained429Rate|AuthFailuresSpike"
+    equal: ["service"]
+  - source_matchers:
+      - alertname="Sustained429Rate"
+    target_matchers:
+      - alertname="OrgRateLimitBlocksHigh"
+    equal: ["service", "bucket"]
+
 receivers:
   - name: slo-paging
     slack_configs:

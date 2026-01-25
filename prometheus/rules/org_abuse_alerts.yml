@@ -1,0 +1,94 @@
+groups:
+  - name: org.abuse.alerts
+    interval: 30s
+    rules:
+      - alert: ApiScrapeDown
+        expr: up{job="clean-api"} == 0
+        for: 2m
+        labels:
+          severity: page
+          service: api
+        annotations:
+          summary: "API metrics scrape is down"
+          description: |
+            Prometheus cannot scrape /metrics from the clean-api target for 2 minutes.
+            Next: verify API health checks, container uptime, and /metrics auth token.
+          runbook: "docs/runbooks/api-down.md"
+
+      - alert: OrgUserQuotaRejectionsSpike
+        expr: sum(increase(org_user_quota_rejections_total[15m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "User quota rejections spiking"
+          description: |
+            User quota rejections increased above baseline in the last 15 minutes.
+            Next: identify the org from logs/audit and confirm if usage is legitimate or abusive.
+          runbook: "docs/runbooks/QUOTA_BLOCKS.md"
+
+      - alert: OrgBookingQuotaRejectionsSpike
+        expr: sum(increase(org_active_bookings_quota_rejections_total[15m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Booking quota rejections spiking"
+          description: |
+            Booking quota rejections increased above baseline in the last 15 minutes.
+            Next: identify the org via logs/audit and validate plan limits or abuse.
+          runbook: "docs/runbooks/QUOTA_BLOCKS.md"
+
+      - alert: OrgStorageQuotaRejectionsSpike
+        expr: sum(increase(org_storage_quota_rejections_total[15m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Storage quota rejections spiking"
+          description: |
+            Storage quota rejections increased above baseline in the last 15 minutes.
+            Next: identify the org via logs/audit and confirm storage usage growth.
+          runbook: "docs/runbooks/QUOTA_BLOCKS.md"
+
+      - alert: OrgRateLimitBlocksHigh
+        expr: sum by (bucket) (increase(org_rate_limit_blocks_total[5m])) > 50
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Rate limit blocks elevated for {{ $labels.bucket }}"
+          description: |
+            Rate limit blocks exceeded the threshold over 5 minutes for bucket {{ $labels.bucket }}.
+            Next: confirm request spikes, check for abusive clients, and review recent deploys.
+          runbook: "docs/runbooks/RATE_LIMIT_ABUSE.md"
+
+      - alert: Sustained429Rate
+        expr: sum by (bucket) (rate(http_429_total[10m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Sustained HTTP 429 rate for {{ $labels.bucket }}"
+          description: |
+            HTTP 429 rate is elevated for bucket {{ $labels.bucket }} over the last 10 minutes.
+            Next: confirm global throttling signals and inspect rate limit logs.
+          runbook: "docs/runbooks/RATE_LIMIT_ABUSE.md"
+
+      - alert: AuthFailuresSpike
+        expr: sum by (source) (increase(auth_failures_total[10m])) > 25
+        for: 10m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Auth failures spiking for {{ $labels.source }}"
+          description: |
+            Authentication failures spiked in the last 10 minutes for {{ $labels.source }}.
+            Next: check for brute force attempts, credential stuffing, or broken clients.
+          runbook: "docs/runbooks/ORG_ABUSE_TRIAGE.md"

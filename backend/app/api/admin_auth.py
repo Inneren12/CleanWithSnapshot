@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.settings import settings
 from app.domain.iam import permissions as iam_permissions
 from app.infra.logging import update_log_context
+from app.infra.metrics import metrics
 from app.infra.org_context import set_current_org_id
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,7 @@ def _log_admin_auth_failure(
     if extra_detail:
         payload.update(extra_detail)
     logger.warning("admin_auth_failed", extra={"extra": payload})
+    metrics.record_auth_failure("admin", reason)
 
 
 def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> AdminIdentity:

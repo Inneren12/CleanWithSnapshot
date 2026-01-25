@@ -13,6 +13,7 @@ from app.api.saas_auth import require_permissions, require_role, require_saas_us
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, User
 from app.infra.db import get_db_session
+from app.infra.metrics import metrics
 from app.infra.totp import verify_totp_code
 from app.settings import settings
 
@@ -85,6 +86,7 @@ async def login(
     try:
         user, membership = await saas_service.authenticate_user(session, payload.email, payload.password, payload.org_id)
     except ValueError as exc:  # noqa: BLE001
+        metrics.record_auth_failure("saas", str(exc))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     requires_mfa = _requires_admin_mfa(membership.role)
     mfa_verified = False
@@ -131,6 +133,7 @@ async def refresh_tokens(
             session, payload.refresh_token
         )
     except ValueError as exc:  # noqa: BLE001
+        metrics.record_auth_failure("saas", str(exc))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     user = await session.get(User, membership.user_id)
     requires_mfa = _requires_admin_mfa(membership.role)

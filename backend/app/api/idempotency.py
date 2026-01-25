@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 import uuid
 
@@ -17,7 +18,10 @@ from app.api.problem_details import (
     problem_details,
 )
 from app.domain.admin_idempotency import AdminIdempotency
+from app.domain.admin_audit import service as admin_audit_service
 from app.infra.security import RateLimiter
+from app.infra.metrics import metrics
+from app.settings import settings
 
 
 def _build_response(record: AdminIdempotency) -> Response:
@@ -124,6 +128,42 @@ async def enforce_org_action_rate_limit(
     allowed = await limiter.allow(key)
     if allowed:
         return None
+
+    request_id = getattr(request.state, "request_id", None)
+    metrics.record_rate_limit_block("admin_action")
+    metrics.record_http_429("admin_action")
+    logger = logging.getLogger(__name__)
+    logger.warning(
+        "org_action_rate_limited",
+        extra={
+            "extra": {
+                "org_id": str(org_id),
+                "request_id": str(request_id) if request_id else None,
+                "action": action,
+                "limit_per_minute": settings.admin_action_rate_limit_per_minute,
+            }
+        },
+    )
+    identity = getattr(request.state, "admin_identity", None)
+    if identity:
+        session_factory = getattr(request.app.state, "db_session_factory", None)
+        if session_factory:
+            async with session_factory() as session:
+                await admin_audit_service.record_action(
+                    session,
+                    identity=identity,
+                    org_id=org_id,
+                    action="org_action_rate_limit_rejected",
+                    resource_type="admin_action",
+                    resource_id=action,
+                    before=None,
+                    after={
+                        "action": action,
+                        "request_id": str(request_id) if request_id else None,
+                        "limit_per_minute": settings.admin_action_rate_limit_per_minute,
+                    },
+                )
+                await session.commit()
 
     return problem_details(
         request=request,
