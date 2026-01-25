@@ -33,6 +33,92 @@ The following targets are the formal objectives for incident response planning:
 | Infra outage (single host/zone) | Lost containers, disks, or VM | **4h / 24h** (backup path) or **2h / 5m** (PITR path) | **Redeploy + restore** | Redeploy stack, then restore from daily backup or PITR depending on archive availability. |
 | Region outage | Full region loss | **4h / 24h** (backup path) or **2h / 5m** (PITR path) | **Redeploy + restore** | Bring up stack in alternate region, restore offsite backups/WAL archives. |
 
+### Scenario-Specific Procedures
+
+#### Data Corruption
+
+**Symptoms:** Invalid data in queries, constraint violations, schema inconsistencies.
+
+**Recovery steps:**
+1. **Identify corruption timestamp** - Check application logs, audit logs, or user reports
+2. **Stop writes** - `docker compose stop api web jobs`
+3. **Determine recovery target** - Choose a timestamp before corruption occurred
+4. **Execute PITR restore** - See [PITR Restore Procedure](#pitr-restore-procedure)
+5. **Validate data integrity** - Run targeted queries to confirm corruption is resolved
+6. **Restart services** - `docker compose up -d`
+
+**Post-recovery validation:**
+```bash
+# Verify no constraint violations
+docker compose exec -T db psql -U postgres -d cleaning -c \
+  "SELECT conname, conrelid::regclass FROM pg_constraint WHERE NOT convalidated;"
+
+# Check recent data timestamps
+docker compose exec -T db psql -U postgres -d cleaning -c \
+  "SELECT MAX(created_at), MAX(updated_at) FROM bookings;"
+```
+
+#### Operator Error
+
+**Symptoms:** Missing records, incorrect data after manual operation, misconfigured settings.
+
+**Recovery steps:**
+1. **Identify error timestamp** - Check admin audit logs: `SELECT * FROM admin_audit_logs ORDER BY created_at DESC LIMIT 50;`
+2. **Document affected records** - Note IDs and tables impacted before recovery
+3. **Stop writes** - `docker compose stop api web jobs`
+4. **Execute PITR restore** - Target time should be just before the erroneous operation
+5. **Validate restored data** - Confirm affected records are restored correctly
+6. **Restart services** - `docker compose up -d`
+
+**Post-recovery validation:**
+```bash
+# Verify restored records exist
+docker compose exec -T db psql -U postgres -d cleaning -c \
+  "SELECT id, created_at FROM <affected_table> WHERE id IN (<affected_ids>);"
+```
+
+#### Infrastructure Outage (Single Host/Zone)
+
+**Symptoms:** Service unreachable, container failures, disk errors, VM termination.
+
+**Recovery steps:**
+1. **Assess infrastructure** - Determine what is recoverable vs. lost
+2. **Provision replacement** - New VM/container host if needed
+3. **Deploy stack** - `./ops/deploy.sh` (will pull latest code and start services)
+4. **Check if data volumes survived:**
+   - If `pg_data` volume intact → services should recover automatically
+   - If `pg_data` lost → restore from PITR or daily backup
+5. **Verify health** - `curl -fsS http://localhost:8000/healthz`
+
+**Recovery path selection:**
+- **pg_data intact:** No restore needed, services auto-recover
+- **pg_data lost + pg_wal_archive intact:** PITR restore (2h RTO, 5m RPO)
+- **Both volumes lost:** Daily backup restore (4h RTO, 24h RPO)
+
+#### Region Outage
+
+**Symptoms:** Full region unavailable, all services down, no network access to region.
+
+**Recovery steps:**
+1. **Activate alternate region** - Provision infrastructure in DR region
+2. **Retrieve offsite backups:**
+   ```bash
+   # From S3 or offsite storage
+   aws s3 cp s3://mybucket/backups/basebackup_latest.tar.gz /opt/backups/postgres/
+   aws s3 cp s3://mybucket/wal-archive/ /opt/backups/postgres/wal_archive/ --recursive
+   ```
+3. **Deploy stack** - Clone repo, configure `.env`, run `./ops/deploy.sh`
+4. **Restore data** - Execute PITR or daily backup restore
+5. **Update DNS** - Point domain to new region
+6. **Verify health** - Full smoke test via `./ops/smoke.sh`
+
+**Pre-requisites for region failover:**
+- [ ] Offsite backup sync configured (`WAL_SYNC_TARGET` points to S3/remote)
+- [ ] DR region infrastructure documented
+- [ ] DNS TTL set appropriately for fast failover
+
+---
+
 ## Backup Artifacts
 
 ### Traditional Backups (Phase 0)
@@ -399,10 +485,57 @@ pitr-drill:
 
 ---
 
-## Notes & Escalation
+## Pre-Recovery Checklist
+
+Before initiating any recovery procedure:
+
+- [ ] **Incident declared** - Log start time, assign incident commander
+- [ ] **Communication sent** - Notify stakeholders of outage/recovery in progress
+- [ ] **Current state documented** - Capture error messages, logs, timestamps
+- [ ] **Backup availability verified** - Confirm backup files exist and are accessible
+- [ ] **Recovery target identified** - Determine exact timestamp or backup to restore from
+- [ ] **Write traffic stopped** - Ensure no new data is being written during recovery
+
+## Post-Recovery Checklist
+
+After completing recovery:
+
+- [ ] `/healthz` returns HTTP 200 with `status: ready`
+- [ ] `/readyz` returns HTTP 200 with `migrations_current: true`
+- [ ] Sample queries return expected data
+- [ ] Background jobs heartbeat shows healthy
+- [ ] WAL archiving resumed (if using PITR)
+- [ ] Monitoring alerts cleared
+- [ ] Incident timeline documented
+- [ ] Post-incident review scheduled
+
+## Escalation Matrix
+
+| Severity | Criteria | Response Time | Escalation Path |
+|----------|----------|---------------|-----------------|
+| **SEV-1** | Full outage, data loss imminent | Immediate | On-call → Engineering Lead → CTO |
+| **SEV-2** | Partial outage, degraded service | 15 minutes | On-call → Engineering Lead |
+| **SEV-3** | Backup/monitoring failure, no user impact | 1 hour | On-call → Ops Lead |
+
+**Escalation contacts:**
+- **On-call engineer:** See PagerDuty/OpsGenie rotation
+- **Engineering Lead:** Escalate if RTO at risk or technical blocker
+- **Data/DB owner:** Escalate for data integrity decisions
+- **Security/Compliance:** Notify if data breach suspected or retention impacted
+
+## Notes & Troubleshooting
 
 - If `/readyz` returns non-200 after restore, run `docker compose exec -T api alembic upgrade head`
   and re-check readiness.
 - Escalate any RTO/RPO misses to the incident log and update this runbook with corrections.
 - For PITR failures, check PostgreSQL logs: `docker compose logs db`
 - If PITR restore fails, the pre-restore data is preserved at `pg_data.pre_pitr_*`
+
+**Common issues:**
+
+| Symptom | Likely Cause | Resolution |
+|---------|--------------|------------|
+| PITR restore hangs | WAL files missing | Use daily backup instead, check WAL sync heartbeat |
+| Migrations fail after restore | Schema version mismatch | Run `alembic upgrade head` manually |
+| Services won't start | Port conflicts or volume issues | Check `docker compose ps`, inspect logs |
+| Data appears older than expected | Wrong recovery target time | Re-run PITR with correct timestamp |
