@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole
 from app.api.idempotency import enforce_org_action_rate_limit, require_idempotency
+from app.api.problem_details import problem_details
 from app.api.saas_auth import ROLE_TO_ADMIN_ROLE, SaaSIdentity, require_permissions
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, Organization, PasswordResetEvent, User
@@ -110,6 +111,7 @@ async def list_users(
 @router.post("/users", response_model=IAMCreateUserResponse)
 async def create_user(
     payload: IAMCreateUserRequest,
+    request: Request,
     response: Response,
     identity: SaaSIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
     session: AsyncSession = Depends(get_db_session),
@@ -119,6 +121,11 @@ async def create_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
 
     normalized_email = saas_service.normalize_email(payload.email)
+    audit_identity = AdminIdentity(
+        username=identity.email,
+        role=ROLE_TO_ADMIN_ROLE.get(identity.role, AdminRole.VIEWER),
+        org_id=identity.org_id,
+    )
     user = await session.scalar(sa.select(User).where(User.email == normalized_email))
     membership: Membership | None = None
     if user:
@@ -130,10 +137,53 @@ async def create_user(
         )
         if membership and membership.is_active:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists")
+        if not membership or not membership.is_active:
+            try:
+                await saas_service.enforce_org_user_quota(
+                    session,
+                    identity.org_id,
+                    attempted_action="iam_create_user",
+                    audit_identity=audit_identity,
+                )
+            except saas_service.OrgUserQuotaExceeded as exc:
+                return problem_details(
+                    request,
+                    status=status.HTTP_409_CONFLICT,
+                    title="User quota exceeded",
+                    detail="Organization user quota exceeded",
+                    errors=[
+                        {
+                            "code": "ORG_USER_QUOTA_EXCEEDED",
+                            "current_users_count": exc.snapshot.current_users_count,
+                            "max_users": exc.snapshot.max_users,
+                        }
+                    ],
+                )
         if not user.is_active:
             user.is_active = True
             session.add(user)
     else:
+        try:
+            await saas_service.enforce_org_user_quota(
+                session,
+                identity.org_id,
+                attempted_action="iam_create_user",
+                audit_identity=audit_identity,
+            )
+        except saas_service.OrgUserQuotaExceeded as exc:
+            return problem_details(
+                request,
+                status=status.HTTP_409_CONFLICT,
+                title="User quota exceeded",
+                detail="Organization user quota exceeded",
+                errors=[
+                    {
+                        "code": "ORG_USER_QUOTA_EXCEEDED",
+                        "current_users_count": exc.snapshot.current_users_count,
+                        "max_users": exc.snapshot.max_users,
+                    }
+                ],
+            )
         user = await saas_service.create_user(session, normalized_email)
 
     if membership:

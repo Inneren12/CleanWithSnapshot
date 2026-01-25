@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 import string
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Team
 from app.domain.bookings.service import DEFAULT_TEAM_NAME
+from app.domain.org_settings import service as org_settings_service
 from app.domain.saas.db_models import (
     ApiToken,
     Membership,
@@ -21,11 +23,27 @@ from app.domain.saas.db_models import (
     TokenEvent,
     User,
 )
+from app.domain.admin_audit import service as admin_audit_service
+from app.api.admin_auth import AdminIdentity
+from app.infra.metrics import metrics
 from app.infra.auth import create_access_token, hash_api_token, hash_password, verify_password
 from app.infra.totp import build_otpauth_uri, generate_totp_code, generate_totp_secret, verify_totp_code
 from app.settings import settings
 
 DEFAULT_ORG_NAME = "Default Org"
+
+
+@dataclass(frozen=True)
+class OrgUserQuotaSnapshot:
+    org_id: uuid.UUID
+    current_users_count: int
+    max_users: int | None
+
+
+class OrgUserQuotaExceeded(Exception):
+    def __init__(self, snapshot: OrgUserQuotaSnapshot) -> None:
+        super().__init__("org_user_quota_exceeded")
+        self.snapshot = snapshot
 
 
 async def ensure_default_org_and_team(session: AsyncSession) -> tuple[Organization, Team]:
@@ -182,6 +200,71 @@ async def create_membership(
     session.add(membership)
     await session.flush()
     return membership
+
+
+async def count_active_memberships(session: AsyncSession, org_id: uuid.UUID) -> int:
+    result = await session.execute(
+        sa.select(sa.func.count(Membership.membership_id)).where(
+            Membership.org_id == org_id,
+            Membership.is_active.is_(True),
+        )
+    )
+    return int(result.scalar_one() or 0)
+
+
+async def get_org_user_quota_snapshot(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    lock_org: bool = False,
+) -> OrgUserQuotaSnapshot:
+    if lock_org:
+        await session.execute(
+            sa.select(Organization).where(Organization.org_id == org_id).with_for_update()
+        )
+    settings_record = await org_settings_service.get_or_create_org_settings(session, org_id)
+    current_users = await count_active_memberships(session, org_id)
+    return OrgUserQuotaSnapshot(
+        org_id=org_id,
+        current_users_count=current_users,
+        max_users=settings_record.max_users,
+    )
+
+
+async def enforce_org_user_quota(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    attempted_action: str,
+    audit_identity: AdminIdentity | None = None,
+) -> OrgUserQuotaSnapshot:
+    """Hard gate for org user creation paths (admin UI, IAM API, background jobs/imports).
+
+    This is a hard gate (not a soft limit) so user creation fails before any membership write,
+    ensuring deterministic, race-safe enforcement under concurrent requests.
+    """
+    snapshot = await get_org_user_quota_snapshot(session, org_id, lock_org=True)
+    if snapshot.max_users is None:
+        return snapshot
+    if snapshot.current_users_count >= snapshot.max_users:
+        if audit_identity is not None:
+            await admin_audit_service.record_action(
+                session,
+                identity=audit_identity,
+                org_id=org_id,
+                action="org_user_quota_rejected",
+                resource_type="org_user_quota",
+                resource_id=str(org_id),
+                before=None,
+                after={
+                    "attempted_action": attempted_action,
+                    "current_users_count": snapshot.current_users_count,
+                    "max_users": snapshot.max_users,
+                },
+            )
+        metrics.record_org_user_quota_rejection()
+        raise OrgUserQuotaExceeded(snapshot)
+    return snapshot
 
 
 async def issue_service_token(

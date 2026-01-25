@@ -136,5 +136,7 @@ async def apply_org_settings_update(
         record.referral_credit_trigger = payload.referral_credit_trigger
     if getattr(payload, "finance_ready", None) is not None:
         record.finance_ready = payload.finance_ready
+    if "max_users" in getattr(payload, "model_fields_set", set()):
+        record.max_users = payload.max_users
     await session.flush()
     return record

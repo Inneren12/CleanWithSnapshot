@@ -35,6 +35,8 @@ class OrgSettingsResponse(BaseModel):
     branding: dict[str, str] = Field(default_factory=dict)
     referral_credit_trigger: ReferralCreditTrigger = "booking_confirmed"
     finance_ready: bool = False
+    max_users: int | None = Field(default=None, ge=0)
+    current_users_count: int = 0
 
 
 class OrgSettingsUpdateRequest(BaseModel):
@@ -53,6 +55,7 @@ class OrgSettingsUpdateRequest(BaseModel):
     branding: dict[str, str] | None = None
     referral_credit_trigger: ReferralCreditTrigger | None = None
     finance_ready: bool | None = None
+    max_users: int | None = Field(default=None, ge=0)
 
     @field_validator("timezone")
     @classmethod
