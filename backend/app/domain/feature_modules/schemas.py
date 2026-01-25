@@ -16,6 +16,8 @@ class FeatureConfigResponse(BaseModel):
 class FeatureConfigUpdateRequest(BaseModel):
     overrides: dict[str, bool] = Field(default_factory=dict)
     reason: str | None = None
+    allow_expired_override: bool = False
+    override_reason: str | None = None
 
 
 class UiPrefsResponse(BaseModel):

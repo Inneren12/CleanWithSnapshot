@@ -146,6 +146,7 @@ class Settings(BaseSettings):
     audit_retention_config_days: int = Field(365 * 7)
     audit_retention_batch_size: int = Field(500)
     audit_retention_dry_run: bool = Field(False)
+    feature_flag_max_horizon_days: int = Field(90)
     chat_enabled: bool = Field(False)
     promos_enabled: bool = Field(False)
     default_worker_hourly_rate_cents: int = Field(2500)

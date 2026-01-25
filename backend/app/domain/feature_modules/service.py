@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.config_audit.db_models import ConfigAuditActor
 from app.domain.feature_flag_audit import FeatureFlagAuditAction
 from app.domain.feature_flag_audit import service as feature_flag_audit_service
+from app.domain.feature_flags import FeatureFlagLifecycleState
+from app.domain.feature_flags import service as feature_flag_service
 from app.domain.feature_modules.db_models import OrgFeatureConfig, UserUiPreference
 from app.domain.iam import permissions as iam_permissions
 
@@ -222,8 +224,12 @@ async def upsert_org_feature_overrides(
     *,
     audit_actor: ConfigAuditActor,
     rollout_reason: str | None = None,
+    allow_expired_override: bool = False,
+    override_reason: str | None = None,
     request_id: str | None,
 ) -> OrgFeatureConfig:
+    if allow_expired_override and not override_reason:
+        raise ValueError("override_reason is required when allow_expired_override is true")
     record = await session.get(OrgFeatureConfig, org_id)
     before_overrides = normalize_feature_overrides(record.feature_overrides) if record else {}
     changed_keys = set(before_overrides.keys()) | set(overrides.keys())
@@ -233,6 +239,36 @@ async def upsert_org_feature_overrides(
         after_override = overrides.get(key)
         if before_override == after_override:
             continue
+        definition = await feature_flag_service.get_feature_flag_definition(session, key)
+        if definition is None and before_override is None and after_override is not None:
+            raise ValueError(f"Feature flag metadata is required for new flag '{key}'")
+        if definition is not None:
+            effective_state = feature_flag_service.resolve_effective_state(definition)
+            if effective_state in {
+                FeatureFlagLifecycleState.EXPIRED,
+                FeatureFlagLifecycleState.RETIRED,
+            }:
+                if not allow_expired_override:
+                    raise ValueError(
+                        f"Feature flag '{key}' is {effective_state.value} and cannot be modified"
+                    )
+                before_state = snapshot_feature_flag_state(before_overrides, key)
+                after_state = snapshot_feature_flag_state(overrides, key)
+                await feature_flag_audit_service.audit_feature_flag_change(
+                    session,
+                    actor=audit_actor,
+                    org_id=org_id,
+                    flag_key=key,
+                    action=FeatureFlagAuditAction.OVERRIDE,
+                    before_state=before_state,
+                    after_state=after_state,
+                    rollout_context=feature_flag_audit_service.build_rollout_context(
+                        enabled=after_state["enabled"],
+                        targeting_rules=after_state.get("targeting_rules"),
+                        reason=override_reason,
+                    ),
+                    request_id=request_id,
+                )
         before_state = snapshot_feature_flag_state(before_overrides, key)
         after_state = snapshot_feature_flag_state(overrides, key)
         action = _derive_feature_flag_action(
@@ -344,7 +380,11 @@ async def effective_feature_enabled(
     session: AsyncSession, org_id: uuid.UUID, key: str
 ) -> bool:
     overrides = await get_org_feature_overrides(session, org_id)
-    return effective_feature_enabled_from_overrides(overrides, key)
+    enabled = effective_feature_enabled_from_overrides(overrides, key)
+    definition = await feature_flag_service.get_feature_flag_definition(session, key)
+    if definition and not feature_flag_service.is_flag_mutable(definition):
+        return False
+    return enabled
 
 
 async def effective_visible_for_user(

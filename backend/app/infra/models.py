@@ -19,6 +19,7 @@ from app.domain.data_rights import db_models as data_rights_db_models  # noqa: F
 from app.domain.addons import db_models as addons_db_models  # noqa: F401
 from app.domain.dispatcher import db_models as dispatcher_db_models  # noqa: F401
 from app.domain.feature_modules import db_models as feature_modules_db_models  # noqa: F401
+from app.domain.feature_flags import db_models as feature_flags_db_models  # noqa: F401
 from app.domain.quality import db_models as quality_db_models  # noqa: F401
 from app.domain.notifications_center import db_models as notifications_center_db_models  # noqa: F401
 from app.domain.notifications_digests import db_models as notifications_digests_db_models  # noqa: F401

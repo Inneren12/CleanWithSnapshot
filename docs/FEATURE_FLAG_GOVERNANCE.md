@@ -1,16 +1,18 @@
 # Feature Flag Governance & Audit Trail
 
-This document defines how feature flag changes are audited and reviewed for compliance and incident response.
+This document defines how feature flag changes are audited, governed, and reviewed for compliance and incident response.
 
 ## What counts as a feature flag change
 
 The following actions are audited:
 
-- **Create**: a new explicit override is added for a flag.
+- **Create**: a new feature flag definition or explicit override is added.
 - **Enable / disable**: toggling a flag on or off.
 - **Rollout change**: percentage adjustments (currently captured as `0%` or `100%` because the org-level flags are boolean).
 - **Targeting rule changes**: any change to targeting rules summary.
 - **Delete / retire**: removal of an override or retirement in automation flows.
+- **Activate / expire**: lifecycle state transitions for a flag definition.
+- **Override**: policy-approved changes to expired/retired flags.
 
 Flag evaluation (reads) is **not** audited. Audit logging only applies to mutation paths.
 
@@ -29,10 +31,43 @@ Audit records are immutable (no update/delete) at the database level.
 
 ## Lifecycle stages
 
-1. **Create**: a flag override is added for an org.
-2. **Rollout**: the flag is enabled/disabled (or percentage adjusted) with context.
-3. **Operate**: changes are traceable for incident review.
-4. **Retire**: overrides are removed and/or retirement actions are logged.
+1. **Create**: a flag definition is created with required metadata.
+2. **Activate**: the definition moves to `active` for rollout.
+3. **Rollout**: org-level overrides enable/disable the flag with context.
+4. **Expire**: the flag reaches `expires_at` or is explicitly expired.
+5. **Retire**: the flag is fully retired and overrides are removed.
+
+## Metadata requirements
+
+Every feature flag definition includes:
+
+- **Owner**: accountable team or individual.
+- **Purpose**: business or technical justification.
+- **Created at**: server-generated timestamp.
+- **Expires at**: required for new flags; legacy flags may be null until backfilled.
+- **Lifecycle state**: `draft`, `active`, `expired`, or `retired`.
+
+New flags **cannot** be created without `owner`, `purpose`, and `expires_at`.
+
+## Expiration policy (deterministic behavior)
+
+- Expired or retired flags **auto-disable** during evaluation.
+- Expired or retired flags **cannot** be modified or rolled out without an explicit override.
+- Overrides require `override_reason` and are audited as `override`.
+
+## Policy gates
+
+- `expires_at` must be within the configured horizon (default: 90 days) unless an override is supplied.
+- Any change to expired/retired flags requires an override and emits an audit entry.
+
+## Admin API endpoints
+
+- `GET /v1/admin/settings/feature-flags` lists flag definitions and lifecycle metadata.
+  - Filter by `state=expired|retired|draft|active`.
+  - `expiring_within_days=7|14|30` lists flags expiring soon.
+- `POST /v1/admin/settings/feature-flags` creates a new flag definition (metadata required).
+- `PATCH /v1/admin/settings/feature-flags/{flag_key}` updates metadata or lifecycle state.
+- `PATCH /v1/admin/settings/features` updates org overrides and enforces lifecycle gates.
 
 ## Covered mutation paths
 
