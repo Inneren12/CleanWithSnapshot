@@ -87,6 +87,9 @@ jobs:
           grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN|ADMIN_BASIC_USERNAME|ADMIN_BASIC_PASSWORD|LEGACY_BASIC_AUTH_ENABLED)=' backend/.env.e2e.ci \
             | sed -E 's/=.*/=<redacted>/'
 
+      - name: Compose down (pre-cleanup)
+        run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v || true
+
       - name: Compose up (E2E override)
         run: |
           set +e
@@ -100,6 +103,44 @@ jobs:
             docker inspect "$api_container_id" --format '{{json .State.Health}}' || true
           fi
           exit $status
+
+      - name: Wait for DB healthy
+        run: |
+          set -euo pipefail
+          db_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q db)
+          if [ -z "$db_container_id" ]; then
+            echo "DB container not found."
+            exit 1
+          fi
+          deadline=$((SECONDS + 180))
+          while true; do
+            health=$(docker inspect "$db_container_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}')
+            if [ "$health" = "healthy" ]; then
+              echo "DB is healthy."
+              break
+            fi
+            if [ "$health" = "unhealthy" ]; then
+              echo "DB is unhealthy."
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+              docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
+              exit 1
+            fi
+            if [ $SECONDS -ge $deadline ]; then
+              echo "Timed out waiting for DB health."
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+              docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
+              exit 1
+            fi
+            sleep 3
+          done
+
+      - name: Verify DB readiness via SQL
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T db \
+            psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select 1;"
 
       - name: Compose diagnostics (post-up)
         run: |
@@ -172,7 +213,7 @@ jobs:
           npx playwright test --config e2e/playwright.config.ts
 
       - name: Collect compose diagnostics
-        if: failure()
+        if: always()
         run: |
           {
             echo "== docker compose ps =="
@@ -189,6 +230,14 @@ jobs:
             echo ""
             echo "== docker compose logs db (tail) =="
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=200 || true
+            echo ""
+            echo "== docker inspect db health =="
+            db_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q db)
+            if [ -n "$db_container_id" ]; then
+              docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
+            else
+              echo "db container missing"
+            fi
           } > e2e-compose-diagnostics.log
 
       - name: Upload Playwright report
@@ -206,7 +255,7 @@ jobs:
           path: web/test-results/**
 
       - name: Upload compose diagnostics
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-compose-diagnostics
