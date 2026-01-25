@@ -45,8 +45,9 @@ CANARY_IMAGE_TAG="${CANARY_IMAGE_TAG:-canary}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://prometheus:9090}"
 CANARY_OBSERVATION_TIME="${CANARY_OBSERVATION_TIME:-300}"
 CANARY_TRAFFIC_STAGES="${CANARY_TRAFFIC_STAGES:-10,25,50,100}"
-CANARY_ERROR_RATE_THRESHOLD="${CANARY_ERROR_RATE_THRESHOLD:-2.0}"
-CANARY_LATENCY_P95_THRESHOLD="${CANARY_LATENCY_P95_THRESHOLD:-500}"
+CANARY_ERROR_RATE_THRESHOLD="${CANARY_ERROR_RATE_THRESHOLD:-1.0}"
+CANARY_LATENCY_P95_THRESHOLD="${CANARY_LATENCY_P95_THRESHOLD:-300}"
+CANARY_AVAILABILITY_THRESHOLD="${CANARY_AVAILABILITY_THRESHOLD:-99.0}"
 CANARY_AUTO_ROLLBACK="${CANARY_AUTO_ROLLBACK:-true}"
 
 # State file for tracking canary deployment
@@ -113,6 +114,18 @@ check_canary_error_rate() {
   echo "$result"
 }
 
+# Query Prometheus for canary availability (success rate)
+check_canary_availability() {
+  local query='sum(rate(http_requests_total{service="api-canary",status_class=~"2xx|3xx"}[5m])) / sum(rate(http_requests_total{service="api-canary"}[5m])) * 100'
+  local result
+
+  result=$(curl -s --fail "${PROMETHEUS_URL}/api/v1/query" \
+    --data-urlencode "query=${query}" 2>/dev/null | \
+    jq -r '.data.result[0].value[1] // "0"' 2>/dev/null) || result="N/A"
+
+  echo "$result"
+}
+
 # Query Prometheus for canary p95 latency
 check_canary_latency_p95() {
   local query='histogram_quantile(0.95, sum(rate(http_request_latency_seconds_bucket{service="api-canary"}[5m])) by (le)) * 1000'
@@ -130,31 +143,36 @@ check_canary_slos() {
   log_info "Checking canary SLOs..."
 
   local error_rate
+  local availability
   local latency_p95
 
   error_rate=$(check_canary_error_rate)
+  availability=$(check_canary_availability)
   latency_p95=$(check_canary_latency_p95)
 
   log_info "Canary error rate: ${error_rate}% (threshold: ${CANARY_ERROR_RATE_THRESHOLD}%)"
+  log_info "Canary availability: ${availability}% (threshold: ${CANARY_AVAILABILITY_THRESHOLD}%)"
   log_info "Canary p95 latency: ${latency_p95}ms (threshold: ${CANARY_LATENCY_P95_THRESHOLD}ms)"
 
   # Check if we have valid metrics
-  if [[ "$error_rate" == "N/A" ]] || [[ "$latency_p95" == "N/A" ]]; then
+  if [[ "$error_rate" == "N/A" ]] || [[ "$availability" == "N/A" ]] || [[ "$latency_p95" == "N/A" ]]; then
     log_warn "Unable to retrieve canary metrics - Prometheus may not be available"
     return 2  # Unknown state
   fi
 
   # Compare against thresholds
-  local error_ok latency_ok
+  local error_ok availability_ok latency_ok
   error_ok=$(echo "$error_rate <= $CANARY_ERROR_RATE_THRESHOLD" | bc -l 2>/dev/null) || error_ok=1
+  availability_ok=$(echo "$availability >= $CANARY_AVAILABILITY_THRESHOLD" | bc -l 2>/dev/null) || availability_ok=1
   latency_ok=$(echo "$latency_p95 <= $CANARY_LATENCY_P95_THRESHOLD" | bc -l 2>/dev/null) || latency_ok=1
 
-  if [[ "$error_ok" -eq 1 ]] && [[ "$latency_ok" -eq 1 ]]; then
+  if [[ "$error_ok" -eq 1 ]] && [[ "$availability_ok" -eq 1 ]] && [[ "$latency_ok" -eq 1 ]]; then
     log_success "Canary SLOs are within thresholds"
     return 0
   else
     log_error "Canary SLOs exceeded thresholds!"
     [[ "$error_ok" -eq 0 ]] && log_error "  Error rate ${error_rate}% > ${CANARY_ERROR_RATE_THRESHOLD}%"
+    [[ "$availability_ok" -eq 0 ]] && log_error "  Availability ${availability}% < ${CANARY_AVAILABILITY_THRESHOLD}%"
     [[ "$latency_ok" -eq 0 ]] && log_error "  Latency p95 ${latency_p95}ms > ${CANARY_LATENCY_P95_THRESHOLD}ms"
     return 1
   fi
@@ -422,8 +440,9 @@ cmd_status() {
 
   echo ""
   echo "=== SLO Metrics ==="
-  local error_rate latency_p95
+  local error_rate availability latency_p95
   error_rate=$(check_canary_error_rate)
+  availability=$(check_canary_availability)
   latency_p95=$(check_canary_latency_p95)
 
   if [[ "$error_rate" != "N/A" ]]; then
@@ -434,6 +453,16 @@ cmd_status() {
     echo -e "Error rate: ${error_rate}% (threshold: ${CANARY_ERROR_RATE_THRESHOLD}%) - ${error_status}"
   else
     echo "Error rate: N/A (metrics unavailable)"
+  fi
+
+  if [[ "$availability" != "N/A" ]]; then
+    local availability_status="${GREEN}OK${NC}"
+    if (( $(echo "$availability < $CANARY_AVAILABILITY_THRESHOLD" | bc -l 2>/dev/null || echo 0) )); then
+      availability_status="${RED}EXCEEDED${NC}"
+    fi
+    echo -e "Availability: ${availability}% (threshold: ${CANARY_AVAILABILITY_THRESHOLD}%) - ${availability_status}"
+  else
+    echo "Availability: N/A (metrics unavailable)"
   fi
 
   if [[ "$latency_p95" != "N/A" ]]; then

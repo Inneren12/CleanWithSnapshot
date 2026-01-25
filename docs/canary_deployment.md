@@ -108,8 +108,9 @@ CANARY_OBSERVATION_TIME=300
 CANARY_TRAFFIC_STAGES=10,25,50,100
 
 # SLO thresholds for automatic rollback
-CANARY_ERROR_RATE_THRESHOLD=2.0      # Percentage
-CANARY_LATENCY_P95_THRESHOLD=500     # Milliseconds
+CANARY_ERROR_RATE_THRESHOLD=1.0      # Percentage
+CANARY_LATENCY_P95_THRESHOLD=300     # Milliseconds
+CANARY_AVAILABILITY_THRESHOLD=99.0   # Percentage
 
 # Enable automatic rollback on SLO violation
 CANARY_AUTO_ROLLBACK=true
@@ -159,7 +160,7 @@ Output includes:
 - Deployment state (active/inactive)
 - Current traffic split
 - Service health status
-- Error rate and latency metrics
+- Availability, error rate, and latency metrics
 - Comparison to SLO thresholds
 
 ### `deploy_canary.sh promote`
