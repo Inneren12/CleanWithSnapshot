@@ -168,6 +168,124 @@ git reset --hard <sha>
 
 ---
 
+### Blue/Green Deployment (Zero Downtime)
+
+Blue/Green deployment enables zero-downtime releases by running two identical stacks (blue and green)
+and switching traffic between them via Caddy. The old stack remains running until the new one is verified healthy.
+
+**Architecture:**
+
+```
+                      ┌─────────────────────────────────────┐
+                      │            Caddy Proxy              │
+                      │     (switches between colors)       │
+                      └──────────┬────────────┬─────────────┘
+                                 │            │
+              ┌──────────────────┴──┐    ┌────┴──────────────────┐
+              │     BLUE Stack      │    │     GREEN Stack       │
+              │  ┌───────┬───────┐  │    │  ┌───────┬───────┐    │
+              │  │api-   │web-   │  │    │  │api-   │web-   │    │
+              │  │blue   │blue   │  │    │  │green  │green  │    │
+              │  └───┬───┴───────┘  │    │  └───┬───┴───────┘    │
+              └──────┼──────────────┘    └──────┼────────────────┘
+                     │                          │
+                     ▼                          ▼
+              ┌──────────────────────────────────────────────────┐
+              │        Shared: db, redis, volumes                 │
+              └──────────────────────────────────────────────────┘
+```
+
+**Files:**
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.blue-green.yml` | Blue/Green service definitions |
+| `Caddyfile.blue-green` | Caddy config with dynamic upstream import |
+| `config/caddy/upstream-blue.caddy` | Blue upstream configuration |
+| `config/caddy/upstream-green.caddy` | Green upstream configuration |
+| `config/caddy/active-upstream.caddy` | Currently active upstream (managed by script) |
+| `ops/state/active_color` | Tracks current active color (blue/green) |
+| `ops/blue-green-deploy.sh` | Deployment script |
+
+**Commands:**
+
+```bash
+# Deploy to inactive color (zero downtime)
+./ops/blue-green-deploy.sh
+
+# Check deployment status
+./ops/blue-green-deploy.sh --status
+
+# Rollback to previous color (instant)
+./ops/blue-green-deploy.sh --rollback
+
+# Clean up inactive stack
+./ops/blue-green-deploy.sh --cleanup
+```
+
+**Deployment Flow:**
+
+1. **Determine target color** - Script reads `ops/state/active_color` and deploys to the opposite color
+2. **Build images** - Builds `cleanwithsnapshot-api:${color}` and `cleanwithsnapshot-web:${color}`
+3. **Start new stack** - Starts `api-${color}` and `web-${color}` containers
+4. **Health checks** - Waits for Docker health checks and HTTP endpoint checks to pass
+5. **Run migrations** - Executes `alembic upgrade head` on new API container
+6. **Switch traffic** - Updates `config/caddy/active-upstream.caddy` and reloads Caddy
+7. **Smoke tests** - Runs `ops/smoke.sh` to verify the deployment
+8. **Update state** - Writes new active color to `ops/state/active_color`
+9. **Keep old stack** - Old stack remains running for instant rollback (optional cleanup)
+
+**Environment Variables:**
+
+```bash
+# Skip image build (use existing images)
+SKIP_BUILD=1 ./ops/blue-green-deploy.sh
+
+# Skip migrations
+SKIP_MIGRATIONS=1 ./ops/blue-green-deploy.sh
+
+# Custom health check timeout (default: 300 seconds)
+HEALTH_TIMEOUT=600 ./ops/blue-green-deploy.sh
+
+# Remove old stack after successful deployment
+KEEP_OLD_STACK=0 ./ops/blue-green-deploy.sh
+```
+
+**Rollback:**
+
+Rollback is instant because the previous color's stack is still running:
+
+```bash
+# Instant rollback to previous color
+./ops/blue-green-deploy.sh --rollback
+```
+
+This switches Caddy back to the previous color without rebuilding or restarting containers.
+
+**Initial Setup:**
+
+To migrate from standard deployment to blue/green:
+
+```bash
+# 1. Start with blue stack
+docker compose -f docker-compose.yml -f docker-compose.blue-green.yml up -d db redis
+docker compose -f docker-compose.yml -f docker-compose.blue-green.yml up -d api-blue web-blue caddy
+
+# 2. Verify blue is working
+curl -fsS https://api.panidobro.com/healthz
+
+# 3. First blue/green deployment (deploys to green)
+./ops/blue-green-deploy.sh
+```
+
+**Compatibility:**
+
+- **Original deploy.sh** - Still works for standard single-stack deployments
+- **CI smoke tests** - No changes required, continue using standard compose
+- **Blue/green** - Use `ops/blue-green-deploy.sh` for zero-downtime production deploys
+
+---
+
 ## Security Scanning
 
 **Policy:** See [docs/SECURITY_VULN_POLICY.md](./docs/SECURITY_VULN_POLICY.md) for merge-block thresholds,
