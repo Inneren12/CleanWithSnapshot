@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from datetime import date, datetime, timezone
+import uuid
 from typing import Any
 
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from app.domain.clients.db_models import ClientUser
 from app.domain.documents.db_models import Document, DocumentTemplate
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.leads.db_models import Lead
+from app.domain.storage_quota import service as storage_quota_service
 
 DOCUMENT_TYPE_INVOICE = "invoice"
 DOCUMENT_TYPE_RECEIPT = "receipt"
@@ -385,19 +387,33 @@ async def _create_document(
     *,
     document_type: str,
     reference_id: str,
+    org_id: uuid.UUID,
     snapshot: dict[str, Any],
     template: DocumentTemplate,
 ) -> Document:
     pdf_bytes = _render_pdf(document_type, template, snapshot)
+    reservation = await storage_quota_service.reserve_bytes(
+        session,
+        org_id,
+        len(pdf_bytes),
+        resource_type="document",
+        resource_id=reference_id,
+    )
     document = Document(
         document_type=document_type,
         reference_id=reference_id,
+        org_id=org_id,
         template_id=template.template_id,
         template_version=template.version,
         snapshot=snapshot,
         pdf_bytes=pdf_bytes,
     )
     session.add(document)
+    await storage_quota_service.finalize_reservation(
+        session,
+        reservation.reservation_id,
+        len(pdf_bytes),
+    )
     return document
 
 
@@ -414,6 +430,7 @@ async def get_or_create_invoice_document(
         session,
         document_type=DOCUMENT_TYPE_INVOICE,
         reference_id=invoice.invoice_id,
+        org_id=invoice.org_id,
         snapshot=snapshot,
         template=template,
     )
@@ -434,6 +451,7 @@ async def get_or_create_receipt_document(
         session,
         document_type=DOCUMENT_TYPE_RECEIPT,
         reference_id=payment.payment_id,
+        org_id=invoice.org_id,
         snapshot=snapshot,
         template=template,
     )
@@ -454,6 +472,7 @@ async def get_or_create_service_agreement_document(
         session,
         document_type=DOCUMENT_TYPE_SERVICE_AGREEMENT,
         reference_id=booking.booking_id,
+        org_id=booking.org_id,
         snapshot=snapshot,
         template=template,
     )

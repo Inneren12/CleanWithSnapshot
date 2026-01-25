@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.photo_tokens import verify_photo_download_token
+from app.api.problem_details import problem_details
 from app.domain.bookings import photos_service
 from app.domain.bookings.db_models import Booking
 from app.domain.clients.db_models import ClientUser
@@ -19,6 +20,7 @@ from app.domain.nps import schemas as nps_schemas, service as nps_service
 from app.domain.nps.db_models import NpsToken
 from app.domain.notifications import email_service
 from app.domain.quality import service as quality_service
+from app.domain.storage_quota import service as storage_quota_service
 from app.infra.db import get_db_session
 from app.infra.email import resolve_app_email_adapter
 from app.infra.storage import resolve_storage_backend
@@ -450,8 +452,27 @@ async def download_invoice_pdf(
     if invoice.status == invoice_statuses.INVOICE_STATUS_VOID:
         raise HTTPException(status_code=400, detail="Invoice is void")
     lead = await invoice_service.fetch_customer(session, invoice)
-    document = await document_service.get_or_create_invoice_document(session, invoice=invoice, lead=lead)
-    await session.commit()
+    try:
+        document = await document_service.get_or_create_invoice_document(session, invoice=invoice, lead=lead)
+        await session.commit()
+    except storage_quota_service.OrgStorageQuotaExceeded as exc:
+        await session.rollback()
+        return problem_details(
+            request,
+            status=status.HTTP_409_CONFLICT,
+            title="Storage quota exceeded",
+            detail="Organization storage quota exceeded",
+            errors=[
+                {
+                    "code": "ORG_STORAGE_QUOTA_EXCEEDED",
+                    "bytes_requested": exc.requested_bytes,
+                    "storage_bytes_used": exc.snapshot.storage_bytes_used,
+                    "storage_bytes_pending": exc.snapshot.storage_bytes_pending,
+                    "max_storage_bytes": exc.snapshot.max_storage_bytes,
+                    "remaining_bytes": exc.snapshot.remaining_bytes,
+                }
+            ],
+        )
     pdf_bytes = document_service.pdf_bytes(document)
     filename = f"{invoice.invoice_number}.pdf"
     headers = {"Content-Disposition": f"inline; filename=\"{filename}\""}
@@ -475,10 +496,29 @@ async def download_receipt_pdf(
     if payment.status != invoice_statuses.PAYMENT_STATUS_SUCCEEDED:
         raise HTTPException(status_code=400, detail="Receipt available only for successful payments")
     lead = await invoice_service.fetch_customer(session, invoice)
-    document = await document_service.get_or_create_receipt_document(
-        session, invoice=invoice, payment=payment, lead=lead
-    )
-    await session.commit()
+    try:
+        document = await document_service.get_or_create_receipt_document(
+            session, invoice=invoice, payment=payment, lead=lead
+        )
+        await session.commit()
+    except storage_quota_service.OrgStorageQuotaExceeded as exc:
+        await session.rollback()
+        return problem_details(
+            request,
+            status=status.HTTP_409_CONFLICT,
+            title="Storage quota exceeded",
+            detail="Organization storage quota exceeded",
+            errors=[
+                {
+                    "code": "ORG_STORAGE_QUOTA_EXCEEDED",
+                    "bytes_requested": exc.requested_bytes,
+                    "storage_bytes_used": exc.snapshot.storage_bytes_used,
+                    "storage_bytes_pending": exc.snapshot.storage_bytes_pending,
+                    "max_storage_bytes": exc.snapshot.max_storage_bytes,
+                    "remaining_bytes": exc.snapshot.remaining_bytes,
+                }
+            ],
+        )
     pdf_bytes = document_service.pdf_bytes(document)
     filename = f"{invoice.invoice_number}-receipt.pdf"
     headers = {"Content-Disposition": f"inline; filename=\"{filename}\""}
@@ -503,10 +543,29 @@ async def download_service_agreement_pdf(
         raise HTTPException(status_code=404, detail="Booking not found")
     lead = await invoice_service.fetch_customer(session, invoice)
     client = await session.get(ClientUser, booking.client_id) if booking.client_id else None
-    document = await document_service.get_or_create_service_agreement_document(
-        session, booking=booking, lead=lead, client=client
-    )
-    await session.commit()
+    try:
+        document = await document_service.get_or_create_service_agreement_document(
+            session, booking=booking, lead=lead, client=client
+        )
+        await session.commit()
+    except storage_quota_service.OrgStorageQuotaExceeded as exc:
+        await session.rollback()
+        return problem_details(
+            request,
+            status=status.HTTP_409_CONFLICT,
+            title="Storage quota exceeded",
+            detail="Organization storage quota exceeded",
+            errors=[
+                {
+                    "code": "ORG_STORAGE_QUOTA_EXCEEDED",
+                    "bytes_requested": exc.requested_bytes,
+                    "storage_bytes_used": exc.snapshot.storage_bytes_used,
+                    "storage_bytes_pending": exc.snapshot.storage_bytes_pending,
+                    "max_storage_bytes": exc.snapshot.max_storage_bytes,
+                    "remaining_bytes": exc.snapshot.remaining_bytes,
+                }
+            ],
+        )
     pdf_bytes = document_service.pdf_bytes(document)
     filename = f"{invoice.invoice_number}-service-agreement.pdf"
     headers = {"Content-Disposition": f"inline; filename=\"{filename}\""}

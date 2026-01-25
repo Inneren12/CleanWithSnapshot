@@ -25,6 +25,7 @@ from app.jobs import (
     notifications_digests,
     outbox,
     qbo_sync,
+    storage_quota,
     storage_janitor,
 )
 from app.infra.storage import new_storage_backend
@@ -150,6 +151,10 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         )
     if name == "storage-janitor":
         return lambda session: storage_janitor.run_storage_janitor(session, _STORAGE)
+    if name == "storage-quota-cleanup":
+        return lambda session: storage_quota.run_storage_quota_cleanup(session)
+    if name == "storage-quota-reconcile":
+        return lambda session: storage_quota.run_storage_quota_reconciliation(session)
     if name == "notifications-digest-daily":
         return lambda session: notifications_digests.run_notifications_digest(
             session, _ADAPTER, schedule="daily"
@@ -198,6 +203,8 @@ async def run(argv: list[str] | None = None) -> None:
             "outbox-delivery",
             "dlq-auto-replay",
             "storage-janitor",
+            "storage-quota-cleanup",
+            "storage-quota-reconcile",
             "notifications-digest-daily",
             "notifications-digest-weekly",
             "notifications-digest-monthly",

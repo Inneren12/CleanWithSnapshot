@@ -36,6 +36,10 @@ class OrganizationSettings(Base):
         sa.Boolean, nullable=False, default=False, server_default=sa.text("false")
     )
     max_users: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    max_storage_bytes: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
+    storage_bytes_used: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=0, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

@@ -189,6 +189,8 @@ class Settings(BaseSettings):
     order_upload_root: str = Field("tmp")
     order_photo_max_bytes: int = Field(10 * 1024 * 1024)
     order_photo_allowed_mimes_raw: str = Field("image/jpeg,image/png,image/webp")
+    storage_quota_reservation_ttl_seconds: int = Field(3600)
+    storage_quota_cleanup_batch_size: int = Field(1000)
     order_storage_backend: Literal[
         "local",
         "s3",

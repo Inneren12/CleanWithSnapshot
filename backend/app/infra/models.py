@@ -31,3 +31,4 @@ from app.domain.rules import db_models as rules_db_models  # noqa: F401
 from app.domain.leads import db_models as leads_db_models  # noqa: F401
 from app.domain.leads_nurture import db_models as leads_nurture_db_models  # noqa: F401
 from app.domain.leads_scoring import db_models as leads_scoring_db_models  # noqa: F401
+from app.domain.storage_quota import db_models as storage_quota_db_models  # noqa: F401

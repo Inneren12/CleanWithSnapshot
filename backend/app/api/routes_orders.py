@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import entitlements
+from app.api.problem_details import problem_details
 from app.api.admin_auth import (
     AdminIdentity,
     permission_keys_for_request,
@@ -37,6 +38,7 @@ from app.domain.bookings import schemas as booking_schemas
 from app.domain.admin_audit import service as audit_service
 from app.domain.reason_logs import schemas as reason_schemas
 from app.domain.reason_logs import service as reason_service
+from app.domain.storage_quota import service as storage_quota_service
 from app.infra.storage import resolve_storage_backend
 from app.infra.storage.backends import CloudflareImagesStorageBackend
 from app.domain.saas import billing_service
@@ -232,9 +234,35 @@ async def upload_order_photo(
 
     uploaded_by = identity.role.value or identity.username
     storage = _storage_backend(request)
-    photo = await photos_service.save_photo(
-        session, order, file, parsed_phase, uploaded_by, org_id, storage
-    )
+    try:
+        photo = await photos_service.save_photo(
+            session,
+            order,
+            file,
+            parsed_phase,
+            uploaded_by,
+            org_id,
+            storage,
+            expected_size_bytes=size_bytes,
+            audit_identity=identity,
+        )
+    except storage_quota_service.OrgStorageQuotaExceeded as exc:
+        return problem_details(
+            request,
+            status=status.HTTP_409_CONFLICT,
+            title="Storage quota exceeded",
+            detail="Organization storage quota exceeded",
+            errors=[
+                {
+                    "code": "ORG_STORAGE_QUOTA_EXCEEDED",
+                    "bytes_requested": exc.requested_bytes,
+                    "storage_bytes_used": exc.snapshot.storage_bytes_used,
+                    "storage_bytes_pending": exc.snapshot.storage_bytes_pending,
+                    "max_storage_bytes": exc.snapshot.max_storage_bytes,
+                    "remaining_bytes": exc.snapshot.remaining_bytes,
+                }
+            ],
+        )
     if entitlements.has_tenant_identity(request):
         await billing_service.record_usage_event(
             session,

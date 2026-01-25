@@ -37,6 +37,9 @@ class OrgSettingsResponse(BaseModel):
     finance_ready: bool = False
     max_users: int | None = Field(default=None, ge=0)
     current_users_count: int = 0
+    max_storage_bytes: int | None = Field(default=None, ge=0)
+    storage_bytes_used: int = Field(default=0, ge=0)
+    storage_usage_percent: float | None = None
 
 
 class OrgSettingsUpdateRequest(BaseModel):
@@ -56,6 +59,7 @@ class OrgSettingsUpdateRequest(BaseModel):
     referral_credit_trigger: ReferralCreditTrigger | None = None
     finance_ready: bool | None = None
     max_users: int | None = Field(default=None, ge=0)
+    max_storage_bytes: int | None = Field(default=None, ge=0)
 
     @field_validator("timezone")
     @classmethod
