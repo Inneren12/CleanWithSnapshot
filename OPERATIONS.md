@@ -170,6 +170,9 @@ git reset --hard <sha>
 
 ## Security Scanning
 
+**Policy:** See [docs/SECURITY_VULN_POLICY.md](./docs/SECURITY_VULN_POLICY.md) for merge-block thresholds,
+remediation SLAs, and the waiver/exception process.
+
 ### Container vulnerability policy (Trivy)
 
 **CI behavior:** The pipeline builds the `api` and `web` images with `docker compose build api web` and scans
