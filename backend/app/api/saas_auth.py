@@ -197,6 +197,8 @@ class TenantSessionMiddleware(BaseHTTPMiddleware):
                     username=identity.email or str(identity.user_id),
                     role=admin_role,
                     org_id=identity.org_id,
+                    admin_id=str(identity.user_id),
+                    auth_method="token",
                 )
         elif identity_error:
             request.state.saas_identity_error = identity_error

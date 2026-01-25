@@ -169,6 +169,7 @@ class AdminSafetyMiddleware(BaseHTTPMiddleware):
                     session,
                     identity=identity,
                     action="break_glass_write",
+                    auth_method="break-glass",
                     resource_type="http_request",
                     resource_id=f"{request.method} {request.url.path}",
                     before=None,

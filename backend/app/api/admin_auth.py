@@ -4,7 +4,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable, Optional
+from typing import Iterable
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler
@@ -64,6 +64,8 @@ class AdminIdentity:
     username: str
     role: AdminRole
     org_id: uuid.UUID | None = None
+    admin_id: str | None = None
+    auth_method: str | None = None
 
 
 @dataclass
@@ -213,7 +215,11 @@ def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> Admin
             credentials.password, user.password
         ):
             return AdminIdentity(
-                username=user.username, role=user.role, org_id=settings.default_org_id
+                username=user.username,
+                role=user.role,
+                org_id=settings.default_org_id,
+                admin_id=user.username,
+                auth_method="basic",
             )
 
     raise _build_auth_exception(reason="invalid_credentials")
@@ -423,55 +429,65 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
 
 class AdminAuditMiddleware(BaseHTTPMiddleware):
     SENSITIVE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+    READ_METHODS = {"GET", "HEAD"}
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
-        should_audit = request.url.path.startswith("/v1/admin") and request.method in self.SENSITIVE_METHODS
-        body_bytes: bytes | None = None
-        if should_audit:
-            body_bytes = await request.body()
-            request._body = body_bytes
-
+        path = request.url.path
+        is_admin_path = path.startswith("/v1/admin")
+        should_audit_write = is_admin_path and request.method in self.SENSITIVE_METHODS
         request.state.explicit_admin_audit = False
+
         response = await call_next(request)
         already_logged = getattr(request.state, "explicit_admin_audit", False)
 
-        if should_audit and not already_logged:
-            from app.domain.admin_audit import service as audit_service
+        if not is_admin_path or already_logged:
+            return response
 
-            identity: AdminIdentity | None = getattr(request.state, "admin_identity", None)
-            if identity is None:
-                return response
+        from app.domain.admin_audit import policy as audit_policy
+        from app.domain.admin_audit import service as audit_service
+        from app.domain.admin_audit.db_models import AdminAuditActionType, AdminAuditSensitivity
 
-            before = _safe_json(body_bytes)
-            raw_after = getattr(response, "body", None)
-            after = _safe_json(raw_after if isinstance(raw_after, (bytes, bytearray)) else None)
-            session_factory = getattr(request.app.state, "db_session_factory", None)
-            if session_factory is None:
-                return response
-            try:
-                async with session_factory() as session:
-                    await audit_service.record_action(
-                        session,
-                        identity=identity,
-                        action=f"{request.method} {request.url.path}",
-                        resource_type=None,
-                        resource_id=None,
-                        before=before,
-                        after=after,
-                    )
-                    await session.commit()
-            except Exception:  # noqa: BLE001
-                logger.exception("admin_audit_failed")
-                return response
+        identity: AdminIdentity | None = getattr(request.state, "admin_identity", None)
+        if identity is None:
+            return response
+
+        action_type = None
+        sensitivity = None
+        resource_type = None
+        resource_id = None
+
+        if should_audit_write:
+            action_type = AdminAuditActionType.WRITE
+            sensitivity = AdminAuditSensitivity.NORMAL
+        elif request.method in self.READ_METHODS:
+            classification = audit_policy.classify_sensitive_read(path)
+            if classification:
+                resource_type, resource_id, sensitivity = classification
+                action_type = AdminAuditActionType.READ
+
+        if action_type is None:
+            return response
+
+        session_factory = getattr(request.app.state, "db_session_factory", None)
+        if session_factory is None:
+            return response
+
+        try:
+            async with session_factory() as session:
+                await audit_service.audit_admin_action(
+                    session,
+                    identity=identity,
+                    action=f"{request.method} {path}",
+                    action_type=action_type,
+                    sensitivity_level=sensitivity,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    before=None,
+                    after=None,
+                )
+                await session.commit()
+                request.state.explicit_admin_audit = True
+        except Exception:  # noqa: BLE001
+            logger.exception("admin_audit_failed")
+            return response
         return response
-
-
-def _safe_json(payload: Optional[bytes]) -> dict | list | None:
-    if not payload:
-        return None
-    try:
-        import json
-
-        return json.loads(payload.decode())
-    except Exception:  # noqa: BLE001
-        return None

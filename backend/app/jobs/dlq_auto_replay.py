@@ -65,7 +65,13 @@ async def run_dlq_auto_replay(
     adapters = OutboxAdapters(
         email_adapter=adapter, export_transport=export_transport, export_resolver=export_resolver
     )
-    identity = AdminIdentity(username=AUTO_REPLAY_ACTOR, role=AdminRole.ADMIN, org_id=org_uuid)
+    identity = AdminIdentity(
+        username=AUTO_REPLAY_ACTOR,
+        role=AdminRole.ADMIN,
+        org_id=org_uuid,
+        admin_id=AUTO_REPLAY_ACTOR,
+        auth_method="system",
+    )
 
     with org_id_context(org_uuid):
         before_outbox = await outbox_counts_by_status(session, ["dead"])
