@@ -14,7 +14,8 @@ The following actions are audited:
 - **Activate / expire**: lifecycle state transitions for a flag definition.
 - **Override**: policy-approved changes to expired/retired flags.
 
-Flag evaluation (reads) is **not** audited. Audit logging only applies to mutation paths.
+Flag evaluation (reads) is **not** audited. Audit logging only applies to mutation paths. Evaluation telemetry
+is stored separately for stale detection and does not capture org or user identifiers.
 
 ## Audit record fields
 
@@ -95,6 +96,51 @@ Filters:
 - `start` / `end`: ISO timestamps
 
 Results are paginated; use `next_offset` to page forward.
+
+## Stale flag detection (evaluation telemetry)
+
+Stale detection relies on lightweight evaluation telemetry captured whenever a flag is evaluated:
+
+- `last_evaluated_at`: UTC timestamp updated at most once per throttle window.
+- `evaluate_count`: incremented at the same throttled cadence (sampled counter).
+
+To keep overhead low, telemetry updates are **rate-limited per flag** (default: once every 15 minutes).
+This means `evaluate_count` is a sampled indicator of use, not a precise per-request total.
+
+No org IDs or user identifiers are recorded; telemetry is stored on the flag definition only.
+
+### Stale report API
+
+Admins can retrieve stale flags from:
+
+```
+GET /v1/admin/settings/feature-flags/stale?include_never=true&inactive_days=30&max_evaluate_count=1&limit=50&offset=0
+```
+
+Filters:
+
+- `include_never`: include flags that have never been evaluated (`last_evaluated_at` is null).
+- `inactive_days`: flags not evaluated in N days (use `0` to disable this filter).
+- `max_evaluate_count`: flags whose sampled `evaluate_count` is near zero.
+- `lifecycle_state`: optional lifecycle filter (draft/active/expired/retired).
+- Pagination: `limit` and `offset`.
+
+### Metrics & alerting
+
+The scheduled job `feature-flag-governance` refreshes Prometheus gauges:
+
+- `feature_flags_stale_total{category="never"}`: flags never evaluated.
+- `feature_flags_stale_total{category="inactive"}`: flags inactive for the configured window.
+- `feature_flags_stale_total{category="expired_evaluated"}`: expired/retired flags still evaluated recently.
+
+These metrics are low-cardinality and safe to alert on.
+
+### Recommended cleanup workflow
+
+1. **Review stale report**: filter by `include_never` and `inactive_days` to identify unused flags.
+2. **Confirm ownership**: contact the owner listed in the flag definition.
+3. **Retire flags**: expire or retire unused flags and remove overrides.
+4. **Monitor alerts**: investigate any `expired_evaluated` counts to find callers using deprecated flags.
 
 ## Redaction policy
 

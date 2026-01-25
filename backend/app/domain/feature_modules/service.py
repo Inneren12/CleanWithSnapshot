@@ -382,6 +382,8 @@ async def effective_feature_enabled(
     overrides = await get_org_feature_overrides(session, org_id)
     enabled = effective_feature_enabled_from_overrides(overrides, key)
     definition = await feature_flag_service.get_feature_flag_definition(session, key)
+    if definition is not None:
+        await feature_flag_service.record_feature_flag_evaluation(session, key)
     if definition and not feature_flag_service.is_flag_mutable(definition):
         return False
     return enabled
@@ -397,4 +399,5 @@ async def effective_visible_for_user(
 ) -> bool:
     overrides = await get_org_feature_overrides(session, org_id)
     hidden_keys = await get_user_ui_prefs(session, org_id, user_key)
+    await feature_flag_service.record_feature_flag_evaluation(session, key)
     return effective_visible(role=role, hidden_keys=hidden_keys, overrides=overrides, key=key)
