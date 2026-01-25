@@ -246,7 +246,9 @@ from app.domain.subscriptions import schemas as subscription_schemas
 from app.domain.subscriptions import service as subscription_service
 from app.domain.subscriptions.db_models import Subscription
 from app.domain.time_tracking.db_models import WorkTimeEntry
+from app.domain.admin_audit import schemas as admin_audit_schemas
 from app.domain.admin_audit import service as audit_service
+from app.domain.admin_audit.db_models import AdminAuditActionType, AdminAuditSensitivity
 from app.domain.rules import engine as rules_engine
 from app.domain.rules import schemas as rules_schemas
 from app.domain.rules import service as rules_service
@@ -720,6 +722,53 @@ async def get_admin_profile(
         username=identity.username,
         role=role_value,
         permissions=permissions,
+    )
+
+
+@router.get("/v1/admin/audit/actions", response_model=admin_audit_schemas.AdminAuditLogListResponse)
+async def list_admin_audit_actions(
+    request: Request,
+    admin_id: str | None = None,
+    action_type: AdminAuditActionType | None = Query(default=None),
+    resource_type: str | None = None,
+    from_ts: datetime | None = Query(default=None),
+    to_ts: datetime | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_db_session),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
+) -> admin_audit_schemas.AdminAuditLogListResponse:
+    org_id = entitlements.resolve_org_id(request)
+    filters = audit_service.AuditListFilters(
+        admin_id=admin_id,
+        action_type=action_type,
+        resource_type=resource_type,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        limit=limit,
+        offset=offset,
+    )
+    logs = await audit_service.list_admin_audit_logs(session, org_id=org_id, filters=filters)
+    return admin_audit_schemas.AdminAuditLogListResponse(
+        audits=[
+            admin_audit_schemas.AdminAuditLogEntry(
+                audit_id=log.audit_id,
+                created_at=log.created_at,
+                admin_id=log.admin_id,
+                actor=log.actor,
+                role=log.role,
+                auth_method=log.auth_method,
+                action=log.action,
+                action_type=AdminAuditActionType(log.action_type),
+                sensitivity_level=AdminAuditSensitivity(log.sensitivity_level),
+                resource_type=log.resource_type,
+                resource_id=log.resource_id,
+                context=log.context,
+            )
+            for log in logs
+        ],
+        limit=limit,
+        offset=offset,
     )
 
 

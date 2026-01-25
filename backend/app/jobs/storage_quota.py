@@ -95,7 +95,13 @@ async def run_storage_quota_reconciliation(session: AsyncSession) -> dict[str, i
 
     reconciled = 0
     adjusted = 0
-    identity = AdminIdentity(username="system", role=AdminRole.ADMIN, org_id=None)
+    identity = AdminIdentity(
+        username="system",
+        role=AdminRole.ADMIN,
+        org_id=None,
+        admin_id="system",
+        auth_method="system",
+    )
     existing_orgs = set()
 
     for org_id, stored_used in existing_rows.all():

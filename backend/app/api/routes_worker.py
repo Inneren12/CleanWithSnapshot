@@ -53,6 +53,7 @@ from app.domain.chat_threads import service as chat_service
 from app.domain.chat_threads.service import PARTICIPANT_WORKER
 from app.domain.addons.db_models import OrderAddon
 from app.domain.admin_audit import service as audit_service
+from app.domain.admin_audit.db_models import AdminAuditActionType, AdminAuditSensitivity
 from app.domain.checklists import schemas as checklist_schemas
 from app.domain.checklists import service as checklist_service
 from app.domain.disputes import schemas as dispute_schemas
@@ -197,6 +198,8 @@ async def _audit(
     resource_id: str | None,
     before: dict | None = None,
     after: dict | None = None,
+    action_type: AdminAuditActionType | None = None,
+    sensitivity_level: AdminAuditSensitivity | None = None,
 ) -> None:
     await audit_service.record_action(
         session,
@@ -206,6 +209,8 @@ async def _audit(
         resource_id=resource_id,
         before=before,
         after=after,
+        action_type=action_type,
+        sensitivity_level=sensitivity_level,
     )
     await session.flush()
 
@@ -786,6 +791,8 @@ async def _render_job_page(
             action="VIEW_JOB",
             resource_type="booking",
             resource_id=booking.booking_id,
+            action_type=AdminAuditActionType.READ,
+            sensitivity_level=AdminAuditSensitivity.SENSITIVE,
         )
         await session.commit()
     csrf_token = get_csrf_token(request)
@@ -1383,7 +1390,15 @@ async def worker_dashboard(
         if starts_at and starts_at >= now:
             next_job = booking
             break
-    await _audit(session, identity, action="VIEW_DASHBOARD", resource_type="portal", resource_id=None)
+    await _audit(
+        session,
+        identity,
+        action="VIEW_DASHBOARD",
+        resource_type="portal",
+        resource_id=None,
+        action_type=AdminAuditActionType.READ,
+        sensitivity_level=AdminAuditSensitivity.SENSITIVE,
+    )
     await session.commit()
     return HTMLResponse(
         _wrap_page(request, _render_dashboard(next_job, counts, lang), title="Worker dashboard", active="dashboard", lang=lang)
@@ -1405,7 +1420,15 @@ async def worker_jobs(
         "".join(_render_job_card(booking, invoices.get(booking.booking_id), lang) for booking in bookings)
         or f"<p class=\"muted\">{html.escape(tr(lang, 'worker.no_jobs'))}</p>"
     )
-    await _audit(session, identity, action="VIEW_JOBS", resource_type="portal", resource_id=None)
+    await _audit(
+        session,
+        identity,
+        action="VIEW_JOBS",
+        resource_type="portal",
+        resource_id=None,
+        action_type=AdminAuditActionType.READ,
+        sensitivity_level=AdminAuditSensitivity.SENSITIVE,
+    )
     await session.commit()
     return HTMLResponse(_wrap_page(request, cards, title="My jobs", active="jobs", lang=lang))
 
@@ -1744,6 +1767,8 @@ async def worker_checklist(
         resource_id=run.run_id,
         before=None,
         after={"order_id": booking.booking_id},
+        action_type=AdminAuditActionType.READ,
+        sensitivity_level=AdminAuditSensitivity.SENSITIVE,
     )
     await session.commit()
     return checklist_service.serialize_run(run)

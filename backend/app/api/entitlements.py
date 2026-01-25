@@ -29,7 +29,13 @@ def _resolve_request_id(request: Request) -> str | None:
 
 
 def _system_identity(org_id: uuid.UUID) -> AdminIdentity:
-    return AdminIdentity(username="system", role=AdminRole.ADMIN, org_id=org_id)
+    return AdminIdentity(
+        username="system",
+        role=AdminRole.ADMIN,
+        org_id=org_id,
+        admin_id="system",
+        auth_method="system",
+    )
 
 
 def resolve_org_id(request: Request) -> uuid.UUID:

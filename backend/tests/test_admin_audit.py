@@ -70,6 +70,8 @@ async def test_booking_confirm_audited_once(client, async_session_maker):
         logs = result.scalars().all()
         assert len(logs) == 1
         log = logs[0]
+        assert log.action_type == "WRITE"
+        assert log.sensitivity_level == "normal"
         assert log.before is not None
         assert log.after is not None
 
@@ -94,4 +96,44 @@ async def test_explicit_audit_flag_is_request_scoped(client, async_session_maker
         actions = [log.action for log in logs]
         assert "booking_confirm" in actions
         assert "POST /v1/admin/email-scan" in actions
+        assert all(log.action_type == "WRITE" for log in logs)
         assert len(actions) == 2
+
+
+@pytest.mark.anyio
+async def test_sensitive_read_logs_audit_entry(client, async_session_maker):
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    headers = _basic_auth_header("admin", "secret")
+
+    resp = client.get("/v1/admin/invoices", headers=headers)
+    assert resp.status_code == 200
+
+    async with async_session_maker() as session:
+        result = await session.execute(
+            sa.select(AdminAuditLog).where(AdminAuditLog.action == "GET /v1/admin/invoices")
+        )
+        logs = result.scalars().all()
+        assert len(logs) == 1
+        log = logs[0]
+        assert log.action_type == "READ"
+        assert log.sensitivity_level == "sensitive"
+        assert log.before is None
+        assert log.after is None
+
+
+@pytest.mark.anyio
+async def test_non_sensitive_read_skips_audit_entry(client, async_session_maker):
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    headers = _basic_auth_header("admin", "secret")
+
+    resp = client.get("/v1/admin/whoami", headers=headers)
+    assert resp.status_code == 200
+
+    async with async_session_maker() as session:
+        result = await session.execute(
+            sa.select(AdminAuditLog).where(AdminAuditLog.action == "GET /v1/admin/whoami")
+        )
+        logs = result.scalars().all()
+        assert logs == []

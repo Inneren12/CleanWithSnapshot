@@ -125,6 +125,8 @@ async def create_user(
         username=identity.email,
         role=ROLE_TO_ADMIN_ROLE.get(identity.role, AdminRole.VIEWER),
         org_id=identity.org_id,
+        admin_id=str(identity.user_id),
+        auth_method="token",
     )
     user = await session.scalar(sa.select(User).where(User.email == normalized_email))
     membership: Membership | None = None
@@ -268,6 +270,8 @@ async def reset_temp_password(
         username=identity.email,
         role=ROLE_TO_ADMIN_ROLE.get(identity.role, AdminRole.VIEWER),
         org_id=identity.org_id,
+        admin_id=str(identity.user_id),
+        auth_method="token",
     )
     request.state.explicit_admin_audit = True
     await audit_service.record_action(
