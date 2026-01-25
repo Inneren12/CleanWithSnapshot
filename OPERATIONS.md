@@ -977,6 +977,52 @@ curl http://localhost:9080/metrics | grep promtail_targets_active_total
 
 ## Backup & Restore
 
+### RPO/RTO Targets & Recovery Matrix
+
+**Recovery Point Objective (RPO)** = maximum tolerable data loss.
+**Recovery Time Objective (RTO)** = time to restore service to healthy `/readyz` status.
+
+#### Formal Targets
+
+| Recovery Path | Target RTO | Target RPO | When to Use |
+|---------------|------------|------------|-------------|
+| **PITR (WAL archive)** | 2 hours | 5 minutes | Data corruption, operator error, any scenario where WAL archives are available |
+| **Daily backup** | 4 hours | 24 hours | PITR unavailable, WAL archive corruption, simpler recovery needs |
+| **Staging drills** | 90 minutes | 24 hours | Quarterly verification of operational readiness |
+
+#### Recovery Matrix by Scenario
+
+| Scenario | Primary Impact | RTO / RPO | Recovery Mechanism | Procedure |
+|----------|----------------|-----------|-------------------|-----------|
+| **Data corruption** | Invalid data or schema state in Postgres | 2h / 5m | **PITR** | Identify corruption timestamp → restore to last known-good point |
+| **Operator error** | Accidental DELETE/UPDATE or misconfiguration | 2h / 5m | **PITR** | Identify error timestamp → restore to pre-change point → validate data |
+| **Infra outage** (single host/zone) | Lost containers, disks, or VM | 2h–4h / 5m–24h | **Redeploy + restore** | Redeploy stack → restore from PITR (preferred) or daily backup |
+| **Region outage** | Full region loss | 2h–4h / 5m–24h | **Redeploy + restore** | Provision in alternate region → restore from offsite backups/WAL |
+
+#### Recovery Path Decision Guide
+
+```
+Is data integrity compromised (corruption/accidental change)?
+├─ YES → Use PITR (recover to specific timestamp)
+│        └─ Run: ops/pitr_restore.sh with TARGET_TIME
+└─ NO → Is infrastructure lost?
+         ├─ YES → Redeploy stack first
+         │        └─ Then restore using PITR (if WAL available) or daily backup
+         └─ NO → Standard troubleshooting (see runbooks/)
+```
+
+#### Monitoring Thresholds for Recovery Readiness
+
+| Artifact | Heartbeat File | Max Age | Alert Condition |
+|----------|----------------|---------|-----------------|
+| Daily backup | `ops/state/backup_last_ok.txt` | 26 hours | Backup stale |
+| PITR base backup | `/opt/backups/postgres/LAST_BASEBACKUP.txt` | 26 hours | Base backup stale |
+| WAL archive sync | `ops/state/wal_sync_last_ok.txt` | 10 minutes | WAL sync failing |
+
+**Detailed procedures:** See [docs/DISASTER_RECOVERY.md](./docs/DISASTER_RECOVERY.md) for step-by-step restore instructions.
+
+---
+
 ### Database Backup
 
 **Automated backup (recommended):**
