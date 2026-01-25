@@ -8,12 +8,25 @@ services:
       - "shared_preload_libraries=pg_stat_statements"
       - "-c"
       - "pg_stat_statements.track=all"
+      # WAL archiving for Point-in-Time Recovery (PITR)
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "archive_mode=on"
+      - "-c"
+      - "archive_command=test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f"
+      - "-c"
+      - "archive_timeout=300"
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pg_data:/var/lib/postgresql/data
+      # WAL archive volume for PITR - sync this offsite for disaster recovery
+      - pg_wal_archive:/var/lib/postgresql/wal_archive
+      # Init script to create WAL archive directory with correct permissions
+      - ./config/postgres/init-wal-archive.sh:/docker-entrypoint-initdb.d/init-wal-archive.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -162,6 +175,7 @@ services:
 
 volumes:
   pg_data:
+  pg_wal_archive:   # WAL archive for Point-in-Time Recovery - sync offsite
   redis_data:
   caddy_data:
   caddy_config:

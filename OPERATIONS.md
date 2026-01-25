@@ -1022,6 +1022,79 @@ gzip /opt/backups/postgres/backup_*.sql
 
 ---
 
+### WAL Archiving (Point-in-Time Recovery)
+
+PostgreSQL WAL (Write-Ahead Log) archiving is enabled for Point-in-Time Recovery (PITR).
+This allows recovery to any point in time, significantly reducing RPO compared to daily backups.
+
+**How it works:**
+1. PostgreSQL continuously writes WAL segments as transactions occur
+2. Completed WAL segments are copied to `/var/lib/postgresql/wal_archive` (pg_wal_archive volume)
+3. A base backup + WAL archives enable recovery to any point in time after the base backup
+
+**Configuration (docker-compose.yml):**
+```yaml
+command:
+  - "postgres"
+  - "-c"
+  - "wal_level=replica"
+  - "-c"
+  - "archive_mode=on"
+  - "-c"
+  - "archive_command=test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f"
+  - "-c"
+  - "archive_timeout=300"
+```
+
+**Key settings:**
+- `wal_level=replica`: Full WAL information for PITR and replication
+- `archive_mode=on`: Enable WAL archiving
+- `archive_command`: Safely copy WAL files to archive directory
+- `archive_timeout=300`: Force archive after 5 minutes of inactivity (limits data loss)
+
+**Volumes:**
+- `pg_wal_archive`: Stores archived WAL files; sync this offsite for disaster recovery
+
+---
+
+### PITR Base Backup
+
+Create a PITR-compatible base backup:
+
+```bash
+./ops/backup_basebackup.sh
+```
+
+**Output files:**
+- `basebackup_YYYYMMDDTHHMMSSZ.tar.gz`: PostgreSQL base backup
+- `wal_archive_YYYYMMDDTHHMMSSZ.tar.gz`: WAL archive snapshot
+- `basebackup_YYYYMMDDTHHMMSSZ.manifest`: Backup metadata
+
+**Recommended schedule:**
+- Daily PITR base backup (in addition to pg_dump)
+- Continuous WAL archive sync every 5 minutes
+
+---
+
+### WAL Archive Offsite Sync
+
+Sync WAL archives to offsite storage for disaster recovery:
+
+```bash
+# Sync to S3
+WAL_SYNC_TARGET="s3://mybucket/wal-archive/" ./ops/wal_archive_sync.sh
+
+# Sync to remote server
+WAL_SYNC_TARGET="backup@server:/backup/wal-archive/" ./ops/wal_archive_sync.sh
+
+# Add to cron (every 5 minutes)
+*/5 * * * * WAL_SYNC_TARGET="s3://mybucket/wal-archive/" /opt/cleaning/ops/wal_archive_sync.sh
+```
+
+**Heartbeat file:** `ops/state/wal_sync_last_ok.txt`
+
+---
+
 ### Database Restore
 
 **From backup file:**
@@ -1046,6 +1119,35 @@ docker compose exec db psql -U postgres cleaning -c "SELECT COUNT(*) FROM bookin
 # 5. Restart services
 docker compose up -d
 ```
+
+---
+
+### Point-in-Time Recovery (PITR) Restore
+
+Restore to a specific point in time:
+
+```bash
+TARGET_TIME="2026-01-25 14:30:00 UTC" \
+BASE_BACKUP=/opt/backups/postgres/basebackup_20260125T120000Z.tar.gz \
+WAL_ARCHIVE=/opt/backups/postgres/wal_archive_20260125T120000Z.tar.gz \
+CONFIRM_PITR_RESTORE=YES \
+./ops/pitr_restore.sh
+```
+
+**Required environment variables:**
+- `TARGET_TIME`: Recovery target time (e.g., "2026-01-25 14:30:00 UTC")
+- `BASE_BACKUP`: Path to base backup tarball
+- `WAL_ARCHIVE`: Path to WAL archive tarball
+- `CONFIRM_PITR_RESTORE=YES`: Safety confirmation
+
+**Recovery target options:**
+- `RECOVERY_TARGET=time`: Recover to specific time (default)
+- `RECOVERY_TARGET=immediate`: Recover to end of backup
+- `RECOVERY_TARGET=latest`: Apply all available WAL
+
+**Important:** PITR recovery is destructive. The script backs up current data before restore.
+
+See [docs/DISASTER_RECOVERY.md](./docs/DISASTER_RECOVERY.md) for detailed PITR procedures.
 
 ---
 

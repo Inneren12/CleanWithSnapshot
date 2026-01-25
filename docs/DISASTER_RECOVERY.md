@@ -1,26 +1,38 @@
 # Disaster Recovery (DR) Runbook
 
-This runbook documents the Phase 0 disaster recovery procedure and the staging restore drill for
-CleanWithSnapshot. It is designed for **measurable** RTO/RPO outcomes and uses existing backup
-artifacts (no new database technology or PITR in Phase 0).
+This runbook documents the disaster recovery procedures for CleanWithSnapshot, including both
+traditional backup restore and Point-in-Time Recovery (PITR) using WAL archiving.
 
-## Objectives (Phase 0)
+## Objectives
 
-| Environment | Recovery Time Objective (RTO) | Recovery Point Objective (RPO) | Notes |
+| Environment | Recovery Time Objective (RTO) | Recovery Point Objective (RPO) | Method |
 | --- | --- | --- | --- |
-| Staging (drill) | **90 minutes** | **24 hours** | Restore latest daily backup + uploads archive. |
-| Production | **4 hours** | **24 hours** | Manual restore from latest backup; no PITR. |
+| Staging (drill) | **90 minutes** | **24 hours** | Daily backup restore |
+| Production (daily backup) | **4 hours** | **24 hours** | pg_dump restore |
+| Production (PITR) | **2 hours** | **5 minutes** | WAL archive restore |
 
-**RTO** = time to restore service to healthy `/readyz` status.  
-**RPO** = maximum tolerable data loss based on last successful backup.
+**RTO** = time to restore service to healthy `/readyz` status.
+**RPO** = maximum tolerable data loss based on last successful backup/WAL sync.
 
-## Backup Artifacts (Phase 0)
+## Backup Artifacts
+
+### Traditional Backups (Phase 0)
 
 - **Postgres dumps**: `/opt/backups/postgres/cleaning_YYYYMMDDTHHMMSSZ.sql.gz`
 - **Uploads archives**: `/opt/backups/postgres/uploads_YYYYMMDDTHHMMSSZ.tar.gz`
 - **Backup heartbeat**: `/opt/backups/postgres/LAST_SUCCESS.txt` (used by `/healthz/backup`)
 
-The backup files are generated via `ops/backup_now.sh` and validated with `ops/backup_verify.sh`.
+Generated via `ops/backup_now.sh` and validated with `ops/backup_verify.sh`.
+
+### PITR Backups (WAL Archiving)
+
+- **Base backups**: `/opt/backups/postgres/basebackup_YYYYMMDDTHHMMSSZ.tar.gz`
+- **WAL archives**: `/opt/backups/postgres/wal_archive_YYYYMMDDTHHMMSSZ.tar.gz`
+- **Live WAL archive**: Docker volume `pg_wal_archive` (sync offsite every 5 min)
+- **Base backup heartbeat**: `/opt/backups/postgres/LAST_BASEBACKUP.txt`
+- **WAL sync heartbeat**: `ops/state/wal_sync_last_ok.txt`
+
+Generated via `ops/backup_basebackup.sh` and synced via `ops/wal_archive_sync.sh`.
 
 ## Staging Restore (Step-by-Step)
 
@@ -114,8 +126,126 @@ Issues encountered:
 Follow-up actions:
 ```
 
+## Point-in-Time Recovery (PITR)
+
+PITR enables recovery to any specific point in time after a base backup, using WAL archives.
+This significantly reduces RPO from 24 hours (daily backup) to 5 minutes (WAL sync interval).
+
+### Prerequisites
+
+1. **WAL archiving enabled** (configured in docker-compose.yml)
+2. **Base backup available** (from `ops/backup_basebackup.sh`)
+3. **WAL archives synced offsite** (from `ops/wal_archive_sync.sh`)
+
+### PITR Restore Procedure
+
+#### 1) Identify the target recovery time
+
+Determine the point in time you want to recover to. This must be after the base backup timestamp.
+
+```bash
+# Check available base backups
+ls -la /opt/backups/postgres/basebackup_*.tar.gz
+
+# Check WAL archive coverage
+ls -la /opt/backups/postgres/wal_archive_*.tar.gz
+```
+
+#### 2) Run the PITR restore script
+
+```bash
+cd /opt/cleaning
+
+TARGET_TIME="2026-01-25 14:30:00 UTC" \
+BASE_BACKUP=/opt/backups/postgres/basebackup_20260125T120000Z.tar.gz \
+WAL_ARCHIVE=/opt/backups/postgres/wal_archive_20260125T120000Z.tar.gz \
+CONFIRM_PITR_RESTORE=YES \
+./ops/pitr_restore.sh
+```
+
+**Environment variables:**
+- `TARGET_TIME`: Exact recovery target (e.g., "2026-01-25 14:30:00 UTC")
+- `BASE_BACKUP`: Path to base backup tarball
+- `WAL_ARCHIVE`: Path to WAL archive tarball (optional if using live volume)
+- `CONFIRM_PITR_RESTORE=YES`: Safety confirmation (required)
+
+**Alternative recovery targets:**
+```bash
+# Recover to end of base backup (no WAL replay)
+RECOVERY_TARGET=immediate ...
+
+# Recover to latest available WAL (apply all archives)
+RECOVERY_TARGET=latest ...
+```
+
+#### 3) Verify the recovery
+
+```bash
+# Health checks
+curl -fsS http://localhost:8000/healthz | jq .
+curl -fsS http://localhost:8000/readyz | jq .
+
+# Verify data as of target time
+docker compose exec -T db psql -U postgres -d cleaning -c \
+  "SELECT MAX(created_at) FROM bookings;"
+```
+
+### PITR Backup Schedule
+
+**Recommended cron entries:**
+
+```bash
+# Daily base backup at 2 AM
+0 2 * * * /opt/cleaning/ops/backup_basebackup.sh
+
+# WAL archive sync every 5 minutes
+*/5 * * * * WAL_SYNC_TARGET="s3://mybucket/wal-archive/" /opt/cleaning/ops/wal_archive_sync.sh
+
+# Traditional backup (kept for compatibility)
+0 3 * * * /opt/cleaning/ops/backup_now.sh
+```
+
+### PITR Monitoring
+
+Monitor these heartbeat files to ensure PITR capability:
+
+| File | Maximum Age | Alert Condition |
+| --- | --- | --- |
+| `/opt/backups/postgres/LAST_BASEBACKUP.txt` | 26 hours | Base backup stale |
+| `ops/state/wal_sync_last_ok.txt` | 10 minutes | WAL sync failing |
+
+### PITR DR Drill Record Template
+
+```
+Date (UTC):
+Primary operator:
+Secondary reviewer:
+Environment: staging
+Recovery target type: time / immediate / latest
+Target time (if applicable):
+Base backup file:
+WAL archive file:
+Start time (UTC):
+End time (UTC):
+Duration (minutes):
+RTO target (minutes): 120
+RTO achieved (minutes):
+RPO target (minutes): 5
+RPO achieved (minutes):
+Verification results:
+  - /healthz:
+  - /readyz:
+  - Data timestamp check:
+Issues encountered:
+Follow-up actions:
+```
+
+---
+
 ## Notes & Escalation
 
 - If `/readyz` returns non-200 after restore, run `docker compose exec -T api alembic upgrade head`
   and re-check readiness.
 - Escalate any RTO/RPO misses to the incident log and update this runbook with corrections.
+- For PITR failures, check PostgreSQL logs: `docker compose logs db`
+- If PITR restore fails, the pre-restore data is preserved at `pg_data.pre_pitr_*`
