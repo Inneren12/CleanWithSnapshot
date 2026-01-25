@@ -457,6 +457,10 @@ Each report includes:
 | After infrastructure changes | Targeted drill | Verify backup/restore still works |
 | After PostgreSQL upgrades | Full drill | Confirm compatibility |
 
+**Quarterly Drill Process:** For the complete operational process including scheduling guidance,
+preparation checklists, validation steps, success criteria, and reporting formats, see
+[PITR_DRILL_PROCESS.md](./PITR_DRILL_PROCESS.md).
+
 ### CI/CD Integration
 
 For automated scheduled drills, add to your CI pipeline:
