@@ -62,6 +62,7 @@ class Membership(Base):
     __tablename__ = "memberships"
     __table_args__ = (
         sa.UniqueConstraint("org_id", "user_id", name="uq_memberships_org_user"),
+        sa.Index("ix_memberships_org_active", "org_id", "is_active"),
     )
 
     membership_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

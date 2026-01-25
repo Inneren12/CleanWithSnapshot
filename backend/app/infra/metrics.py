@@ -49,6 +49,7 @@ class Metrics:
             self.outbox_deliver_total = None
             self.outbox_lag_seconds = None
             self.circuit_state = None
+            self.org_user_quota_rejections = None
             return
 
         self.webhook_events = Counter(
@@ -214,6 +215,11 @@ class Metrics:
             ["circuit"],
             registry=self.registry,
         )
+        self.org_user_quota_rejections = Counter(
+            "org_user_quota_rejections_total",
+            "Organization user quota rejections.",
+            registry=self.registry,
+        )
 
     def record_webhook(self, result: str) -> None:
         if not self.enabled or self.webhook_events is None:
@@ -362,6 +368,11 @@ class Metrics:
         safe_kind = kind or "unknown"
         safe_result = result or "unknown"
         self.outbox_deliver_total.labels(type=safe_kind, result=safe_result).inc()
+
+    def record_org_user_quota_rejection(self) -> None:
+        if not self.enabled or self.org_user_quota_rejections is None:
+            return
+        self.org_user_quota_rejections.inc()
 
     def set_outbox_lag(self, kind: str, lag_seconds: float) -> None:
         if not self.enabled or self.outbox_lag_seconds is None:

@@ -14,6 +14,7 @@ from app.domain.integrations import schemas as integrations_schemas
 from app.domain.invoices.db_models import StripeEvent
 from app.domain.org_settings import schemas as org_settings_schemas
 from app.domain.org_settings import service as org_settings_service
+from app.domain.saas import service as saas_service
 from app.infra.db import get_db_session
 from app.settings import settings
 from app.shared.pii_masking import mask_email, mask_phone
@@ -118,6 +119,7 @@ async def get_org_settings(
     session: AsyncSession = Depends(get_db_session),
 ) -> org_settings_schemas.OrgSettingsResponse:
     record = await org_settings_service.get_or_create_org_settings(session, org_id)
+    quota_snapshot = await saas_service.get_org_user_quota_snapshot(session, org_id)
     return org_settings_schemas.OrgSettingsResponse(
         org_id=org_id,
         timezone=org_settings_service.resolve_timezone(record),
@@ -135,6 +137,8 @@ async def get_org_settings(
         branding=org_settings_service.resolve_branding(record),
         referral_credit_trigger=org_settings_service.resolve_referral_credit_trigger(record),
         finance_ready=org_settings_service.resolve_finance_ready(record),
+        max_users=record.max_users,
+        current_users_count=quota_snapshot.current_users_count,
     )
 
 
@@ -150,6 +154,7 @@ async def update_org_settings(
     session: AsyncSession = Depends(get_db_session),
 ) -> org_settings_schemas.OrgSettingsResponse:
     record = await org_settings_service.apply_org_settings_update(session, org_id, payload=payload)
+    quota_snapshot = await saas_service.get_org_user_quota_snapshot(session, org_id)
     await session.commit()
     return org_settings_schemas.OrgSettingsResponse(
         org_id=org_id,
@@ -168,6 +173,8 @@ async def update_org_settings(
         branding=org_settings_service.resolve_branding(record),
         referral_credit_trigger=org_settings_service.resolve_referral_credit_trigger(record),
         finance_ready=org_settings_service.resolve_finance_ready(record),
+        max_users=record.max_users,
+        current_users_count=quota_snapshot.current_users_count,
     )
 
 

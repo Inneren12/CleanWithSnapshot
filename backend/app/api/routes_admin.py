@@ -1763,6 +1763,12 @@ class AdminUserResponse(BaseModel):
     temp_password: str
 
 
+class AdminOrgUserQuotaResponse(BaseModel):
+    org_id: uuid.UUID
+    current_users_count: int
+    max_users: int | None
+
+
 class ResetPasswordRequest(BaseModel):
     reason: str | None = None
 
@@ -2232,6 +2238,25 @@ def _resolve_membership_role(target_type: str, explicit: MembershipRole | None) 
     return MembershipRole.VIEWER
 
 
+@router.get("/v1/admin/orgs/{org_id}/user-quota", response_model=AdminOrgUserQuotaResponse)
+async def get_org_user_quota(
+    org_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> AdminOrgUserQuotaResponse:
+    if identity.org_id and identity.org_id != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    org = await session.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    snapshot = await saas_service.get_org_user_quota_snapshot(session, org_id)
+    return AdminOrgUserQuotaResponse(
+        org_id=org_id,
+        current_users_count=snapshot.current_users_count,
+        max_users=snapshot.max_users,
+    )
+
+
 @router.post("/v1/admin/users", response_model=AdminUserResponse)
 async def admin_create_user(
     payload: AdminUserCreateRequest,
@@ -2253,8 +2278,50 @@ async def admin_create_user(
         )
         if membership:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists in organization")
+        try:
+            await saas_service.enforce_org_user_quota(
+                session,
+                org_id,
+                attempted_action="admin_create_user",
+                audit_identity=identity,
+            )
+        except saas_service.OrgUserQuotaExceeded as exc:
+            return problem_details(
+                request,
+                status=status.HTTP_409_CONFLICT,
+                title="User quota exceeded",
+                detail="Organization user quota exceeded",
+                errors=[
+                    {
+                        "code": "ORG_USER_QUOTA_EXCEEDED",
+                        "current_users_count": exc.snapshot.current_users_count,
+                        "max_users": exc.snapshot.max_users,
+                    }
+                ],
+            )
         user = existing_user
     else:
+        try:
+            await saas_service.enforce_org_user_quota(
+                session,
+                org_id,
+                attempted_action="admin_create_user",
+                audit_identity=identity,
+            )
+        except saas_service.OrgUserQuotaExceeded as exc:
+            return problem_details(
+                request,
+                status=status.HTTP_409_CONFLICT,
+                title="User quota exceeded",
+                detail="Organization user quota exceeded",
+                errors=[
+                    {
+                        "code": "ORG_USER_QUOTA_EXCEEDED",
+                        "current_users_count": exc.snapshot.current_users_count,
+                        "max_users": exc.snapshot.max_users,
+                    }
+                ],
+            )
         user = await saas_service.create_user(session, normalized_email)
 
     role = _resolve_membership_role(payload.target_type, payload.role)
