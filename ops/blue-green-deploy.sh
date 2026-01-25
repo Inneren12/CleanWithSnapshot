@@ -27,6 +27,7 @@ cd "$REPO_ROOT"
 # Configuration
 STATE_DIR="$REPO_ROOT/ops/state"
 ACTIVE_COLOR_FILE="$STATE_DIR/active_color"
+LAST_GOOD_FILE="$STATE_DIR/last_good.env"
 CADDY_UPSTREAM_DIR="$REPO_ROOT/config/caddy"
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.blue-green.yml"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-300}"
@@ -80,6 +81,23 @@ set_active_color() {
   mkdir -p "$STATE_DIR"
   echo "$color" > "$ACTIVE_COLOR_FILE"
   log_info "Active color set to: $color"
+}
+
+record_last_good() {
+  local sha="$1"
+  local mode="$2"
+  local color="$3"
+  local timestamp
+  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  mkdir -p "$STATE_DIR"
+  cat > "$LAST_GOOD_FILE" <<EOF
+LAST_GOOD_SHA=$sha
+LAST_GOOD_MODE=$mode
+LAST_GOOD_COLOR=$color
+LAST_GOOD_TIMESTAMP=$timestamp
+EOF
+  log_info "Recorded last known good deploy: $sha ($color)"
 }
 
 # Update Caddy upstream configuration
@@ -463,6 +481,8 @@ deploy() {
   echo "Active color: $target_color"
   echo "Revision: $current_sha"
   echo ""
+
+  record_last_good "$current_sha" "blue-green" "$target_color"
 
   show_status
 }

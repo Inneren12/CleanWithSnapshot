@@ -149,7 +149,29 @@ to help debug startup issues.
 
 ### Rollback
 
-**Rollback to previous commit:**
+**One-command rollback (last known good):**
+
+```bash
+cd /opt/cleaning
+./ops/rollback.sh
+```
+
+**How it works:**
+
+- Restores the last known good git SHA recorded by `ops/deploy.sh` or `ops/blue-green-deploy.sh`.
+- Rebuilds and restarts **API + Web** services.
+- If the environment uses blue/green, it **switches Caddy routing** back to the recorded good color.
+- Uses `ops/state/last_good.env` as the source of truth for the rollback target.
+
+**Rollback guarantees & limits:**
+
+- ✅ **Guaranteed:** Code, containers, and proxy routing return to the last recorded good release.
+- ✅ **Guaranteed:** API + Web are rebuilt and restarted from that commit.
+- ⚠️ **Not guaranteed:** Database schema/data are **not** rolled back. Migrations are forward-only.
+- ⚠️ **Not guaranteed:** If `ops/state/last_good.env` is missing or stale, rollback will fail.
+- ⚠️ **Not guaranteed:** External dependencies (DNS, third-party services) are unaffected.
+
+**Manual rollback to previous commit:**
 
 ```bash
 cd /opt/cleaning
