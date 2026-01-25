@@ -1222,6 +1222,9 @@ Run this on staging after copying over the most recent backup to prove restores 
 4. **Record the drill**
    - Log the restore date, backup filename, and verification output in your incident/ops log.
 
+**Quarterly PITR Drills:** For comprehensive PITR recovery drills with formal validation and reporting,
+see [docs/PITR_DRILL_PROCESS.md](./docs/PITR_DRILL_PROCESS.md).
+
 ---
 
 ### File Uploads Backup
@@ -1582,6 +1585,11 @@ docker stats
 - [ ] Review performance metrics
 - [ ] Clean up old logs/backups
 
+**Quarterly:**
+- [ ] Run PITR restore drill on staging (see [docs/PITR_DRILL_PROCESS.md](./docs/PITR_DRILL_PROCESS.md))
+- [ ] Review and archive drill reports
+- [ ] Update DR documentation if procedures changed
+
 ---
 
 ## Related Documentation
@@ -1615,3 +1623,5 @@ See [docs/runbooks/README.md](./docs/runbooks/README.md) for the complete incide
 
 **Backup & Recovery:**
 - [docs/runbooks/backup-stale.md](./docs/runbooks/backup-stale.md) - Incident: Backup stale
+- [docs/DISASTER_RECOVERY.md](./docs/DISASTER_RECOVERY.md) - Disaster recovery procedures
+- [docs/PITR_DRILL_PROCESS.md](./docs/PITR_DRILL_PROCESS.md) - Quarterly PITR drill process
