@@ -197,6 +197,12 @@ Use this when you need the fastest possible rollback without prompts.
 
 ## Monitoring
 
+### Canary Identification Header
+
+Caddy adds an `X-Canary-Upstream` response header to API traffic in canary mode.
+Use it to confirm which upstream handled a request (e.g., `api:8000` vs
+`api-canary:8000`) when validating the traffic split or debugging behavior.
+
 ### Prometheus Alerts
 
 The following alerts are configured for canary deployments:
