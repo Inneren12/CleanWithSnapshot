@@ -103,8 +103,8 @@ async def test_config_audit_endpoint_paginates(async_session_maker, client):
     assert response.status_code == 200
 
     response = client.patch(
-        "/v1/admin/settings/features",
-        json={"overrides": {"module.integrations": True}},
+        "/v1/admin/settings/org",
+        json={"language": "es"},
         headers=headers,
     )
     assert response.status_code == 200

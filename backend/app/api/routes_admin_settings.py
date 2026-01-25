@@ -13,6 +13,9 @@ from app.api.org_context import require_org_context
 from app.domain.config_audit import ConfigAuditAction, ConfigActorType, ConfigScope
 from app.domain.config_audit import schemas as config_audit_schemas
 from app.domain.config_audit import service as config_audit_service
+from app.domain.feature_flag_audit import schemas as feature_flag_audit_schemas
+from app.domain.feature_flag_audit import service as feature_flag_audit_service
+from app.domain.feature_flag_audit.db_models import FeatureFlagAuditAction
 from app.domain.feature_modules import schemas as feature_schemas
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import schemas as integrations_schemas
@@ -131,6 +134,7 @@ async def update_feature_config(
         org_id,
         overrides,
         audit_actor=config_audit_service.admin_actor(identity, auth_method=_resolve_auth_method(request)),
+        rollout_reason=payload.reason,
         request_id=getattr(request.state, "request_id", None),
     )
     await session.commit()
@@ -283,6 +287,66 @@ async def list_config_audit_logs(
     ]
     next_offset = resolved_offset + resolved_limit if len(items) == resolved_limit else None
     return config_audit_schemas.ConfigAuditLogListResponse(
+        items=items,
+        limit=resolved_limit,
+        offset=resolved_offset,
+        next_offset=next_offset,
+    )
+
+
+@router.get(
+    "/v1/admin/settings/audit/feature-flags",
+    response_model=feature_flag_audit_schemas.FeatureFlagAuditLogListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_feature_flag_audit_logs(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
+    session: AsyncSession = Depends(get_db_session),
+    org_id_filter: uuid.UUID | None = Query(None, alias="org_id"),
+    flag_key: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> feature_flag_audit_schemas.FeatureFlagAuditLogListResponse:
+    if org_id_filter is not None and org_id_filter != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    resolved_limit = max(1, min(limit, 200))
+    resolved_offset = max(0, offset)
+    start_ts = _parse_iso_timestamp(start)
+    end_ts = _parse_iso_timestamp(end)
+    logs = await feature_flag_audit_service.list_feature_flag_audit_logs(
+        session,
+        org_id=org_id_filter or org_id,
+        flag_key=flag_key,
+        from_ts=start_ts,
+        to_ts=end_ts,
+        limit=resolved_limit,
+        offset=resolved_offset,
+    )
+    items = [
+        feature_flag_audit_schemas.FeatureFlagAuditLogEntry(
+            audit_id=log.audit_id,
+            occurred_at=log.occurred_at,
+            actor_type=ConfigActorType(log.actor_type),
+            actor_id=log.actor_id,
+            actor_role=log.actor_role,
+            auth_method=log.auth_method,
+            actor_source=log.actor_source,
+            org_id=log.org_id,
+            flag_key=log.flag_key,
+            action=FeatureFlagAuditAction(log.action),
+            before_state=log.before_state,
+            after_state=log.after_state,
+            rollout_context=log.rollout_context,
+            request_id=log.request_id,
+        )
+        for log in logs
+    ]
+    next_offset = resolved_offset + resolved_limit if len(items) == resolved_limit else None
+    return feature_flag_audit_schemas.FeatureFlagAuditLogListResponse(
         items=items,
         limit=resolved_limit,
         offset=resolved_offset,

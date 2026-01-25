@@ -77,6 +77,7 @@ from app.domain.finance import db_models as finance_db_models  # noqa: F401
 from app.domain.rules import db_models as rules_db_models  # noqa: F401
 from app.domain.leads_nurture import db_models as leads_nurture_db_models  # noqa: F401
 from app.domain.config_audit import db_models as config_audit_db_models  # noqa: F401
+from app.domain.feature_flag_audit import db_models as feature_flag_audit_db_models  # noqa: F401
 from app.infra.bot_store import InMemoryBotStore
 from app.infra.db import Base, get_db_session
 from app.infra.org_context import set_current_org_id

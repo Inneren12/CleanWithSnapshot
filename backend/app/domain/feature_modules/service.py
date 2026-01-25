@@ -6,8 +6,9 @@ from typing import Iterable
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.config_audit import ConfigAuditAction, ConfigAuditActor, ConfigScope
-from app.domain.config_audit import service as config_audit_service
+from app.domain.config_audit.db_models import ConfigAuditActor
+from app.domain.feature_flag_audit import FeatureFlagAuditAction
+from app.domain.feature_flag_audit import service as feature_flag_audit_service
 from app.domain.feature_modules.db_models import OrgFeatureConfig, UserUiPreference
 from app.domain.iam import permissions as iam_permissions
 
@@ -220,29 +221,86 @@ async def upsert_org_feature_overrides(
     overrides: dict[str, bool],
     *,
     audit_actor: ConfigAuditActor,
+    rollout_reason: str | None = None,
     request_id: str | None,
 ) -> OrgFeatureConfig:
     record = await session.get(OrgFeatureConfig, org_id)
-    before_snapshot = record.feature_overrides if record else None
-    action = ConfigAuditAction.UPDATE if record else ConfigAuditAction.CREATE
+    before_overrides = normalize_feature_overrides(record.feature_overrides) if record else {}
+    changed_keys = set(before_overrides.keys()) | set(overrides.keys())
+    audits: list[tuple[str, dict | None, dict | None, FeatureFlagAuditAction]] = []
+    for key in sorted(changed_keys):
+        before_override = before_overrides.get(key)
+        after_override = overrides.get(key)
+        if before_override == after_override:
+            continue
+        before_state = snapshot_feature_flag_state(before_overrides, key)
+        after_state = snapshot_feature_flag_state(overrides, key)
+        action = _derive_feature_flag_action(
+            before_state=before_state,
+            after_state=after_state,
+            before_override=before_override,
+            after_override=after_override,
+        )
+        audits.append((key, before_state, after_state, action))
     if record:
         record.feature_overrides = overrides
     else:
         record = OrgFeatureConfig(org_id=org_id, feature_overrides=overrides)
         session.add(record)
     await session.flush()
-    await config_audit_service.record_config_change(
-        session,
-        actor=audit_actor,
-        org_id=org_id,
-        config_scope=ConfigScope.FEATURE_FLAG,
-        config_key="feature_overrides",
-        action=action,
-        before_value=before_snapshot,
-        after_value=record.feature_overrides,
-        request_id=request_id,
-    )
+    for key, before_state, after_state, action in audits:
+        rollout_context = feature_flag_audit_service.build_rollout_context(
+            enabled=after_state["enabled"],
+            targeting_rules=after_state.get("targeting_rules"),
+            reason=rollout_reason,
+        )
+        await feature_flag_audit_service.audit_feature_flag_change(
+            session,
+            actor=audit_actor,
+            org_id=org_id,
+            flag_key=key,
+            action=action,
+            before_state=before_state,
+            after_state=after_state,
+            rollout_context=rollout_context,
+            request_id=request_id,
+        )
     return record
+
+
+def snapshot_feature_flag_state(overrides: dict[str, bool], key: str) -> dict[str, object]:
+    default_value = default_feature_value(key)
+    override = overrides.get(key)
+    enabled = effective_feature_enabled_from_overrides(overrides, key)
+    return {
+        "key": key,
+        "enabled": enabled,
+        "percentage": 100 if enabled else 0,
+        "default": default_value,
+        "override": override,
+        "targeting_rules": [],
+    }
+
+
+def _derive_feature_flag_action(
+    *,
+    before_state: dict[str, object] | None,
+    after_state: dict[str, object] | None,
+    before_override: bool | None,
+    after_override: bool | None,
+) -> FeatureFlagAuditAction:
+    if before_state and after_state:
+        before_enabled = bool(before_state.get("enabled"))
+        after_enabled = bool(after_state.get("enabled"))
+        if before_enabled != after_enabled:
+            return FeatureFlagAuditAction.ENABLE if after_enabled else FeatureFlagAuditAction.DISABLE
+        if before_state.get("percentage") != after_state.get("percentage"):
+            return FeatureFlagAuditAction.ROLLOUT_CHANGE
+    if before_override is None and after_override is not None:
+        return FeatureFlagAuditAction.CREATE
+    if before_override is not None and after_override is None:
+        return FeatureFlagAuditAction.DELETE
+    return FeatureFlagAuditAction.UPDATE
 
 
 async def get_user_ui_prefs(
