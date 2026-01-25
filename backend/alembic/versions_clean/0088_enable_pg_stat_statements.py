@@ -8,6 +8,7 @@ Create Date: 2026-03-10 00:00:00.000000
 from __future__ import annotations
 
 import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
 from alembic import op
 
 revision = "0088_enable_pg_stat_statements"
@@ -25,11 +26,16 @@ def upgrade() -> None:
     if not _is_postgres():
         return
 
-    op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_stat_statements"))
+    try:
+        op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_stat_statements"))
+    except SQLAlchemyError as exc:
+        raise RuntimeError(
+            "pg_stat_statements extension could not be created. Ensure the database user has "
+            "CREATE EXTENSION privileges and Postgres is configured with "
+            "shared_preload_libraries=pg_stat_statements (restart required). "
+            "Managed services may require enabling the extension via provider settings."
+        ) from exc
 
 
 def downgrade() -> None:
-    if not _is_postgres():
-        return
-
-    op.execute(sa.text("DROP EXTENSION IF EXISTS pg_stat_statements"))
+    return

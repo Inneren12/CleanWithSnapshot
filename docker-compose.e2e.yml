@@ -1,4 +1,12 @@
 services:
+  db:
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+
   api:
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/cleaning

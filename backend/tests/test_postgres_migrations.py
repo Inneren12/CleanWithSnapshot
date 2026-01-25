@@ -89,6 +89,7 @@ def test_postgres_migration_invariants():
             settings.database_url = temp_url
             config.set_main_option("sqlalchemy.url", temp_url)
             command.upgrade(config, "head")
+            command.upgrade(config, "head")
         finally:
             settings.database_url = original_url
 
@@ -125,5 +126,11 @@ def test_postgres_migration_invariants():
         _assert_unique_constraint(
             inspector, "unsubscribe", "uq_unsubscribe_recipient_scope", {"org_id", "recipient", "scope"}
         )
+
+        with engine.connect() as conn:
+            extension_present = conn.execute(
+                sa.text("SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'")
+            ).scalar()
+            assert extension_present == 1, "pg_stat_statements extension should be installed"
 
         engine.dispose()
