@@ -81,6 +81,7 @@ from app.domain.feature_flag_audit import db_models as feature_flag_audit_db_mod
 from app.domain.feature_flags import db_models as feature_flags_db_models  # noqa: F401
 from app.domain.feature_modules import service as feature_service
 from app.domain.audit_retention import db_models as audit_retention_db_models  # noqa: F401
+from app.domain.access_review import db_models as access_review_db_models  # noqa: F401
 from app.infra.bot_store import InMemoryBotStore
 from app.infra.db import Base, get_db_session
 from app.infra.org_context import set_current_org_id
