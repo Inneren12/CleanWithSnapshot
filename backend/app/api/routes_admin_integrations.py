@@ -10,9 +10,13 @@ from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, requir
 from app.api.break_glass import BREAK_GLASS_HEADER
 from app.api.org_context import require_org_context
 from app.api.problem_details import PROBLEM_TYPE_DOMAIN, PROBLEM_TYPE_RATE_LIMIT, problem_details
+from app.domain.config_audit import ConfigActorType
 from app.domain.config_audit import service as config_audit_service
 from app.domain.feature_modules import service as feature_service
 from app.domain.integrations import gcal_service, maps_service, qbo_service, schemas as integrations_schemas
+from app.domain.integration_audit import IntegrationAuditAction, IntegrationScope
+from app.domain.integration_audit import schemas as integration_audit_schemas
+from app.domain.integration_audit import service as integration_audit_service
 from app.infra.db import get_db_session
 from app.settings import settings
 
@@ -34,6 +38,18 @@ def _resolve_auth_method(request: Request) -> str:
     if authorization.lower().startswith("bearer "):
         return "token"
     return "basic"
+
+
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid timestamp") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 async def _require_google_calendar_enabled(
@@ -68,6 +84,67 @@ async def _require_maps_enabled(
     maps_enabled = await feature_service.effective_feature_enabled(session, org_id, "integrations.maps")
     if not (module_enabled and maps_enabled):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Disabled by org settings")
+
+
+@router.get(
+    "/v1/admin/integrations/audit",
+    response_model=integration_audit_schemas.IntegrationAuditLogListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_integration_audit_logs(
+    request: Request,
+    org_id: uuid.UUID = Depends(require_org_context),
+    _identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
+    session: AsyncSession = Depends(get_db_session),
+    org_id_filter: uuid.UUID | None = Query(None, alias="org_id"),
+    integration_type: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> integration_audit_schemas.IntegrationAuditLogListResponse:
+    if org_id_filter is not None and org_id_filter != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    resolved_limit = max(1, min(limit, 200))
+    resolved_offset = max(0, offset)
+    start_ts = _parse_iso_timestamp(start)
+    end_ts = _parse_iso_timestamp(end)
+    logs = await integration_audit_service.list_integration_audit_logs(
+        session,
+        org_id=org_id_filter or org_id,
+        integration_type=integration_type,
+        from_ts=start_ts,
+        to_ts=end_ts,
+        limit=resolved_limit,
+        offset=resolved_offset,
+    )
+    items = [
+        integration_audit_schemas.IntegrationAuditLogEntry(
+            audit_id=log.audit_id,
+            occurred_at=log.occurred_at,
+            actor_type=ConfigActorType(log.actor_type),
+            actor_id=log.actor_id,
+            actor_role=log.actor_role,
+            auth_method=log.auth_method,
+            actor_source=log.actor_source,
+            org_id=log.org_id,
+            integration_type=log.integration_type,
+            integration_scope=IntegrationScope(log.integration_scope),
+            action=IntegrationAuditAction(log.action),
+            before_state=log.before_state,
+            after_state=log.after_state,
+            redaction_map=log.redaction_map,
+            request_id=log.request_id,
+        )
+        for log in logs
+    ]
+    next_offset = resolved_offset + resolved_limit if len(items) == resolved_limit else None
+    return integration_audit_schemas.IntegrationAuditLogListResponse(
+        items=items,
+        limit=resolved_limit,
+        offset=resolved_offset,
+        next_offset=next_offset,
+    )
 
 
 @router.get(

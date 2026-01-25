@@ -6,7 +6,6 @@ import sqlalchemy as sa
 from app.domain.config_audit import ConfigAuditAction, ConfigActorType, ConfigScope
 from app.domain.config_audit import service as config_audit_service
 from app.domain.config_audit.db_models import ConfigAuditLog
-from app.domain.integrations import qbo_service
 from app.settings import settings
 
 
@@ -63,29 +62,6 @@ async def test_invalid_org_settings_update_does_not_audit(async_session_maker, c
     async with async_session_maker() as session:
         count = await session.scalar(sa.select(sa.func.count(ConfigAuditLog.audit_id)))
         assert count == 0
-
-
-@pytest.mark.anyio
-async def test_integration_audit_redacts_sensitive_fields(async_session_maker):
-    async with async_session_maker() as session:
-        await qbo_service.upsert_account(
-            session,
-            settings.default_org_id,
-            "refresh-secret",
-            "realm-123",
-            audit_actor=config_audit_service.system_actor("tests"),
-            request_id="req-1",
-        )
-        await session.commit()
-
-    async with async_session_maker() as session:
-        log = await session.scalar(
-            sa.select(ConfigAuditLog).where(
-                ConfigAuditLog.config_key == "integrations.accounting.quickbooks"
-            )
-        )
-        assert log is not None
-        assert log.after_value["encrypted_refresh_token"] == "[REDACTED]"
 
 
 @pytest.mark.anyio
