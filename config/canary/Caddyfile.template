@@ -1,0 +1,89 @@
+{
+  log {
+    output file /var/log/caddy/caddy.log {
+      roll_size 50MiB
+      roll_keep 10
+      roll_keep_for 168h
+    }
+  }
+}
+
+panidobro.com, www.panidobro.com {
+  encode zstd gzip
+
+  log {
+    output file /var/log/caddy/access_web.log {
+      roll_size 50MiB
+      roll_keep 10
+      roll_keep_for 168h
+    }
+    format json
+  }
+
+  handle_path /admin {
+    header Cache-Control "no-store"
+    redir https://api.panidobro.com/v1/admin 302
+  }
+
+  handle_path /admin/* {
+    header Cache-Control "no-store"
+    redir https://api.panidobro.com/v1/admin{path} 302
+  }
+
+  handle_path /grafana/* {
+    @grafana_allowlist remote_ip 127.0.0.1 ::1 {env.GRAFANA_ALLOWED_IPS}
+    handle @grafana_allowlist {
+      reverse_proxy grafana:3000
+    }
+    handle {
+      respond "Grafana access denied." 403
+    }
+  }
+
+  reverse_proxy web:3000 {
+    transport http {
+      dial_timeout 10s
+      read_timeout 60s
+      write_timeout 60s
+    }
+  }
+}
+
+api.panidobro.com {
+  encode zstd gzip
+
+  log {
+    output file /var/log/caddy/access_api.log {
+      roll_size 50MiB
+      roll_keep 10
+      roll_keep_for 168h
+    }
+    format json
+  }
+
+  @docs path /docs* /openapi.json
+  header @docs -Content-Security-Policy
+  header @docs Content-Security-Policy "default-src 'self'; img-src 'self' data: https://fastapi.tiangolo.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;"
+
+  # Canary traffic routing with percentage-based weighted load balancing
+  # {{CANARY_UPSTREAM_CONFIG}} will be replaced by the deployment script
+  reverse_proxy {{CANARY_UPSTREAM_CONFIG}} {
+    lb_policy random_choose 2
+
+    # Health checks for automatic failover
+    health_uri /healthz
+    health_interval 10s
+    health_timeout 5s
+    health_status 2xx
+
+    # Add header to identify which backend served the request
+    header_up X-Forwarded-Proto {scheme}
+    header_up Authorization {header.Authorization}
+
+    transport http {
+      dial_timeout 10s
+      read_timeout 90s
+      write_timeout 90s
+    }
+  }
+}

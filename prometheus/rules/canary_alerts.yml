@@ -1,0 +1,166 @@
+groups:
+  - name: canary.alerting.rules
+    interval: 15s
+    rules:
+      # Canary-specific error rate alert - triggers faster than SLO alerts
+      - alert: CanaryHighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{service="api-canary",status_class="5xx"}[2m]))
+            /
+            clamp_min(sum(rate(http_requests_total{service="api-canary"}[2m])), 0.001)
+          ) > 0.02
+        for: 1m
+        labels:
+          severity: page
+          deployment: canary
+        annotations:
+          summary: "Canary deployment has high error rate"
+          description: |
+            Canary API error rate is {{ $value | humanizePercentage }} over the last 2 minutes.
+            This exceeds the 2% threshold for canary deployments.
+            Consider rolling back: ./ops/deploy_canary.sh rollback
+
+      # Canary latency degradation
+      - alert: CanaryHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_latency_seconds_bucket{service="api-canary"}[2m])) by (le)
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          deployment: canary
+        annotations:
+          summary: "Canary deployment has high latency"
+          description: |
+            Canary API p95 latency is {{ $value | humanizeDuration }} over the last 2 minutes.
+            This exceeds the 500ms threshold for canary deployments.
+            Consider rolling back: ./ops/deploy_canary.sh rollback
+
+      # Canary vs Stable comparison - error rate significantly higher
+      - alert: CanaryErrorRateHigherThanStable
+        expr: |
+          (
+            (
+              sum(rate(http_requests_total{service="api-canary",status_class="5xx"}[5m]))
+              /
+              clamp_min(sum(rate(http_requests_total{service="api-canary"}[5m])), 0.001)
+            )
+            -
+            (
+              sum(rate(http_requests_total{service="api",status_class="5xx"}[5m]))
+              /
+              clamp_min(sum(rate(http_requests_total{service="api"}[5m])), 0.001)
+            )
+          ) > 0.01
+        for: 3m
+        labels:
+          severity: warning
+          deployment: canary
+        annotations:
+          summary: "Canary error rate significantly higher than stable"
+          description: |
+            Canary API error rate is {{ $value | humanizePercentage }} higher than stable.
+            This indicates the canary deployment may be experiencing issues.
+            Review metrics and consider rolling back: ./ops/deploy_canary.sh rollback
+
+      # Canary vs Stable comparison - latency significantly higher
+      - alert: CanaryLatencyHigherThanStable
+        expr: |
+          (
+            histogram_quantile(0.95,
+              sum(rate(http_request_latency_seconds_bucket{service="api-canary"}[5m])) by (le)
+            )
+            /
+            clamp_min(
+              histogram_quantile(0.95,
+                sum(rate(http_request_latency_seconds_bucket{service="api"}[5m])) by (le)
+              ), 0.001
+            )
+          ) > 1.5
+        for: 3m
+        labels:
+          severity: warning
+          deployment: canary
+        annotations:
+          summary: "Canary latency significantly higher than stable"
+          description: |
+            Canary API p95 latency is {{ $value | humanize }}x higher than stable.
+            This indicates the canary deployment may have performance issues.
+            Review metrics and consider rolling back: ./ops/deploy_canary.sh rollback
+
+      # Canary service unhealthy
+      - alert: CanaryServiceUnhealthy
+        expr: up{job="api-canary"} == 0
+        for: 1m
+        labels:
+          severity: page
+          deployment: canary
+        annotations:
+          summary: "Canary service is not responding"
+          description: |
+            The canary API service is not responding to health checks.
+            Immediate rollback recommended: ./ops/deploy_canary.sh rollback
+
+      # Canary traffic not flowing (when canary is supposed to be active)
+      - alert: CanaryNoTraffic
+        expr: |
+          sum(rate(http_requests_total{service="api-canary"}[5m])) == 0
+          and
+          sum(rate(http_requests_total{service="api"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          deployment: canary
+        annotations:
+          summary: "Canary service receiving no traffic"
+          description: |
+            The canary API is receiving no traffic while stable API is active.
+            Check Caddy configuration and ensure traffic routing is working.
+
+  - name: canary.recording.rules
+    interval: 30s
+    rules:
+      # Record canary error rate for dashboards
+      - record: canary:error_rate:5m
+        expr: |
+          sum(rate(http_requests_total{service="api-canary",status_class="5xx"}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total{service="api-canary"}[5m])), 0.001)
+
+      # Record stable error rate for comparison
+      - record: stable:error_rate:5m
+        expr: |
+          sum(rate(http_requests_total{service="api",status_class="5xx"}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total{service="api"}[5m])), 0.001)
+
+      # Record canary p95 latency
+      - record: canary:latency_p95:5m
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_latency_seconds_bucket{service="api-canary"}[5m])) by (le)
+          )
+
+      # Record stable p95 latency for comparison
+      - record: stable:latency_p95:5m
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_latency_seconds_bucket{service="api"}[5m])) by (le)
+          )
+
+      # Record canary request rate
+      - record: canary:request_rate:5m
+        expr: sum(rate(http_requests_total{service="api-canary"}[5m]))
+
+      # Record stable request rate
+      - record: stable:request_rate:5m
+        expr: sum(rate(http_requests_total{service="api"}[5m]))
+
+      # Record traffic split ratio
+      - record: canary:traffic_ratio:5m
+        expr: |
+          canary:request_rate:5m
+          /
+          clamp_min(canary:request_rate:5m + stable:request_rate:5m, 0.001)

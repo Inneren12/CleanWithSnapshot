@@ -1,0 +1,78 @@
+# Docker Compose override for canary deployment
+# Usage: docker compose -f docker-compose.yml -f docker-compose.canary.yml up -d
+#
+# This file adds an api-canary service that runs alongside the stable api service.
+# Traffic is split between them via Caddy's weighted load balancing.
+
+services:
+  api-canary:
+    volumes:
+      - /opt/backups/postgres:/opt/backups/postgres:ro
+      - ./var/uploads:/app/var/uploads
+    image: ${CANARY_IMAGE:-cleanwithsnapshot-api:canary}
+    build:
+      context: ./backend
+      args:
+        - BUILD_VERSION=${CANARY_VERSION:-canary}
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
+      OTEL_SERVICE_NAME: api-canary
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-local}
+      # Canary-specific label for metrics differentiation
+      DEPLOYMENT_VARIANT: canary
+      APP_VERSION: ${CANARY_VERSION:-canary}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz').read()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "promtail=true"
+      - "service=api-canary"
+      - "deployment.variant=canary"
+
+  # Override stable API to add variant label for metrics differentiation
+  api:
+    environment:
+      DEPLOYMENT_VARIANT: stable
+      APP_VERSION: ${STABLE_VERSION:-stable}
+    labels:
+      - "promtail=true"
+      - "service=api"
+      - "deployment.variant=stable"
+
+  # Caddy needs to depend on both api and api-canary
+  caddy:
+    depends_on:
+      - api
+      - api-canary
+    volumes:
+      - ./Caddyfile.canary:/etc/caddy/Caddyfile:ro
+      - ./logs:/var/log/caddy
+      - caddy_data:/data
+      - caddy_config:/config
