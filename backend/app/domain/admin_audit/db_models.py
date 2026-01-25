@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, event, func
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -60,3 +60,13 @@ class AdminAuditLog(Base):
         Index("ix_admin_audit_logs_action_type", "action_type"),
         Index("ix_admin_audit_logs_resource_type", "resource_type"),
     )
+
+
+@event.listens_for(AdminAuditLog, "before_update", propagate=True)
+def _prevent_admin_audit_updates(mapper, connection, target) -> None:  # noqa: ARG001
+    raise ValueError("Admin audit records are immutable")
+
+
+@event.listens_for(AdminAuditLog, "before_delete", propagate=True)
+def _prevent_admin_audit_deletes(mapper, connection, target) -> None:  # noqa: ARG001
+    raise ValueError("Admin audit records cannot be deleted")

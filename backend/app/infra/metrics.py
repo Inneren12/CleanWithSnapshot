@@ -58,6 +58,8 @@ class Metrics:
             self.outbox_failures_total = None
             self.storage_bytes_used = None
             self.storage_reservations_pending = None
+            self.audit_records_purged_total = None
+            self.audit_records_on_legal_hold_total = None
             return
 
         self.webhook_events = Counter(
@@ -231,6 +233,16 @@ class Metrics:
             "outbox_lag_seconds",
             "Age of the oldest pending outbox event by type.",
             ["type"],
+            registry=self.registry,
+        )
+        self.audit_records_purged_total = Counter(
+            "audit_records_purged_total",
+            "Audit records purged by retention job.",
+            registry=self.registry,
+        )
+        self.audit_records_on_legal_hold_total = Counter(
+            "audit_records_on_legal_hold_total",
+            "Audit records prevented from purge due to legal hold.",
             registry=self.registry,
         )
         self.circuit_state = Gauge(
@@ -462,6 +474,20 @@ class Metrics:
         safe_source = source or "unknown"
         safe_reason = reason or "unknown"
         self.auth_failures_total.labels(source=safe_source, reason=safe_reason).inc()
+
+    def record_audit_purge(self, count: int) -> None:
+        if not self.enabled or self.audit_records_purged_total is None:
+            return
+        if count <= 0:
+            return
+        self.audit_records_purged_total.inc(count)
+
+    def record_audit_legal_hold(self, count: int) -> None:
+        if not self.enabled or self.audit_records_on_legal_hold_total is None:
+            return
+        if count <= 0:
+            return
+        self.audit_records_on_legal_hold_total.inc(count)
 
     def record_storage_quota_rejection(self, reason: str) -> None:
         self.record_org_storage_quota_rejection(reason)

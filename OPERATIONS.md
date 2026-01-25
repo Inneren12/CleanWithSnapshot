@@ -623,6 +623,24 @@ MAPS_REQUESTS_PER_MINUTE="30"     # per-org rate limit
 - Track usage via `GET /v1/admin/maps/quota` (owner/admin), and validate the key via
   `POST /v1/admin/maps/test_key` (owner only).
 
+### Audit Retention (Governance)
+
+Retention and legal hold behavior is automated by the `audit-retention` job. Configure defaults via:
+
+```bash
+# Retention windows (days)
+AUDIT_RETENTION_ADMIN_DAYS="1095"          # admin action audits
+AUDIT_RETENTION_CONFIG_DAYS="2555"         # config/feature/integration audits
+
+# Operational controls
+AUDIT_RETENTION_BATCH_SIZE="500"
+AUDIT_RETENTION_DRY_RUN="false"            # set true to validate eligibility without deletion
+```
+
+**Runbook:**
+- The `audit-retention` job runs via the jobs runner and records purge activity in `audit_purge_events`.
+- Dry runs are safe for validation and still produce audit entries for oversight.
+
 ### Weather + Traffic Widget (Open-Meteo)
 
 Controls the ops dashboard weather/traffic widget provider:
