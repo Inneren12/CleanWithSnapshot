@@ -66,14 +66,15 @@ fi
 echo ""
 log_info "Starting emergency rollback..."
 
-# Step 1: Restore original Caddyfile
-log_info "Step 1/4: Restoring original Caddyfile..."
-if [[ -f "${REPO_ROOT}/Caddyfile" ]]; then
-  cp "${REPO_ROOT}/Caddyfile" "${REPO_ROOT}/Caddyfile.canary"
-  log_success "Caddyfile restored"
+# Step 1: Set canary weight to 0 and reload Caddy
+log_info "Step 1/4: Setting canary weight to 0%..."
+"${SCRIPT_DIR}/generate_canary_caddyfile.sh" 0
+if docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null; then
+  log_success "Caddy configuration reloaded with 0% canary traffic"
 else
-  log_error "Original Caddyfile not found!"
-  exit 1
+  log_warn "Caddy reload failed, restarting container..."
+  docker compose restart caddy
+  log_success "Caddy container restarted"
 fi
 
 # Step 2: Stop canary service
@@ -86,18 +87,10 @@ log_info "Step 3/4: Restarting with stable configuration..."
 docker compose -f docker-compose.yml up -d --remove-orphans
 log_success "Services restarted with stable configuration"
 
-# Step 4: Reload Caddy
-log_info "Step 4/4: Reloading Caddy..."
-if docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null; then
-  log_success "Caddy configuration reloaded"
-else
-  log_warn "Caddy reload failed, restarting container..."
-  docker compose restart caddy
-  log_success "Caddy container restarted"
-fi
-
-# Clear state file
+# Step 4: Clear canary state
+log_info "Step 4/4: Clearing canary state..."
 rm -f "$STATE_FILE"
+log_success "Canary state cleared"
 
 echo ""
 echo "========================================"

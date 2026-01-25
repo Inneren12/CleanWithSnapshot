@@ -4,16 +4,20 @@
 #
 # Usage:
 #   ./deploy_canary.sh start [--weight PERCENT] [--auto-advance]
-#   ./deploy_canary.sh set-weight PERCENT
-#   ./deploy_canary.sh promote
+#   ./deploy_canary.sh set-weight PERCENT [--require-metrics|--no-require-metrics] [--allow-unknown]
+#   ./deploy_canary.sh promote [--force]
 #   ./deploy_canary.sh rollback
-#   ./deploy_canary.sh status
+#   ./deploy_canary.sh status [--require-metrics|--no-require-metrics] [--allow-unknown]
 #
 # Options:
 #   --weight PERCENT    Initial traffic percentage for canary (default: 10)
 #   --auto-advance      Automatically advance through traffic stages if SLOs are met
 #   --skip-build        Skip building the canary image (use existing)
-#   --force             Skip confirmation prompts
+#   --force             Override gate failures for promotion
+#   --require-metrics   Require metrics to pass the gate (default: true)
+#   --no-require-metrics
+#                       Allow missing metrics to be treated as UNKNOWN
+#   --allow-unknown     Allow UNKNOWN gate results to proceed (default: false)
 #
 # Environment Variables:
 #   CANARY_IMAGE_TAG    Docker image tag for canary (default: canary)
@@ -49,6 +53,8 @@ CANARY_ERROR_RATE_THRESHOLD="${CANARY_ERROR_RATE_THRESHOLD:-1.0}"
 CANARY_LATENCY_P95_THRESHOLD="${CANARY_LATENCY_P95_THRESHOLD:-300}"
 CANARY_AVAILABILITY_THRESHOLD="${CANARY_AVAILABILITY_THRESHOLD:-99.0}"
 CANARY_AUTO_ROLLBACK="${CANARY_AUTO_ROLLBACK:-true}"
+CANARY_REQUIRE_METRICS="${CANARY_REQUIRE_METRICS:-true}"
+CANARY_ALLOW_UNKNOWN="${CANARY_ALLOW_UNKNOWN:-false}"
 
 # State file for tracking canary deployment
 STATE_FILE="${REPO_ROOT}/.canary_state"
@@ -102,80 +108,152 @@ is_canary_active() {
   return 1
 }
 
-# Query Prometheus for canary error rate
+is_number() {
+  [[ "${1:-}" =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]
+}
+
+format_number() {
+  local value="${1:-}"
+  if [[ -z "$value" ]]; then
+    echo "N/A"
+    return
+  fi
+  awk -v v="$value" 'BEGIN { printf "%.2f", v }'
+}
+
+to_percent() {
+  local value="${1:-}"
+  if [[ -z "$value" ]]; then
+    echo ""
+    return
+  fi
+  awk -v v="$value" 'BEGIN { printf "%.6f", v * 100 }'
+}
+
+to_milliseconds() {
+  local value="${1:-}"
+  if [[ -z "$value" ]]; then
+    echo ""
+    return
+  fi
+  awk -v v="$value" 'BEGIN { printf "%.6f", v * 1000 }'
+}
+
+float_gt() {
+  awk -v a="$1" -v b="$2" 'BEGIN { exit !(a > b) }'
+}
+
+float_lt() {
+  awk -v a="$1" -v b="$2" 'BEGIN { exit !(a < b) }'
+}
+
+prometheus_query_value() {
+  local query="$1"
+  local response
+
+  response=$(curl -sS --fail "${PROMETHEUS_URL}/api/v1/query" \
+    --data-urlencode "query=${query}" 2>/dev/null) || return 1
+
+  if [[ "$(echo "$response" | jq -r '.status // "error"' 2>/dev/null)" != "success" ]]; then
+    return 1
+  fi
+
+  echo "$response" | jq -r '.data.result[0].value[1] // empty' 2>/dev/null
+}
+
+CANARY_METRIC_ERROR_RATE=""
+CANARY_METRIC_AVAILABILITY=""
+CANARY_METRIC_LATENCY_P95=""
+
+fetch_canary_metrics() {
+  local availability_raw error_rate_raw latency_raw
+  availability_raw=$(prometheus_query_value 'sli:canary_success_rate5m' || true)
+  error_rate_raw=$(prometheus_query_value 'sli:canary_error_rate5m' || true)
+  latency_raw=$(prometheus_query_value 'sli:canary_latency_p95_5m' || true)
+
+  if ! is_number "$availability_raw" || ! is_number "$error_rate_raw" || ! is_number "$latency_raw"; then
+    CANARY_METRIC_ERROR_RATE=""
+    CANARY_METRIC_AVAILABILITY=""
+    CANARY_METRIC_LATENCY_P95=""
+    return 2
+  fi
+
+  CANARY_METRIC_AVAILABILITY=$(to_percent "$availability_raw")
+  CANARY_METRIC_ERROR_RATE=$(to_percent "$error_rate_raw")
+  CANARY_METRIC_LATENCY_P95=$(to_milliseconds "$latency_raw")
+  return 0
+}
+
 check_canary_error_rate() {
-  local query='sum(rate(http_requests_total{service="api-canary",status_class="5xx"}[5m])) / sum(rate(http_requests_total{service="api-canary"}[5m])) * 100'
-  local result
-
-  result=$(curl -s --fail "${PROMETHEUS_URL}/api/v1/query" \
-    --data-urlencode "query=${query}" 2>/dev/null | \
-    jq -r '.data.result[0].value[1] // "0"' 2>/dev/null) || result="N/A"
-
-  echo "$result"
+  if [[ -z "$CANARY_METRIC_ERROR_RATE" ]]; then
+    echo "N/A"
+    return
+  fi
+  format_number "$CANARY_METRIC_ERROR_RATE"
 }
 
-# Query Prometheus for canary availability (success rate)
 check_canary_availability() {
-  local query='sum(rate(http_requests_total{service="api-canary",status_class=~"2xx|3xx"}[5m])) / sum(rate(http_requests_total{service="api-canary"}[5m])) * 100'
-  local result
-
-  result=$(curl -s --fail "${PROMETHEUS_URL}/api/v1/query" \
-    --data-urlencode "query=${query}" 2>/dev/null | \
-    jq -r '.data.result[0].value[1] // "0"' 2>/dev/null) || result="N/A"
-
-  echo "$result"
+  if [[ -z "$CANARY_METRIC_AVAILABILITY" ]]; then
+    echo "N/A"
+    return
+  fi
+  format_number "$CANARY_METRIC_AVAILABILITY"
 }
 
-# Query Prometheus for canary p95 latency
 check_canary_latency_p95() {
-  local query='histogram_quantile(0.95, sum(rate(http_request_latency_seconds_bucket{service="api-canary"}[5m])) by (le)) * 1000'
-  local result
-
-  result=$(curl -s --fail "${PROMETHEUS_URL}/api/v1/query" \
-    --data-urlencode "query=${query}" 2>/dev/null | \
-    jq -r '.data.result[0].value[1] // "0"' 2>/dev/null) || result="N/A"
-
-  echo "$result"
+  if [[ -z "$CANARY_METRIC_LATENCY_P95" ]]; then
+    echo "N/A"
+    return
+  fi
+  format_number "$CANARY_METRIC_LATENCY_P95"
 }
 
-# Check if canary SLOs are within thresholds
-check_canary_slos() {
+gate_canary_slos() {
   log_info "Checking canary SLOs..."
 
-  local error_rate
-  local availability
-  local latency_p95
+  if ! fetch_canary_metrics; then
+    log_warn "Unable to retrieve canary metrics - Prometheus may be unavailable or auth is missing"
+    return 2
+  fi
 
-  error_rate=$(check_canary_error_rate)
-  availability=$(check_canary_availability)
-  latency_p95=$(check_canary_latency_p95)
+  local error_rate availability latency_p95
+  error_rate="$(check_canary_error_rate)"
+  availability="$(check_canary_availability)"
+  latency_p95="$(check_canary_latency_p95)"
 
   log_info "Canary error rate: ${error_rate}% (threshold: ${CANARY_ERROR_RATE_THRESHOLD}%)"
   log_info "Canary availability: ${availability}% (threshold: ${CANARY_AVAILABILITY_THRESHOLD}%)"
   log_info "Canary p95 latency: ${latency_p95}ms (threshold: ${CANARY_LATENCY_P95_THRESHOLD}ms)"
 
-  # Check if we have valid metrics
-  if [[ "$error_rate" == "N/A" ]] || [[ "$availability" == "N/A" ]] || [[ "$latency_p95" == "N/A" ]]; then
-    log_warn "Unable to retrieve canary metrics - Prometheus may not be available"
-    return 2  # Unknown state
+  local error_ok availability_ok latency_ok
+  if float_gt "$CANARY_METRIC_ERROR_RATE" "$CANARY_ERROR_RATE_THRESHOLD"; then
+    error_ok=false
+  else
+    error_ok=true
   fi
 
-  # Compare against thresholds
-  local error_ok availability_ok latency_ok
-  error_ok=$(echo "$error_rate <= $CANARY_ERROR_RATE_THRESHOLD" | bc -l 2>/dev/null) || error_ok=1
-  availability_ok=$(echo "$availability >= $CANARY_AVAILABILITY_THRESHOLD" | bc -l 2>/dev/null) || availability_ok=1
-  latency_ok=$(echo "$latency_p95 <= $CANARY_LATENCY_P95_THRESHOLD" | bc -l 2>/dev/null) || latency_ok=1
+  if float_lt "$CANARY_METRIC_AVAILABILITY" "$CANARY_AVAILABILITY_THRESHOLD"; then
+    availability_ok=false
+  else
+    availability_ok=true
+  fi
 
-  if [[ "$error_ok" -eq 1 ]] && [[ "$availability_ok" -eq 1 ]] && [[ "$latency_ok" -eq 1 ]]; then
+  if float_gt "$CANARY_METRIC_LATENCY_P95" "$CANARY_LATENCY_P95_THRESHOLD"; then
+    latency_ok=false
+  else
+    latency_ok=true
+  fi
+
+  if [[ "$error_ok" == "true" && "$availability_ok" == "true" && "$latency_ok" == "true" ]]; then
     log_success "Canary SLOs are within thresholds"
     return 0
-  else
-    log_error "Canary SLOs exceeded thresholds!"
-    [[ "$error_ok" -eq 0 ]] && log_error "  Error rate ${error_rate}% > ${CANARY_ERROR_RATE_THRESHOLD}%"
-    [[ "$availability_ok" -eq 0 ]] && log_error "  Availability ${availability}% < ${CANARY_AVAILABILITY_THRESHOLD}%"
-    [[ "$latency_ok" -eq 0 ]] && log_error "  Latency p95 ${latency_p95}ms > ${CANARY_LATENCY_P95_THRESHOLD}ms"
-    return 1
   fi
+
+  log_error "Canary SLOs exceeded thresholds!"
+  [[ "$error_ok" == "false" ]] && log_error "  Error rate ${error_rate}% > ${CANARY_ERROR_RATE_THRESHOLD}%"
+  [[ "$availability_ok" == "false" ]] && log_error "  Availability ${availability}% < ${CANARY_AVAILABILITY_THRESHOLD}%"
+  [[ "$latency_ok" == "false" ]] && log_error "  Latency p95 ${latency_p95}ms > ${CANARY_LATENCY_P95_THRESHOLD}ms"
+  return 1
 }
 
 # Update traffic weight
@@ -206,6 +284,68 @@ update_traffic_weight() {
   log_success "Traffic weight updated to ${new_weight}%"
 }
 
+should_accept_unknown() {
+  if [[ "${CANARY_ALLOW_UNKNOWN}" == "true" ]]; then
+    return 0
+  fi
+  if [[ "${CANARY_REQUIRE_METRICS}" != "true" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+enforce_gate() {
+  local gate_status="$1"
+
+  case "$gate_status" in
+    0)
+      return 0
+      ;;
+    1)
+      return 1
+      ;;
+    2)
+      if should_accept_unknown; then
+        log_warn "Gate returned UNKNOWN but proceeding due to flags"
+        return 0
+      fi
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+perform_rollback() {
+  local reason="$1"
+  local exit_code="${2:-1}"
+
+  log_error "Rollback triggered: ${reason}"
+
+  log_info "Setting canary traffic weight to 0%..."
+  "${SCRIPT_DIR}/generate_canary_caddyfile.sh" 0
+  if docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null; then
+    log_success "Caddy configuration reloaded with 0% canary traffic"
+  else
+    log_warn "Caddy reload failed, restarting container..."
+    docker compose restart caddy
+  fi
+
+  log_info "Stopping canary service..."
+  docker compose -f docker-compose.yml -f docker-compose.canary.yml stop api-canary 2>/dev/null || true
+
+  log_info "Restarting stable configuration..."
+  docker compose -f docker-compose.yml up -d --remove-orphans
+
+  clear_state
+
+  echo ""
+  log_success "Rollback complete: stable traffic restored, canary stopped."
+
+  exit "$exit_code"
+}
+
 # Start canary deployment
 cmd_start() {
   local initial_weight=10
@@ -229,6 +369,22 @@ cmd_start() {
         ;;
       --force)
         force=true
+        shift
+        ;;
+      --require-metrics)
+        CANARY_REQUIRE_METRICS=true
+        shift
+        ;;
+      --no-require-metrics)
+        CANARY_REQUIRE_METRICS=false
+        shift
+        ;;
+      --allow-unknown)
+        CANARY_ALLOW_UNKNOWN=true
+        shift
+        ;;
+      --disallow-unknown)
+        CANARY_ALLOW_UNKNOWN=false
         shift
         ;;
       *)
@@ -286,8 +442,7 @@ cmd_start() {
     if [[ $attempts -eq $max_attempts ]]; then
       log_error "Canary service failed to become healthy"
       log_error "Rolling back..."
-      cmd_rollback
-      exit 1
+      perform_rollback "Canary failed to become healthy during start"
     fi
     sleep 2
   done
@@ -300,8 +455,7 @@ cmd_start() {
   else
     log_error "Canary smoke tests failed"
     log_error "Rolling back..."
-    cmd_rollback
-    exit 1
+    perform_rollback "Canary smoke tests failed during start"
   fi
 
   CANARY_WEIGHT="$initial_weight"
@@ -326,10 +480,40 @@ cmd_start() {
 
 # Set traffic weight
 cmd_set_weight() {
-  local new_weight="${1:-}"
+  local new_weight=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --require-metrics)
+        CANARY_REQUIRE_METRICS=true
+        shift
+        ;;
+      --no-require-metrics)
+        CANARY_REQUIRE_METRICS=false
+        shift
+        ;;
+      --allow-unknown)
+        CANARY_ALLOW_UNKNOWN=true
+        shift
+        ;;
+      --disallow-unknown)
+        CANARY_ALLOW_UNKNOWN=false
+        shift
+        ;;
+      *)
+        if [[ -z "$new_weight" ]]; then
+          new_weight="$1"
+          shift
+        else
+          log_error "Unexpected argument: $1"
+          exit 1
+        fi
+        ;;
+    esac
+  done
 
   if [[ -z "$new_weight" ]]; then
-    log_error "Usage: deploy_canary.sh set-weight PERCENT"
+    log_error "Usage: deploy_canary.sh set-weight PERCENT [--require-metrics|--no-require-metrics] [--allow-unknown]"
     exit 1
   fi
 
@@ -338,11 +522,62 @@ cmd_set_weight() {
     exit 1
   fi
 
+  load_state
+  local previous_weight="${CANARY_WEIGHT:-0}"
+
   update_traffic_weight "$new_weight"
+
+  if [[ "$new_weight" -gt "$previous_weight" ]]; then
+    log_info "Observing for ${CANARY_OBSERVATION_TIME} seconds..."
+    sleep "$CANARY_OBSERVATION_TIME"
+
+    local gate_status=0
+    gate_canary_slos || gate_status=$?
+    if ! enforce_gate "$gate_status"; then
+      log_error "Gate check failed after increasing traffic"
+      if [[ "$CANARY_AUTO_ROLLBACK" == "true" ]]; then
+        perform_rollback "SLO gate failed after set-weight to ${new_weight}%"
+      fi
+      exit 1
+    fi
+
+    log_success "Gate check passed after set-weight to ${new_weight}%"
+  fi
 }
 
 # Promote canary to stable (100% traffic)
 cmd_promote() {
+  local force=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force)
+        force=true
+        shift
+        ;;
+      --require-metrics)
+        CANARY_REQUIRE_METRICS=true
+        shift
+        ;;
+      --no-require-metrics)
+        CANARY_REQUIRE_METRICS=false
+        shift
+        ;;
+      --allow-unknown)
+        CANARY_ALLOW_UNKNOWN=true
+        shift
+        ;;
+      --disallow-unknown)
+        CANARY_ALLOW_UNKNOWN=false
+        shift
+        ;;
+      *)
+        log_error "Unknown option: $1"
+        exit 1
+        ;;
+    esac
+  done
+
   if ! is_canary_active; then
     log_error "No active canary deployment to promote"
     exit 1
@@ -351,11 +586,13 @@ cmd_promote() {
   log_info "Promoting canary to stable..."
 
   # Check SLOs before promotion
-  if ! check_canary_slos; then
-    log_warn "Canary SLOs are not within thresholds"
-    read -r -p "Continue with promotion anyway? [y/N] " response
-    if [[ ! "$response" =~ ^[Yy]$ ]]; then
-      log_info "Promotion cancelled"
+  local gate_status=0
+  gate_canary_slos || gate_status=$?
+  if [[ "$gate_status" -ne 0 ]]; then
+    if [[ "$force" == "true" ]]; then
+      log_warn "Gate check did not pass, but --force specified. Proceeding with promotion."
+    else
+      log_error "Gate check failed or returned UNKNOWN. Use --force to override."
       exit 1
     fi
   fi
@@ -385,25 +622,36 @@ cmd_promote() {
 # Rollback canary deployment
 cmd_rollback() {
   log_info "Rolling back canary deployment..."
-
-  # Restore original Caddyfile (0% canary traffic)
-  log_info "Restoring original Caddyfile..."
-  cp "${REPO_ROOT}/Caddyfile" "${REPO_ROOT}/Caddyfile.canary"
-
-  # Restart with standard configuration (no canary)
-  log_info "Stopping canary and restarting with stable configuration..."
-  docker compose -f docker-compose.yml up -d --remove-orphans
-
-  # Force Caddy to reload original config
-  docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || \
-    docker compose restart caddy
-
-  clear_state
-  log_success "Canary rollback completed. All traffic now goes to stable."
+  perform_rollback "Manual rollback requested" 0
 }
 
 # Show canary status
 cmd_status() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --require-metrics)
+        CANARY_REQUIRE_METRICS=true
+        shift
+        ;;
+      --no-require-metrics)
+        CANARY_REQUIRE_METRICS=false
+        shift
+        ;;
+      --allow-unknown)
+        CANARY_ALLOW_UNKNOWN=true
+        shift
+        ;;
+      --disallow-unknown)
+        CANARY_ALLOW_UNKNOWN=false
+        shift
+        ;;
+      *)
+        log_error "Unknown option: $1"
+        exit 1
+        ;;
+    esac
+  done
+
   echo "=== Canary Deployment Status ==="
   echo ""
 
@@ -440,6 +688,8 @@ cmd_status() {
 
   echo ""
   echo "=== SLO Metrics ==="
+  local metrics_status=0
+  fetch_canary_metrics || metrics_status=$?
   local error_rate availability latency_p95
   error_rate=$(check_canary_error_rate)
   availability=$(check_canary_availability)
@@ -447,7 +697,7 @@ cmd_status() {
 
   if [[ "$error_rate" != "N/A" ]]; then
     local error_status="${GREEN}OK${NC}"
-    if (( $(echo "$error_rate > $CANARY_ERROR_RATE_THRESHOLD" | bc -l 2>/dev/null || echo 0) )); then
+    if float_gt "$CANARY_METRIC_ERROR_RATE" "$CANARY_ERROR_RATE_THRESHOLD"; then
       error_status="${RED}EXCEEDED${NC}"
     fi
     echo -e "Error rate: ${error_rate}% (threshold: ${CANARY_ERROR_RATE_THRESHOLD}%) - ${error_status}"
@@ -457,7 +707,7 @@ cmd_status() {
 
   if [[ "$availability" != "N/A" ]]; then
     local availability_status="${GREEN}OK${NC}"
-    if (( $(echo "$availability < $CANARY_AVAILABILITY_THRESHOLD" | bc -l 2>/dev/null || echo 0) )); then
+    if float_lt "$CANARY_METRIC_AVAILABILITY" "$CANARY_AVAILABILITY_THRESHOLD"; then
       availability_status="${RED}EXCEEDED${NC}"
     fi
     echo -e "Availability: ${availability}% (threshold: ${CANARY_AVAILABILITY_THRESHOLD}%) - ${availability_status}"
@@ -467,12 +717,21 @@ cmd_status() {
 
   if [[ "$latency_p95" != "N/A" ]]; then
     local latency_status="${GREEN}OK${NC}"
-    if (( $(echo "$latency_p95 > $CANARY_LATENCY_P95_THRESHOLD" | bc -l 2>/dev/null || echo 0) )); then
+    if float_gt "$CANARY_METRIC_LATENCY_P95" "$CANARY_LATENCY_P95_THRESHOLD"; then
       latency_status="${RED}EXCEEDED${NC}"
     fi
     echo -e "P95 latency: ${latency_p95}ms (threshold: ${CANARY_LATENCY_P95_THRESHOLD}ms) - ${latency_status}"
   else
     echo "P95 latency: N/A (metrics unavailable)"
+  fi
+
+  if [[ "$metrics_status" -ne 0 ]]; then
+    echo ""
+    echo -e "${YELLOW}Metrics are missing or unavailable.${NC}"
+    echo "Check:"
+    echo "  - Prometheus targets: ${PROMETHEUS_URL}/api/v1/targets"
+    echo "  - Metrics auth token mounted at /run/secrets/prom_metrics_token"
+    echo "  - METRICS_TOKEN set for api/api-canary in production"
   fi
 
   echo ""
@@ -484,6 +743,31 @@ cmd_status() {
 
 # Auto-advance through traffic stages
 cmd_auto_advance() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --require-metrics)
+        CANARY_REQUIRE_METRICS=true
+        shift
+        ;;
+      --no-require-metrics)
+        CANARY_REQUIRE_METRICS=false
+        shift
+        ;;
+      --allow-unknown)
+        CANARY_ALLOW_UNKNOWN=true
+        shift
+        ;;
+      --disallow-unknown)
+        CANARY_ALLOW_UNKNOWN=false
+        shift
+        ;;
+      *)
+        log_error "Unknown option: $1"
+        exit 1
+        ;;
+    esac
+  done
+
   if ! is_canary_active; then
     log_error "No active canary deployment"
     exit 1
@@ -500,28 +784,29 @@ cmd_auto_advance() {
     log_info "Advancing to ${stage}% canary traffic..."
     update_traffic_weight "$stage"
 
-    if [[ "$stage" -eq 100 ]]; then
-      log_info "Reached 100% - ready for promotion"
-      break
-    fi
-
     log_info "Observing for ${CANARY_OBSERVATION_TIME} seconds..."
     sleep "$CANARY_OBSERVATION_TIME"
 
     # Check SLOs
-    if ! check_canary_slos; then
+    local gate_status=0
+    gate_canary_slos || gate_status=$?
+    if ! enforce_gate "$gate_status"; then
       if [[ "$CANARY_AUTO_ROLLBACK" == "true" ]]; then
-        log_error "SLOs exceeded threshold - auto-rolling back"
-        cmd_rollback
-        exit 1
+        log_error "Gate failed - auto-rolling back"
+        perform_rollback "SLO gate failed during auto-advance at ${stage}%"
       else
-        log_warn "SLOs exceeded but auto-rollback is disabled"
+        log_warn "Gate failed but auto-rollback is disabled"
         log_warn "Manual intervention required"
         exit 1
       fi
     fi
 
-    log_success "Stage ${stage}% complete, SLOs within thresholds"
+    log_success "Stage ${stage}% complete, gate passed"
+
+    if [[ "$stage" -eq 100 ]]; then
+      log_info "Reached 100% - ready for promotion"
+      break
+    fi
   done
 
   log_success "All traffic stages completed successfully!"
@@ -560,7 +845,7 @@ main() {
       echo "Commands:"
       echo "  start [--weight N] [--auto-advance]  Start canary deployment"
       echo "  set-weight PERCENT                   Set canary traffic percentage"
-      echo "  promote                              Promote canary to stable (100%)"
+      echo "  promote [--force]                    Promote canary to stable (100%)"
       echo "  rollback                             Rollback to stable, remove canary"
       echo "  status                               Show current canary status"
       echo "  auto-advance                         Auto-advance through traffic stages"
@@ -570,6 +855,9 @@ main() {
       echo "  --auto-advance      Automatically advance traffic if SLOs are met"
       echo "  --skip-build        Skip building canary image"
       echo "  --force             Force start even if canary is already active"
+      echo "  --require-metrics   Require metrics to pass the gate (default: true)"
+      echo "  --no-require-metrics Allow missing metrics to be treated as UNKNOWN"
+      echo "  --allow-unknown     Allow UNKNOWN gate results to proceed (default: false)"
       echo ""
       echo "Examples:"
       echo "  ./deploy_canary.sh start --weight 10"
