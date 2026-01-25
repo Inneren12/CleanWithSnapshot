@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.api import entitlements
+from app.api.problem_details import problem_details
 from app.api.worker_auth import (
     SESSION_COOKIE_NAME,
     WorkerIdentity,
@@ -46,6 +47,7 @@ from app.domain.analytics import service as analytics_service
 from app.domain.bookings import photos_service
 from app.domain.bookings.db_models import Booking, BookingWorker, EmailEvent
 from app.domain.bookings import schemas as booking_schemas
+from app.domain.storage_quota import service as storage_quota_service
 from app.domain.chat_threads import schemas as chat_schemas
 from app.domain.chat_threads import service as chat_service
 from app.domain.chat_threads.service import PARTICIPANT_WORKER
@@ -1840,15 +1842,35 @@ async def worker_upload_photo(
     await file.seek(0)
     storage = _storage_backend(request)
     org_id = entitlements.resolve_org_id(request)
-    photo = await photos_service.save_photo(
-        session,
-        booking,
-        file,
-        parsed_phase,
-        identity.username,
-        org_id,
-        storage,
-    )
+    try:
+        photo = await photos_service.save_photo(
+            session,
+            booking,
+            file,
+            parsed_phase,
+            identity.username,
+            org_id,
+            storage,
+            expected_size_bytes=size_bytes,
+            audit_identity=identity,
+        )
+    except storage_quota_service.OrgStorageQuotaExceeded as exc:
+        return problem_details(
+            request,
+            status=status.HTTP_409_CONFLICT,
+            title="Storage quota exceeded",
+            detail="Organization storage quota exceeded",
+            errors=[
+                {
+                    "code": "ORG_STORAGE_QUOTA_EXCEEDED",
+                    "bytes_requested": exc.requested_bytes,
+                    "storage_bytes_used": exc.snapshot.storage_bytes_used,
+                    "storage_bytes_pending": exc.snapshot.storage_bytes_pending,
+                    "max_storage_bytes": exc.snapshot.max_storage_bytes,
+                    "remaining_bytes": exc.snapshot.remaining_bytes,
+                }
+            ],
+        )
     await _audit(
         session,
         identity,

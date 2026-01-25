@@ -51,6 +51,7 @@ async def get_or_create_org_settings(
         branding={},
         referral_credit_trigger=DEFAULT_REFERRAL_CREDIT_TRIGGER,
         finance_ready=False,
+        storage_bytes_used=0,
     )
     session.add(record)
     await session.flush()
@@ -138,5 +139,7 @@ async def apply_org_settings_update(
         record.finance_ready = payload.finance_ready
     if "max_users" in getattr(payload, "model_fields_set", set()):
         record.max_users = payload.max_users
+    if "max_storage_bytes" in getattr(payload, "model_fields_set", set()):
+        record.max_storage_bytes = payload.max_storage_bytes
     await session.flush()
     return record

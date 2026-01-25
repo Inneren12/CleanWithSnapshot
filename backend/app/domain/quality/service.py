@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings.db_models import Booking, BookingPhoto, Team
+from app.domain.storage_quota import service as storage_quota_service
 from app.domain.clients.db_models import ClientFeedback, ClientUser
 from app.domain.leads.db_models import Lead
 from app.domain.quality.db_models import (
@@ -165,7 +166,16 @@ async def create_booking_photo_evidence(
     size_bytes: int,
     consent: bool,
     uploaded_by: str,
+    audit_identity=None,
 ) -> BookingPhoto:
+    reservation = await storage_quota_service.reserve_bytes(
+        session,
+        org_id,
+        size_bytes,
+        resource_type="booking_photo",
+        resource_id=booking_id,
+        audit_identity=audit_identity,
+    )
     photo = BookingPhoto(
         photo_id=str(uuid.uuid4()),
         org_id=org_id,
@@ -178,6 +188,12 @@ async def create_booking_photo_evidence(
         uploaded_by=uploaded_by,
     )
     session.add(photo)
+    await storage_quota_service.finalize_reservation(
+        session,
+        reservation.reservation_id,
+        size_bytes,
+        audit_identity=audit_identity,
+    )
     await session.commit()
     await session.refresh(photo)
     return photo

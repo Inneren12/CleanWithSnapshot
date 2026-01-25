@@ -195,6 +195,7 @@ from app.domain.quality.db_models import QualityIssue, QualityIssueResponse
 from app.domain.training import schemas as training_schemas
 from app.domain.training import service as training_service
 from app.domain.saas import billing_service, service as saas_service
+from app.domain.storage_quota import service as storage_quota_service
 from app.domain.saas.db_models import Membership, MembershipRole, Organization, PasswordResetEvent, User
 from app.domain.ops import service as ops_service
 from app.domain.ops.db_models import JobHeartbeat
@@ -1769,6 +1770,14 @@ class AdminOrgUserQuotaResponse(BaseModel):
     max_users: int | None
 
 
+class AdminOrgStorageQuotaResponse(BaseModel):
+    org_id: uuid.UUID
+    storage_bytes_used: int
+    storage_bytes_pending: int
+    max_storage_bytes: int | None
+    storage_usage_percent: float | None
+
+
 class ResetPasswordRequest(BaseModel):
     reason: str | None = None
 
@@ -1802,6 +1811,12 @@ def _format_ts(value: float | None) -> str:
         return "-"
     dt = datetime.fromtimestamp(value, tz=timezone.utc)
     return _format_dt(dt)
+
+
+def _usage_percent(used_bytes: int, max_bytes: int | None) -> float | None:
+    if max_bytes is None or max_bytes <= 0:
+        return None
+    return round((used_bytes / max_bytes) * 100, 2)
 
 
 def _resolve_admin_org(request: Request, identity: AdminIdentity) -> uuid.UUID:
@@ -2254,6 +2269,27 @@ async def get_org_user_quota(
         org_id=org_id,
         current_users_count=snapshot.current_users_count,
         max_users=snapshot.max_users,
+    )
+
+
+@router.get("/v1/admin/orgs/{org_id}/storage-quota", response_model=AdminOrgStorageQuotaResponse)
+async def get_org_storage_quota(
+    org_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    identity: AdminIdentity = Depends(require_admin),
+) -> AdminOrgStorageQuotaResponse:
+    if identity.org_id and identity.org_id != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    org = await session.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    snapshot = await storage_quota_service.get_org_storage_quota_snapshot(session, org_id)
+    return AdminOrgStorageQuotaResponse(
+        org_id=org_id,
+        storage_bytes_used=snapshot.storage_bytes_used,
+        storage_bytes_pending=snapshot.storage_bytes_pending,
+        max_storage_bytes=snapshot.max_storage_bytes,
+        storage_usage_percent=_usage_percent(snapshot.storage_bytes_used, snapshot.max_storage_bytes),
     )
 
 
@@ -7764,17 +7800,36 @@ async def register_booking_photo_evidence(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Feature disabled")
     await photos_service.fetch_order(session, booking_id, org_id)
     uploader = payload.uploaded_by or identity.username or identity.role.value
-    photo = await quality_service.create_booking_photo_evidence(
-        session,
-        org_id=org_id,
-        booking_id=booking_id,
-        kind=payload.kind,
-        storage_key=payload.storage_key,
-        mime=payload.mime,
-        size_bytes=payload.bytes,
-        consent=payload.consent,
-        uploaded_by=uploader,
-    )
+    try:
+        photo = await quality_service.create_booking_photo_evidence(
+            session,
+            org_id=org_id,
+            booking_id=booking_id,
+            kind=payload.kind,
+            storage_key=payload.storage_key,
+            mime=payload.mime,
+            size_bytes=payload.bytes,
+            consent=payload.consent,
+            uploaded_by=uploader,
+            audit_identity=identity,
+        )
+    except storage_quota_service.OrgStorageQuotaExceeded as exc:
+        return problem_details(
+            request,
+            status=status.HTTP_409_CONFLICT,
+            title="Storage quota exceeded",
+            detail="Organization storage quota exceeded",
+            errors=[
+                {
+                    "code": "ORG_STORAGE_QUOTA_EXCEEDED",
+                    "bytes_requested": exc.requested_bytes,
+                    "storage_bytes_used": exc.snapshot.storage_bytes_used,
+                    "storage_bytes_pending": exc.snapshot.storage_bytes_pending,
+                    "max_storage_bytes": exc.snapshot.max_storage_bytes,
+                    "remaining_bytes": exc.snapshot.remaining_bytes,
+                }
+            ],
+        )
     return quality_schemas.BookingPhotoEvidenceResponse(
         photo_id=photo.photo_id,
         booking_id=photo.booking_id,
@@ -8997,8 +9052,27 @@ async def download_invoice_pdf_admin(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice is void")
 
     lead = await invoice_service.fetch_customer(session, invoice)
-    document = await document_service.get_or_create_invoice_document(session, invoice=invoice, lead=lead)
-    await session.commit()
+    try:
+        document = await document_service.get_or_create_invoice_document(session, invoice=invoice, lead=lead)
+        await session.commit()
+    except storage_quota_service.OrgStorageQuotaExceeded as exc:
+        await session.rollback()
+        return problem_details(
+            http_request,
+            status=status.HTTP_409_CONFLICT,
+            title="Storage quota exceeded",
+            detail="Organization storage quota exceeded",
+            errors=[
+                {
+                    "code": "ORG_STORAGE_QUOTA_EXCEEDED",
+                    "bytes_requested": exc.requested_bytes,
+                    "storage_bytes_used": exc.snapshot.storage_bytes_used,
+                    "storage_bytes_pending": exc.snapshot.storage_bytes_pending,
+                    "max_storage_bytes": exc.snapshot.max_storage_bytes,
+                    "remaining_bytes": exc.snapshot.remaining_bytes,
+                }
+            ],
+        )
     pdf_bytes = document_service.pdf_bytes(document)
     filename = f"{invoice.invoice_number}.pdf"
     headers = {"Content-Disposition": f"inline; filename=\"{filename}\""}

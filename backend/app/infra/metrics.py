@@ -50,6 +50,9 @@ class Metrics:
             self.outbox_lag_seconds = None
             self.circuit_state = None
             self.org_user_quota_rejections = None
+            self.storage_quota_rejections = None
+            self.storage_bytes_used = None
+            self.storage_reservations_pending = None
             return
 
         self.webhook_events = Counter(
@@ -195,6 +198,21 @@ class Metrics:
             "outbox_pending_total",
             "Outbox pending messages by type.",
             ["type"],
+            registry=self.registry,
+        )
+        self.storage_quota_rejections = Counter(
+            "storage_quota_rejections_total",
+            "Storage quota rejections.",
+            registry=self.registry,
+        )
+        self.storage_bytes_used = Gauge(
+            "storage_bytes_used",
+            "Total storage bytes used across orgs.",
+            registry=self.registry,
+        )
+        self.storage_reservations_pending = Gauge(
+            "storage_reservations_pending",
+            "Count of pending storage reservations.",
             registry=self.registry,
         )
         self.outbox_deliver_total = Counter(
@@ -373,6 +391,21 @@ class Metrics:
         if not self.enabled or self.org_user_quota_rejections is None:
             return
         self.org_user_quota_rejections.inc()
+
+    def record_storage_quota_rejection(self) -> None:
+        if not self.enabled or self.storage_quota_rejections is None:
+            return
+        self.storage_quota_rejections.inc()
+
+    def set_storage_bytes_used(self, total_bytes: int) -> None:
+        if not self.enabled or self.storage_bytes_used is None:
+            return
+        self.storage_bytes_used.set(max(0, int(total_bytes)))
+
+    def set_storage_reservations_pending(self, count: int) -> None:
+        if not self.enabled or self.storage_reservations_pending is None:
+            return
+        self.storage_reservations_pending.set(max(0, int(count)))
 
     def set_outbox_lag(self, kind: str, lag_seconds: float) -> None:
         if not self.enabled or self.outbox_lag_seconds is None:

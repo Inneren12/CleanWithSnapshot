@@ -15,6 +15,7 @@ from app.domain.invoices.db_models import StripeEvent
 from app.domain.org_settings import schemas as org_settings_schemas
 from app.domain.org_settings import service as org_settings_service
 from app.domain.saas import service as saas_service
+from app.domain.storage_quota import service as storage_quota_service
 from app.infra.db import get_db_session
 from app.settings import settings
 from app.shared.pii_masking import mask_email, mask_phone
@@ -59,6 +60,12 @@ def _twilio_health(connected: bool) -> str:
 
 def _email_health(connected: bool) -> str:
     return "connected" if connected else "missing_configuration"
+
+
+def _usage_percent(used_bytes: int, max_bytes: int | None) -> float | None:
+    if max_bytes is None or max_bytes <= 0:
+        return None
+    return round((used_bytes / max_bytes) * 100, 2)
 
 
 @router.get(
@@ -120,6 +127,7 @@ async def get_org_settings(
 ) -> org_settings_schemas.OrgSettingsResponse:
     record = await org_settings_service.get_or_create_org_settings(session, org_id)
     quota_snapshot = await saas_service.get_org_user_quota_snapshot(session, org_id)
+    storage_snapshot = await storage_quota_service.get_org_storage_quota_snapshot(session, org_id)
     return org_settings_schemas.OrgSettingsResponse(
         org_id=org_id,
         timezone=org_settings_service.resolve_timezone(record),
@@ -139,6 +147,9 @@ async def get_org_settings(
         finance_ready=org_settings_service.resolve_finance_ready(record),
         max_users=record.max_users,
         current_users_count=quota_snapshot.current_users_count,
+        max_storage_bytes=storage_snapshot.max_storage_bytes,
+        storage_bytes_used=storage_snapshot.storage_bytes_used,
+        storage_usage_percent=_usage_percent(storage_snapshot.storage_bytes_used, storage_snapshot.max_storage_bytes),
     )
 
 
@@ -155,6 +166,7 @@ async def update_org_settings(
 ) -> org_settings_schemas.OrgSettingsResponse:
     record = await org_settings_service.apply_org_settings_update(session, org_id, payload=payload)
     quota_snapshot = await saas_service.get_org_user_quota_snapshot(session, org_id)
+    storage_snapshot = await storage_quota_service.get_org_storage_quota_snapshot(session, org_id)
     await session.commit()
     return org_settings_schemas.OrgSettingsResponse(
         org_id=org_id,
@@ -175,6 +187,9 @@ async def update_org_settings(
         finance_ready=org_settings_service.resolve_finance_ready(record),
         max_users=record.max_users,
         current_users_count=quota_snapshot.current_users_count,
+        max_storage_bytes=storage_snapshot.max_storage_bytes,
+        storage_bytes_used=storage_snapshot.storage_bytes_used,
+        storage_usage_percent=_usage_percent(storage_snapshot.storage_bytes_used, storage_snapshot.max_storage_bytes),
     )
 
 

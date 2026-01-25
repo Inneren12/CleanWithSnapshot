@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.bookings.db_models import Booking, OrderPhoto, OrderPhotoTombstone
 from app.domain.saas import billing_service
 from app.domain.bookings.schemas import PhotoPhase, PhotoReviewStatus
+from app.domain.storage_quota import service as storage_quota_service
 from app.infra.storage.backends import StoredObject, StorageBackend
 from app.settings import settings
 
@@ -98,6 +99,9 @@ async def save_photo(
     uploaded_by: str,
     org_id: uuid.UUID,
     storage: StorageBackend,
+    *,
+    expected_size_bytes: int,
+    audit_identity=None,
 ) -> OrderPhoto:
     content_type = _validate_content_type(upload.content_type)
     photo_id = str(uuid.uuid4())
@@ -106,8 +110,20 @@ async def save_photo(
     hasher = hashlib.sha256()
     size = 0
     stored: StoredObject | None = None
+    reservation_id: uuid.UUID | None = None
+    photo: OrderPhoto | None = None
 
     try:
+        reservation = await storage_quota_service.reserve_bytes(
+            session,
+            org_id,
+            expected_size_bytes,
+            resource_type="order_photo",
+            resource_id=photo_id,
+            audit_identity=audit_identity,
+        )
+        reservation_id = reservation.reservation_id
+
         async def _stream():
             nonlocal size
             while True:
@@ -127,6 +143,13 @@ async def save_photo(
         storage_provider = settings.order_storage_backend.lower()
         if storage_provider == "cf_images":
             storage_provider = "cloudflare_images"
+
+        await storage_quota_service.finalize_reservation(
+            session,
+            reservation_id,
+            stored.size if stored else size,
+            audit_identity=audit_identity,
+        )
 
         photo = OrderPhoto(
             photo_id=photo_id,
@@ -169,14 +192,42 @@ async def save_photo(
             },
         )
         return photo
+    except storage_quota_service.OrgStorageQuotaExceeded:
+        if stored:
+            await storage.delete(key=stored.key)
+        if reservation_id:
+            await storage_quota_service.release_reservation(
+                session,
+                reservation_id,
+                reason="finalize_rejected",
+                audit_identity=audit_identity,
+            )
+            await session.commit()
+        raise
     except HTTPException:
         if stored:
             await storage.delete(key=stored.key)
+        if reservation_id:
+            await storage_quota_service.release_reservation(
+                session,
+                reservation_id,
+                reason="upload_failed",
+                audit_identity=audit_identity,
+            )
+            await session.commit()
         raise
     except Exception:  # noqa: BLE001
         if stored:
             await storage.delete(key=stored.key)
         logger.exception("order_photo_save_failed", extra={"extra": {"order_id": order.booking_id}})
+        if reservation_id:
+            await storage_quota_service.release_reservation(
+                session,
+                reservation_id,
+                reason="upload_failed",
+                audit_identity=audit_identity,
+            )
+            await session.commit()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed")
     finally:
         try:
@@ -260,6 +311,13 @@ async def delete_photo(
                 quantity=-photo.size_bytes,
                 resource_id=photo.photo_id,
             )
+        await storage_quota_service.decrement_storage_usage(
+            session,
+            org_id,
+            photo.size_bytes,
+            resource_type="order_photo",
+            resource_id=photo.photo_id,
+        )
         await session.commit()
         await session.refresh(tombstone)
     except Exception as exc:  # noqa: BLE001
@@ -355,4 +413,3 @@ async def _mark_tombstone_processed(
     tombstone.processed_at = datetime.now(timezone.utc)
     tombstone.last_error = None
     await session.commit()
-
