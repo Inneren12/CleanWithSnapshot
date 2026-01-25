@@ -28,6 +28,7 @@ cd "$REPO_ROOT"
 STATE_DIR="$REPO_ROOT/ops/state"
 ACTIVE_COLOR_FILE="$STATE_DIR/active_color"
 LAST_GOOD_FILE="$STATE_DIR/last_good.env"
+DEPLOY_STATE_FILE="${DEPLOY_STATE_FILE:-/opt/cleaning/.deploy_state.json}"
 CADDY_UPSTREAM_DIR="$REPO_ROOT/config/caddy"
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.blue-green.yml"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-300}"
@@ -98,6 +99,51 @@ LAST_GOOD_COLOR=$color
 LAST_GOOD_TIMESTAMP=$timestamp
 EOF
   log_info "Recorded last known good deploy: $sha ($color)"
+}
+
+get_db_revision() {
+  docker compose $COMPOSE_FILES exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select version_num from alembic_version"' \
+    2>/dev/null | tr -d '[:space:]'
+}
+
+get_expected_heads() {
+  local color="$1"
+  docker compose $COMPOSE_FILES run --rm --no-deps "api-${color}" python - <<'PY'
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+cfg = Config("alembic.ini")
+script = ScriptDirectory.from_config(cfg)
+heads = script.get_heads()
+print(" ".join(heads))
+PY
+}
+
+record_deploy_state() {
+  local sha="$1"
+  local mode="$2"
+  local color="$3"
+  local timestamp="$4"
+  local db_revision="$5"
+  local expected_heads="$6"
+
+  mkdir -p "$(dirname "$DEPLOY_STATE_FILE")"
+  python3 - <<PY
+import json
+from pathlib import Path
+
+data = {
+    "last_good_sha": "${sha}",
+    "last_good_timestamp": "${timestamp}",
+    "deploy_mode": "${mode}",
+    "deploy_color": "${color}",
+    "db_revision": "${db_revision}",
+    "expected_heads": "${expected_heads}".split() if "${expected_heads}" else [],
+}
+
+Path("${DEPLOY_STATE_FILE}").write_text(json.dumps(data, indent=2) + "\n")
+PY
+  log_info "Recorded deploy state: $DEPLOY_STATE_FILE"
 }
 
 # Update Caddy upstream configuration
@@ -482,6 +528,10 @@ deploy() {
   echo "Revision: $current_sha"
   echo ""
 
+  deploy_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  db_revision="$(get_db_revision)"
+  expected_heads="$(get_expected_heads "$target_color")"
+  record_deploy_state "$current_sha" "blue-green" "$target_color" "$deploy_timestamp" "$db_revision" "$expected_heads"
   record_last_good "$current_sha" "blue-green" "$target_color"
 
   show_status

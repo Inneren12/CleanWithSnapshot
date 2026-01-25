@@ -158,17 +158,18 @@ cd /opt/cleaning
 
 **How it works:**
 
+- Uses `/opt/cleaning/.deploy_state.json` (written on successful deploy) as the source of truth.
 - Restores the last known good git SHA recorded by `ops/deploy.sh` or `ops/blue-green-deploy.sh`.
 - Rebuilds and restarts **API + Web** services.
 - If the environment uses blue/green, it **switches Caddy routing** back to the recorded good color.
-- Uses `ops/state/last_good.env` as the source of truth for the rollback target.
+- If a canary is active, it forces **100% stable** routing and stops the canary service.
 
 **Rollback guarantees & limits:**
 
 - ✅ **Guaranteed:** Code, containers, and proxy routing return to the last recorded good release.
 - ✅ **Guaranteed:** API + Web are rebuilt and restarted from that commit.
 - ⚠️ **Not guaranteed:** Database schema/data are **not** rolled back. Migrations are forward-only.
-- ⚠️ **Not guaranteed:** If `ops/state/last_good.env` is missing or stale, rollback will fail.
+- ⚠️ **Not guaranteed:** If `/opt/cleaning/.deploy_state.json` is missing or stale, rollback will fail.
 - ⚠️ **Not guaranteed:** External dependencies (DNS, third-party services) are unaffected.
 
 **Manual rollback to previous commit:**
@@ -187,6 +188,25 @@ git reset --hard <sha>
 ```
 
 **Important:** Migrations are forward-only. Rollback code, NOT migrations.
+
+**Specific target rollback:**
+
+```bash
+./ops/rollback.sh --sha <sha>
+./ops/rollback.sh --tag <tag>
+```
+
+**Verify-only (no changes):**
+
+```bash
+./ops/rollback.sh --verify-only
+```
+
+**DB ahead safety override (explicit):**
+
+```bash
+./ops/rollback.sh --allow-db-ahead --i-accept-forward-only-db
+```
 
 ---
 

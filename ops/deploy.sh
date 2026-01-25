@@ -6,6 +6,7 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 STATE_DIR="$REPO_ROOT/ops/state"
 LAST_GOOD_FILE="$STATE_DIR/last_good.env"
+DEPLOY_STATE_FILE="${DEPLOY_STATE_FILE:-/opt/cleaning/.deploy_state.json}"
 
 record_last_good() {
   local sha="$1"
@@ -20,6 +21,49 @@ LAST_GOOD_MODE=$mode
 LAST_GOOD_COLOR=
 LAST_GOOD_TIMESTAMP=$timestamp
 EOF
+}
+
+get_db_revision() {
+  docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select version_num from alembic_version"' \
+    2>/dev/null | tr -d '[:space:]'
+}
+
+get_expected_heads() {
+  docker compose exec -T api python - <<'PY'
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+cfg = Config("alembic.ini")
+script = ScriptDirectory.from_config(cfg)
+heads = script.get_heads()
+print(" ".join(heads))
+PY
+}
+
+record_deploy_state() {
+  local sha="$1"
+  local mode="$2"
+  local color="${3:-}"
+  local timestamp="$4"
+  local db_revision="$5"
+  local expected_heads="$6"
+
+  mkdir -p "$(dirname "$DEPLOY_STATE_FILE")"
+  python3 - <<PY
+import json
+from pathlib import Path
+
+data = {
+    "last_good_sha": "${sha}",
+    "last_good_timestamp": "${timestamp}",
+    "deploy_mode": "${mode}",
+    "deploy_color": "${color}",
+    "db_revision": "${db_revision}",
+    "expected_heads": "${expected_heads}".split() if "${expected_heads}" else [],
+}
+
+Path("${DEPLOY_STATE_FILE}").write_text(json.dumps(data, indent=2) + "\n")
+PY
 }
 
 echo "== CleanWithSnapshot deploy =="
@@ -47,7 +91,8 @@ git clean -xfd \
   -e "pg_data/" \
   -e "caddy_data/" \
   -e "caddy_config/" \
-  -e "ops/state/last_good.env"
+  -e "ops/state/last_good.env" \
+  -e ".deploy_state.json"
 
 updated_sha="$(git rev-parse HEAD)"
 echo "Updated revision: $updated_sha"
@@ -83,7 +128,13 @@ echo "Migrations completed. No API restart required beyond compose up."
 echo "Running smoke tests..."
 "$REPO_ROOT/ops/smoke.sh"
 
+deploy_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+db_revision="$(get_db_revision)"
+expected_heads="$(get_expected_heads)"
+record_deploy_state "$updated_sha" "standard" "" "$deploy_timestamp" "$db_revision" "$expected_heads"
+
 record_last_good "$updated_sha" "standard"
 echo "Recorded last known good deploy: $updated_sha"
+echo "Recorded deploy state: $DEPLOY_STATE_FILE"
 
 echo "Deploy completed successfully."
