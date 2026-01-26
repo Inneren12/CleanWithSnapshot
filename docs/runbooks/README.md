@@ -51,6 +51,7 @@ Each runbook follows a standard structure:
 |---------|-------------|----------|
 | [Email/SMS Provider Failing](./email-sms-provider-failing.md) | Delivery failures, queue backlog | **Medium** |
 | [Payment Webhook Failing](./payment-webhook-failing.md) | Stripe webhook failures, missing payment updates | **High** |
+| [Twilio Incident Response (N/A)](./TWILIO_INCIDENT.md) | Twilio integration enabled | **N/A** |
 
 ### Backup & Recovery
 
