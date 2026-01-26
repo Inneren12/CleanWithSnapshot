@@ -49,6 +49,7 @@ This guide covers the new admin features for worker password management, client 
 curl -X POST https://your-domain.com/v1/admin/ui/workers/new \
   -H "X-Admin-User: admin@example.com" \
   -H "X-Admin-Email: admin@example.com" \
+  -H "X-Proxy-Auth: 1" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "name=John Doe" \
   -d "phone=+1234567890" \
@@ -159,6 +160,7 @@ curl -X POST https://your-domain.com/worker/login \
 curl -X POST https://your-domain.com/v1/admin/ui/clients/new \
   -H "X-Admin-User: admin@example.com" \
   -H "X-Admin-Email: admin@example.com" \
+  -H "X-Proxy-Auth: 1" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "name=Jane Smith" \
   -d "phone=+1987654321" \
@@ -181,7 +183,8 @@ curl -X POST https://your-domain.com/v1/admin/ui/clients/new \
 # Search for clients
 curl "https://your-domain.com/v1/admin/ui/clients?q=jane" \
   -H "X-Admin-User: admin@example.com" \
-  -H "X-Admin-Email: admin@example.com"
+  -H "X-Admin-Email: admin@example.com" \
+  -H "X-Proxy-Auth: 1"
 ```
 
 ### Editing a Client
@@ -227,6 +230,7 @@ curl "https://your-domain.com/v1/admin/ui/clients?q=jane" \
 curl -X POST https://your-domain.com/v1/admin/ui/bookings/create \
   -H "X-Admin-User: admin@example.com" \
   -H "X-Admin-Email: admin@example.com" \
+  -H "X-Proxy-Auth: 1" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "team_id=1" \
   -d "client_id=abc-123-def-456" \

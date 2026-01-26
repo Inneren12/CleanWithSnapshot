@@ -24,6 +24,7 @@
     header_up X-Admin-User {http.auth.user}
     header_up X-Admin-Email {http.auth.user}
     header_up X-Admin-Roles {env.ADMIN_PROXY_DEFAULT_ROLE}
+    header_up X-Proxy-Auth "1"
     transport http {
       dial_timeout 10s
       read_timeout 90s

@@ -13,6 +13,7 @@ def _proxy_headers(username: str, roles: str = "admin") -> dict[str, str]:
         "X-Admin-User": username,
         "X-Admin-Email": username,
         "X-Admin-Roles": roles,
+        "X-Proxy-Auth": "1",
     }
 
 

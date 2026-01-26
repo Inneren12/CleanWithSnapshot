@@ -8,7 +8,12 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole
+from app.api.admin_auth import (
+    ADMIN_IDENTITY_SOURCE_SAAS,
+    AdminIdentity,
+    AdminPermission,
+    AdminRole,
+)
 from app.api.problem_details import problem_details
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, User
@@ -18,6 +23,7 @@ from app.infra.auth import decode_access_token
 from app.infra.logging import update_log_context
 from app.infra.metrics import metrics
 from app.infra.org_context import set_current_org_id
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -191,15 +197,17 @@ class TenantSessionMiddleware(BaseHTTPMiddleware):
             request.state.current_org_id = identity.org_id
             set_current_org_id(identity.org_id)
             update_log_context(org_id=str(identity.org_id), user_id=str(identity.user_id), role=str(identity.role))
-            admin_role = ROLE_TO_ADMIN_ROLE.get(identity.role)
-            if admin_role:
-                request.state.admin_identity = AdminIdentity(
-                    username=identity.email or str(identity.user_id),
-                    role=admin_role,
-                    org_id=identity.org_id,
-                    admin_id=str(identity.user_id),
-                    auth_method="token",
-                )
+            request.state.admin_identity_source = ADMIN_IDENTITY_SOURCE_SAAS
+            if not settings.admin_proxy_auth_enabled:
+                admin_role = ROLE_TO_ADMIN_ROLE.get(identity.role)
+                if admin_role:
+                    request.state.admin_identity = AdminIdentity(
+                        username=identity.email or str(identity.user_id),
+                        role=admin_role,
+                        org_id=identity.org_id,
+                        admin_id=str(identity.user_id),
+                        auth_method="token",
+                    )
         elif identity_error:
             request.state.saas_identity_error = identity_error
         return await call_next(request)

@@ -50,6 +50,9 @@ jobs:
               "ADMIN_BASIC_USERNAME",
               "ADMIN_BASIC_PASSWORD",
               "LEGACY_BASIC_AUTH_ENABLED",
+              "ADMIN_PROXY_AUTH_ENABLED",
+              "TRUST_PROXY_HEADERS",
+              "TRUSTED_PROXY_IPS",
             }
           )
           keys = sorted(keys)
@@ -64,6 +67,9 @@ jobs:
             "ADMIN_BASIC_USERNAME": admin_username,
             "ADMIN_BASIC_PASSWORD": admin_password,
             "LEGACY_BASIC_AUTH_ENABLED": "true",
+            "ADMIN_PROXY_AUTH_ENABLED": "true",
+            "TRUST_PROXY_HEADERS": "true",
+            "TRUSTED_PROXY_IPS": "127.0.0.1",
           }
           generated = [
             f"{key}={overrides.get(key, f'ci-{secrets.token_hex(32)}')}" for key in keys
@@ -75,6 +81,9 @@ jobs:
             github_env.read_text(encoding="utf-8")
             + f"ADMIN_BASIC_USERNAME={admin_username}\n"
             + f"ADMIN_BASIC_PASSWORD={admin_password}\n"
+            + "ADMIN_PROXY_AUTH_ENABLED=true\n"
+            + "TRUST_PROXY_HEADERS=true\n"
+            + "TRUSTED_PROXY_IPS=127.0.0.1\n"
             + "ENV_FILE=backend/.env.e2e.ci\n",
             encoding="utf-8",
           )
@@ -83,6 +92,8 @@ jobs:
       - name: Verify ENV_FILE secrets are present
         run: |
           echo "ENV_FILE=$ENV_FILE"
+          echo "ADMIN_PROXY_AUTH_ENABLED=${ADMIN_PROXY_AUTH_ENABLED}"
+          echo "TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS}"
           grep -q '^AUTH_SECRET_KEY=' backend/.env.e2e.ci
           grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN|ADMIN_BASIC_USERNAME|ADMIN_BASIC_PASSWORD|LEGACY_BASIC_AUTH_ENABLED)=' backend/.env.e2e.ci \
             | sed -E 's/=.*/=<redacted>/'

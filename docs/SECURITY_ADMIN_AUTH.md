@@ -14,6 +14,7 @@ from a trusted proxy IP/CIDR. Direct access to `/v1/admin/*` without proxy heade
    - `X-Admin-User`
    - `X-Admin-Email`
    - `X-Admin-Roles` (optional)
+   - `X-Proxy-Auth: 1`
 4. Backend validates the request came from a trusted proxy and requires the headers.
 5. Backend authorizes based on the role and processes the request.
 
@@ -24,6 +25,7 @@ The backend accepts admin headers **only** if:
 - `TRUST_PROXY_HEADERS=true`
 - The request `client.host` is in `TRUSTED_PROXY_IPS` or `TRUSTED_PROXY_CIDRS`
 - `X-Admin-User` or `X-Admin-Email` is present
+- `X-Proxy-Auth=1` is present
 
 Any direct call to `/v1/admin/*` that does not meet the above is rejected with `401`.
 
@@ -39,7 +41,7 @@ The proxy must:
 
 - Authenticate admin users (Basic/SSO/Access provider)
 - Strip any inbound `Authorization` headers for `/v1/admin/*`
-- Inject `X-Admin-User`, `X-Admin-Email`, and optional `X-Admin-Roles`
+- Inject `X-Admin-User`, `X-Admin-Email`, `X-Admin-Roles`, and `X-Proxy-Auth=1`
 
 See `Caddyfile` for a working example.
 

@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 ADMIN_PROXY_USER_HEADER = "X-Admin-User"
 ADMIN_PROXY_EMAIL_HEADER = "X-Admin-Email"
 ADMIN_PROXY_ROLES_HEADER = "X-Admin-Roles"
+ADMIN_PROXY_AUTH_HEADER = "X-Proxy-Auth"
+ADMIN_IDENTITY_SOURCE_PROXY = "proxy"
+ADMIN_IDENTITY_SOURCE_SAAS = "saas"
+ADMIN_IDENTITY_SOURCE_BASIC = "basic"
 
 
 class AdminAuthException(HTTPException):
@@ -161,6 +165,13 @@ def _resolve_request_id(request: Request) -> str | None:
     return request.headers.get("X-Request-ID")
 
 
+def _set_admin_identity(request: Request, identity: AdminIdentity, source: str) -> None:
+    request.state.admin_identity = identity
+    request.state.admin_identity_source = source
+    request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
+    set_current_org_id(request.state.current_org_id)
+
+
 def _log_admin_auth_failure(
     request: Request,
     *,
@@ -277,12 +288,16 @@ def _authenticate_proxy_headers(request: Request) -> AdminIdentity:
         settings.trusted_proxy_cidrs,
     ):
         raise _build_proxy_auth_exception(reason="untrusted_proxy")
+    proxy_auth = request.headers.get(ADMIN_PROXY_AUTH_HEADER)
+    if proxy_auth != "1":
+        raise _build_proxy_auth_exception(reason="missing_proxy_auth_header")
     user = request.headers.get(ADMIN_PROXY_USER_HEADER)
     email = request.headers.get(ADMIN_PROXY_EMAIL_HEADER)
-    if not user and not email:
+    roles = request.headers.get(ADMIN_PROXY_ROLES_HEADER)
+    if not user or not email or not roles:
         raise _build_proxy_auth_exception(reason="missing_proxy_headers")
     username = user or email or "unknown"
-    role = _role_from_proxy_headers(request.headers.get(ADMIN_PROXY_ROLES_HEADER), username)
+    role = _role_from_proxy_headers(roles, username)
     return AdminIdentity(
         username=username,
         role=role,
@@ -344,23 +359,30 @@ async def get_admin_identity(
     request: Request, credentials: HTTPBasicCredentials | None = Depends(security)
 ) -> AdminIdentity:
     cached: AdminIdentity | None = getattr(request.state, "admin_identity", None)
-    if cached:
-        request.state.current_org_id = getattr(request.state, "current_org_id", None) or cached.org_id
-        set_current_org_id(request.state.current_org_id)
-        org_for_log = request.state.current_org_id
-        payload: dict[str, str] = {"role": getattr(cached.role, "value", str(cached.role))}
-        if org_for_log:
-            payload["org_id"] = str(org_for_log)
-        update_log_context(**payload)
-        return cached
+    identity_source = getattr(request.state, "admin_identity_source", None)
     if settings.admin_proxy_auth_enabled and request.url.path.startswith("/v1/admin"):
+        if cached and identity_source and identity_source != ADMIN_IDENTITY_SOURCE_PROXY:
+            raise _build_proxy_auth_exception(reason="admin_identity_source_mismatch")
+        if cached and identity_source == ADMIN_IDENTITY_SOURCE_PROXY:
+            org_for_log = getattr(request.state, "current_org_id", None) or cached.org_id
+            payload: dict[str, str] = {"role": getattr(cached.role, "value", str(cached.role))}
+            if org_for_log:
+                payload["org_id"] = str(org_for_log)
+            update_log_context(**payload)
+            return cached
         identity = _authenticate_proxy_headers(request)
+        _set_admin_identity(request, identity, ADMIN_IDENTITY_SOURCE_PROXY)
     else:
+        if cached:
+            org_for_log = getattr(request.state, "current_org_id", None) or cached.org_id
+            payload = {"role": getattr(cached.role, "value", str(cached.role))}
+            if org_for_log:
+                payload["org_id"] = str(org_for_log)
+            update_log_context(**payload)
+            return cached
         identity = _authenticate_credentials(credentials)
-    request.state.admin_identity = identity
-    request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
-    set_current_org_id(request.state.current_org_id)
-    org_for_log = request.state.current_org_id
+        _set_admin_identity(request, identity, ADMIN_IDENTITY_SOURCE_BASIC)
+    org_for_log = getattr(request.state, "current_org_id", None) or identity.org_id
     payload = {"role": getattr(identity.role, "value", str(identity.role))}
     if org_for_log:
         payload["org_id"] = str(org_for_log)
@@ -436,7 +458,8 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         cached: AdminIdentity | None = getattr(request.state, "admin_identity", None)
-        if cached:
+        identity_source = getattr(request.state, "admin_identity_source", None)
+        if cached and (not settings.admin_proxy_auth_enabled or identity_source == ADMIN_IDENTITY_SOURCE_PROXY):
             return await call_next(request)
 
         saas_identity_error: HTTPException | None = getattr(request.state, "saas_identity_error", None)
@@ -447,6 +470,13 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
         has_bearer = authorization.lower().startswith("bearer ")
 
         if settings.admin_proxy_auth_enabled:
+            if cached and identity_source and identity_source != ADMIN_IDENTITY_SOURCE_PROXY:
+                _log_admin_auth_failure(
+                    request,
+                    reason="admin_identity_source_mismatch",
+                    credentials=None,
+                )
+                return await http_exception_handler(request, _build_proxy_auth_exception())
             if has_bearer:
                 _log_admin_auth_failure(
                     request,
@@ -456,9 +486,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             try:
                 identity = _authenticate_proxy_headers(request)
                 _assert_permissions(request, identity, [AdminPermission.VIEW])
-                request.state.admin_identity = identity
-                request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
-                set_current_org_id(request.state.current_org_id)
+                _set_admin_identity(request, identity, ADMIN_IDENTITY_SOURCE_PROXY)
                 return await call_next(request)
             except HTTPException as exc:
                 reason = getattr(exc, "reason", None) or "proxy_auth_required"
@@ -495,9 +523,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             credentials = _credentials_from_header(request)
             identity = _authenticate_credentials(credentials)
             _assert_permissions(request, identity, [AdminPermission.VIEW])
-            request.state.admin_identity = identity
-            request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
-            set_current_org_id(request.state.current_org_id)
+            _set_admin_identity(request, identity, ADMIN_IDENTITY_SOURCE_BASIC)
             return await call_next(request)
         except HTTPException as exc:
             reason = getattr(exc, "reason", None) or "unauthorized"

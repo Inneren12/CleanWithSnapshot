@@ -426,10 +426,22 @@ def inject_admin_proxy_headers():
                             headers.append((b"x-admin-user", username.encode()))
                             headers.append((b"x-admin-email", username.encode()))
                             headers.append((b"x-admin-roles", role.encode()))
+                            headers.append((b"x-proxy-auth", b"1"))
                             request.scope["headers"] = headers
             return await call_next(request)
 
         app.state.test_admin_proxy_header_middleware_added = True
+    if not getattr(app.state, "test_admin_identity_source_middleware_added", False):
+
+        @app.middleware("http")
+        async def _inject_admin_identity_source_header(request, call_next):  # type: ignore[override]
+            response = await call_next(request)
+            if request.headers.get("X-Test-Inspect-Admin-Identity") == "1":
+                source = getattr(request.state, "admin_identity_source", "")
+                response.headers["X-Test-Admin-Identity-Source"] = str(source)
+            return response
+
+        app.state.test_admin_identity_source_middleware_added = True
     yield
 
 

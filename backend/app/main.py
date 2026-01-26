@@ -383,8 +383,9 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
     app.add_middleware(AdminSafetyMiddleware, app_settings=app_settings)
     app.add_middleware(PasswordChangeGateMiddleware)
     app.add_middleware(AdminMfaMiddleware, app_settings=app_settings)
-    # Last-added middleware runs first; keep TenantSessionMiddleware outermost so AdminMfaMiddleware
-    # sees the populated request.state.saas_identity.
+    # Last-added middleware runs first; keep TenantSessionMiddleware outermost so downstream
+    # middleware (AdminMfaMiddleware/AdminAccessMiddleware) sees request.state.saas_identity and
+    # can enforce proxy-only admin access when enabled.
     app.add_middleware(TenantSessionMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(LoggingMiddleware)
