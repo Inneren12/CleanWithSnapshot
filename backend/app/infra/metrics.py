@@ -60,6 +60,7 @@ class Metrics:
             self.storage_reservations_pending = None
             self.audit_records_purged_total = None
             self.audit_records_on_legal_hold_total = None
+            self.retention_records_deleted_total = None
             self.feature_flags_stale_total = None
             self.break_glass_grants_total = None
             self.break_glass_active = None
@@ -246,6 +247,12 @@ class Metrics:
         self.audit_records_on_legal_hold_total = Counter(
             "audit_records_on_legal_hold_total",
             "Audit records prevented from purge due to legal hold.",
+            registry=self.registry,
+        )
+        self.retention_records_deleted_total = Counter(
+            "retention_records_deleted_total",
+            "Records deleted by data retention category.",
+            ["category"],
             registry=self.registry,
         )
         self.feature_flags_stale_total = Gauge(
@@ -508,6 +515,14 @@ class Metrics:
         if count <= 0:
             return
         self.audit_records_on_legal_hold_total.inc(count)
+
+    def record_retention_deletion(self, category: str, count: int) -> None:
+        if not self.enabled or self.retention_records_deleted_total is None:
+            return
+        if count <= 0:
+            return
+        safe_category = category or "unknown"
+        self.retention_records_deleted_total.labels(category=safe_category).inc(count)
 
     def record_storage_quota_rejection(self, reason: str) -> None:
         self.record_org_storage_quota_rejection(reason)
