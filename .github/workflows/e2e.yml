@@ -147,36 +147,89 @@ jobs:
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml config || true
             exit 1
           fi
+          python - <<'PY'
+          import sys
 
-          db_block=$(printf "%s\n" "$config_stdout" | awk '
-            $1 == "services:" {in_services=1; next}
-            in_services && $1 == "db:" {in_db=1; print; next}
-            in_db && $1 ~ /^[a-zA-Z0-9_-]+:$/ {exit}
-            in_db {print}
-          ')
+          content = sys.stdin.read().splitlines()
+          if not content:
+            raise SystemExit("compose config output is empty")
 
-          if [ -z "$db_block" ]; then
-            echo "db service block not found in compose config"
-            echo "---- docker compose config ----"
-            printf "%s\n" "$config_stdout"
-            exit 1
-          fi
+          def indent_of(line: str) -> int:
+            return len(line) - len(line.lstrip(" "))
 
-          command_block=$(printf "%s\n" "$db_block" | awk '
-            $1 == "command:" {in_command=1; print; next}
-            in_command && $1 ~ /^[a-zA-Z0-9_-]+:$/ {exit}
-            in_command {print}
-          ')
+          services_idx = None
+          services_indent = 0
+          for idx, line in enumerate(content):
+            if line.strip() == "services:":
+              services_idx = idx
+              services_indent = indent_of(line)
+              break
+          if services_idx is None:
+            print("services block not found")
+            print("\n".join(content[:120]))
+            raise SystemExit(1)
 
-          echo "Resolved db.command block:"
-          printf "%s\n" "${command_block:-<missing>}"
+          db_idx = None
+          db_indent = services_indent + 2
+          for idx in range(services_idx + 1, len(content)):
+            line = content[idx]
+            if not line.strip():
+              continue
+            if indent_of(line) == services_indent and line.strip().endswith(":"):
+              break
+            if indent_of(line) == db_indent and line.strip() == "db:":
+              db_idx = idx
+              break
 
-          if ! printf "%s\n" "$command_block" | grep -q "shared_preload_libraries=pg_stat_statements"; then
-            echo "db.command missing shared_preload_libraries=pg_stat_statements"
-            echo "---- db block ----"
-            printf "%s\n" "$db_block"
-            exit 1
-          fi
+          if db_idx is None:
+            print("db service block not found in compose config")
+            print("\n".join(content[services_idx:services_idx + 120]))
+            raise SystemExit(1)
+
+          db_block = [content[db_idx]]
+          for idx in range(db_idx + 1, len(content)):
+            line = content[idx]
+            if not line.strip():
+              db_block.append(line)
+              continue
+            if indent_of(line) <= db_indent and line.strip().endswith(":"):
+              break
+            db_block.append(line)
+
+          command_tokens: list[str] = []
+          command_block_indent = None
+          for idx, line in enumerate(db_block):
+            stripped = line.strip()
+            if stripped.startswith("command:"):
+              command_block_indent = indent_of(line)
+              after = stripped.removeprefix("command:").strip()
+              if after:
+                command_tokens.append(after)
+              for next_line in db_block[idx + 1:]:
+                if not next_line.strip():
+                  continue
+                next_indent = indent_of(next_line)
+                if next_indent <= command_block_indent:
+                  break
+                candidate = next_line.strip()
+                if candidate.startswith("- "):
+                  command_tokens.append(candidate.removeprefix("- ").strip())
+              break
+
+          print("Resolved db.command tokens:", command_tokens if command_tokens else "<missing>")
+          if not command_tokens:
+            print("---- db block ----")
+            print("\n".join(db_block))
+            raise SystemExit(1)
+
+          joined = " ".join(command_tokens)
+          if "shared_preload_libraries=pg_stat_statements" not in joined:
+            print("db.command missing shared_preload_libraries=pg_stat_statements")
+            print("---- db block ----")
+            print("\n".join(db_block))
+            raise SystemExit(1)
+          PY
+          <<<"$config_stdout"
 
       - name: Compose up (db + redis)
         run: |
