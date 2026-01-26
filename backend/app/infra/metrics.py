@@ -55,6 +55,8 @@ class Metrics:
             self.org_rate_limit_blocks = None
             self.http_429_total = None
             self.auth_failures_total = None
+            self.data_export_rate_limited_total = None
+            self.data_export_denied_total = None
             self.outbox_failures_total = None
             self.storage_bytes_used = None
             self.storage_reservations_pending = None
@@ -333,6 +335,18 @@ class Metrics:
             ["source", "reason"],
             registry=self.registry,
         )
+        self.data_export_rate_limited_total = Counter(
+            "data_export_rate_limited_total",
+            "Data export rate limits by endpoint.",
+            ["endpoint"],
+            registry=self.registry,
+        )
+        self.data_export_denied_total = Counter(
+            "data_export_denied_total",
+            "Data export denied attempts by reason.",
+            ["reason"],
+            registry=self.registry,
+        )
 
     def record_webhook(self, result: str) -> None:
         if not self.enabled or self.webhook_events is None:
@@ -520,6 +534,18 @@ class Metrics:
         safe_source = source or "unknown"
         safe_reason = reason or "unknown"
         self.auth_failures_total.labels(source=safe_source, reason=safe_reason).inc()
+
+    def record_data_export_rate_limited(self, endpoint: str) -> None:
+        if not self.enabled or self.data_export_rate_limited_total is None:
+            return
+        safe_endpoint = endpoint or "unknown"
+        self.data_export_rate_limited_total.labels(endpoint=safe_endpoint).inc()
+
+    def record_data_export_denied(self, reason: str) -> None:
+        if not self.enabled or self.data_export_denied_total is None:
+            return
+        safe_reason = reason or "unknown"
+        self.data_export_denied_total.labels(reason=safe_reason).inc()
 
     def record_audit_purge(self, count: int) -> None:
         if not self.enabled or self.audit_records_purged_total is None:

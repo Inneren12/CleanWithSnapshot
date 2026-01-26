@@ -40,6 +40,12 @@ class OrganizationSettings(Base):
     storage_bytes_used: Mapped[int] = mapped_column(
         sa.BigInteger, nullable=False, default=0, server_default="0"
     )
+    data_export_request_rate_limit_per_minute: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    data_export_request_rate_limit_per_hour: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    data_export_download_rate_limit_per_minute: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    data_export_download_failure_limit_per_window: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    data_export_download_lockout_limit_per_window: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    data_export_cooldown_minutes: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

@@ -60,8 +60,14 @@ Sensitive keys are redacted, and internal secrets (tokens, signatures) are exclu
 - **Short-lived delivery**
   - Signed URLs are generated for object storage downloads.
   - Local storage downloads are protected by authenticated access control.
-- **Rate limiting**
-  - Endpoints include hooks to enforce rate limits when a limiter is configured.
+- **Rate limiting & abuse protection**
+  - **Export requests** are limited per subject and org using a two-tier policy: burst (`data_export_request_rate_limit_per_minute`, default 1/min) and sustained (`data_export_request_rate_limit_per_hour`, default 5/hour).
+  - **Downloads** are limited per export subject (`data_export_download_rate_limit_per_minute`, default 10/min).
+  - **Denied download attempts** (subject mismatch or missing permission) are throttled after repeated failures and can trigger a temporary lockout window. Defaults:
+    - `data_export_download_failure_limit_per_window` (default 3 in 5 minutes)
+    - `data_export_download_lockout_limit_per_window` (default 5 in 30 minutes)
+  - All limits can be tuned via environment settings or per-organization overrides in org settings.
+  - Rate-limited responses return HTTP 429 with `Retry-After` and machine code `DATA_EXPORT_RATE_LIMITED`.
 - **Audit logging**
   - Export lifecycle events are recorded in the immutable admin audit trail with request correlation IDs.
   - Events: `DATA_EXPORT_REQUESTED`, `DATA_EXPORT_COMPLETED`, `DATA_EXPORT_FAILED`, `DATA_EXPORT_DOWNLOADED`, `DATA_EXPORT_DOWNLOAD_DENIED`.
@@ -90,6 +96,10 @@ This supports GDPR/CCPA accountability requirements and incident investigations 
 
 Export bundles are retained for `data_export_retention_days` (default: 7 days). After this window, the `data-export-retention` job deletes stored bundles and removes database records. Update retention settings in `app.settings` to align with policy requirements.
 
+## Cooldown behavior
+
+If a matching export was generated recently, the request endpoint returns the existing export instead of creating a new record. The cooldown window is controlled by `data_export_cooldown_minutes` (default: 30). This prevents repeated regeneration spam while keeping exports available for re-download during the retention window.
+
 ## Operator troubleshooting
 
 If an export remains pending:
@@ -101,3 +111,4 @@ If a download fails:
 - Confirm the export status is `completed`.
 - Verify the storage backend configuration and signed URL TTL (`data_export_signed_url_ttl_seconds`).
 - Ensure the requesting identity matches the subject or has `exports.run` permission.
+- Check rate limit and lockout settings if 429 responses are returned (`data_export_*` settings).

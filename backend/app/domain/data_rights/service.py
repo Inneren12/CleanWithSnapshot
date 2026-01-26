@@ -363,6 +363,45 @@ async def create_data_export_request(
     return record
 
 
+async def find_recent_export_request(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    subject_id: str | None,
+    subject_email: str | None,
+    cooldown_seconds: int,
+) -> DataExportRequest | None:
+    if cooldown_seconds <= 0:
+        return None
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(seconds=cooldown_seconds)
+    conditions = [DataExportRequest.org_id == org_id]
+    if subject_id and subject_email:
+        conditions.append(
+            or_(
+                DataExportRequest.subject_id == subject_id,
+                DataExportRequest.subject_email == subject_email,
+            )
+        )
+    elif subject_id:
+        conditions.append(DataExportRequest.subject_id == subject_id)
+    elif subject_email:
+        conditions.append(DataExportRequest.subject_email == subject_email)
+    else:
+        return None
+    recent_stmt = (
+        select(DataExportRequest)
+        .where(
+            *conditions,
+            DataExportRequest.status.in_(["pending", "processing", "completed"]),
+            func.coalesce(DataExportRequest.completed_at, DataExportRequest.created_at) >= cutoff,
+        )
+        .order_by(DataExportRequest.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(recent_stmt)
+    return result.scalar_one_or_none()
+
+
 async def list_data_export_requests(
     session: AsyncSession,
     *,

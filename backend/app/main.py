@@ -368,6 +368,10 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
         yield
         await app.state.rate_limiter.close()
         await app.state.action_rate_limiter.close()
+        data_export_limiters = getattr(app.state, "data_export_rate_limiters", None)
+        if data_export_limiters:
+            for limiter in data_export_limiters.values():
+                await limiter.close()
 
     app = FastAPI(title="Cleaning Economy Bot", version="1.0.0", lifespan=lifespan)
 

@@ -23,9 +23,16 @@ class RateLimiter(Protocol):
 
 
 class InMemoryRateLimiter:
-    def __init__(self, requests_per_minute: int, cleanup_minutes: int = 10) -> None:
+    def __init__(
+        self,
+        requests_per_minute: int,
+        cleanup_minutes: int = 10,
+        *,
+        window_seconds: int = 60,
+    ) -> None:
         self.requests_per_minute = requests_per_minute
         self.cleanup_minutes = cleanup_minutes
+        self.window_seconds = max(1, int(window_seconds))
         self._requests: Dict[str, Deque[float]] = defaultdict(deque)
         self._last_seen: Dict[str, float] = {}
         self._last_prune: float = 0.0
@@ -35,7 +42,7 @@ class InMemoryRateLimiter:
         async with self._lock:
             now = time.time()
             self._maybe_prune(now)
-            window_start = now - 60
+            window_start = now - self.window_seconds
             timestamps = self._requests[key]
             while timestamps and timestamps[0] < window_start:
                 timestamps.popleft()
@@ -98,13 +105,16 @@ class RedisRateLimiter:
         redis_client: redis.Redis | None = None,
         fail_open_seconds: int = 300,
         health_probe_seconds: float = 5.0,
+        *,
+        window_seconds: int = 60,
     ) -> None:
         self.requests_per_minute = requests_per_minute
         self.cleanup_seconds = max(int(cleanup_minutes * 60), 60)
         self.redis = redis_client or redis.from_url(redis_url, encoding="utf-8", decode_responses=False)
         self._script_sha: str | None = None
-        self.window_ms = 60_000
-        self.ttl_seconds = max(int(self.window_ms / 1000) + 2, self.cleanup_seconds)
+        self.window_seconds = max(1, int(window_seconds))
+        self.window_ms = self.window_seconds * 1000
+        self.ttl_seconds = max(self.window_seconds + 2, self.cleanup_seconds)
 
         self.fail_open_seconds = max(1, fail_open_seconds)
         self.health_probe_seconds = max(0.5, health_probe_seconds)
@@ -208,7 +218,12 @@ class RedisRateLimiter:
         return result
 
 
-def create_rate_limiter(app_settings, requests_per_minute: int | None = None) -> RateLimiter:
+def create_rate_limiter(
+    app_settings,
+    requests_per_minute: int | None = None,
+    *,
+    window_seconds: int = 60,
+) -> RateLimiter:
     limit = requests_per_minute or app_settings.rate_limit_per_minute
     if getattr(app_settings, "redis_url", None):
         return RedisRateLimiter(
@@ -217,10 +232,12 @@ def create_rate_limiter(app_settings, requests_per_minute: int | None = None) ->
             cleanup_minutes=app_settings.rate_limit_cleanup_minutes,
             fail_open_seconds=getattr(app_settings, "rate_limit_fail_open_seconds", 300),
             health_probe_seconds=getattr(app_settings, "rate_limit_redis_probe_seconds", 5.0),
+            window_seconds=window_seconds,
         )
     return InMemoryRateLimiter(
         limit,
         cleanup_minutes=app_settings.rate_limit_cleanup_minutes,
+        window_seconds=window_seconds,
     )
 
 

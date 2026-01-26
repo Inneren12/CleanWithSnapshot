@@ -218,6 +218,28 @@ def restore_admin_settings():
     original_dlq_export_replay_limit = getattr(settings, "dlq_auto_replay_export_replay_limit", 2)
     original_dlq_export_cooldown = getattr(settings, "dlq_auto_replay_export_cooldown_minutes", 120)
     original_weather_traffic_mode = getattr(settings, "weather_traffic_mode", "off")
+    original_data_export_request_rate_limit_per_minute = getattr(
+        settings, "data_export_request_rate_limit_per_minute", 1
+    )
+    original_data_export_request_rate_limit_per_hour = getattr(
+        settings, "data_export_request_rate_limit_per_hour", 5
+    )
+    original_data_export_download_rate_limit_per_minute = getattr(
+        settings, "data_export_download_rate_limit_per_minute", 10
+    )
+    original_data_export_download_failure_limit_per_window = getattr(
+        settings, "data_export_download_failure_limit_per_window", 3
+    )
+    original_data_export_download_lockout_limit_per_window = getattr(
+        settings, "data_export_download_lockout_limit_per_window", 5
+    )
+    original_data_export_download_failure_window_seconds = getattr(
+        settings, "data_export_download_failure_window_seconds", 300
+    )
+    original_data_export_download_lockout_window_seconds = getattr(
+        settings, "data_export_download_lockout_window_seconds", 1800
+    )
+    original_data_export_cooldown_minutes = getattr(settings, "data_export_cooldown_minutes", 30)
     yield
     settings.admin_basic_username = original_username
     settings.admin_basic_password = original_password
@@ -249,6 +271,28 @@ def restore_admin_settings():
     settings.dlq_auto_replay_export_replay_limit = original_dlq_export_replay_limit
     settings.dlq_auto_replay_export_cooldown_minutes = original_dlq_export_cooldown
     settings.weather_traffic_mode = original_weather_traffic_mode
+    settings.data_export_request_rate_limit_per_minute = (
+        original_data_export_request_rate_limit_per_minute
+    )
+    settings.data_export_request_rate_limit_per_hour = (
+        original_data_export_request_rate_limit_per_hour
+    )
+    settings.data_export_download_rate_limit_per_minute = (
+        original_data_export_download_rate_limit_per_minute
+    )
+    settings.data_export_download_failure_limit_per_window = (
+        original_data_export_download_failure_limit_per_window
+    )
+    settings.data_export_download_lockout_limit_per_window = (
+        original_data_export_download_lockout_limit_per_window
+    )
+    settings.data_export_download_failure_window_seconds = (
+        original_data_export_download_failure_window_seconds
+    )
+    settings.data_export_download_lockout_window_seconds = (
+        original_data_export_download_lockout_window_seconds
+    )
+    settings.data_export_cooldown_minutes = original_data_export_cooldown_minutes
 
 
 @pytest.fixture(autouse=True)
@@ -274,6 +318,7 @@ def restore_app_state():
     """Restore app.state after each test to prevent state pollution."""
     original_metrics = getattr(app.state, "metrics", None)
     original_app_settings = getattr(app.state, "app_settings", None)
+    original_export_limiters = getattr(app.state, "data_export_rate_limiters", None)
     yield
     # Restore original state
     if original_metrics is not None:
@@ -285,6 +330,11 @@ def restore_app_state():
         app.state.app_settings = original_app_settings
     elif hasattr(app.state, "app_settings"):
         delattr(app.state, "app_settings")
+
+    if original_export_limiters is not None:
+        app.state.data_export_rate_limiters = original_export_limiters
+    elif hasattr(app.state, "data_export_rate_limiters"):
+        delattr(app.state, "data_export_rate_limiters")
 
 
 @pytest.fixture(autouse=True)
