@@ -14,6 +14,8 @@ web/.env.local
 # logs (храним на сервере)
 logs/
 *.log
+!backend/app/domain/logs/
+!backend/app/domain/logs/**
 
 # docker volumes/runtime
 caddy_data/
