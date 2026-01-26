@@ -130,32 +130,53 @@ jobs:
       - name: Compose down (pre-cleanup)
         run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v || true
 
+      - name: Log Docker Compose versions
+        run: |
+          docker compose version || true
+          docker version || true
+
       - name: Verify compose db command preload
         run: |
           set -euo pipefail
-          config_json=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml config --format json || true)
-          if [ -z "$config_json" ]; then
-            echo "docker compose config --format json returned empty output"
+          config_stdout=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml config 2>compose_config_stderr.log || true)
+          if [ -z "$config_stdout" ]; then
+            echo "docker compose config returned empty output"
+            echo "---- docker compose stderr ----"
+            cat compose_config_stderr.log || true
+            echo "---- docker compose config ----"
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml config || true
             exit 1
           fi
-          python - <<'PY'
-          import json
-          import sys
 
-          payload = json.loads(sys.stdin.read())
-          db = payload.get("services", {}).get("db", {})
-          command = db.get("command", [])
-          if isinstance(command, str):
-            command_list = [command]
-          else:
-            command_list = command or []
-          print("Resolved db.command:", command_list)
-          joined = " ".join(command_list)
-          if "shared_preload_libraries=pg_stat_statements" not in joined:
-            raise SystemExit("db.command is missing shared_preload_libraries=pg_stat_statements")
-          PY
-          <<<"$config_json"
+          db_block=$(printf "%s\n" "$config_stdout" | awk '
+            $1 == "services:" {in_services=1; next}
+            in_services && $1 == "db:" {in_db=1; print; next}
+            in_db && $1 ~ /^[a-zA-Z0-9_-]+:$/ {exit}
+            in_db {print}
+          ')
+
+          if [ -z "$db_block" ]; then
+            echo "db service block not found in compose config"
+            echo "---- docker compose config ----"
+            printf "%s\n" "$config_stdout"
+            exit 1
+          fi
+
+          command_block=$(printf "%s\n" "$db_block" | awk '
+            $1 == "command:" {in_command=1; print; next}
+            in_command && $1 ~ /^[a-zA-Z0-9_-]+:$/ {exit}
+            in_command {print}
+          ')
+
+          echo "Resolved db.command block:"
+          printf "%s\n" "${command_block:-<missing>}"
+
+          if ! printf "%s\n" "$command_block" | grep -q "shared_preload_libraries=pg_stat_statements"; then
+            echo "db.command missing shared_preload_libraries=pg_stat_statements"
+            echo "---- db block ----"
+            printf "%s\n" "$db_block"
+            exit 1
+          fi
 
       - name: Compose up (db + redis)
         run: |
