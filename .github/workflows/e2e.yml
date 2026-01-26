@@ -133,7 +133,12 @@ jobs:
       - name: Verify compose db command preload
         run: |
           set -euo pipefail
-          config_json=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml config --format json)
+          config_json=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml config --format json || true)
+          if [ -z "$config_json" ]; then
+            echo "docker compose config --format json returned empty output"
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml config || true
+            exit 1
+          fi
           python - <<'PY'
           import json
           import sys
