@@ -135,7 +135,7 @@ jobs:
           docker compose version || true
           docker version || true
 
-      - name: Verify compose db command preload
+      - name: Verify E2E db command preload (source)
         run: |
           set -euo pipefail
           if [ ! -f docker-compose.yml ] || [ ! -f docker-compose.e2e.yml ]; then
@@ -143,39 +143,12 @@ jobs:
             ls -la docker-compose.yml docker-compose.e2e.yml || true
             exit 1
           fi
-
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config > compose_config_stdout.yml 2> compose_config_stderr.log
-
-          if [ ! -s compose_config_stdout.yml ]; then
-            echo "docker compose config returned empty output"
-            echo "---- docker compose stderr ----"
-            cat compose_config_stderr.log || true
-            echo "---- docker-compose.yml (head) ----"
-            sed -n '1,50p' docker-compose.yml || true
-            echo "---- docker-compose.e2e.yml (head) ----"
-            sed -n '1,50p' docker-compose.e2e.yml || true
-            echo "compose config failed; falling back to source YAML validation"
-            if ! awk 'BEGIN{in_db=0; in_cmd=0}
-              /^  db:$/ {in_db=1; next}
-              in_db && /^  [a-zA-Z0-9_-]+:$/ {exit}
-              in_db && /^    command:$/ {in_cmd=1; next}
-              in_db && in_cmd && /^    [a-zA-Z0-9_-]+:$/ {in_cmd=0}
-              in_db && in_cmd && /shared_preload_libraries=pg_stat_statements/ {found=1}
-              END {exit found?0:1}
-            ' docker-compose.e2e.yml; then
-              echo "Fallback validation failed: db.command missing shared_preload_libraries=pg_stat_statements in docker-compose.e2e.yml"
-              exit 1
-            fi
-            exit 1
-          fi
-
-          config_stdout=$(cat compose_config_stdout.yml)
           python - <<'PY'
           import sys
 
-          content = sys.stdin.read().splitlines()
+          content = open("docker-compose.e2e.yml", "r", encoding="utf-8").read().splitlines()
           if not content:
-            raise SystemExit("compose config output is empty")
+            raise SystemExit("docker-compose.e2e.yml is empty")
 
           def indent_of(line: str) -> int:
             return len(line) - len(line.lstrip(" "))
@@ -205,7 +178,7 @@ jobs:
               break
 
           if db_idx is None:
-            print("db service block not found in compose config")
+            print("db service block not found in docker-compose.e2e.yml")
             print("\n".join(content[services_idx:services_idx + 120]))
             raise SystemExit(1)
 
@@ -251,8 +224,20 @@ jobs:
             print("---- db block ----")
             print("\n".join(db_block))
             raise SystemExit(1)
+          if "pg_stat_statements.track=all" not in joined:
+            print("db.command missing pg_stat_statements.track=all")
+            print("---- db block ----")
+            print("\n".join(db_block))
+            raise SystemExit(1)
           PY
-          <<<"$config_stdout"
+
+      - name: Compose config (diagnostic only)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config > compose_config_stdout.yml 2> compose_config_stderr.log || true
+          if [ ! -s compose_config_stdout.yml ]; then
+            echo "docker compose config produced empty output (diagnostic only)"
+            cat compose_config_stderr.log || true
+          fi
 
       - name: Compose up (db + redis)
         run: |

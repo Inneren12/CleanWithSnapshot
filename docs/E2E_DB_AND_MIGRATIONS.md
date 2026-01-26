@@ -13,10 +13,11 @@ The workflow generates `backend/.env.e2e.ci` from `backend/.env.example` and enf
 required keys. Only key names are printed to avoid leaking secrets.
 
 ## E2E startup sequence (CI)
-1. Start DB + Redis.
-2. Wait for DB healthcheck (pg_isready) and validate `shared_preload_libraries`.
-3. Run a SQL readiness probe: `select 1;`.
-4. Start API/Web/Jobs, then wait for HTTP readiness.
+1. Validate `docker-compose.e2e.yml` source config includes the pg_stat_statements preload flags.
+2. Start DB + Redis.
+3. Wait for DB healthcheck (pg_isready) and validate `shared_preload_libraries`.
+4. Run a SQL readiness probe: `select 1;`.
+5. Start API/Web/Jobs, then wait for HTTP readiness.
 
 ## Debugging migration failures
 If API startup fails, the workflow prints:
