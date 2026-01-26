@@ -100,6 +100,7 @@ class Lead(Base):
     pending_deletion: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
+    legal_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -124,6 +125,7 @@ class Lead(Base):
         Index("ix_leads_org_id", "org_id"),
         Index("ix_leads_org_status", "org_id", "status"),
         Index("ix_leads_org_created_at", "org_id", "created_at"),
+        Index("ix_leads_deleted_at_legal_hold", "deleted_at", "legal_hold"),
     )
 
     def __init__(self, **kwargs: object) -> None:

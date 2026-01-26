@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.admin_audit import service as admin_audit_service
 from app.domain.analytics.db_models import EventLog
-from app.domain.leads.db_models import Lead
 from app.domain.reason_logs.db_models import ReasonLog
 from app.infra.metrics import metrics
 from app.settings import settings
@@ -57,12 +56,6 @@ _RETENTION_TARGETS: dict[RetentionCategory, RetentionTarget] = {
         model=EventLog,
         id_column=EventLog.event_id,
         timestamp_column=EventLog.occurred_at,
-    ),
-    RetentionCategory.SOFT_DELETED_ENTITIES: RetentionTarget(
-        model=Lead,
-        id_column=Lead.lead_id,
-        timestamp_column=Lead.deleted_at,
-        filters=(Lead.deleted_at.is_not(None),),
     ),
 }
 
@@ -193,6 +186,30 @@ async def enforce_retention(
             deleted=0,
             cutoff=cutoff,
             status="reference_only",
+        )
+
+    if category == RetentionCategory.SOFT_DELETED_ENTITIES:
+        async with session.begin():
+            await admin_audit_service.record_system_action(
+                session,
+                org_id=settings.default_org_id,
+                action="data_retention_policy_reference",
+                resource_type="soft_deleted_entities",
+                resource_id=None,
+                context={
+                    "category": category.value,
+                    "retention_days": policy.retention_days,
+                    "cutoff": cutoff.isoformat() if cutoff else None,
+                    "deleted": 0,
+                    "status": "delegated_to_soft_delete_purge",
+                },
+            )
+        return RetentionResult(
+            category=category,
+            retention_days=policy.retention_days,
+            deleted=0,
+            cutoff=cutoff,
+            status="delegated_to_soft_delete_purge",
         )
 
     target = _RETENTION_TARGETS.get(category)
