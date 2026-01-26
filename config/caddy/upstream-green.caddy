@@ -15,6 +15,23 @@
   }
 }
 
+(api_upstream_admin) {
+  reverse_proxy api-green:8000 {
+    header_up -Authorization
+    header_up X-Admin-User {http.auth.user}
+    header_up X-Admin-Email {http.auth.user}
+    header_up X-Admin-Roles {env.ADMIN_PROXY_DEFAULT_ROLE}
+    transport http {
+      dial_timeout 10s
+      read_timeout 90s
+      write_timeout 90s
+    }
+    health_uri /healthz
+    health_interval 5s
+    health_timeout 3s
+  }
+}
+
 (web_upstream) {
   reverse_proxy web-green:3000 {
     transport http {

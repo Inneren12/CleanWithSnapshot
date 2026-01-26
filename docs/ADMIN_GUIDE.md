@@ -2,6 +2,9 @@
 
 This guide covers the new admin features for worker password management, client management, and booking creation.
 
+> **Note**: Admin API calls are now authenticated at the reverse proxy. Requests must include the
+> `X-Admin-User`/`X-Admin-Email` headers injected by the proxy; direct backend access is rejected.
+
 ## Table of Contents
 
 1. [Worker Password Management](#worker-password-management)
@@ -44,7 +47,8 @@ This guide covers the new admin features for worker password management, client 
 **Example cURL** (for API access):
 ```bash
 curl -X POST https://your-domain.com/v1/admin/ui/workers/new \
-  -H "Authorization: Basic <admin-credentials>" \
+  -H "X-Admin-User: admin@example.com" \
+  -H "X-Admin-Email: admin@example.com" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "name=John Doe" \
   -d "phone=+1234567890" \
@@ -153,7 +157,8 @@ curl -X POST https://your-domain.com/worker/login \
 **Example cURL**:
 ```bash
 curl -X POST https://your-domain.com/v1/admin/ui/clients/new \
-  -H "Authorization: Basic <admin-credentials>" \
+  -H "X-Admin-User: admin@example.com" \
+  -H "X-Admin-Email: admin@example.com" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "name=Jane Smith" \
   -d "phone=+1987654321" \
@@ -175,7 +180,8 @@ curl -X POST https://your-domain.com/v1/admin/ui/clients/new \
 ```bash
 # Search for clients
 curl "https://your-domain.com/v1/admin/ui/clients?q=jane" \
-  -H "Authorization: Basic <admin-credentials>"
+  -H "X-Admin-User: admin@example.com" \
+  -H "X-Admin-Email: admin@example.com"
 ```
 
 ### Editing a Client
@@ -219,7 +225,8 @@ curl "https://your-domain.com/v1/admin/ui/clients?q=jane" \
 **Example cURL**:
 ```bash
 curl -X POST https://your-domain.com/v1/admin/ui/bookings/create \
-  -H "Authorization: Basic <admin-credentials>" \
+  -H "X-Admin-User: admin@example.com" \
+  -H "X-Admin-Email: admin@example.com" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "team_id=1" \
   -d "client_id=abc-123-def-456" \

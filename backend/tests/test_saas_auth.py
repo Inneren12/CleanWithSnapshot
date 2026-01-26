@@ -8,6 +8,14 @@ from app.settings import settings
 from tests.conftest import DEFAULT_ORG_ID
 
 
+def _proxy_headers(username: str, roles: str = "admin") -> dict[str, str]:
+    return {
+        "X-Admin-User": username,
+        "X-Admin-Email": username,
+        "X-Admin-Roles": roles,
+    }
+
+
 @pytest.mark.anyio
 async def test_duplicate_email_globally_unique(async_session_maker):
     async with async_session_maker() as session:
@@ -59,36 +67,22 @@ async def test_rbac_finance_denied_for_viewer(async_session_maker, client):
         await saas_service.create_membership(session, org, viewer, MembershipRole.VIEWER)
         await session.commit()
 
-    login_response = client.post(
-        "/v1/auth/login",
-        json={"email": "viewer@example.com", "password": "pw", "org_id": str(org.org_id)},
-    )
-    assert login_response.status_code == 200
-    token = login_response.json()["access_token"]
-
     resp = client.get(
         "/v1/admin/exports/sales-ledger.csv",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=_proxy_headers("viewer@example.com", roles="viewer"),
     )
     assert resp.status_code == 403
 
 
 @pytest.mark.anyio
-async def test_saas_middleware_bypasses_admin_basic_auth(async_session_maker, client):
+async def test_admin_proxy_headers_allow_access_when_legacy_disabled(async_session_maker, client):
     settings.legacy_basic_auth_enabled = False
 
     async with async_session_maker() as session:
-        org = await saas_service.create_organization(session, "SaaS Org")
-        user = await saas_service.create_user(session, "owner@example.com", "pw")
-        membership = await saas_service.create_membership(session, org, user, MembershipRole.OWNER)
+        await saas_service.create_organization(session, "SaaS Org")
         await session.commit()
 
-    token = saas_service.build_access_token(user, membership)
-
-    response = client.get(
-        "/v1/admin/observability",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    response = client.get("/v1/admin/observability", headers=_proxy_headers("owner@example.com", roles="owner"))
 
     assert response.status_code == 200
 

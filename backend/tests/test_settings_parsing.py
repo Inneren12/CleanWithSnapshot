@@ -48,6 +48,8 @@ def test_defaults_to_prod_when_env_missing(monkeypatch):
         client_portal_secret="client-secret",
         worker_portal_secret="worker-secret",
         metrics_enabled=False,
+        trust_proxy_headers=True,
+        trusted_proxy_ips=["127.0.0.1"],
         _env_file=None,
     )
 
@@ -57,7 +59,7 @@ def test_defaults_to_prod_when_env_missing(monkeypatch):
 def test_prod_requires_non_default_secrets(monkeypatch):
     monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
     with pytest.raises(ValidationError, match="AUTH_SECRET_KEY"):
-        Settings(app_env="prod", _env_file=None)
+        Settings(app_env="prod", trust_proxy_headers=True, trusted_proxy_ips=["127.0.0.1"], _env_file=None)
 
 
 def test_prod_requires_metrics_token_when_enabled(monkeypatch):
@@ -70,6 +72,8 @@ def test_prod_requires_metrics_token_when_enabled(monkeypatch):
             worker_portal_secret="worker-secret",
             metrics_enabled=True,
             metrics_token=None,
+            trust_proxy_headers=True,
+            trusted_proxy_ips=["127.0.0.1"],
             _env_file=None,
         )
 
@@ -84,6 +88,8 @@ def test_prod_rejects_wildcard_cors_with_strict_mode(monkeypatch):
             worker_portal_secret="worker-secret",
             strict_cors=True,
             cors_origins=["*"],
+            trust_proxy_headers=True,
+            trusted_proxy_ips=["127.0.0.1"],
             _env_file=None,
         )
 
@@ -98,6 +104,8 @@ def test_prod_validates_admin_allowlist_cidrs(monkeypatch):
             worker_portal_secret="worker-secret",
             metrics_enabled=False,
             admin_ip_allowlist_cidrs="not-a-cidr",
+            trust_proxy_headers=True,
+            trusted_proxy_ips=["127.0.0.1"],
             _env_file=None,
         )
 
@@ -111,6 +119,8 @@ def test_prod_rejects_testing_mode_override():
             worker_portal_secret="worker-secret",
             metrics_enabled=False,
             testing=True,
+            trust_proxy_headers=True,
+            trusted_proxy_ips=["127.0.0.1"],
             _env_file=None,
         )
 
@@ -127,6 +137,8 @@ def test_prod_accepts_valid_configuration(monkeypatch):
         metrics_enabled=True,
         metrics_token="metrics-token",
         admin_ip_allowlist_cidrs="10.0.0.0/8",
+        trust_proxy_headers=True,
+        trusted_proxy_ips=["127.0.0.1"],
         _env_file=None,
     )
 
@@ -141,6 +153,8 @@ def test_legacy_basic_auth_defaults_disabled_in_prod(monkeypatch):
         client_portal_secret="client-secret",
         worker_portal_secret="worker-secret",
         metrics_enabled=False,
+        trust_proxy_headers=True,
+        trusted_proxy_ips=["127.0.0.1"],
         _env_file=None,
     )
 

@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     strict_cors: bool = Field(False)
     strict_policy_mode: bool = Field(False)
     admin_read_only: bool = Field(False)
+    admin_proxy_auth_enabled: bool = Field(True)
     admin_ip_allowlist_cidrs_raw: str | None = Field(
         None, validation_alias="admin_ip_allowlist_cidrs"
     )
@@ -437,6 +438,16 @@ class Settings(BaseSettings):
                     ip_network(cidr, strict=False)
                 except ValueError as exc:  # noqa: BLE001
                     raise ValueError(f"Invalid CIDR in ADMIN_IP_ALLOWLIST_CIDRS: {cidr}") from exc
+
+        if self.admin_proxy_auth_enabled:
+            if not self.trust_proxy_headers:
+                raise ValueError(
+                    "ADMIN_PROXY_AUTH_ENABLED=true requires TRUST_PROXY_HEADERS=true"
+                )
+            if not (self.trusted_proxy_ips or self.trusted_proxy_cidrs):
+                raise ValueError(
+                    "ADMIN_PROXY_AUTH_ENABLED=true requires TRUSTED_PROXY_IPS or TRUSTED_PROXY_CIDRS"
+                )
 
         return self
 

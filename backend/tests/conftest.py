@@ -8,6 +8,7 @@ os.environ["APP_ENV"] = "dev"
 os.environ["TESTING"] = "true"
 
 import asyncio
+import base64
 import inspect
 import sys
 from pathlib import Path
@@ -192,6 +193,7 @@ def restore_admin_settings():
     original_password = settings.admin_basic_password
     original_dispatcher_username = settings.dispatcher_basic_username
     original_dispatcher_password = settings.dispatcher_basic_password
+    original_admin_proxy_auth_enabled = getattr(settings, "admin_proxy_auth_enabled", True)
     original_testing = getattr(settings, "testing", False)
     original_deposits = getattr(settings, "deposits_enabled", True)
     original_metrics = getattr(settings, "metrics_enabled", True)
@@ -245,6 +247,7 @@ def restore_admin_settings():
     settings.admin_basic_password = original_password
     settings.dispatcher_basic_username = original_dispatcher_username
     settings.dispatcher_basic_password = original_dispatcher_password
+    settings.admin_proxy_auth_enabled = original_admin_proxy_auth_enabled
     settings.testing = original_testing
     settings.deposits_enabled = original_deposits
     settings.metrics_enabled = original_metrics
@@ -302,6 +305,10 @@ def enable_test_mode():
     settings.app_env = "dev"
     settings.email_mode = "sendgrid"
     settings.legacy_basic_auth_enabled = True
+    settings.admin_proxy_auth_enabled = True
+    settings.trust_proxy_headers = True
+    settings.trusted_proxy_ips = ["testclient"]
+    settings.trusted_proxy_cidrs = []
     settings.admin_basic_username = "admin"
     settings.admin_basic_password = "admin123"
     settings.viewer_basic_username = "viewer"
@@ -378,6 +385,51 @@ def override_org_resolver(monkeypatch):
         return settings.default_org_id
 
     monkeypatch.setattr("app.api.entitlements.resolve_org_id", _resolve_org_id)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def inject_admin_proxy_headers():
+    if not getattr(app.state, "test_admin_proxy_header_middleware_added", False):
+
+        def _resolve_role_from_username(username: str) -> str:
+            normalized = username.strip().lower()
+            if normalized in {"dispatch", "dispatcher"}:
+                return "dispatcher"
+            if normalized in {"accountant"}:
+                return "accountant"
+            if normalized in {"finance"}:
+                return "finance"
+            if normalized in {"viewer"}:
+                return "viewer"
+            if normalized in {"owner"}:
+                return "owner"
+            return "admin"
+
+        @app.middleware("http")
+        async def _inject_admin_proxy_headers(request, call_next):  # type: ignore[override]
+            if request.url.path.startswith("/v1/admin"):
+                if not (
+                    request.headers.get("X-Admin-User") or request.headers.get("X-Admin-Email")
+                ):
+                    authorization = request.headers.get("Authorization", "")
+                    scheme, payload = authorization.split(" ", 1) if " " in authorization else ("", "")
+                    if scheme.lower() == "basic" and payload:
+                        try:
+                            decoded = base64.b64decode(payload).decode("latin1")
+                        except Exception:  # noqa: BLE001
+                            decoded = ""
+                        username, _, _password = decoded.partition(":")
+                        if username:
+                            role = _resolve_role_from_username(username)
+                            headers = list(request.scope.get("headers", []))
+                            headers.append((b"x-admin-user", username.encode()))
+                            headers.append((b"x-admin-email", username.encode()))
+                            headers.append((b"x-admin-roles", role.encode()))
+                            request.scope["headers"] = headers
+            return await call_next(request)
+
+        app.state.test_admin_proxy_header_middleware_added = True
     yield
 
 

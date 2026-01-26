@@ -14,11 +14,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.settings import settings
 from app.domain.iam import permissions as iam_permissions
+from app.infra.security import is_request_from_trusted_proxy
 from app.infra.logging import update_log_context
 from app.infra.metrics import metrics
 from app.infra.org_context import set_current_org_id
 
 logger = logging.getLogger(__name__)
+
+ADMIN_PROXY_USER_HEADER = "X-Admin-User"
+ADMIN_PROXY_EMAIL_HEADER = "X-Admin-Email"
+ADMIN_PROXY_ROLES_HEADER = "X-Admin-Roles"
 
 
 class AdminAuthException(HTTPException):
@@ -141,6 +146,14 @@ def _build_auth_exception(
     return AdminAuthException(detail=detail, reason=reason)
 
 
+def _build_proxy_auth_exception(
+    *, detail: str = "Admin access requires proxy authentication", reason: str = "proxy_auth_required"
+) -> HTTPException:
+    exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+    setattr(exc, "reason", reason)
+    return exc
+
+
 def _resolve_request_id(request: Request) -> str | None:
     request_id = getattr(request.state, "request_id", None)
     if request_id:
@@ -225,6 +238,60 @@ def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> Admin
     raise _build_auth_exception(reason="invalid_credentials")
 
 
+def _role_from_proxy_headers(roles_header: str | None, username: str) -> AdminRole:
+    role_map = {role.value: role for role in AdminRole}
+    if roles_header:
+        roles = [value.strip().lower() for value in roles_header.split(",") if value.strip()]
+        for preferred in (
+            AdminRole.OWNER,
+            AdminRole.ADMIN,
+            AdminRole.FINANCE,
+            AdminRole.ACCOUNTANT,
+            AdminRole.DISPATCHER,
+            AdminRole.VIEWER,
+        ):
+            if preferred.value in roles:
+                return preferred
+        for role in roles:
+            if role in role_map:
+                return role_map[role]
+
+    normalized = username.strip().lower()
+    if normalized == AdminRole.VIEWER.value:
+        return AdminRole.VIEWER
+    if normalized == AdminRole.DISPATCHER.value:
+        return AdminRole.DISPATCHER
+    if normalized == AdminRole.ACCOUNTANT.value:
+        return AdminRole.ACCOUNTANT
+    if normalized == AdminRole.FINANCE.value:
+        return AdminRole.FINANCE
+    return AdminRole.ADMIN
+
+
+def _authenticate_proxy_headers(request: Request) -> AdminIdentity:
+    if not settings.trust_proxy_headers:
+        raise _build_proxy_auth_exception(reason="proxy_headers_not_trusted")
+    if not is_request_from_trusted_proxy(
+        request,
+        settings.trusted_proxy_ips,
+        settings.trusted_proxy_cidrs,
+    ):
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+    user = request.headers.get(ADMIN_PROXY_USER_HEADER)
+    email = request.headers.get(ADMIN_PROXY_EMAIL_HEADER)
+    if not user and not email:
+        raise _build_proxy_auth_exception(reason="missing_proxy_headers")
+    username = user or email or "unknown"
+    role = _role_from_proxy_headers(request.headers.get(ADMIN_PROXY_ROLES_HEADER), username)
+    return AdminIdentity(
+        username=username,
+        role=role,
+        org_id=settings.default_org_id,
+        admin_id=email or username,
+        auth_method="proxy",
+    )
+
+
 def _resolve_permission_keys(request: Request, identity: AdminIdentity) -> set[str]:
     saas_identity = getattr(request.state, "saas_identity", None)
     if saas_identity is not None:
@@ -286,7 +353,10 @@ async def get_admin_identity(
             payload["org_id"] = str(org_for_log)
         update_log_context(**payload)
         return cached
-    identity = _authenticate_credentials(credentials)
+    if settings.admin_proxy_auth_enabled and request.url.path.startswith("/v1/admin"):
+        identity = _authenticate_proxy_headers(request)
+    else:
+        identity = _authenticate_credentials(credentials)
     request.state.admin_identity = identity
     request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
     set_current_org_id(request.state.current_org_id)
@@ -369,25 +439,35 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
         if cached:
             return await call_next(request)
 
-        saas_identity = getattr(request.state, "saas_identity", None)
-        if saas_identity:
-            return await call_next(request)
-
         saas_identity_error: HTTPException | None = getattr(request.state, "saas_identity_error", None)
-        authorization: str = request.headers.get("Authorization", "")
-        has_bearer = authorization.lower().startswith("bearer ")
-
         if saas_identity_error:
             return await http_exception_handler(request, saas_identity_error)
 
-        if has_bearer:
-            _log_admin_auth_failure(
-                request,
-                reason="bearer_token_present_for_admin",
-                credentials=None,
-            )
-            unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-            return await http_exception_handler(request, unauthorized)
+        authorization: str = request.headers.get("Authorization", "")
+        has_bearer = authorization.lower().startswith("bearer ")
+
+        if settings.admin_proxy_auth_enabled:
+            if has_bearer:
+                _log_admin_auth_failure(
+                    request,
+                    reason="bearer_token_present_for_admin",
+                    credentials=None,
+                )
+            try:
+                identity = _authenticate_proxy_headers(request)
+                _assert_permissions(request, identity, [AdminPermission.VIEW])
+                request.state.admin_identity = identity
+                request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
+                set_current_org_id(request.state.current_org_id)
+                return await call_next(request)
+            except HTTPException as exc:
+                reason = getattr(exc, "reason", None) or "proxy_auth_required"
+                _log_admin_auth_failure(request, reason=reason, credentials=None)
+                return await http_exception_handler(request, exc)
+
+        saas_identity = getattr(request.state, "saas_identity", None)
+        if saas_identity:
+            return await call_next(request)
 
         configured_users = _configured_users()
         basic_auth_enabled = bool(settings.legacy_basic_auth_enabled)

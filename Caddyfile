@@ -70,6 +70,28 @@ api.panidobro.com {
   header @docs -Content-Security-Policy
   header @docs Content-Security-Policy "default-src 'self'; img-src 'self' data: https://fastapi.tiangolo.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;"
 
+  @admin path /v1/admin*
+  handle @admin {
+    # Example edge auth. Swap for SSO/Access providers (e.g., Authentik, Authelia, Cloudflare Access).
+    # Use hashed passwords; do not commit secrets.
+    basicauth {
+      {env.ADMIN_BASIC_AUTH_USER} {env.ADMIN_BASIC_AUTH_HASH}
+    }
+
+    header_up -Authorization
+    header_up X-Admin-User {http.auth.user}
+    header_up X-Admin-Email {http.auth.user}
+    header_up X-Admin-Roles {env.ADMIN_PROXY_DEFAULT_ROLE}
+
+    reverse_proxy api:8000 {
+      transport http {
+        dial_timeout 10s
+        read_timeout 90s
+        write_timeout 90s
+      }
+    }
+  }
+
   reverse_proxy api:8000 {
     header_up Authorization {header.Authorization}
     transport http {

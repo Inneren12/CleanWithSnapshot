@@ -193,8 +193,8 @@ async def test_admin_routes_reject_sessions_without_mfa(async_session_maker, cli
         "/v1/admin/profile", headers={"Authorization": f"Bearer {access_token_without_mfa}"}
     )
     assert admin_resp.status_code == 401
-    assert admin_resp.headers["content-type"].startswith("application/problem+json")
-    assert admin_resp.json()["type"] == "mfa_required"
+    assert admin_resp.headers["content-type"].startswith("application/json")
+    assert admin_resp.json()["detail"] == "Admin access requires proxy authentication"
 
     success_resp = client.get(
         "/v1/iam/users", headers={"Authorization": f"Bearer {access_token_with_mfa}"}
