@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Iterable
+from typing import Any, Iterable, TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,8 +17,10 @@ from app.domain.admin_audit.db_models import AdminAuditLog
 from app.domain.break_glass.db_models import BreakGlassSession
 from app.domain.iam import permissions as iam_permissions
 from app.domain.iam.db_models import IamRole
-from app.domain.saas.db_models import Membership, MembershipRole, Organization, SaaSSession, User
 from app.settings import settings
+
+if TYPE_CHECKING:
+    from app.domain.saas.db_models import Membership, Organization, User
 
 ROLE_CHANGE_ACTION_RE = re.compile(r"^PATCH /v1/admin/iam/users/(?P<user_id>[^/]+)/role")
 
@@ -93,7 +95,8 @@ def _hash_payload(payload: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-async def _resolve_orgs(session: AsyncSession, scope: AccessReviewScope, org_id: uuid.UUID | None) -> list[Organization]:
+async def _resolve_orgs(session: AsyncSession, scope: AccessReviewScope, org_id: uuid.UUID | None) -> list["Organization"]:
+    from app.domain.saas.db_models import Organization
     if scope == AccessReviewScope.ORG:
         resolved = org_id or settings.default_org_id
         result = await session.execute(sa.select(Organization).where(Organization.org_id == resolved))
@@ -110,6 +113,7 @@ async def _fetch_last_login_map(
     org_ids: list[uuid.UUID],
     as_of: datetime,
 ) -> dict[tuple[uuid.UUID, uuid.UUID], datetime]:
+    from app.domain.saas.db_models import SaaSSession
     if not org_ids:
         return {}
     stmt = (
@@ -190,8 +194,8 @@ async def _fetch_role_change_events(
 
 def _build_admin_user_entry(
     *,
-    membership: Membership,
-    user: User,
+    membership: "Membership",
+    user: "User",
     role_key: str,
     custom_permissions: list[str] | None,
     mfa_required: bool,
@@ -304,6 +308,7 @@ async def build_access_review_snapshot(
     config: AccessReviewConfig | None = None,
     generated_by: str | None = None,
 ) -> dict[str, Any]:
+    from app.domain.saas.db_models import Membership, MembershipRole, User
     resolved_config = config or AccessReviewConfig()
     orgs = await _resolve_orgs(session, scope, org_id)
     org_ids = [org.org_id for org in orgs]
