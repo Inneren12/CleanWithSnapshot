@@ -36,3 +36,4 @@ from app.domain.storage_quota import db_models as storage_quota_db_models  # noq
 from app.domain.config_audit import db_models as config_audit_db_models  # noqa: F401
 from app.domain.feature_flag_audit import db_models as feature_flag_audit_db_models  # noqa: F401
 from app.domain.audit_retention import db_models as audit_retention_db_models  # noqa: F401
+from app.domain.access_review import db_models as access_review_db_models  # noqa: F401

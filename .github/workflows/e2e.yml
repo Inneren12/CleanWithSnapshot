@@ -87,14 +87,225 @@ jobs:
           grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN|ADMIN_BASIC_USERNAME|ADMIN_BASIC_PASSWORD|LEGACY_BASIC_AUTH_ENABLED)=' backend/.env.e2e.ci \
             | sed -E 's/=.*/=<redacted>/'
 
-      - name: Compose up (E2E override)
+      - name: Validate E2E env file completeness
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          env_path = Path("backend/.env.e2e.ci")
+          if not env_path.exists():
+            raise SystemExit("backend/.env.e2e.ci missing")
+          content = env_path.read_text(encoding="utf-8").strip()
+          if not content:
+            raise SystemExit("backend/.env.e2e.ci is empty")
+
+          settings_text = Path("backend/app/settings.py").read_text(encoding="utf-8")
+          required = set(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be configured", settings_text))
+          required.update(re.findall(r"APP_ENV=prod requires ([A-Z0-9_]+) to be set", settings_text))
+          required.update(re.findall(r"([A-Z0-9_]+) is required when .* in prod", settings_text))
+          required.update(
+            {
+              "AUTH_SECRET_KEY",
+              "CLIENT_PORTAL_SECRET",
+              "WORKER_PORTAL_SECRET",
+              "METRICS_TOKEN",
+              "ADMIN_BASIC_USERNAME",
+              "ADMIN_BASIC_PASSWORD",
+              "LEGACY_BASIC_AUTH_ENABLED",
+            }
+          )
+
+          present = {
+            line.split("=", 1)[0]
+            for line in content.splitlines()
+            if line and not line.strip().startswith("#") and "=" in line
+          }
+          missing = sorted(required - present)
+          print("E2E env keys present:", ", ".join(sorted(present)))
+          if missing:
+            raise SystemExit(f"Missing required E2E env keys: {', '.join(missing)}")
+          PY
+
+      - name: Compose down (pre-cleanup)
+        run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v || true
+
+      - name: Log Docker Compose versions
+        run: |
+          docker compose version || true
+          docker version || true
+
+      - name: Verify E2E db command preload (source)
+        run: |
+          set -euo pipefail
+          if [ ! -f docker-compose.yml ] || [ ! -f docker-compose.e2e.yml ]; then
+            echo "Compose files missing"
+            ls -la docker-compose.yml docker-compose.e2e.yml || true
+            exit 1
+          fi
+          python - <<'PY'
+          import sys
+
+          content = open("docker-compose.e2e.yml", "r", encoding="utf-8").read().splitlines()
+          if not content:
+            raise SystemExit("docker-compose.e2e.yml is empty")
+
+          def indent_of(line: str) -> int:
+            return len(line) - len(line.lstrip(" "))
+
+          services_idx = None
+          services_indent = 0
+          for idx, line in enumerate(content):
+            if line.strip() == "services:":
+              services_idx = idx
+              services_indent = indent_of(line)
+              break
+          if services_idx is None:
+            print("services block not found")
+            print("\n".join(content[:120]))
+            raise SystemExit(1)
+
+          db_idx = None
+          db_indent = services_indent + 2
+          for idx in range(services_idx + 1, len(content)):
+            line = content[idx]
+            if not line.strip():
+              continue
+            if indent_of(line) == services_indent and line.strip().endswith(":"):
+              break
+            if indent_of(line) == db_indent and line.strip() == "db:":
+              db_idx = idx
+              break
+
+          if db_idx is None:
+            print("db service block not found in docker-compose.e2e.yml")
+            print("\n".join(content[services_idx:services_idx + 120]))
+            raise SystemExit(1)
+
+          db_block = [content[db_idx]]
+          for idx in range(db_idx + 1, len(content)):
+            line = content[idx]
+            if not line.strip():
+              db_block.append(line)
+              continue
+            if indent_of(line) <= db_indent and line.strip().endswith(":"):
+              break
+            db_block.append(line)
+
+          command_tokens: list[str] = []
+          command_block_indent = None
+          for idx, line in enumerate(db_block):
+            stripped = line.strip()
+            if stripped.startswith("command:"):
+              command_block_indent = indent_of(line)
+              after = stripped.removeprefix("command:").strip()
+              if after:
+                command_tokens.append(after)
+              for next_line in db_block[idx + 1:]:
+                if not next_line.strip():
+                  continue
+                next_indent = indent_of(next_line)
+                if next_indent <= command_block_indent:
+                  break
+                candidate = next_line.strip()
+                if candidate.startswith("- "):
+                  command_tokens.append(candidate.removeprefix("- ").strip())
+              break
+
+          print("Resolved db.command tokens:", command_tokens if command_tokens else "<missing>")
+          if not command_tokens:
+            print("---- db block ----")
+            print("\n".join(db_block))
+            raise SystemExit(1)
+
+          joined = " ".join(command_tokens)
+          if "shared_preload_libraries=pg_stat_statements" not in joined:
+            print("db.command missing shared_preload_libraries=pg_stat_statements")
+            print("---- db block ----")
+            print("\n".join(db_block))
+            raise SystemExit(1)
+          if "pg_stat_statements.track=all" not in joined:
+            print("db.command missing pg_stat_statements.track=all")
+            print("---- db block ----")
+            print("\n".join(db_block))
+            raise SystemExit(1)
+          PY
+
+      - name: Compose config (diagnostic only)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config > compose_config_stdout.yml 2> compose_config_stderr.log || true
+          if [ ! -s compose_config_stdout.yml ]; then
+            echo "docker compose config produced empty output (diagnostic only)"
+            cat compose_config_stderr.log || true
+          fi
+
+      - name: Compose up (db + redis)
         run: |
           set +e
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 db redis api web jobs
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 db redis
           status=$?
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 api || true
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
+          exit $status
+
+      - name: Wait for DB healthy
+        run: |
+          set -euo pipefail
+          db_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q db)
+          if [ -z "$db_container_id" ]; then
+            echo "DB container not found."
+            exit 1
+          fi
+          deadline=$((SECONDS + 180))
+          while true; do
+            health=$(docker inspect "$db_container_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}')
+            if [ "$health" = "healthy" ]; then
+              echo "DB is healthy."
+              break
+            fi
+            if [ "$health" = "unhealthy" ]; then
+              echo "DB is unhealthy."
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+              docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
+              exit 1
+            fi
+            if [ $SECONDS -ge $deadline ]; then
+              echo "Timed out waiting for DB health."
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+              docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
+              exit 1
+            fi
+            sleep 3
+          done
+
+      - name: Validate pg_stat_statements preload
+        run: |
+          set -euo pipefail
+          preload=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T db \
+            psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -c "SHOW shared_preload_libraries;")
+          echo "shared_preload_libraries=$preload"
+          if ! echo "$preload" | grep -q "pg_stat_statements"; then
+            echo "pg_stat_statements is not preloaded. Check docker-compose.e2e.yml db command overrides."
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
+            exit 1
+          fi
+
+      - name: Verify DB readiness via SQL
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T db \
+            psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select 1;"
+
+      - name: Compose up (api + web + jobs)
+        run: |
+          set +e
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 api web jobs
+          status=$?
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
           api_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q api)
           if [ -n "$api_container_id" ]; then
             docker inspect "$api_container_id" --format '{{json .State.Health}}' || true
@@ -109,12 +320,15 @@ jobs:
           echo ""
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml port api 8000 || true
           echo ""
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true
           echo ""
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
           echo ""
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api \
             python -c "import os; print('AUTH_SECRET_KEY set:', bool(os.getenv('AUTH_SECRET_KEY')))" || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic current || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic heads || true
 
       - name: Wait for stack readiness
         run: |
@@ -124,8 +338,10 @@ jobs:
             if ! curl -fsS --max-time 2 --retry 60 --retry-connrefused --retry-delay 2 "$url" >/dev/null; then
               echo "Timed out waiting for ${name} at ${url}"
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 db || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic current || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic heads || true
               return 1
             fi
           }
@@ -172,7 +388,7 @@ jobs:
           npx playwright test --config e2e/playwright.config.ts
 
       - name: Collect compose diagnostics
-        if: failure()
+        if: always()
         run: |
           {
             echo "== docker compose ps =="
@@ -185,10 +401,22 @@ jobs:
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml port api 8000 || true
             echo ""
             echo "== docker compose logs api (tail) =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=300 || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=400 || true
             echo ""
             echo "== docker compose logs db (tail) =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=200 || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+            echo ""
+            echo "== docker inspect db health =="
+            db_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q db)
+            if [ -n "$db_container_id" ]; then
+              docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
+            else
+              echo "db container missing"
+            fi
+            echo ""
+            echo "== alembic status (api) =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic current || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic heads || true
           } > e2e-compose-diagnostics.log
 
       - name: Upload Playwright report
@@ -206,7 +434,7 @@ jobs:
           path: web/test-results/**
 
       - name: Upload compose diagnostics
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-compose-diagnostics

@@ -21,11 +21,14 @@ docker compose run --rm api alembic upgrade head
 ## Verify
 
 ```bash
-docker compose exec db psql -U postgres -c "SELECT 1"
-docker compose exec db psql -U postgres -c "SELECT * FROM pg_stat_statements LIMIT 1;"
+docker compose exec db psql -U postgres -c "SHOW shared_preload_libraries;"
+docker compose exec db psql -U postgres -c "SELECT * FROM pg_extension WHERE extname='pg_stat_statements';"
+docker compose exec db psql -U postgres -c "SELECT query, calls, total_time FROM pg_stat_statements ORDER BY total_time DESC LIMIT 10;"
 ```
 
 ## Notes
 
 - `pg_stat_statements` requires the preload setting; if you change database configuration,
   ensure the preload line remains present before relying on the view.
+- Managed Postgres offerings may restrict `CREATE EXTENSION`. If extension creation fails,
+  enable `pg_stat_statements` via the provider console or request elevated permissions.
