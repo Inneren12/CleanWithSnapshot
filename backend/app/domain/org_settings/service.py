@@ -99,6 +99,54 @@ def resolve_finance_ready(record: OrganizationSettings) -> bool:
     return bool(getattr(record, "finance_ready", False))
 
 
+def resolve_data_export_request_rate_limit_per_minute(
+    record: OrganizationSettings,
+    fallback: int,
+) -> int:
+    value = getattr(record, "data_export_request_rate_limit_per_minute", None)
+    return value if value is not None else fallback
+
+
+def resolve_data_export_request_rate_limit_per_hour(
+    record: OrganizationSettings,
+    fallback: int,
+) -> int:
+    value = getattr(record, "data_export_request_rate_limit_per_hour", None)
+    return value if value is not None else fallback
+
+
+def resolve_data_export_download_rate_limit_per_minute(
+    record: OrganizationSettings,
+    fallback: int,
+) -> int:
+    value = getattr(record, "data_export_download_rate_limit_per_minute", None)
+    return value if value is not None else fallback
+
+
+def resolve_data_export_download_failure_limit_per_window(
+    record: OrganizationSettings,
+    fallback: int,
+) -> int:
+    value = getattr(record, "data_export_download_failure_limit_per_window", None)
+    return value if value is not None else fallback
+
+
+def resolve_data_export_download_lockout_limit_per_window(
+    record: OrganizationSettings,
+    fallback: int,
+) -> int:
+    value = getattr(record, "data_export_download_lockout_limit_per_window", None)
+    return value if value is not None else fallback
+
+
+def resolve_data_export_cooldown_minutes(
+    record: OrganizationSettings,
+    fallback: int,
+) -> int:
+    value = getattr(record, "data_export_cooldown_minutes", None)
+    return value if value is not None else fallback
+
+
 async def apply_org_settings_update(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -149,6 +197,22 @@ async def apply_org_settings_update(
         record.max_users = payload.max_users
     if "max_storage_bytes" in getattr(payload, "model_fields_set", set()):
         record.max_storage_bytes = payload.max_storage_bytes
+    if "data_export_request_rate_limit_per_minute" in getattr(payload, "model_fields_set", set()):
+        record.data_export_request_rate_limit_per_minute = payload.data_export_request_rate_limit_per_minute
+    if "data_export_request_rate_limit_per_hour" in getattr(payload, "model_fields_set", set()):
+        record.data_export_request_rate_limit_per_hour = payload.data_export_request_rate_limit_per_hour
+    if "data_export_download_rate_limit_per_minute" in getattr(payload, "model_fields_set", set()):
+        record.data_export_download_rate_limit_per_minute = payload.data_export_download_rate_limit_per_minute
+    if "data_export_download_failure_limit_per_window" in getattr(payload, "model_fields_set", set()):
+        record.data_export_download_failure_limit_per_window = (
+            payload.data_export_download_failure_limit_per_window
+        )
+    if "data_export_download_lockout_limit_per_window" in getattr(payload, "model_fields_set", set()):
+        record.data_export_download_lockout_limit_per_window = (
+            payload.data_export_download_lockout_limit_per_window
+        )
+    if "data_export_cooldown_minutes" in getattr(payload, "model_fields_set", set()):
+        record.data_export_cooldown_minutes = payload.data_export_cooldown_minutes
     await session.flush()
     after_snapshot = snapshot_org_settings(record)
     await config_audit_service.record_config_change(
@@ -185,4 +249,10 @@ def snapshot_org_settings(record: OrganizationSettings) -> dict[str, object | No
         "max_users": record.max_users,
         "max_storage_bytes": record.max_storage_bytes,
         "storage_bytes_used": record.storage_bytes_used,
+        "data_export_request_rate_limit_per_minute": record.data_export_request_rate_limit_per_minute,
+        "data_export_request_rate_limit_per_hour": record.data_export_request_rate_limit_per_hour,
+        "data_export_download_rate_limit_per_minute": record.data_export_download_rate_limit_per_minute,
+        "data_export_download_failure_limit_per_window": record.data_export_download_failure_limit_per_window,
+        "data_export_download_lockout_limit_per_window": record.data_export_download_lockout_limit_per_window,
+        "data_export_cooldown_minutes": record.data_export_cooldown_minutes,
     }

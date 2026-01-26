@@ -470,6 +470,12 @@ async def get_org_settings(
         max_storage_bytes=storage_snapshot.max_storage_bytes,
         storage_bytes_used=storage_snapshot.storage_bytes_used,
         storage_usage_percent=_usage_percent(storage_snapshot.storage_bytes_used, storage_snapshot.max_storage_bytes),
+        data_export_request_rate_limit_per_minute=record.data_export_request_rate_limit_per_minute,
+        data_export_request_rate_limit_per_hour=record.data_export_request_rate_limit_per_hour,
+        data_export_download_rate_limit_per_minute=record.data_export_download_rate_limit_per_minute,
+        data_export_download_failure_limit_per_window=record.data_export_download_failure_limit_per_window,
+        data_export_download_lockout_limit_per_window=record.data_export_download_lockout_limit_per_window,
+        data_export_cooldown_minutes=record.data_export_cooldown_minutes,
     )
 
 
@@ -517,6 +523,12 @@ async def update_org_settings(
         max_storage_bytes=storage_snapshot.max_storage_bytes,
         storage_bytes_used=storage_snapshot.storage_bytes_used,
         storage_usage_percent=_usage_percent(storage_snapshot.storage_bytes_used, storage_snapshot.max_storage_bytes),
+        data_export_request_rate_limit_per_minute=record.data_export_request_rate_limit_per_minute,
+        data_export_request_rate_limit_per_hour=record.data_export_request_rate_limit_per_hour,
+        data_export_download_rate_limit_per_minute=record.data_export_download_rate_limit_per_minute,
+        data_export_download_failure_limit_per_window=record.data_export_download_failure_limit_per_window,
+        data_export_download_lockout_limit_per_window=record.data_export_download_lockout_limit_per_window,
+        data_export_cooldown_minutes=record.data_export_cooldown_minutes,
     )
 
 

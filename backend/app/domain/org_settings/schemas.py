@@ -40,6 +40,12 @@ class OrgSettingsResponse(BaseModel):
     max_storage_bytes: int | None = Field(default=None, ge=0)
     storage_bytes_used: int = Field(default=0, ge=0)
     storage_usage_percent: float | None = None
+    data_export_request_rate_limit_per_minute: int | None = Field(default=None, ge=0)
+    data_export_request_rate_limit_per_hour: int | None = Field(default=None, ge=0)
+    data_export_download_rate_limit_per_minute: int | None = Field(default=None, ge=0)
+    data_export_download_failure_limit_per_window: int | None = Field(default=None, ge=0)
+    data_export_download_lockout_limit_per_window: int | None = Field(default=None, ge=0)
+    data_export_cooldown_minutes: int | None = Field(default=None, ge=0)
 
 
 class OrgSettingsUpdateRequest(BaseModel):
@@ -60,6 +66,12 @@ class OrgSettingsUpdateRequest(BaseModel):
     finance_ready: bool | None = None
     max_users: int | None = Field(default=None, ge=0)
     max_storage_bytes: int | None = Field(default=None, ge=0)
+    data_export_request_rate_limit_per_minute: int | None = Field(default=None, ge=0)
+    data_export_request_rate_limit_per_hour: int | None = Field(default=None, ge=0)
+    data_export_download_rate_limit_per_minute: int | None = Field(default=None, ge=0)
+    data_export_download_failure_limit_per_window: int | None = Field(default=None, ge=0)
+    data_export_download_lockout_limit_per_window: int | None = Field(default=None, ge=0)
+    data_export_cooldown_minutes: int | None = Field(default=None, ge=0)
 
     @field_validator("timezone")
     @classmethod

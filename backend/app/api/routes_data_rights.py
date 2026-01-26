@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, RedirectResponse
@@ -24,8 +25,10 @@ from app.domain.data_rights import service as data_rights_service
 from app.domain.data_rights.db_models import DataExportRequest
 from app.domain.iam import permissions as iam_permissions
 from app.domain.leads.db_models import Lead
+from app.domain.org_settings import service as org_settings_service
 from app.infra.db import get_db_session
 from app.infra.org_context import set_current_org_id
+from app.infra.security import create_rate_limiter
 from app.infra.storage import resolve_storage_backend
 from app.settings import settings
 
@@ -33,6 +36,18 @@ router = APIRouter(tags=["data-rights"])
 logger = logging.getLogger(__name__)
 
 CLIENT_SESSION_COOKIE = "client_session"
+
+
+@dataclass(frozen=True)
+class DataExportRateLimitPolicy:
+    request_per_minute: int
+    request_per_hour: int
+    download_per_minute: int
+    download_failure_limit: int
+    download_lockout_limit: int
+    download_failure_window_seconds: int
+    download_lockout_window_seconds: int
+    cooldown_seconds: int
 
 
 def _resolve_request_id(request: Request) -> str | None:
@@ -46,26 +61,185 @@ def _storage_backend(request: Request):
     return resolve_storage_backend(request.app.state)
 
 
-async def _enforce_data_rights_rate_limit(
-    request: Request, *, key_hint: str | None = None
-) -> Response | None:
-    limiter = getattr(request.app.state, "rate_limiter", None)
-    if not limiter:
-        return None
-    client_host = request.client.host if request.client else "unknown"
-    key_parts = ["data-rights", client_host]
-    if key_hint:
-        key_parts.append(key_hint)
-    allowed = await limiter.allow(":".join(key_parts))
-    if allowed:
-        return None
+def _resolve_metrics(request: Request):
+    return getattr(request.app.state, "metrics", None)
+
+
+def _export_rate_limit_response(
+    request: Request,
+    *,
+    endpoint: str,
+    retry_after_seconds: int,
+    detail: str,
+) -> Response:
+    metrics_client = _resolve_metrics(request)
+    if metrics_client is not None:
+        metrics_client.record_data_export_rate_limited(endpoint)
+    headers = {"Retry-After": str(max(1, int(retry_after_seconds)))}
     return problem_details(
         request=request,
         status=status.HTTP_429_TOO_MANY_REQUESTS,
         title="Too Many Requests",
-        detail="Data export rate limit exceeded",
+        detail=detail,
+        errors=[{"code": "DATA_EXPORT_RATE_LIMITED"}],
+        headers=headers,
         type_=PROBLEM_TYPE_RATE_LIMIT,
     )
+
+
+def _record_export_denied(request: Request, reason: str) -> None:
+    metrics_client = _resolve_metrics(request)
+    if metrics_client is not None:
+        metrics_client.record_data_export_denied(reason)
+
+
+def _get_export_rate_limiter(request: Request, *, limit: int, window_seconds: int):
+    if limit <= 0 or window_seconds <= 0:
+        return None
+    app_state = request.app.state
+    cache = getattr(app_state, "data_export_rate_limiters", None)
+    if cache is None:
+        cache = {}
+        app_state.data_export_rate_limiters = cache
+    cache_key = (limit, window_seconds)
+    limiter = cache.get(cache_key)
+    if limiter:
+        return limiter
+    app_settings = getattr(app_state, "app_settings", settings)
+    limiter = create_rate_limiter(
+        app_settings,
+        requests_per_minute=limit,
+        window_seconds=window_seconds,
+    )
+    cache[cache_key] = limiter
+    return limiter
+
+
+def _rate_limit_key(*parts: str) -> str:
+    return ":".join(part for part in parts if part)
+
+
+async def _resolve_export_policy(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+) -> DataExportRateLimitPolicy:
+    record = await org_settings_service.get_or_create_org_settings(session, org_id)
+    return DataExportRateLimitPolicy(
+        request_per_minute=org_settings_service.resolve_data_export_request_rate_limit_per_minute(
+            record, settings.data_export_request_rate_limit_per_minute
+        ),
+        request_per_hour=org_settings_service.resolve_data_export_request_rate_limit_per_hour(
+            record, settings.data_export_request_rate_limit_per_hour
+        ),
+        download_per_minute=org_settings_service.resolve_data_export_download_rate_limit_per_minute(
+            record, settings.data_export_download_rate_limit_per_minute
+        ),
+        download_failure_limit=org_settings_service.resolve_data_export_download_failure_limit_per_window(
+            record, settings.data_export_download_failure_limit_per_window
+        ),
+        download_lockout_limit=org_settings_service.resolve_data_export_download_lockout_limit_per_window(
+            record, settings.data_export_download_lockout_limit_per_window
+        ),
+        download_failure_window_seconds=settings.data_export_download_failure_window_seconds,
+        download_lockout_window_seconds=settings.data_export_download_lockout_window_seconds,
+        cooldown_seconds=org_settings_service.resolve_data_export_cooldown_minutes(
+            record, settings.data_export_cooldown_minutes
+        )
+        * 60,
+    )
+
+
+async def _enforce_export_request_limits(
+    request: Request,
+    *,
+    subject_key: str,
+    policy: DataExportRateLimitPolicy,
+) -> Response | None:
+    if policy.request_per_minute > 0:
+        limiter = _get_export_rate_limiter(
+            request,
+            limit=policy.request_per_minute,
+            window_seconds=60,
+        )
+        if limiter and not await limiter.allow(subject_key):
+            return _export_rate_limit_response(
+                request,
+                endpoint="request",
+                retry_after_seconds=60,
+                detail="Data export request rate limit exceeded",
+            )
+    if policy.request_per_hour > 0:
+        limiter = _get_export_rate_limiter(
+            request,
+            limit=policy.request_per_hour,
+            window_seconds=3600,
+        )
+        if limiter and not await limiter.allow(subject_key):
+            return _export_rate_limit_response(
+                request,
+                endpoint="request",
+                retry_after_seconds=3600,
+                detail="Data export request cooldown limit exceeded",
+            )
+    return None
+
+
+async def _enforce_export_download_limit(
+    request: Request,
+    *,
+    download_key: str,
+    policy: DataExportRateLimitPolicy,
+) -> Response | None:
+    if policy.download_per_minute <= 0:
+        return None
+    limiter = _get_export_rate_limiter(
+        request,
+        limit=policy.download_per_minute,
+        window_seconds=60,
+    )
+    if limiter and not await limiter.allow(download_key):
+        return _export_rate_limit_response(
+            request,
+            endpoint="download",
+            retry_after_seconds=60,
+            detail="Data export download rate limit exceeded",
+        )
+    return None
+
+
+async def _enforce_download_denied_limits(
+    request: Request,
+    *,
+    denied_key: str,
+    policy: DataExportRateLimitPolicy,
+) -> Response | None:
+    if policy.download_lockout_limit > 0:
+        limiter = _get_export_rate_limiter(
+            request,
+            limit=policy.download_lockout_limit,
+            window_seconds=policy.download_lockout_window_seconds,
+        )
+        if limiter and not await limiter.allow(denied_key):
+            return _export_rate_limit_response(
+                request,
+                endpoint="download",
+                retry_after_seconds=policy.download_lockout_window_seconds,
+                detail="Data export download locked due to repeated denied attempts",
+            )
+    if policy.download_failure_limit > 0:
+        limiter = _get_export_rate_limiter(
+            request,
+            limit=policy.download_failure_limit,
+            window_seconds=policy.download_failure_window_seconds,
+        )
+        if limiter and not await limiter.allow(denied_key):
+            return _export_rate_limit_response(
+                request,
+                endpoint="download",
+                retry_after_seconds=policy.download_failure_window_seconds,
+                detail="Data export download throttled due to repeated denied attempts",
+            )
+    return None
 
 
 def _client_token(request: Request) -> str | None:
@@ -150,6 +324,19 @@ def _resolve_admin_identity(
     return resolved
 
 
+def _actor_key(
+    *,
+    client_identity: client_schemas.ClientIdentity | None,
+    saas_identity: saas_auth.SaaSIdentity | None,
+) -> str:
+    if client_identity:
+        return f"client:{client_identity.client_id}"
+    if saas_identity:
+        value = saas_identity.user_id or saas_identity.email or "unknown"
+        return f"admin:{value}"
+    return "unknown"
+
+
 @router.post(
     "/v1/data-rights/export-request",
     response_model=data_rights_schemas.DataRightsExportRequestResponse,
@@ -159,16 +346,14 @@ async def request_data_export(
     payload: data_rights_schemas.DataRightsExportRequestPayload | None = None,
     session: AsyncSession = Depends(get_db_session),
 ) -> data_rights_schemas.DataRightsExportRequestResponse:
-    rate_limited = await _enforce_data_rights_rate_limit(request)
-    if rate_limited:
-        return rate_limited  # type: ignore[return-value]
-
     client_identity = await _get_client_identity(request)
     saas_identity = await _get_saas_identity(request)
     if not client_identity and not saas_identity:
+        _record_export_denied(request, "unauthenticated")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
     org_id = entitlements.resolve_org_id(request)
+    policy = await _resolve_export_policy(session, org_id)
     request_id = _resolve_request_id(request)
 
     if client_identity:
@@ -178,7 +363,12 @@ async def request_data_export(
         requested_by = client_identity.email
         requested_by_type = "client"
     else:
-        _require_export_permission(saas_identity)
+        try:
+            _require_export_permission(saas_identity)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_403_FORBIDDEN:
+                _record_export_denied(request, "missing_permission")
+            raise
         if not payload or not (payload.lead_id or payload.email):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="lead_id_or_email_required"
@@ -196,6 +386,34 @@ async def request_data_export(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lead_not_found")
             if lead.email:
                 subject_email = lead.email.lower()
+
+    subject_key = _rate_limit_key(
+        "data-export:request",
+        str(org_id),
+        subject_type,
+        str(subject_id),
+    )
+    rate_limited = await _enforce_export_request_limits(
+        request,
+        subject_key=subject_key,
+        policy=policy,
+    )
+    if rate_limited:
+        return rate_limited  # type: ignore[return-value]
+
+    existing = await data_rights_service.find_recent_export_request(
+        session,
+        org_id=org_id,
+        subject_id=str(subject_id) if subject_id else None,
+        subject_email=subject_email,
+        cooldown_seconds=policy.cooldown_seconds,
+    )
+    if existing:
+        return data_rights_schemas.DataRightsExportRequestResponse(
+            export_id=str(existing.export_id),
+            status=existing.status,
+            created_at=existing.created_at,
+        )
 
     record = await data_rights_service.create_data_export_request(
         session,
@@ -303,15 +521,13 @@ async def download_data_export(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
-    rate_limited = await _enforce_data_rights_rate_limit(request, key_hint=str(export_id))
-    if rate_limited:
-        return rate_limited
-
     client_identity = await _get_client_identity(request)
     saas_identity = await _get_saas_identity(request)
     if not client_identity and not saas_identity:
+        _record_export_denied(request, "unauthenticated")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     org_id = entitlements.resolve_org_id(request)
+    policy = await _resolve_export_policy(session, org_id)
 
     export_request = await session.scalar(
         select(DataExportRequest).where(
@@ -327,6 +543,19 @@ async def download_data_export(
         email_match = export_request.subject_email == client_identity.email.lower()
         id_match = export_request.subject_id == client_identity.client_id
         if not (email_match or id_match):
+            denied_key = _rate_limit_key(
+                "data-export:download-denied",
+                str(org_id),
+                _actor_key(client_identity=client_identity, saas_identity=None),
+            )
+            throttled = await _enforce_download_denied_limits(
+                request,
+                denied_key=denied_key,
+                policy=policy,
+            )
+            if throttled:
+                return throttled
+            _record_export_denied(request, "subject_mismatch")
             await audit_data_export_event(
                 session,
                 org_id=org_id,
@@ -346,6 +575,19 @@ async def download_data_export(
             _require_export_permission(saas_identity)
         except HTTPException as exc:
             if exc.status_code == status.HTTP_403_FORBIDDEN:
+                denied_key = _rate_limit_key(
+                    "data-export:download-denied",
+                    str(org_id),
+                    _actor_key(client_identity=None, saas_identity=saas_identity),
+                )
+                throttled = await _enforce_download_denied_limits(
+                    request,
+                    denied_key=denied_key,
+                    policy=policy,
+                )
+                if throttled:
+                    return throttled
+                _record_export_denied(request, "missing_permission")
                 admin_identity = _resolve_admin_identity(request, saas_identity)
                 request.state.explicit_admin_audit = True
                 await audit_data_export_event(
@@ -367,6 +609,21 @@ async def download_data_export(
                 )
                 await session.commit()
             raise
+
+    download_key = _rate_limit_key(
+        "data-export:download",
+        str(org_id),
+        export_request.subject_type,
+        export_request.subject_id,
+        str(export_id),
+    )
+    rate_limited = await _enforce_export_download_limit(
+        request,
+        download_key=download_key,
+        policy=policy,
+    )
+    if rate_limited:
+        return rate_limited
 
     if saas_identity:
         admin_identity = _resolve_admin_identity(request, saas_identity)
