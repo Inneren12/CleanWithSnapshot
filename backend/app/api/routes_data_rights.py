@@ -11,10 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import entitlements, saas_auth
 from app.api.admin_auth import AdminIdentity
 from app.api.problem_details import PROBLEM_TYPE_RATE_LIMIT, problem_details
-from app.domain.admin_audit import service as audit_service
-from app.domain.admin_audit.db_models import AdminAuditActionType, AdminAuditSensitivity
 from app.domain.clients import schemas as client_schemas
 from app.domain.clients import service as client_service
+from app.domain.data_rights.audit import (
+    DATA_EXPORT_DOWNLOAD_DENIED,
+    DATA_EXPORT_DOWNLOADED,
+    DATA_EXPORT_REQUESTED,
+    audit_data_export_event,
+)
 from app.domain.data_rights import schemas as data_rights_schemas
 from app.domain.data_rights import service as data_rights_service
 from app.domain.data_rights.db_models import DataExportRequest
@@ -207,35 +211,32 @@ async def request_data_export(
     if saas_identity:
         admin_identity = _resolve_admin_identity(request, saas_identity)
         request.state.explicit_admin_audit = True
-        await audit_service.audit_admin_action(
+        await audit_data_export_event(
             session,
-            identity=admin_identity,
             org_id=org_id,
-            action="data_export_requested",
-            action_type=AdminAuditActionType.WRITE,
-            sensitivity_level=AdminAuditSensitivity.CRITICAL,
-            resource_type="data_export",
-            resource_id=str(record.export_id),
-            context={
-                "request_id": request_id,
-                "subject_id": subject_id,
-                "subject_type": subject_type,
-                "subject_email": subject_email,
-            },
+            export_id=record.export_id,
+            subject_id=subject_id,
+            subject_type=subject_type,
+            actor_type="admin",
+            actor_id=None,
+            admin_identity=admin_identity,
+            request_id=request_id,
+            status=record.status,
+            on_behalf_of={"subject_id": subject_id, "subject_type": subject_type},
+            event=DATA_EXPORT_REQUESTED,
         )
     else:
-        await audit_service.record_system_action(
+        await audit_data_export_event(
             session,
             org_id=org_id,
-            action="data_export_requested",
-            resource_type="data_export",
-            resource_id=str(record.export_id),
-            context={
-                "request_id": request_id,
-                "subject_id": subject_id,
-                "subject_type": subject_type,
-                "subject_email": subject_email,
-            },
+            export_id=record.export_id,
+            subject_id=subject_id,
+            subject_type=subject_type,
+            actor_type="subject",
+            actor_id=client_identity.client_id if client_identity else None,
+            request_id=request_id,
+            status=record.status,
+            event=DATA_EXPORT_REQUESTED,
         )
 
     await session.commit()
@@ -321,37 +322,84 @@ async def download_data_export(
     if not export_request or export_request.status != "completed" or not export_request.storage_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
 
+    request_id = _resolve_request_id(request)
     if client_identity:
         email_match = export_request.subject_email == client_identity.email.lower()
         id_match = export_request.subject_id == client_identity.client_id
         if not (email_match or id_match):
+            await audit_data_export_event(
+                session,
+                org_id=org_id,
+                export_id=export_request.export_id,
+                subject_id=export_request.subject_id,
+                subject_type=export_request.subject_type,
+                actor_type="subject",
+                actor_id=client_identity.client_id,
+                request_id=request_id,
+                event=DATA_EXPORT_DOWNLOAD_DENIED,
+                reason_code="subject_mismatch",
+            )
+            await session.commit()
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     else:
-        _require_export_permission(saas_identity)
+        try:
+            _require_export_permission(saas_identity)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_403_FORBIDDEN:
+                admin_identity = _resolve_admin_identity(request, saas_identity)
+                request.state.explicit_admin_audit = True
+                await audit_data_export_event(
+                    session,
+                    org_id=org_id,
+                    export_id=export_request.export_id,
+                    subject_id=export_request.subject_id,
+                    subject_type=export_request.subject_type,
+                    actor_type="admin",
+                    actor_id=None,
+                    admin_identity=admin_identity,
+                    request_id=request_id,
+                    event=DATA_EXPORT_DOWNLOAD_DENIED,
+                    reason_code="missing_permission",
+                    on_behalf_of={
+                        "subject_id": export_request.subject_id,
+                        "subject_type": export_request.subject_type,
+                    },
+                )
+                await session.commit()
+            raise
 
-    request_id = _resolve_request_id(request)
     if saas_identity:
         admin_identity = _resolve_admin_identity(request, saas_identity)
         request.state.explicit_admin_audit = True
-        await audit_service.audit_admin_action(
+        await audit_data_export_event(
             session,
-            identity=admin_identity,
             org_id=org_id,
-            action="data_export_downloaded",
-            action_type=AdminAuditActionType.READ,
-            sensitivity_level=AdminAuditSensitivity.CRITICAL,
-            resource_type="data_export",
-            resource_id=str(export_request.export_id),
-            context={"request_id": request_id},
+            export_id=export_request.export_id,
+            subject_id=export_request.subject_id,
+            subject_type=export_request.subject_type,
+            actor_type="admin",
+            actor_id=None,
+            admin_identity=admin_identity,
+            request_id=request_id,
+            event=DATA_EXPORT_DOWNLOADED,
+            status=export_request.status,
+            on_behalf_of={
+                "subject_id": export_request.subject_id,
+                "subject_type": export_request.subject_type,
+            },
         )
     else:
-        await audit_service.record_system_action(
+        await audit_data_export_event(
             session,
             org_id=org_id,
-            action="data_export_downloaded",
-            resource_type="data_export",
-            resource_id=str(export_request.export_id),
-            context={"request_id": request_id},
+            export_id=export_request.export_id,
+            subject_id=export_request.subject_id,
+            subject_type=export_request.subject_type,
+            actor_type="subject",
+            actor_id=client_identity.client_id if client_identity else None,
+            request_id=request_id,
+            event=DATA_EXPORT_DOWNLOADED,
+            status=export_request.status,
         )
     await session.commit()
 
