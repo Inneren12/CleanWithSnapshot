@@ -75,6 +75,17 @@ Data retention runs are transactional per category. If a category fails, the tra
 
 Retention enforcement is idempotent; re-running a category after successful deletion will delete zero additional records once the dataset is compliant.
 
+## Compliance Tests
+
+The compliance suite verifies that retention enforcement deletes stale data, preserves protected categories, and emits audit entries for each purge
+run. It uses a fixed reference time to keep the tests deterministic.
+
+Run the compliance suite with:
+
+```bash
+pytest backend/tests/test_retention_compliance.py
+```
+
 ## Analytics Classification & Privacy Guarantees
 
 Analytics data is classified into:
