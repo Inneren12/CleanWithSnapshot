@@ -149,6 +149,8 @@ class Settings(BaseSettings):
     retention_soft_deleted_days: int | None = Field(30)
     retention_audit_log_days: int | None = Field(365 * 7)
     retention_batch_size: int = Field(500)
+    log_retention_batch_retries: int = Field(3)
+    log_retention_batch_retry_delay_seconds: float = Field(0.5)
     audit_retention_admin_days: int = Field(365 * 3)
     audit_retention_config_days: int = Field(365 * 7)
     audit_retention_batch_size: int = Field(500)

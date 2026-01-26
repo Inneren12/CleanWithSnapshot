@@ -60,6 +60,7 @@ class Metrics:
             self.storage_reservations_pending = None
             self.audit_records_purged_total = None
             self.audit_records_on_legal_hold_total = None
+            self.logs_purged_total = None
             self.retention_records_deleted_total = None
             self.feature_flags_stale_total = None
             self.break_glass_grants_total = None
@@ -247,6 +248,11 @@ class Metrics:
         self.audit_records_on_legal_hold_total = Counter(
             "audit_records_on_legal_hold_total",
             "Audit records prevented from purge due to legal hold.",
+            registry=self.registry,
+        )
+        self.logs_purged_total = Counter(
+            "logs_purged_total",
+            "Application logs purged by retention job.",
             registry=self.registry,
         )
         self.retention_records_deleted_total = Counter(
@@ -515,6 +521,13 @@ class Metrics:
         if count <= 0:
             return
         self.audit_records_on_legal_hold_total.inc(count)
+
+    def record_logs_purged(self, count: int) -> None:
+        if not self.enabled or self.logs_purged_total is None:
+            return
+        if count <= 0:
+            return
+        self.logs_purged_total.inc(count)
 
     def record_retention_deletion(self, category: str, count: int) -> None:
         if not self.enabled or self.retention_records_deleted_total is None:

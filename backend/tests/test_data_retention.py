@@ -8,7 +8,7 @@ from app.domain.data_retention import RetentionCategory, enforce_retention
 from app.domain.leads.db_models import Lead
 from app.domain.leads.statuses import default_lead_status
 from app.domain.reason_logs.db_models import ReasonLog
-from app.jobs import data_retention
+from app.jobs import log_retention
 from app.settings import settings
 
 
@@ -152,12 +152,12 @@ async def test_job_idempotency(async_session_maker):
             await session.commit()
 
         async with async_session_maker() as session:
-            first = await data_retention.run_data_retention_daily(session)
-            assert first[RetentionCategory.APPLICATION_LOGS.value] == 1
+            first = await log_retention.run_log_retention_daily(session)
+            assert first["deleted"] == 1
 
         async with async_session_maker() as session:
-            second = await data_retention.run_data_retention_daily(session)
-            assert second[RetentionCategory.APPLICATION_LOGS.value] == 0
+            second = await log_retention.run_log_retention_daily(session)
+            assert second["deleted"] == 0
     finally:
         settings.retention_application_log_days = original_app_days
 

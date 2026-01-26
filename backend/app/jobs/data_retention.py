@@ -36,7 +36,6 @@ async def run_data_retention_daily(session: AsyncSession) -> dict[str, int]:
     return await _run_categories(
         session,
         [
-            RetentionCategory.APPLICATION_LOGS,
             RetentionCategory.ANALYTICS_EVENTS,
         ],
     )
