@@ -103,6 +103,46 @@ Each anomaly entry includes `rule`, `severity`, `org_id`, and (when applicable) 
    - Require sign-off from Security/Governance and the Org Owner (or delegated admin).
    - Attach the artifacts and anomaly resolution notes to the quarterly review record.
 
+## Evidence package report (PR-GOV-10 v2)
+
+The evidence package bundles the snapshot, audit extract, Markdown report, and SHA-256 checksums into a
+tamper-evident archive that can be stored for compliance. The bundle is deterministic for a fixed snapshot
+and `--generated-at` value.
+
+### Generate the evidence bundle
+```bash
+python backend/scripts/access_review_report.py \
+  --snapshot ./access-review/access_review_org_<org_uuid>_20240331T235959Z.json \
+  --output-dir ./access-review \
+  --generated-at 2024-03-31T23:59:59Z \
+  --signed-by "security-reviewer@example.com"
+```
+
+This produces a subdirectory containing:
+- `report.md`
+- `snapshot.json`
+- `audit_extract.json` (role-change events within the lookback window)
+- `metadata.json`
+- `checksums.txt`
+
+### Verify integrity (tamper evidence)
+1. Verify per-file hashes:
+   ```bash
+   cd ./access-review/<bundle_dir>
+   sha256sum -c checksums.txt
+   ```
+
+2. Verify the manifest hash:
+   ```bash
+   grep -v '^#' checksums.txt | sha256sum
+   ```
+   Compare the output to the `manifest_sha256` value listed at the bottom of `checksums.txt`.
+
+### Storage guidance
+- Store the entire evidence bundle directory in an access-controlled archive.
+- Record the `manifest_sha256` value in the compliance ticket for quick tamper checks.
+- Avoid modifying any file in the bundle once stored; regenerate instead for corrections.
+
 ## Output guarantees
 - No secrets (passwords, tokens, MFA secrets) are included in the snapshot.
 - Output ordering is deterministic for the same inputs and `--as-of` timestamp.
