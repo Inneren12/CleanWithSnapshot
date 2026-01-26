@@ -18,6 +18,7 @@ from app.jobs.heartbeat import _resolve_runner_id, record_heartbeat
 from app.jobs import (
     accounting_export,
     audit_retention,
+    data_retention,
     dlq_auto_replay,
     email_jobs,
     flag_retirement,
@@ -160,6 +161,10 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         return lambda session: storage_quota.run_storage_quota_reconciliation(session)
     if name == "audit-retention":
         return lambda session: audit_retention.run_audit_retention(session)
+    if name == "data-retention-daily":
+        return lambda session: data_retention.run_data_retention_daily(session)
+    if name == "data-retention-weekly":
+        return lambda session: data_retention.run_data_retention_weekly(session)
     if name == "feature-flag-retirement":
         return lambda session: flag_retirement.run_feature_flag_retirement(session)
     if name == "feature-flag-governance":
@@ -215,6 +220,8 @@ async def run(argv: list[str] | None = None) -> None:
             "storage-quota-cleanup",
             "storage-quota-reconcile",
             "audit-retention",
+            "data-retention-daily",
+            "data-retention-weekly",
             "feature-flag-retirement",
             "feature-flag-governance",
             "notifications-digest-daily",
