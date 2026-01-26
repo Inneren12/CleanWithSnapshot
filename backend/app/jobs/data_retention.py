@@ -42,7 +42,6 @@ async def run_data_retention_weekly(session: AsyncSession) -> dict[str, int]:
     return await _run_categories(
         session,
         [
-            RetentionCategory.SOFT_DELETED_ENTITIES,
             RetentionCategory.AUDIT_LOGS,
         ],
     )

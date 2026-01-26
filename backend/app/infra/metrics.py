@@ -63,6 +63,7 @@ class Metrics:
             self.logs_purged_total = None
             self.retention_records_deleted_total = None
             self.analytics_events_purged_total = None
+            self.soft_deleted_entities_purged_total = None
             self.feature_flags_stale_total = None
             self.break_glass_grants_total = None
             self.break_glass_active = None
@@ -265,6 +266,12 @@ class Metrics:
         self.analytics_events_purged_total = Counter(
             "analytics_events_purged_total",
             "Raw analytics events purged by retention job.",
+            registry=self.registry,
+        )
+        self.soft_deleted_entities_purged_total = Counter(
+            "soft_deleted_entities_purged_total",
+            "Soft-deleted entities purged after grace period.",
+            ["entity_type"],
             registry=self.registry,
         )
         self.feature_flags_stale_total = Gauge(
@@ -549,6 +556,14 @@ class Metrics:
         if count <= 0:
             return
         self.analytics_events_purged_total.inc(count)
+
+    def record_soft_delete_purge(self, entity_type: str, count: int) -> None:
+        if not self.enabled or self.soft_deleted_entities_purged_total is None:
+            return
+        if count <= 0:
+            return
+        safe_type = entity_type or "unknown"
+        self.soft_deleted_entities_purged_total.labels(entity_type=safe_type).inc(count)
 
     def record_storage_quota_rejection(self, reason: str) -> None:
         self.record_org_storage_quota_rejection(reason)

@@ -8,7 +8,7 @@ This document defines the centralized data retention framework that enforces ret
 | --- | --- | --- | --- | --- |
 | application logs | Request, error, and operational logs stored in the database (reason logs). **Excludes audit logs and security logs with extended retention.** | 30 days | `retention_application_log_days` | Purged daily via log retention job. |
 | analytics events | Raw, user-level analytics event logs (timestamped). | 90 days | `retention_analytics_event_days` | Purged daily via analytics retention job. Aggregated metrics are retained. |
-| soft-deleted entities | Records marked as deleted (soft delete). | 30 days | `retention_soft_deleted_days` | Purged weekly via data retention job. |
+| soft-deleted entities | Records marked as deleted (soft delete). | 30 days | `retention_soft_deleted_days` | Purged daily via the soft-delete purge job with legal-hold safeguards. |
 | audit logs | Administrative/configuration audit logs. | 7 years (2555 days) | `retention_audit_log_days` | **Reference-only in this framework.** Purge enforcement remains in the dedicated audit retention job/policy. |
 
 Retention policies are centrally defined in code (`app.settings`) and used by the retention engine.
@@ -20,7 +20,8 @@ Retention policies are centrally defined in code (`app.settings`) and used by th
 | `log-retention-daily` | Daily | application logs |
 | `data-retention-daily` | Daily | analytics events (raw only, legacy alias) |
 | `analytics-retention-daily` | Daily | analytics events (raw only) |
-| `data-retention-weekly` | Weekly | soft-deleted entities, audit logs (reference-only) |
+| `data-retention-weekly` | Weekly | audit logs (reference-only) |
+| `soft-delete-purge-daily` | Daily | soft-deleted entities |
 
 Schedulers should run these jobs daily/weekly. The jobs call the centralized retention service and do not delete data directly.
 
@@ -37,6 +38,32 @@ Log retention runs additionally emit:
 Analytics retention runs additionally emit:
 - A system audit entry with `category=analytics` and the data classification.
 - A Prometheus counter: `analytics_events_purged_total`.
+
+Soft-delete purge runs additionally emit:
+- A system audit entry with `category=soft_delete_purge`, the entity type, deleted/held counts, and the applied grace period.
+- A Prometheus counter: `soft_deleted_entities_purged_total{entity_type}`.
+
+## Soft-Delete Purge Policy Inventory
+
+Soft-delete purges are defined per entity type with explicit cascade and exclusion rules:
+
+| Entity type | Grace period | Cascade order | Exclusions |
+| --- | --- | --- | --- |
+| `lead` | `retention_soft_deleted_days` | `lead_quote_followups → lead_quotes → referral_credits → lead_touchpoints → leads` | audit logs, payments, invoices, bookings, policy override audits |
+
+## Legal Holds & Retention Overrides
+
+Soft-deleted records can be placed on legal hold (per-record flag). Records on legal hold are **never** purged, and the
+purge job reports the count of held records to audit logs and metrics. This ensures legal/retention overrides are visible
+in compliance reporting while still allowing routine purges of non-held data.
+
+## Operator Troubleshooting
+
+If a soft-delete purge run deletes zero records when you expect purges:
+- Verify `retention_soft_deleted_days` is set to a positive number.
+- Confirm `deleted_at` is populated on the entity and is older than the grace period.
+- Check the legal hold flag (held records are skipped and counted).
+- Ensure the job is scheduled (`soft-delete-purge-daily`) and metrics/audit logs are flowing.
 
 ## Failure & Retry Behavior
 

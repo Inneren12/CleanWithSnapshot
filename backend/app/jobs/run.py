@@ -33,6 +33,7 @@ from app.jobs import (
     qbo_sync,
     storage_quota,
     storage_janitor,
+    soft_delete_purge,
 )
 from app.infra.storage import new_storage_backend
 from app.domain.ops.db_models import JobHeartbeat
@@ -171,6 +172,8 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         return lambda session: data_retention.run_data_retention_daily(session)
     if name == "data-retention-weekly":
         return lambda session: data_retention.run_data_retention_weekly(session)
+    if name == "soft-delete-purge-daily":
+        return lambda session: soft_delete_purge.run_soft_delete_purge(session)
     if name == "feature-flag-retirement":
         return lambda session: flag_retirement.run_feature_flag_retirement(session)
     if name == "feature-flag-governance":
@@ -229,6 +232,7 @@ async def run(argv: list[str] | None = None) -> None:
             "log-retention-daily",
             "data-retention-daily",
             "data-retention-weekly",
+            "soft-delete-purge-daily",
             "feature-flag-retirement",
             "feature-flag-governance",
             "notifications-digest-daily",
