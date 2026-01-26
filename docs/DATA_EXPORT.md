@@ -50,6 +50,25 @@ The bundle is stored as a JSON payload containing:
 
 Sensitive keys are redacted, and internal secrets (tokens, signatures) are excluded.
 
+## Completeness tests
+
+The test suite enforces a canonical export contract to ensure GDPR/CCPA bundles stay complete and scoped to
+the subject:
+
+- **Contract coverage:** tests assert the exported top-level sections and required fields per section
+  (`leads`, `bookings`, `invoices`, `payments`, `photos`) to guarantee minimum schema coverage.
+- **Subject scope:** fixtures generate data in multiple modules for a subject and confirm all records are present.
+- **Cross-org isolation:** parallel fixtures in another org validate that no cross-tenant data appears.
+- **Secret redaction:** fixtures include token-like keys to verify export redaction replaces them with `[REDACTED]`.
+
+### Updating the contract safely
+
+When adding a new exportable domain module or field:
+
+1. Update the export builder to include the new section/fields.
+2. Extend the export contract in `backend/tests/test_data_export_completeness.py` with the new section/keys.
+3. Add fixture data for the new section to keep the completeness test deterministic.
+
 ## Security model
 
 - **Authentication required** for all endpoints (client portal token or SaaS token).
