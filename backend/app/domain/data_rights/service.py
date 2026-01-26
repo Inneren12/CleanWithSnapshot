@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings import photos_service
 from app.domain.bookings.db_models import Booking, OrderPhoto
-from app.domain.data_rights.db_models import DataDeletionRequest
+from app.domain.data_rights.db_models import DataDeletionRequest, DataExportRequest
 from app.domain.errors import DomainError
 from app.domain.invoices.db_models import Invoice, InvoicePublicToken, Payment
 from app.domain.leads.db_models import Lead
 from app.domain.leads.service import export_payload_from_lead
 from app.infra.storage import StorageBackend, new_storage_backend
+from app.settings import settings
 
 
 def _sanitize_booking(booking: Booking) -> dict:
@@ -300,3 +303,177 @@ async def process_pending_deletions(
         "photos_deleted": photos_deleted,
         "invoices_detached": invoices_detached,
     }
+
+
+_SENSITIVE_EXPORT_KEYS = {
+    "token",
+    "secret",
+    "signature",
+    "authorization",
+    "access_token",
+    "refresh_token",
+    "id_token",
+}
+
+
+def _redact_sensitive_fields(payload: Any) -> Any:
+    if payload is None:
+        return None
+    if isinstance(payload, list):
+        return [_redact_sensitive_fields(item) for item in payload]
+    if isinstance(payload, dict):
+        sanitized: dict[str, Any] = {}
+        for key, value in payload.items():
+            normalized = str(key).lower()
+            if (
+                normalized in _SENSITIVE_EXPORT_KEYS
+                or normalized.endswith("_token")
+                or normalized.endswith("_secret")
+            ):
+                sanitized[key] = "[REDACTED]"
+            else:
+                sanitized[key] = _redact_sensitive_fields(value)
+        return sanitized
+    return payload
+
+
+async def create_data_export_request(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    subject_id: str,
+    subject_type: str,
+    subject_email: str | None,
+    requested_by: str | None,
+    requested_by_type: str | None,
+    request_id: str | None,
+) -> DataExportRequest:
+    record = DataExportRequest(
+        org_id=org_id,
+        subject_id=subject_id,
+        subject_type=subject_type,
+        subject_email=subject_email,
+        status="pending",
+        requested_by=requested_by,
+        requested_by_type=requested_by_type,
+        request_id=request_id,
+    )
+    session.add(record)
+    await session.flush()
+    return record
+
+
+async def list_data_export_requests(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    subject_email: str | None = None,
+    subject_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[DataExportRequest], int]:
+    stmt = select(DataExportRequest).where(DataExportRequest.org_id == org_id)
+    if subject_email and subject_id:
+        stmt = stmt.where(
+            or_(
+                DataExportRequest.subject_email == subject_email,
+                DataExportRequest.subject_id == subject_id,
+            )
+        )
+    elif subject_email:
+        stmt = stmt.where(DataExportRequest.subject_email == subject_email)
+    elif subject_id:
+        stmt = stmt.where(DataExportRequest.subject_id == subject_id)
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = (await session.execute(count_stmt)).scalar_one()
+    stmt = stmt.order_by(DataExportRequest.created_at.desc()).limit(limit).offset(offset)
+    result = await session.execute(stmt)
+    return list(result.scalars().all()), total
+
+
+async def generate_data_export_bundle(
+    session: AsyncSession,
+    *,
+    export_request: DataExportRequest,
+    storage_backend: StorageBackend | None = None,
+) -> DataExportRequest:
+    storage = storage_backend or getattr(session.bind, "storage_backend", None) or new_storage_backend()
+    export_request.status = "processing"
+    await session.flush()
+
+    lead_id = export_request.subject_id if export_request.subject_type == "lead" else None
+    email = export_request.subject_email if export_request.subject_email else None
+    if export_request.subject_type == "email":
+        email = export_request.subject_id
+
+    try:
+        bundle = await export_client_data(
+            session,
+            export_request.org_id,
+            lead_id=lead_id,
+            email=email,
+        )
+    except DomainError as exc:
+        export_request.status = "failed"
+        export_request.error_code = exc.detail
+        await session.flush()
+        return export_request
+
+    sanitized_bundle = _redact_sensitive_fields(bundle)
+    payload = {
+        "export_id": str(export_request.export_id),
+        "org_id": str(export_request.org_id),
+        "subject_id": export_request.subject_id,
+        "subject_type": export_request.subject_type,
+        "subject_email": export_request.subject_email,
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        "data": sanitized_bundle,
+    }
+    data_bytes = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    async def _stream() -> Any:
+        yield data_bytes
+
+    key = f"data-exports/{export_request.org_id}/{export_request.export_id}.json"
+    stored = await storage.put(
+        key=key,
+        body=_stream(),
+        content_type="application/json",
+    )
+    export_request.storage_key = stored.key
+    export_request.content_type = stored.content_type
+    export_request.size_bytes = stored.size
+    export_request.status = "completed"
+    export_request.completed_at = datetime.now(tz=timezone.utc)
+    export_request.error_code = None
+    await session.flush()
+    return export_request
+
+
+async def purge_expired_exports(
+    session: AsyncSession,
+    *,
+    storage_backend: StorageBackend | None = None,
+) -> dict[str, int]:
+    retention_days = settings.data_export_retention_days
+    if not retention_days or retention_days <= 0:
+        return {"processed": 0, "deleted": 0}
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=retention_days)
+    stmt = select(DataExportRequest).where(
+        DataExportRequest.completed_at.is_not(None),
+        DataExportRequest.completed_at <= cutoff,
+    )
+    result = await session.execute(stmt)
+    records = list(result.scalars().all())
+    processed = 0
+    deleted = 0
+    storage = storage_backend or getattr(session.bind, "storage_backend", None) or new_storage_backend()
+    for record in records:
+        processed += 1
+        if record.storage_key:
+            await storage.delete(key=record.storage_key)
+            deleted += 1
+        await session.delete(record)
+    if records:
+        await session.commit()
+    return {"processed": processed, "deleted": deleted}

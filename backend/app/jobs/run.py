@@ -20,6 +20,7 @@ from app.jobs import (
     analytics_retention,
     audit_retention,
     data_retention,
+    data_export,
     dlq_auto_replay,
     email_jobs,
     flag_retirement,
@@ -172,6 +173,10 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         return lambda session: data_retention.run_data_retention_daily(session)
     if name == "data-retention-weekly":
         return lambda session: data_retention.run_data_retention_weekly(session)
+    if name == "data-rights-export":
+        return lambda session: data_export.run_pending_data_exports(session, storage_backend=_STORAGE)
+    if name == "data-export-retention":
+        return lambda session: data_export.run_data_export_retention(session, storage_backend=_STORAGE)
     if name == "soft-delete-purge-daily":
         return lambda session: soft_delete_purge.run_soft_delete_purge(session)
     if name == "feature-flag-retirement":

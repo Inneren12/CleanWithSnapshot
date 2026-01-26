@@ -121,6 +121,8 @@ class Settings(BaseSettings):
     export_webhook_allowed_hosts_raw: str | None = Field(None, validation_alias="export_webhook_allowed_hosts")
     export_webhook_allow_http: bool = Field(False)
     export_webhook_block_private_ips: bool = Field(True)
+    data_export_signed_url_ttl_seconds: int = Field(600)
+    data_export_retention_days: int = Field(7)
     captcha_enabled: bool = Field(True)
     captcha_mode: Literal["off", "turnstile"] = Field("off")
     turnstile_secret_key: str | None = Field(None)
