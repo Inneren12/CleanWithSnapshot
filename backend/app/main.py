@@ -38,6 +38,7 @@ from app.api.routes_checklists import router as checklists_router
 from app.api.routes_health import router as health_router
 from app.api.health_backup import router as health_backup_router
 from app.api.routes_client import router as client_router
+from app.api.routes_data_rights import router as data_rights_router
 from app.api.routes_payments import router as payments_router
 from app.api.routes_orders import router as orders_router
 from app.api.routes_time_tracking import router as time_tracking_router
@@ -464,6 +465,7 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
     app.include_router(estimate_router)
     app.include_router(chat_router)
     app.include_router(client_router)
+    app.include_router(data_rights_router)
     app.include_router(payments_router)
     app.include_router(billing_router)
     app.include_router(orders_router)

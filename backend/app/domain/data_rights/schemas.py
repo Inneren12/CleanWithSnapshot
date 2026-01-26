@@ -25,6 +25,29 @@ class DataExportResponse(BaseModel):
     photos: list[dict]
 
 
+class DataRightsExportRequestPayload(BaseModel):
+    lead_id: str | None = None
+    email: EmailStr | None = None
+
+
+class DataRightsExportRequestResponse(BaseModel):
+    export_id: str
+    status: str
+    created_at: datetime
+
+
+class DataRightsExportListItem(BaseModel):
+    export_id: str
+    status: str
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class DataRightsExportListResponse(BaseModel):
+    items: list[DataRightsExportListItem]
+    total: int
+
+
 class DataDeletionRequestPayload(BaseModel):
     lead_id: str | None = None
     email: EmailStr | None = None
