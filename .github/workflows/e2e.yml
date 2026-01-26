@@ -130,6 +130,28 @@ jobs:
       - name: Compose down (pre-cleanup)
         run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v || true
 
+      - name: Verify compose db command preload
+        run: |
+          set -euo pipefail
+          config_json=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml config --format json)
+          python - <<'PY'
+          import json
+          import sys
+
+          payload = json.loads(sys.stdin.read())
+          db = payload.get("services", {}).get("db", {})
+          command = db.get("command", [])
+          if isinstance(command, str):
+            command_list = [command]
+          else:
+            command_list = command or []
+          print("Resolved db.command:", command_list)
+          joined = " ".join(command_list)
+          if "shared_preload_libraries=pg_stat_statements" not in joined:
+            raise SystemExit("db.command is missing shared_preload_libraries=pg_stat_statements")
+          PY
+          <<<"$config_json"
+
       - name: Compose up (db + redis)
         run: |
           set +e
@@ -179,6 +201,7 @@ jobs:
           echo "shared_preload_libraries=$preload"
           if ! echo "$preload" | grep -q "pg_stat_statements"; then
             echo "pg_stat_statements is not preloaded. Check docker-compose.e2e.yml db command overrides."
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
             exit 1
           fi
 
