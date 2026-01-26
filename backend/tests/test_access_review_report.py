@@ -98,6 +98,9 @@ def _build_audit_extract(snapshot: dict) -> dict:
         "window_end": snapshot["as_of"],
         "event_count": 0,
         "events": [],
+        "break_glass_window_start": "2024-01-01T00:00:00Z",
+        "break_glass_event_count": 0,
+        "break_glass_events": [],
     }
 
 
@@ -196,7 +199,7 @@ async def test_access_review_report_audit_extract_minimal(async_session_maker):
             "org_id": str(org.org_id),
             "as_of": fixed_now.isoformat().replace("+00:00", "Z"),
             "generated_at": fixed_now.isoformat().replace("+00:00", "Z"),
-            "config": {"role_change_lookback_days": 90},
+            "config": {"role_change_lookback_days": 90, "break_glass_lookback_days": 90},
             "orgs": [{"org_id": str(org.org_id)}],
         }
 
@@ -207,6 +210,7 @@ async def test_access_review_report_audit_extract_minimal(async_session_maker):
         )
 
     assert audit_extract["event_count"] == 1
+    assert "break_glass_event_count" in audit_extract
     event = audit_extract["events"][0]
     assert "context" not in json.dumps(event)
     assert event["action_type"] == "WRITE"

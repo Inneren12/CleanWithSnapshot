@@ -137,23 +137,32 @@ async def _fetch_break_glass_usage(
     org_ids: list[uuid.UUID],
     cutoff: datetime,
     as_of: datetime,
-) -> tuple[set[tuple[uuid.UUID, str]], dict[uuid.UUID, list[datetime]]]:
+) -> tuple[set[tuple[uuid.UUID, str]], set[tuple[uuid.UUID, str]], dict[uuid.UUID, list[datetime]]]:
     if not org_ids:
-        return set(), {}
-    stmt = sa.select(BreakGlassSession.org_id, BreakGlassSession.actor, BreakGlassSession.created_at).where(
+        return set(), set(), {}
+    stmt = sa.select(
+        BreakGlassSession.org_id,
+        BreakGlassSession.actor_id,
+        BreakGlassSession.actor,
+        BreakGlassSession.granted_at,
+    ).where(
         BreakGlassSession.org_id.in_(org_ids),
-        BreakGlassSession.created_at >= cutoff,
-        BreakGlassSession.created_at <= as_of,
+        BreakGlassSession.granted_at >= cutoff,
+        BreakGlassSession.granted_at <= as_of,
     )
     rows = (await session.execute(stmt)).all()
-    actor_map: set[tuple[uuid.UUID, str]] = set()
+    actor_id_map: set[tuple[uuid.UUID, str]] = set()
+    actor_label_map: set[tuple[uuid.UUID, str]] = set()
     org_map: dict[uuid.UUID, list[datetime]] = {}
-    for org_id, actor, created_at in rows:
+    for org_id, actor_id, actor, granted_at in rows:
+        normalized_actor_id = _normalize_identifier(actor_id)
+        if normalized_actor_id:
+            actor_id_map.add((org_id, normalized_actor_id))
         normalized_actor = _normalize_identifier(actor)
         if normalized_actor:
-            actor_map.add((org_id, normalized_actor))
-        org_map.setdefault(org_id, []).append(created_at)
-    return actor_map, org_map
+            actor_label_map.add((org_id, normalized_actor))
+        org_map.setdefault(org_id, []).append(granted_at)
+    return actor_id_map, actor_label_map, org_map
 
 
 async def _fetch_role_change_events(
@@ -318,7 +327,7 @@ async def build_access_review_snapshot(
     role_change_cutoff = as_of - timedelta(days=resolved_config.role_change_lookback_days)
 
     last_login_map = await _fetch_last_login_map(session, org_ids, as_of)
-    break_glass_actor_map, break_glass_org_map = await _fetch_break_glass_usage(
+    break_glass_actor_id_map, break_glass_actor_map, break_glass_org_map = await _fetch_break_glass_usage(
         session, org_ids, break_glass_cutoff, as_of
     )
     role_change_map = await _fetch_role_change_events(session, org_ids, role_change_cutoff, as_of)
@@ -349,8 +358,11 @@ async def build_access_review_snapshot(
         custom_permissions = role_record.permissions if role_record else None
         last_login = last_login_map.get((membership.org_id, user.user_id))
         actor_key = _normalize_identifier(user.email)
+        actor_id_key = _normalize_identifier(str(user.user_id))
         break_glass_recent = False
         if actor_key and (membership.org_id, actor_key) in break_glass_actor_map:
+            break_glass_recent = True
+        if actor_id_key and (membership.org_id, actor_id_key) in break_glass_actor_id_map:
             break_glass_recent = True
         role_changed_recent = (membership.org_id, user.user_id) in role_change_map
 

@@ -61,6 +61,8 @@ class Metrics:
             self.audit_records_purged_total = None
             self.audit_records_on_legal_hold_total = None
             self.feature_flags_stale_total = None
+            self.break_glass_grants_total = None
+            self.break_glass_active = None
             return
 
         self.webhook_events = Counter(
@@ -250,6 +252,17 @@ class Metrics:
             "feature_flags_stale_total",
             "Count of stale or policy-mismatched feature flags by category.",
             ["category"],
+            registry=self.registry,
+        )
+        self.break_glass_grants_total = Counter(
+            "break_glass_grants_total",
+            "Break-glass grant events by scope and event type.",
+            ["scope", "event"],
+            registry=self.registry,
+        )
+        self.break_glass_active = Gauge(
+            "break_glass_active",
+            "Active break-glass grants currently in effect.",
             registry=self.registry,
         )
         self.circuit_state = Gauge(
@@ -546,6 +559,18 @@ class Metrics:
         for category, value in counts.items():
             safe_category = category or "unknown"
             self.feature_flags_stale_total.labels(category=safe_category).set(max(0, int(value)))
+
+    def record_break_glass_grant(self, scope: str, event: str) -> None:
+        if not self.enabled or self.break_glass_grants_total is None:
+            return
+        safe_scope = scope or "unknown"
+        safe_event = event or "unknown"
+        self.break_glass_grants_total.labels(scope=safe_scope, event=safe_event).inc()
+
+    def set_break_glass_active(self, count: int) -> None:
+        if not self.enabled or self.break_glass_active is None:
+            return
+        self.break_glass_active.set(max(0, int(count)))
 
     def render(self) -> tuple[bytes, str]:
         if not self.enabled:
