@@ -17,6 +17,7 @@ from app.infra.tracing import configure_tracing, shutdown_tracing
 from app.jobs.heartbeat import _resolve_runner_id, record_heartbeat
 from app.jobs import (
     accounting_export,
+    analytics_retention,
     audit_retention,
     data_retention,
     dlq_auto_replay,
@@ -162,6 +163,8 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         return lambda session: storage_quota.run_storage_quota_reconciliation(session)
     if name == "audit-retention":
         return lambda session: audit_retention.run_audit_retention(session)
+    if name == "analytics-retention-daily":
+        return lambda session: analytics_retention.run_analytics_retention_daily(session)
     if name == "log-retention-daily":
         return lambda session: log_retention.run_log_retention_daily(session)
     if name == "data-retention-daily":

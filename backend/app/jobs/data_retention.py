@@ -3,6 +3,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.analytics import retention as analytics_retention_service
 from app.domain.data_retention import RetentionCategory, enforce_retention
 
 logger = logging.getLogger(__name__)
@@ -33,12 +34,8 @@ async def _run_categories(
 
 
 async def run_data_retention_daily(session: AsyncSession) -> dict[str, int]:
-    return await _run_categories(
-        session,
-        [
-            RetentionCategory.ANALYTICS_EVENTS,
-        ],
-    )
+    result = await analytics_retention_service.purge_raw_events(session)
+    return {"analytics_events": result.deleted}
 
 
 async def run_data_retention_weekly(session: AsyncSession) -> dict[str, int]:
