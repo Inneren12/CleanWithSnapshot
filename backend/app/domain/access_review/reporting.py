@@ -10,6 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.admin_audit.db_models import AdminAuditLog
+from app.domain.break_glass.db_models import BreakGlassSession
 
 TOOL_VERSION = "access-review-report-v2"
 ROLE_CHANGE_ACTION_LIKE = "PATCH /v1/admin/iam/users/%/role%"
@@ -75,12 +76,15 @@ async def build_audit_extract_payload(
     as_of = _parse_dt(as_of_raw)
     config = snapshot.get("config", {})
     lookback_days = int(config.get("role_change_lookback_days", 0))
+    break_glass_lookback_days = int(config.get("break_glass_lookback_days", 0))
     window_start = as_of - timedelta(days=lookback_days)
+    break_glass_window_start = as_of - timedelta(days=break_glass_lookback_days)
     org_ids = [entry.get("org_id") for entry in snapshot.get("orgs", []) if entry.get("org_id")]
     if not org_ids and snapshot.get("org_id"):
         org_ids = [snapshot.get("org_id")]
 
     events: list[dict[str, Any]] = []
+    break_glass_events: list[dict[str, Any]] = []
     if org_ids:
         stmt = (
             sa.select(AdminAuditLog)
@@ -111,6 +115,36 @@ async def build_audit_extract_payload(
             for row in rows
         ]
 
+        break_stmt = (
+            sa.select(BreakGlassSession)
+            .where(
+                BreakGlassSession.org_id.in_(org_ids),
+                BreakGlassSession.granted_at >= break_glass_window_start,
+                BreakGlassSession.granted_at <= as_of,
+            )
+            .order_by(BreakGlassSession.org_id, BreakGlassSession.granted_at.desc())
+        )
+        break_rows = (await session.execute(break_stmt)).scalars().all()
+        break_glass_events = [
+            {
+                "session_id": str(row.session_id),
+                "org_id": str(row.org_id),
+                "actor_id": row.actor_id,
+                "actor": row.actor,
+                "reason": row.reason,
+                "incident_ref": row.incident_ref,
+                "scope": row.scope,
+                "status": row.status,
+                "granted_at": _serialize_dt(row.granted_at),
+                "expires_at": _serialize_dt(row.expires_at),
+                "revoked_at": _serialize_dt(row.revoked_at) if row.revoked_at else None,
+                "reviewed_at": _serialize_dt(row.reviewed_at) if row.reviewed_at else None,
+                "reviewed_by": row.reviewed_by,
+                "review_notes": row.review_notes,
+            }
+            for row in break_rows
+        ]
+
     return {
         "generated_at": _serialize_dt(generated_at),
         "scope": snapshot.get("scope"),
@@ -120,6 +154,9 @@ async def build_audit_extract_payload(
         "window_end": _serialize_dt(as_of),
         "event_count": len(events),
         "events": events,
+        "break_glass_window_start": _serialize_dt(break_glass_window_start),
+        "break_glass_event_count": len(break_glass_events),
+        "break_glass_events": break_glass_events,
     }
 
 
@@ -144,6 +181,7 @@ def build_report_markdown(snapshot: dict[str, Any], audit_extract: dict[str, Any
     lines.append(f"* Admin users reviewed: {summary.get('admin_user_count')}")
     lines.append(f"* Anomalies detected: {summary.get('anomaly_count')}")
     lines.append(f"* Role change events (audit extract): {audit_extract.get('event_count')}")
+    lines.append(f"* Break-glass events (audit extract): {audit_extract.get('break_glass_event_count')}")
     lines.append("")
 
     lines.append("## Findings")

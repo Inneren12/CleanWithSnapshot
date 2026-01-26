@@ -9,6 +9,7 @@ from app.api.break_glass import BREAK_GLASS_HEADER, set_break_glass_state
 from app.api.problem_details import PROBLEM_TYPE_DOMAIN, problem_details
 from app.domain.admin_audit import service as audit_service
 from app.domain.break_glass import service as break_glass_service
+from app.domain.break_glass.db_models import BreakGlassStatus
 from app.infra.security import resolve_client_key
 from app.settings import settings
 
@@ -49,8 +50,10 @@ class AdminSafetyMiddleware(BaseHTTPMiddleware):
             self.app_settings, "admin_read_only", False
         )
 
-        if enforcing_read_only and not self._is_allowlisted_path(path):
+        if request.headers.get(BREAK_GLASS_HEADER):
             break_glass_session = await self._validate_break_glass(request)
+
+        if enforcing_read_only and not self._is_allowlisted_path(path):
             if break_glass_session is None:
                 self._log_denial(request, reason="read_only", client_ip=client_ip)
                 return problem_details(
@@ -64,7 +67,7 @@ class AdminSafetyMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         if break_glass_session is not None:
-            await self._audit_break_glass_write(request, break_glass_session)
+            await self._audit_break_glass_use(request, break_glass_session)
 
         return response
 
@@ -72,7 +75,11 @@ class AdminSafetyMiddleware(BaseHTTPMiddleware):
         return path.startswith("/v1/admin") or path.startswith("/v1/iam")
 
     def _is_allowlisted_path(self, path: str) -> bool:
-        return path.startswith("/v1/admin/break-glass/start")
+        if path.startswith("/v1/admin/break-glass/start"):
+            return True
+        if path.startswith("/v1/admin/break-glass/") and (path.endswith("/revoke") or path.endswith("/review")):
+            return True
+        return False
 
     def _is_ip_blocked(self, client_ip: str) -> bool:
         cidrs = getattr(self.app_settings, "admin_ip_allowlist_cidrs", [])
@@ -145,8 +152,18 @@ class AdminSafetyMiddleware(BaseHTTPMiddleware):
         try:
             async with session_factory() as session:
                 record = await break_glass_service.get_valid_session(
-                    session, org_id=org_id, token=token
+                    session, org_id=org_id, token=token, request_id=self._resolve_request_id(request)
                 )
+                if record is None:
+                    await session.commit()
+                    return None
+                await break_glass_service.expire_session_if_needed(
+                    session, record=record, request_id=self._resolve_request_id(request)
+                )
+                if record.status != BreakGlassStatus.ACTIVE.value:
+                    await session.commit()
+                    return None
+                await session.commit()
         except Exception:  # noqa: BLE001
             logger.exception("break_glass_validation_failed")
             return None
@@ -157,7 +174,7 @@ class AdminSafetyMiddleware(BaseHTTPMiddleware):
         set_break_glass_state(request, record)
         return record
 
-    async def _audit_break_glass_write(self, request: Request, record) -> None:
+    async def _audit_break_glass_use(self, request: Request, record) -> None:
         identity = getattr(request.state, "admin_identity", None)
         session_factory = getattr(request.app.state, "db_session_factory", None)
         if identity is None or session_factory is None:
@@ -168,16 +185,25 @@ class AdminSafetyMiddleware(BaseHTTPMiddleware):
                 await audit_service.record_action(
                     session,
                     identity=identity,
-                    action="break_glass_write",
+                    action="break_glass_use",
                     auth_method="break-glass",
                     resource_type="http_request",
                     resource_id=f"{request.method} {request.url.path}",
                     before=None,
                     after={
                         "reason": getattr(request.state, "break_glass_reason", record.reason),
+                        "incident_ref": getattr(request.state, "break_glass_incident_ref", record.incident_ref),
+                        "scope": getattr(request.state, "break_glass_scope", record.scope),
                         "session_id": str(getattr(record, "session_id", "")),
+                        "request_id": self._resolve_request_id(request),
                     },
                 )
                 await session.commit()
         except Exception:  # noqa: BLE001
             logger.exception("break_glass_audit_failed")
+
+    def _resolve_request_id(self, request: Request) -> str | None:
+        request_id = getattr(request.state, "request_id", None)
+        if request_id:
+            return str(request_id)
+        return request.headers.get("X-Request-ID")

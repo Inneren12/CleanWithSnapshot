@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     rate_limit_fail_open_seconds: int = Field(300)
     rate_limit_redis_probe_seconds: float = Field(5.0)
     time_overrun_reason_threshold: float = Field(1.2)
+    break_glass_default_ttl_minutes: int = Field(30)
+    break_glass_max_ttl_minutes: int = Field(60)
     trust_proxy_headers: bool = Field(False)
     trusted_proxy_ips_raw: str | None = Field(None, validation_alias="trusted_proxy_ips")
     trusted_proxy_cidrs_raw: str | None = Field(None, validation_alias="trusted_proxy_cidrs")

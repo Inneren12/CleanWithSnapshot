@@ -85,6 +85,14 @@ def _resolve_admin_id(identity: AdminIdentity, admin_id: str | None) -> str | No
     return admin_id or getattr(identity, "admin_id", None) or identity.username
 
 
+def _system_actor_payload() -> dict[str, str]:
+    return {
+        "actor": "system",
+        "role": "system",
+        "auth_method": "system",
+    }
+
+
 async def audit_admin_action(
     session: AsyncSession,
     *,
@@ -169,6 +177,37 @@ async def record_action(
         admin_id=admin_id,
         auth_method=auth_method,
     )
+
+
+async def record_system_action(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    action: str,
+    resource_type: str | None,
+    resource_id: str | None,
+    before: Any = None,
+    after: Any = None,
+    context: dict | None = None,
+) -> AdminAuditLog:
+    payload = _system_actor_payload()
+    log = AdminAuditLog(
+        org_id=org_id,
+        admin_id=None,
+        action=action,
+        action_type=AdminAuditActionType.WRITE.value,
+        sensitivity_level=AdminAuditSensitivity.NORMAL.value,
+        actor=payload["actor"],
+        role=payload["role"],
+        auth_method=payload["auth_method"],
+        resource_type=resource_type,
+        resource_id=resource_id,
+        context=_sanitize_payload(context) if context else None,
+        before=_sanitize_payload(before),
+        after=_sanitize_payload(after),
+    )
+    session.add(log)
+    return log
 
 
 async def list_admin_audit_logs(

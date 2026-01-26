@@ -1,0 +1,20 @@
+groups:
+  - name: break_glass_alerts
+    rules:
+      - alert: BreakGlassActivated
+        expr: increase(break_glass_grants_total{event="created"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Break-glass access activated"
+          description: "A break-glass grant was created within the last 5 minutes. Investigate and ensure incident tracking is active."
+
+      - alert: BreakGlassStillActiveTooLong
+        expr: break_glass_active > 0
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: "Break-glass access still active"
+          description: "Break-glass access has remained active for more than 1 hour. Revoke and complete post-incident review."

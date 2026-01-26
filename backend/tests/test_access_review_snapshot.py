@@ -114,10 +114,15 @@ async def test_access_review_anomalies_and_no_sensitive_data(async_session_maker
             BreakGlassSession(
                 session_id=uuid.uuid4(),
                 org_id=org.org_id,
+                actor_id=str(user.user_id),
                 actor=user.email,
                 reason="incident",
+                incident_ref="INC-900",
+                scope="org",
+                status="active",
                 token_hash="hash",
                 expires_at=fixed_now + timedelta(days=1),
+                granted_at=fixed_now - timedelta(days=10),
                 created_at=fixed_now - timedelta(days=10),
             )
         )
@@ -218,10 +223,15 @@ async def test_access_review_as_of_bounds_and_stability(async_session_maker):
             BreakGlassSession(
                 session_id=uuid.uuid4(),
                 org_id=org.org_id,
+                actor_id=str(user.user_id),
                 actor=user.email,
                 reason="after as_of",
+                incident_ref="INC-901",
+                scope="org",
+                status="active",
                 token_hash="hash",
                 expires_at=as_of + timedelta(days=2),
+                granted_at=as_of + timedelta(days=1),
                 created_at=as_of + timedelta(days=1),
             )
         )
