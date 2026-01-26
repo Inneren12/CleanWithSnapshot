@@ -138,15 +138,38 @@ jobs:
       - name: Verify compose db command preload
         run: |
           set -euo pipefail
-          config_stdout=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml config 2>compose_config_stderr.log || true)
-          if [ -z "$config_stdout" ]; then
+          if [ ! -f docker-compose.yml ] || [ ! -f docker-compose.e2e.yml ]; then
+            echo "Compose files missing"
+            ls -la docker-compose.yml docker-compose.e2e.yml || true
+            exit 1
+          fi
+
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config > compose_config_stdout.yml 2> compose_config_stderr.log
+
+          if [ ! -s compose_config_stdout.yml ]; then
             echo "docker compose config returned empty output"
             echo "---- docker compose stderr ----"
             cat compose_config_stderr.log || true
-            echo "---- docker compose config ----"
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml config || true
+            echo "---- docker-compose.yml (head) ----"
+            sed -n '1,50p' docker-compose.yml || true
+            echo "---- docker-compose.e2e.yml (head) ----"
+            sed -n '1,50p' docker-compose.e2e.yml || true
+            echo "compose config failed; falling back to source YAML validation"
+            if ! awk 'BEGIN{in_db=0; in_cmd=0}
+              /^  db:$/ {in_db=1; next}
+              in_db && /^  [a-zA-Z0-9_-]+:$/ {exit}
+              in_db && /^    command:$/ {in_cmd=1; next}
+              in_db && in_cmd && /^    [a-zA-Z0-9_-]+:$/ {in_cmd=0}
+              in_db && in_cmd && /shared_preload_libraries=pg_stat_statements/ {found=1}
+              END {exit found?0:1}
+            ' docker-compose.e2e.yml; then
+              echo "Fallback validation failed: db.command missing shared_preload_libraries=pg_stat_statements in docker-compose.e2e.yml"
+              exit 1
+            fi
             exit 1
           fi
+
+          config_stdout=$(cat compose_config_stdout.yml)
           python - <<'PY'
           import sys
 
