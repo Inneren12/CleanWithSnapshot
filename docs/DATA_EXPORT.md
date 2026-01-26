@@ -63,7 +63,28 @@ Sensitive keys are redacted, and internal secrets (tokens, signatures) are exclu
 - **Rate limiting**
   - Endpoints include hooks to enforce rate limits when a limiter is configured.
 - **Audit logging**
-  - Export request, completion, and download events are recorded with request correlation IDs.
+  - Export lifecycle events are recorded in the immutable admin audit trail with request correlation IDs.
+  - Events: `DATA_EXPORT_REQUESTED`, `DATA_EXPORT_COMPLETED`, `DATA_EXPORT_FAILED`, `DATA_EXPORT_DOWNLOADED`, `DATA_EXPORT_DOWNLOAD_DENIED`.
+  - Audit context includes `org_id`, `export_id`, `subject_id` (identifier only), `actor_type`, `actor_id`, `request_id`, and server-generated timestamps.
+  - Admin actions include explicit `on_behalf_of` metadata when acting for a subject.
+
+### Querying export audit events
+Export audits are stored in the admin audit log and can be queried via:
+
+```
+GET /v1/admin/audit/actions?resource_type=data_export&from_ts=<ISO>&to_ts=<ISO>&limit=<n>&offset=<n>
+```
+
+Filter the response by `action` to isolate export events (for example `DATA_EXPORT_DOWNLOADED`). Each record includes a server-side `created_at` timestamp and metadata for actor/subject attribution.
+
+### Compliance rationale (GDPR/CCPA evidence)
+The immutable export audit trail provides verifiable evidence of:
+- **Who** initiated or accessed an export (`actor_type`, `actor_id`).
+- **What** was acted on (`export_id`, `subject_id`, `org_id`).
+- **When** the action occurred (`created_at` timestamp).
+- **Outcome** of processing and access attempts (completed/failed/downloaded/denied).
+
+This supports GDPR/CCPA accountability requirements and incident investigations without storing exported content in audit logs.
 
 ## Retention policy
 

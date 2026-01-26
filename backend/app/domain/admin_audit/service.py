@@ -189,14 +189,18 @@ async def record_system_action(
     before: Any = None,
     after: Any = None,
     context: dict | None = None,
+    action_type: AdminAuditActionType | None = None,
+    sensitivity_level: AdminAuditSensitivity | None = None,
 ) -> AdminAuditLog:
     payload = _system_actor_payload()
+    resolved_action_type = action_type or AdminAuditActionType.WRITE
+    resolved_sensitivity = sensitivity_level or AdminAuditSensitivity.NORMAL
     log = AdminAuditLog(
         org_id=org_id,
         admin_id=None,
         action=action,
-        action_type=AdminAuditActionType.WRITE.value,
-        sensitivity_level=AdminAuditSensitivity.NORMAL.value,
+        action_type=resolved_action_type.value,
+        sensitivity_level=resolved_sensitivity.value,
         actor=payload["actor"],
         role=payload["role"],
         auth_method=payload["auth_method"],
