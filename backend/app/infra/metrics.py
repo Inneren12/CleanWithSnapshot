@@ -55,6 +55,7 @@ class Metrics:
             self.org_rate_limit_blocks = None
             self.http_429_total = None
             self.auth_failures_total = None
+            self.admin_auth_events_total = None
             self.data_export_rate_limited_total = None
             self.data_export_denied_total = None
             self.outbox_failures_total = None
@@ -335,6 +336,12 @@ class Metrics:
             ["source", "reason"],
             registry=self.registry,
         )
+        self.admin_auth_events_total = Counter(
+            "admin_auth_events_total",
+            "Admin authentication attempts by outcome, method, MFA, and failure reason.",
+            ["outcome", "method", "mfa", "reason"],
+            registry=self.registry,
+        )
         self.data_export_rate_limited_total = Counter(
             "data_export_rate_limited_total",
             "Data export rate limits by endpoint.",
@@ -534,6 +541,27 @@ class Metrics:
         safe_source = source or "unknown"
         safe_reason = reason or "unknown"
         self.auth_failures_total.labels(source=safe_source, reason=safe_reason).inc()
+
+    def record_admin_auth_event(
+        self,
+        *,
+        outcome: str | None,
+        method: str | None,
+        mfa: bool | None,
+        reason: str | None,
+    ) -> None:
+        if not self.enabled or self.admin_auth_events_total is None:
+            return
+        safe_outcome = outcome or "unknown"
+        safe_method = method or "unknown"
+        safe_mfa = "unknown" if mfa is None else ("true" if mfa else "false")
+        safe_reason = reason or "none"
+        self.admin_auth_events_total.labels(
+            outcome=safe_outcome,
+            method=safe_method,
+            mfa=safe_mfa,
+            reason=safe_reason,
+        ).inc()
 
     def record_data_export_rate_limited(self, endpoint: str) -> None:
         if not self.enabled or self.data_export_rate_limited_total is None:

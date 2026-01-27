@@ -1,0 +1,31 @@
+groups:
+  - name: admin.auth.alerts
+    interval: 30s
+    rules:
+      - alert: AdminAuthFailuresHigh
+        expr: sum(increase(admin_auth_events_total{outcome="failure"}[10m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Admin authentication failures elevated"
+          description: |
+            Admin authentication failures exceeded 10 attempts in 10 minutes.
+            Next: review admin auth audit logs for failure_reason and source_ip,
+            validate MFA enforcement, and confirm whether this is legitimate admin activity.
+          runbook: "docs/SECURITY_ADMIN_AUTH_AUDIT.md"
+
+      - alert: AdminAuthSuccessNoMFA
+        expr: sum(increase(admin_auth_events_total{outcome="success", mfa="false"}[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "Admin login succeeded without MFA"
+          description: |
+            An admin authentication succeeded without MFA.
+            Next: validate proxy/IdP policy, confirm if an allowlisted exception exists,
+            and rotate admin proxy secrets if needed.
+          runbook: "docs/SECURITY_ADMIN_AUTH_AUDIT.md"

@@ -20,6 +20,7 @@ from app.domain.iam import permissions as iam_permissions
 from app.infra.logging import update_log_context
 from app.infra.metrics import metrics
 from app.infra.org_context import set_current_org_id
+from app.infra.security import resolve_client_key
 
 PROXY_AUTH_HEADER_SECRET = "X-Proxy-Auth-Secret"
 PROXY_E2E_SIGNATURE_HEADER = "X-E2E-Proxy-Signature"
@@ -30,6 +31,53 @@ PROXY_E2E_ADMIN_ROLES_HEADER = "X-E2E-Admin-Roles"
 MFA_TRUE_VALUES = {"true", "1", "yes"}
 
 logger = logging.getLogger(__name__)
+
+ADMIN_AUTH_FAILURE_REASONS = {
+    "untrusted_proxy",
+    "proxy_auth_required",
+    "bad_signature",
+    "mfa_required",
+    "invalid_credentials",
+    "rate_limited",
+}
+_ADMIN_AUTH_FAILURE_REASON_MAP = {
+    "basic_auth_disabled": "invalid_credentials",
+    "bearer_token_present_for_admin": "invalid_credentials",
+    "expired_timestamp": "bad_signature",
+    "invalid_authentication": "invalid_credentials",
+    "invalid_proxy_secret": "bad_signature",
+    "malformed_authorization_header": "invalid_credentials",
+    "missing_credentials": "invalid_credentials",
+    "missing_headers": "proxy_auth_required",
+    "missing_username": "invalid_credentials",
+    "proxy_auth_failed": "proxy_auth_required",
+    "unauthorized": "invalid_credentials",
+    "unconfigured_credentials": "invalid_credentials",
+}
+
+
+def _normalize_failure_reason(reason: str | None) -> str:
+    if not reason:
+        return "invalid_credentials"
+    normalized = reason.strip().lower()
+    if normalized in ADMIN_AUTH_FAILURE_REASONS:
+        return normalized
+    return _ADMIN_AUTH_FAILURE_REASON_MAP.get(normalized, "invalid_credentials")
+
+
+def _resolve_source_ip(request: Request) -> str:
+    return resolve_client_key(
+        request,
+        trust_proxy_headers=settings.trust_proxy_headers,
+        trusted_proxy_ips=settings.trusted_proxy_ips,
+        trusted_proxy_cidrs=settings.trusted_proxy_cidrs,
+    )
+
+
+def _parse_roles_list(roles_header: str | None) -> list[str]:
+    if not roles_header:
+        return []
+    return [role.strip().lower() for role in roles_header.split(",") if role.strip()]
 
 
 class AdminAuthException(HTTPException):
@@ -81,6 +129,8 @@ class AdminIdentity:
     admin_id: str | None = None
     auth_method: str | None = None
     mfa_verified: bool = False
+    email: str | None = None
+    roles: list[str] | None = None
 
 
 @dataclass
@@ -153,7 +203,7 @@ def _configured_users() -> list[_ConfiguredUser]:
 def _build_auth_exception(
     *, detail: str = "Invalid authentication", reason: str = "invalid_authentication"
 ) -> AdminAuthException:
-    return AdminAuthException(detail=detail, reason=reason)
+    return AdminAuthException(detail=detail, reason=_normalize_failure_reason(reason))
 
 
 def _resolve_request_id(request: Request) -> str | None:
@@ -212,11 +262,19 @@ def _log_admin_auth_failure(
     authorization_header = request.headers.get("Authorization")
     scheme, _ = get_authorization_scheme_param(authorization_header)
     mfa_header = settings.admin_proxy_auth_header_mfa
+    normalized_reason = _normalize_failure_reason(reason)
+    auth_method = extra_detail.get("auth_method") if extra_detail else None
     payload = {
-        "reason": reason,
+        "event": "admin_auth_attempt",
+        "outcome": "failure",
+        "failure_reason": normalized_reason,
+        "failure_reason_detail": reason,
         "path": request.url.path,
         "method": request.method,
         "request_id": _resolve_request_id(request),
+        "source_ip": _resolve_source_ip(request),
+        "user_agent": request.headers.get("User-Agent"),
+        "auth_method": auth_method,
         "has_authorization_header": authorization_header is not None,
         "auth_scheme": scheme.lower() if scheme else None,
         "mfa": _mfa_verified_from_header(request),
@@ -224,19 +282,67 @@ def _log_admin_auth_failure(
         "mfa_header_present": bool(request.headers.get(mfa_header)),
         "proxy_trusted": _is_trusted_proxy_request(request),
         "e2e_proxy_signature_present": bool(request.headers.get(PROXY_E2E_SIGNATURE_HEADER)),
+        "break_glass": bool(getattr(request.state, "break_glass", False)),
     }
     if credentials and credentials.username:
-        payload["presented_username"] = credentials.username
+        payload["admin_user"] = credentials.username
     if extra_detail:
         payload.update(extra_detail)
     logger.warning("admin_auth_failed", extra={"extra": payload})
-    metrics.record_auth_failure("admin", reason)
+    metrics.record_auth_failure("admin", normalized_reason)
+    metrics.record_admin_auth_event(
+        outcome="failure",
+        method=extra_detail.get("auth_method") if extra_detail else None,
+        mfa=_mfa_verified_from_header(request),
+        reason=normalized_reason,
+    )
+    request.state.admin_auth_logged = True
+
+
+def _log_admin_auth_success(
+    request: Request,
+    *,
+    identity: AdminIdentity,
+    auth_method: str,
+    roles: list[str],
+    mfa_verified: bool,
+    email: str | None = None,
+    extra_detail: dict | None = None,
+) -> None:
+    payload = {
+        "event": "admin_auth_attempt",
+        "outcome": "success",
+        "path": request.url.path,
+        "method": request.method,
+        "request_id": _resolve_request_id(request),
+        "source_ip": _resolve_source_ip(request),
+        "user_agent": request.headers.get("User-Agent"),
+        "admin_user": identity.username,
+        "admin_email": email,
+        "role": identity.role.value,
+        "roles": roles,
+        "auth_method": auth_method,
+        "mfa": mfa_verified,
+        "proxy_trusted": _is_trusted_proxy_request(request),
+        "break_glass": bool(getattr(request.state, "break_glass", False)),
+    }
+    if extra_detail:
+        payload.update(extra_detail)
+    logger.info("admin_auth_success", extra={"extra": payload})
+    metrics.record_admin_auth_event(
+        outcome="success",
+        method=auth_method,
+        mfa=mfa_verified,
+        reason=None,
+    )
+    request.state.admin_auth_logged = True
 
 
 def _authenticate_credentials(
     credentials: HTTPBasicCredentials | None,
     *,
     mfa_verified: bool,
+    request: Request,
 ) -> AdminIdentity:
     configured = _configured_users()
     legacy_basic_auth_enabled = bool(settings.legacy_basic_auth_enabled)
@@ -278,25 +384,24 @@ def _authenticate_credentials(
         if secrets.compare_digest(credentials.username, user.username) and secrets.compare_digest(
             credentials.password, user.password
         ):
-            logger.info(
-                "admin_auth_success",
-                extra={
-                    "extra": {
-                        "username": user.username,
-                        "role": user.role.value,
-                        "auth_method": "basic",
-                        "mfa": mfa_verified,
-                    }
-                },
-            )
-            return AdminIdentity(
+            identity = AdminIdentity(
                 username=user.username,
                 role=user.role,
                 org_id=settings.default_org_id,
                 admin_id=user.username,
                 auth_method="basic",
                 mfa_verified=mfa_verified,
+                roles=[user.role.value],
             )
+            _log_admin_auth_success(
+                request,
+                identity=identity,
+                auth_method="basic",
+                roles=[user.role.value],
+                mfa_verified=mfa_verified,
+                email=None,
+            )
+            return identity
 
     raise _build_auth_exception(reason="invalid_credentials")
 
@@ -504,28 +609,29 @@ def _authenticate_proxy_headers(request: Request) -> AdminIdentity | None:
             roles=admin_roles,
         )
     role = _parse_proxy_roles(admin_roles)
+    role_list = _parse_roles_list(admin_roles)
 
-    logger.info(
-        "admin_auth_success",
-        extra={
-            "extra": {
-                "username": admin_user,
-                "email": admin_email,
-                "role": role.value,
-                "auth_method": source,
-                "mfa": mfa_verified,
-            }
-        },
-    )
-
-    return AdminIdentity(
+    identity = AdminIdentity(
         username=admin_user,
         role=role,
         org_id=settings.default_org_id,
         admin_id=admin_user,
-        auth_method="proxy",
+        auth_method=source,
         mfa_verified=mfa_verified,
+        email=admin_email or None,
+        roles=role_list or [role.value],
     )
+    _log_admin_auth_success(
+        request,
+        identity=identity,
+        auth_method=source,
+        roles=role_list or [role.value],
+        mfa_verified=mfa_verified,
+        email=admin_email or None,
+        extra_detail={"auth_method_source": source},
+    )
+
+    return identity
 
 
 def _resolve_permission_keys(request: Request, identity: AdminIdentity) -> set[str]:
@@ -592,16 +698,29 @@ async def get_admin_identity(
 
     identity: AdminIdentity | None = None
 
-    if settings.admin_proxy_auth_enabled:
-        proxy_identity = _authenticate_proxy_headers(request)
-        if proxy_identity is None:
-            raise _build_auth_exception(
-                reason="proxy_auth_required",
-                detail="Admin access requires proxy authentication",
+    try:
+        if settings.admin_proxy_auth_enabled:
+            proxy_identity = _authenticate_proxy_headers(request)
+            if proxy_identity is None:
+                raise _build_auth_exception(
+                    reason="proxy_auth_required",
+                    detail="Admin access requires proxy authentication",
+                )
+            identity = proxy_identity
+        else:
+            identity = _authenticate_credentials(credentials, mfa_verified=False, request=request)
+    except HTTPException as exc:
+        if not getattr(request.state, "admin_auth_logged", False):
+            reason = getattr(exc, "reason", None) or "invalid_credentials"
+            _log_admin_auth_failure(
+                request,
+                reason=reason,
+                credentials=credentials,
+                extra_detail={
+                    "auth_method": "proxy" if settings.admin_proxy_auth_enabled else "basic"
+                },
             )
-        identity = proxy_identity
-    else:
-        identity = _authenticate_credentials(credentials, mfa_verified=False)
+        raise
 
     request.state.admin_identity = identity
     request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
@@ -706,7 +825,12 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
         except HTTPException as exc:
             reason = getattr(exc, "reason", None) or "proxy_auth_failed"
-            _log_admin_auth_failure(request, reason=reason, credentials=None)
+            _log_admin_auth_failure(
+                request,
+                reason=reason,
+                credentials=None,
+                extra_detail={"auth_method": "proxy"},
+            )
             return await http_exception_handler(request, exc)
 
         if settings.admin_proxy_auth_required:
@@ -714,7 +838,10 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                 request,
                 reason="proxy_auth_required",
                 credentials=None,
-                extra_detail={"proxy_auth_enabled": settings.admin_proxy_auth_enabled},
+                extra_detail={
+                    "proxy_auth_enabled": settings.admin_proxy_auth_enabled,
+                    "auth_method": "proxy",
+                },
             )
             return await http_exception_handler(
                 request,
@@ -732,6 +859,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                 request,
                 reason="bearer_token_present_for_admin",
                 credentials=None,
+                extra_detail={"auth_method": "bearer"},
             )
             unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
             return await http_exception_handler(request, unauthorized)
@@ -744,7 +872,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                 request,
                 reason="basic_auth_disabled",
                 credentials=None,
-                extra_detail={"configured_user_count": len(configured_users)},
+                extra_detail={"configured_user_count": len(configured_users), "auth_method": "basic"},
             )
             logger.debug(
                 "admin_basic_auth_disabled",
@@ -761,7 +889,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
         try:
             credentials = _credentials_from_header(request)
             mfa_verified = _require_mfa_header(request)
-            identity = _authenticate_credentials(credentials, mfa_verified=mfa_verified)
+            identity = _authenticate_credentials(credentials, mfa_verified=mfa_verified, request=request)
             _assert_permissions(request, identity, [AdminPermission.VIEW])
             request.state.admin_identity = identity
             request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
@@ -771,7 +899,12 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             reason = getattr(exc, "reason", None) or "unauthorized"
             if credentials is None:
                 reason = reason or "missing_credentials"
-            _log_admin_auth_failure(request, reason=reason, credentials=credentials)
+            _log_admin_auth_failure(
+                request,
+                reason=reason,
+                credentials=credentials,
+                extra_detail={"auth_method": "basic"},
+            )
             return await http_exception_handler(request, exc)
 
 
