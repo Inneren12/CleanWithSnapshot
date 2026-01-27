@@ -189,6 +189,9 @@ ADMIN_PROXY_AUTH_HASH_VIEWER=$2a$14$...
 
 # Shared secret (must match backend configuration)
 ADMIN_PROXY_AUTH_SECRET=your-very-long-and-secure-shared-secret-here
+
+# Optional IP allowlist for /v1/admin/* (empty means allowlist disabled)
+ADMIN_ALLOWED_IPS="203.0.113.10 198.51.100.0/24"
 ```
 
 ### MFA Enforcement at IdP/Access Layer
@@ -311,6 +314,7 @@ curl -u admin:your-password https://api.example.com/v1/admin/profile
 - Ensure the backend is not directly accessible from the internet
 - Use internal network or localhost for backend-proxy communication
 - Consider IP allowlisting at the proxy level
+- Document and review any temporary allowlist entries with an explicit expiry
 
 ### Monitoring
 
