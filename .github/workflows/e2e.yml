@@ -53,7 +53,7 @@ jobs:
               "LEGACY_BASIC_AUTH_ENABLED",
               "ADMIN_PROXY_AUTH_ENABLED",
               "TRUST_PROXY_HEADERS",
-              "TRUSTED_PROXY_IPS",
+              "TRUSTED_PROXY_CIDRS",
               "E2E_PROXY_AUTH_ENABLED",
               "E2E_PROXY_AUTH_SECRET",
             }
@@ -74,7 +74,7 @@ jobs:
             "LEGACY_BASIC_AUTH_ENABLED": "true",
             "ADMIN_PROXY_AUTH_ENABLED": "true",
             "TRUST_PROXY_HEADERS": "true",
-            "TRUSTED_PROXY_IPS": "127.0.0.1",
+            "TRUSTED_PROXY_CIDRS": "172.16.0.0/12",
             "E2E_PROXY_AUTH_ENABLED": "true",
             "E2E_PROXY_AUTH_SECRET": e2e_proxy_secret,
           }
@@ -90,7 +90,7 @@ jobs:
             + f"ADMIN_BASIC_PASSWORD={admin_password}\n"
             + "ADMIN_PROXY_AUTH_ENABLED=true\n"
             + "TRUST_PROXY_HEADERS=true\n"
-            + "TRUSTED_PROXY_IPS=127.0.0.1\n"
+            + "TRUSTED_PROXY_CIDRS=172.16.0.0/12\n"
             + "E2E_PROXY_AUTH_ENABLED=true\n"
             + f"E2E_PROXY_AUTH_SECRET={e2e_proxy_secret}\n"
             + "APP_ENV=ci\n"
@@ -113,7 +113,7 @@ jobs:
       - name: Preflight env summary (no secrets)
         run: |
           echo "Env summary from backend/.env.e2e.ci:"
-          grep -E '^(APP_ENV|ADMIN_PROXY_AUTH_ENABLED|TRUST_PROXY_HEADERS|E2E_PROXY_AUTH_ENABLED)=' backend/.env.e2e.ci
+          grep -E '^(APP_ENV|ADMIN_PROXY_AUTH_ENABLED|TRUST_PROXY_HEADERS|E2E_PROXY_AUTH_ENABLED|TRUSTED_PROXY_CIDRS)=' backend/.env.e2e.ci
 
       - name: Validate E2E env file completeness
         run: |
@@ -397,6 +397,7 @@ jobs:
           import hashlib
           import os
           import time
+          import urllib.error
           import urllib.request
 
           user = os.environ["ADMIN_BASIC_USERNAME"]
@@ -414,6 +415,12 @@ jobs:
           req.add_header("X-Proxy-Admin-Signature", signature)
           try:
             urllib.request.urlopen(req, timeout=5).read()
+          except urllib.error.HTTPError as exc:
+            reason = exc.headers.get("X-Admin-Auth-Fail-Reason")
+            print(f"Admin proxy auth preflight failed: {exc}")
+            if reason:
+              print(f"X-Admin-Auth-Fail-Reason: {reason}")
+            raise SystemExit(1) from exc
           except Exception as exc:
             raise SystemExit(f"Admin proxy auth preflight failed: {exc}") from exc
           PY

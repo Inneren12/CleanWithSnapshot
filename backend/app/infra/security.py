@@ -277,10 +277,18 @@ def _is_trusted_proxy(client_host: str, trusted_ips: list[str], trusted_cidrs: l
     return False
 
 
-def is_request_from_trusted_proxy(
+def is_trusted_proxy_source(
     request: Request,
     trusted_proxy_ips: list[str],
     trusted_proxy_cidrs: list[str],
 ) -> bool:
     client_host = request.client.host if request.client else "unknown"
     return _is_trusted_proxy(client_host, trusted_proxy_ips, trusted_proxy_cidrs)
+
+
+def is_request_from_trusted_proxy(
+    request: Request,
+    trusted_proxy_ips: list[str],
+    trusted_proxy_cidrs: list[str],
+) -> bool:
+    return is_trusted_proxy_source(request, trusted_proxy_ips, trusted_proxy_cidrs)

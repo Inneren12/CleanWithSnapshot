@@ -23,7 +23,7 @@ from a trusted proxy IP/CIDR. Direct access to `/v1/admin/*` without proxy heade
 The backend accepts admin headers **only** if:
 
 - `TRUST_PROXY_HEADERS=true`
-- The request `client.host` is in `TRUSTED_PROXY_IPS` or `TRUSTED_PROXY_CIDRS`
+- The request `client.host` (TCP peer IP) is in `TRUSTED_PROXY_IPS` or `TRUSTED_PROXY_CIDRS`
 - `X-Admin-User` or `X-Admin-Email` is present
 - `X-Proxy-Auth=1` is present
 
@@ -33,7 +33,11 @@ Any direct call to `/v1/admin/*` that does not meet the above is rejected with `
 
 - `ADMIN_PROXY_AUTH_ENABLED=true` (default)
 - `TRUST_PROXY_HEADERS=true`
-- `TRUSTED_PROXY_IPS` / `TRUSTED_PROXY_CIDRS` set to your edge proxy addresses
+- `TRUSTED_PROXY_IPS` / `TRUSTED_PROXY_CIDRS` set to your edge proxy TCP peer addresses
+
+**Note:** `TRUSTED_PROXY_IPS` / `TRUSTED_PROXY_CIDRS` are evaluated against the TCP peer
+(`request.client.host`), not `X-Forwarded-For`. In CI/E2E, that peer is typically the Docker
+bridge gateway (e.g., `172.16.0.0/12`), not `127.0.0.1`.
 
 ## Reverse Proxy Requirements
 

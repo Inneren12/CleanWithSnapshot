@@ -18,7 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.settings import settings
 from app.domain.iam import permissions as iam_permissions
-from app.infra.security import is_request_from_trusted_proxy
+from app.infra.security import is_trusted_proxy_source
 from app.infra.logging import update_log_context
 from app.infra.metrics import metrics
 from app.infra.org_context import set_current_org_id
@@ -38,6 +38,15 @@ E2E_PROXY_CLOCK_SKEW_SECONDS = 60
 ADMIN_IDENTITY_SOURCE_PROXY = "proxy"
 ADMIN_IDENTITY_SOURCE_SAAS = "saas"
 ADMIN_IDENTITY_SOURCE_BASIC = "basic"
+ADMIN_AUTH_FAIL_HEADER = "X-Admin-Auth-Fail-Reason"
+ADMIN_AUTH_FAIL_REASONS = {
+    "untrusted_proxy",
+    "bad_signature",
+    "missing_headers",
+    "expired_timestamp",
+    "proxy_disabled",
+}
+ADMIN_AUTH_FAIL_ENVS = {"ci", "e2e", "dev", "local", "test"}
 
 
 class AdminAuthException(HTTPException):
@@ -161,7 +170,7 @@ def _build_auth_exception(
 
 
 def _build_proxy_auth_exception(
-    *, detail: str = "Admin access requires proxy authentication", reason: str = "proxy_auth_required"
+    *, detail: str = "Admin access requires proxy authentication", reason: str = "proxy_disabled"
 ) -> HTTPException:
     exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
     setattr(exc, "reason", reason)
@@ -192,6 +201,29 @@ def _is_e2e_proxy_auth_allowed() -> bool:
     if settings.app_env == "prod":
         return False
     return bool(settings.testing or os.getenv("CI", "").lower() == "true")
+
+
+def _should_emit_admin_auth_reason() -> bool:
+    return settings.app_env in ADMIN_AUTH_FAIL_ENVS
+
+
+def _attach_admin_auth_fail_reason(response, reason: str | None):
+    if not reason or reason not in ADMIN_AUTH_FAIL_REASONS:
+        return response
+    if _should_emit_admin_auth_reason():
+        response.headers[ADMIN_AUTH_FAIL_HEADER] = reason
+    return response
+
+
+def _ensure_trusted_proxy_source(request: Request) -> None:
+    if not settings.trust_proxy_headers:
+        raise _build_proxy_auth_exception(reason="proxy_disabled")
+    if not is_trusted_proxy_source(
+        request,
+        settings.trusted_proxy_ips,
+        settings.trusted_proxy_cidrs,
+    ):
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
 
 
 def _log_admin_auth_failure(
@@ -302,22 +334,14 @@ def _role_from_proxy_headers(roles_header: str | None, username: str) -> AdminRo
 
 
 def _authenticate_proxy_headers(request: Request) -> AdminIdentity:
-    if not settings.trust_proxy_headers:
-        raise _build_proxy_auth_exception(reason="proxy_headers_not_trusted")
-    if not is_request_from_trusted_proxy(
-        request,
-        settings.trusted_proxy_ips,
-        settings.trusted_proxy_cidrs,
-    ):
-        raise _build_proxy_auth_exception(reason="untrusted_proxy")
     proxy_auth = request.headers.get(ADMIN_PROXY_AUTH_HEADER)
     if proxy_auth != "1":
-        raise _build_proxy_auth_exception(reason="missing_proxy_auth_header")
+        raise _build_proxy_auth_exception(reason="missing_headers")
     user = request.headers.get(ADMIN_PROXY_USER_HEADER)
     email = request.headers.get(ADMIN_PROXY_EMAIL_HEADER)
     roles = request.headers.get(ADMIN_PROXY_ROLES_HEADER)
     if not user or not email or not roles:
-        raise _build_proxy_auth_exception(reason="missing_proxy_headers")
+        raise _build_proxy_auth_exception(reason="missing_headers")
     username = user or email or "unknown"
     role = _role_from_proxy_headers(roles, username)
     return AdminIdentity(
@@ -343,28 +367,28 @@ def _has_e2e_proxy_headers(request: Request) -> bool:
 
 def _authenticate_e2e_proxy_headers(request: Request) -> AdminIdentity:
     if not _is_e2e_proxy_auth_allowed():
-        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+        raise _build_proxy_auth_exception(reason="proxy_disabled")
     secret = settings.e2e_proxy_auth_secret
     if not secret:
-        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+        raise _build_proxy_auth_exception(reason="proxy_disabled")
     user = request.headers.get(E2E_PROXY_USER_HEADER)
     email = request.headers.get(E2E_PROXY_EMAIL_HEADER)
     roles = request.headers.get(E2E_PROXY_ROLES_HEADER, "")
     timestamp_raw = request.headers.get(E2E_PROXY_TIMESTAMP_HEADER)
     signature = request.headers.get(E2E_PROXY_SIGNATURE_HEADER)
     if not user or not email or not timestamp_raw or not signature:
-        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+        raise _build_proxy_auth_exception(reason="missing_headers")
     try:
         timestamp = int(timestamp_raw)
     except ValueError:
-        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+        raise _build_proxy_auth_exception(reason="missing_headers")
     now = int(time.time())
     if abs(now - timestamp) > E2E_PROXY_CLOCK_SKEW_SECONDS:
-        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+        raise _build_proxy_auth_exception(reason="expired_timestamp")
     canonical = f"{user}|{email}|{roles}|{timestamp}"
     expected = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature):
-        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+        raise _build_proxy_auth_exception(reason="bad_signature")
     role = _role_from_proxy_headers(roles, user)
     return AdminIdentity(
         username=user,
@@ -376,12 +400,10 @@ def _authenticate_e2e_proxy_headers(request: Request) -> AdminIdentity:
 
 
 def _authenticate_admin_via_proxy(request: Request) -> AdminIdentity:
-    try:
-        return _authenticate_proxy_headers(request)
-    except HTTPException as exc:
-        if _has_e2e_proxy_headers(request):
-            return _authenticate_e2e_proxy_headers(request)
-        raise exc
+    _ensure_trusted_proxy_source(request)
+    if _has_e2e_proxy_headers(request):
+        return _authenticate_e2e_proxy_headers(request)
+    return _authenticate_proxy_headers(request)
 
 
 def _resolve_permission_keys(request: Request, identity: AdminIdentity) -> set[str]:
@@ -568,7 +590,8 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             except HTTPException as exc:
                 reason = getattr(exc, "reason", None) or "proxy_auth_required"
                 _log_admin_auth_failure(request, reason=reason, credentials=None)
-                return await http_exception_handler(request, exc)
+                response = await http_exception_handler(request, exc)
+                return _attach_admin_auth_fail_reason(response, reason)
 
         saas_identity = getattr(request.state, "saas_identity", None)
         if saas_identity:
@@ -607,7 +630,8 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             if credentials is None:
                 reason = reason or "missing_credentials"
             _log_admin_auth_failure(request, reason=reason, credentials=credentials)
-            return await http_exception_handler(request, exc)
+            response = await http_exception_handler(request, exc)
+            return _attach_admin_auth_fail_reason(response, reason)
 
 
 class AdminAuditMiddleware(BaseHTTPMiddleware):
