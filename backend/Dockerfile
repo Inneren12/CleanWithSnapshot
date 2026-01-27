@@ -20,8 +20,14 @@ RUN apt-get update \
         test -z "$(find /usr /usr/local -type d -name 'wheel-0.45.1.dist-info' 2>/dev/null)"; \
         test -z "$(find /usr /usr/local -type d -name 'jaraco.context-5.3.0.dist-info' 2>/dev/null)"
 
-COPY . .
+RUN groupadd -r app \
+    && useradd -r -g app -d /app -s /usr/sbin/nologin app \
+    && chown -R app:app /app
+
+COPY --chown=app:app . .
 
 EXPOSE 8000
+
+USER app
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
