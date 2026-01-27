@@ -79,6 +79,28 @@ Define **path-scoped**, **blocking/challenge-mode** Cloudflare WAF and rate-limi
 - **Rationale:** Challenge suspicious traffic while allowing legitimate operators to pass.
 - **Tuning:** Adjust `cf.waf.score` cutoff to balance detection vs. usability.
 
+**Rule: Admin burst guard**
+- **Type:** Cloudflare Rate Limiting rule
+- **Action:** Managed Challenge
+- **Match:**
+  ```
+  http.request.uri.path starts_with "/admin/"
+  or http.request.uri.path starts_with "/v1/admin/"
+  ```
+- **Threshold:** 10 requests per 10 seconds per `ip.src`
+- **Rationale:** Allows small, legitimate bursts while gating automation.
+
+**Rule: Admin sustained rate limit**
+- **Type:** Cloudflare Rate Limiting rule
+- **Action:** Block
+- **Match:**
+  ```
+  http.request.uri.path starts_with "/admin/"
+  or http.request.uri.path starts_with "/v1/admin/"
+  ```
+- **Threshold:** 30 requests per minute per `ip.src`
+- **Rationale:** Enforces the required admin ceiling and prevents sustained scraping.
+
 **Rule: No admin CAPTCHA bypass without MFA**
 - **Action:** Block
 - **Expression (example):**
@@ -129,24 +151,22 @@ Define **path-scoped**, **blocking/challenge-mode** Cloudflare WAF and rate-limi
 - **Match:**
   ```
   http.request.method eq "POST"
-  and (http.request.uri.path eq "/v1/auth/login")
+  and (http.request.uri.path in {"/login" "/v1/auth/login"})
   ```
-- **Threshold (example):** 10 requests per minute per `ip.src`
+- **Threshold:** 3 requests per 10 seconds per `ip.src`
 - **Failure-focused option (preferred where supported):** Count only **401/403** origin responses to target failed attempts.
-- **Rationale:** Reduces brute-force and password spraying.
-- **Tuning:** Adjust threshold and window based on auth traffic volume and observed abuse.
+- **Rationale:** Allows short login bursts while slowing automation.
 
-**Rule: Escalation block after repeated challenges**
+**Rule: Sustained login block**
 - **Type:** Cloudflare Rate Limiting rule
 - **Action:** Block
 - **Match:**
   ```
   http.request.method eq "POST"
-  and (http.request.uri.path eq "/v1/auth/login")
-  and (cf.bot_management.score < 20)
+  and (http.request.uri.path in {"/login" "/v1/auth/login"})
   ```
-- **Threshold (example):** 30 requests per 10 minutes per `ip.src`
-- **Rationale:** Escalates to block when low-score traffic keeps hammering auth endpoints.
+- **Threshold:** 5 requests per minute per `ip.src`
+- **Rationale:** Enforces the required login ceiling and blocks sustained abuse.
 
 ### 3) `/data-rights/*` and `/v1/data-rights/*`
 
@@ -181,13 +201,19 @@ Define **path-scoped**, **blocking/challenge-mode** Cloudflare WAF and rate-limi
 **Rule: Strict rate limits**
 - **Type:** Cloudflare Rate Limiting rule
 - **Action:** Block
-- **Match (export request):**
+- **Match (export requests):**
   ```
-  http.request.method eq "POST"
-  and (http.request.uri.path eq "/v1/data-rights/export-request")
+  http.request.method in {"GET" "POST"}
+  and (
+    http.request.uri.path eq "/export"
+    or http.request.uri.path eq "/v1/data-rights/export-request"
+    or http.request.uri.path eq "/v1/admin/data/export"
+    or http.request.uri.path eq "/v1/admin/finance/taxes/export"
+    or http.request.uri.path eq "/v1/admin/integrations/google/gcal/export_sync"
+  )
   ```
-- **Threshold (example):** 3 requests per 10 minutes per `ip.src`
-- **Rationale:** Prevents export spam and privacy abuse.
+- **Threshold:** 1 request per minute per `ip.src`
+- **Rationale:** Enforces strict export limits for regulated data flows.
 
 ### 4) `/webhooks/*`
 
@@ -290,3 +316,4 @@ Define **path-scoped**, **blocking/challenge-mode** Cloudflare WAF and rate-limi
 - [ ] Maintain allowlists for `$admin_allowlist_ips` and `$webhook_provider_ips`.
 - [ ] Verify Stripe webhook paths remain excluded per baseline guidance.
 - [ ] Update tuning notes after observing production traffic patterns.
+- [ ] Record per-endpoint rate limit decisions in `docs/SECURITY_RATE_LIMITS.md`.
