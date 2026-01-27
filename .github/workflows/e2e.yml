@@ -389,58 +389,7 @@ jobs:
 
       - name: Preflight admin auth
         run: |
-          signature_payload=$(python - <<'PY'
-          import os
-          import time
-
-          user = os.environ.get("ADMIN_PROXY_AUTH_E2E_USER", "")
-          email = os.environ.get("ADMIN_PROXY_AUTH_E2E_EMAIL", "")
-          roles = os.environ.get("ADMIN_PROXY_AUTH_E2E_ROLES", "")
-          timestamp = str(int(time.time()))
-          mfa = "true"
-          print("\n".join([user, email, roles, timestamp, mfa]))
-          print(timestamp)
-          PY
-          )
-          payload=$(echo "$signature_payload" | head -n 5)
-          timestamp=$(echo "$signature_payload" | tail -n 1)
-          signature=$(python - <<'PY'
-          import hmac
-          import os
-          import hashlib
-          import sys
-
-          secret = os.environ.get("ADMIN_PROXY_AUTH_E2E_SECRET", "")
-          payload = sys.stdin.read().encode()
-          if not secret:
-            print("")
-          else:
-            digest = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-            print(digest)
-          PY
-          <<< "$payload"
-          )
-
-          headers_file=$(mktemp)
-          body_file=$(mktemp)
-          status=$(curl -sS -o "$body_file" -D "$headers_file" -w "%{http_code}" \
-            -H "X-Proxy-Auth-Secret=${ADMIN_PROXY_AUTH_SECRET}" \
-            -H "X-Auth-MFA=true" \
-            -H "X-E2E-Admin-User=${ADMIN_PROXY_AUTH_E2E_USER}" \
-            -H "X-E2E-Admin-Email=${ADMIN_PROXY_AUTH_E2E_EMAIL}" \
-            -H "X-E2E-Admin-Roles=${ADMIN_PROXY_AUTH_E2E_ROLES}" \
-            -H "X-E2E-Proxy-Timestamp=${timestamp}" \
-            -H "X-E2E-Proxy-Signature=${signature}" \
-            http://127.0.0.1:8000/v1/admin/profile || true)
-
-          if [ "$status" != "200" ]; then
-            echo "Admin auth preflight failed (status: $status)."
-            grep -i '^X-Admin-Auth-Fail-Reason:' "$headers_file" || true
-            cat "$body_file" || true
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
-            exit 1
-          fi
+          python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:8000/v1/admin/profile
 
       - name: Install web dependencies
         working-directory: web
@@ -488,6 +437,16 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_EMAIL="$ADMIN_PROXY_AUTH_E2E_EMAIL" \
           ADMIN_PROXY_AUTH_E2E_ROLES="$ADMIN_PROXY_AUTH_E2E_ROLES" \
           npx playwright test --config e2e/playwright.config.ts
+
+      - name: Assert no unauthenticated admin probes
+        if: always()
+        run: |
+          logs=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api || true)
+          if echo "$logs" | grep -q "admin_proxy_auth_required_missing_headers"; then
+            echo "Detected unauthenticated admin probes in API logs."
+            echo "$logs" | grep -n "admin_proxy_auth_required_missing_headers" || true
+            exit 1
+          fi
 
       - name: Collect compose diagnostics
         if: always()
