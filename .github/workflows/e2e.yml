@@ -43,6 +43,7 @@ jobs:
           keys.update(re.findall(r"([A-Z0-9_]+) is required when .* in prod", text))
           keys.update(
             {
+              "APP_ENV",
               "AUTH_SECRET_KEY",
               "CLIENT_PORTAL_SECRET",
               "WORKER_PORTAL_SECRET",
@@ -67,6 +68,7 @@ jobs:
           admin_password = f"ci-{secrets.token_hex(32)}"
           e2e_proxy_secret = secrets.token_hex(32)
           overrides = {
+            "APP_ENV": "ci",
             "ADMIN_BASIC_USERNAME": admin_username,
             "ADMIN_BASIC_PASSWORD": admin_password,
             "LEGACY_BASIC_AUTH_ENABLED": "true",
@@ -91,6 +93,7 @@ jobs:
             + "TRUSTED_PROXY_IPS=127.0.0.1\n"
             + "E2E_PROXY_AUTH_ENABLED=true\n"
             + f"E2E_PROXY_AUTH_SECRET={e2e_proxy_secret}\n"
+            + "APP_ENV=ci\n"
             + "ENV_FILE=backend/.env.e2e.ci\n",
             encoding="utf-8",
           )
@@ -99,12 +102,18 @@ jobs:
       - name: Verify ENV_FILE secrets are present
         run: |
           echo "ENV_FILE=$ENV_FILE"
+          echo "APP_ENV=${APP_ENV}"
           echo "ADMIN_PROXY_AUTH_ENABLED=${ADMIN_PROXY_AUTH_ENABLED}"
           echo "TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS}"
           echo "E2E_PROXY_AUTH_ENABLED=${E2E_PROXY_AUTH_ENABLED}"
           grep -q '^AUTH_SECRET_KEY=' backend/.env.e2e.ci
           grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN|ADMIN_BASIC_USERNAME|ADMIN_BASIC_PASSWORD|LEGACY_BASIC_AUTH_ENABLED)=' backend/.env.e2e.ci \
             | sed -E 's/=.*/=<redacted>/'
+
+      - name: Preflight env summary (no secrets)
+        run: |
+          echo "Env summary from backend/.env.e2e.ci:"
+          grep -E '^(APP_ENV|ADMIN_PROXY_AUTH_ENABLED|TRUST_PROXY_HEADERS|E2E_PROXY_AUTH_ENABLED)=' backend/.env.e2e.ci
 
       - name: Validate E2E env file completeness
         run: |
@@ -140,8 +149,19 @@ jobs:
             for line in content.splitlines()
             if line and not line.strip().startswith("#") and "=" in line
           }
+          app_env_value = next(
+            (
+              line.split("=", 1)[1]
+              for line in content.splitlines()
+              if line.startswith("APP_ENV=")
+            ),
+            None,
+          )
           missing = sorted(required - present)
           print("E2E env keys present:", ", ".join(sorted(present)))
+          print("APP_ENV:", app_env_value)
+          if app_env_value != "ci":
+            raise SystemExit(f"APP_ENV must be set to ci for E2E runs (got {app_env_value})")
           if missing:
             raise SystemExit(f"Missing required E2E env keys: {', '.join(missing)}")
           PY
@@ -342,6 +362,8 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true
           echo ""
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
+          echo ""
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api env | grep '^APP_ENV=' || true
           echo ""
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api \
             python -c "import os; print('AUTH_SECRET_KEY set:', bool(os.getenv('AUTH_SECRET_KEY')))" || true

@@ -39,21 +39,11 @@ def test_dev_defaults_allow_placeholders():
     assert settings.auth_secret_key == "dev-auth-secret"
 
 
-def test_defaults_to_prod_when_env_missing(monkeypatch):
+def test_defaults_to_dev_when_env_missing(monkeypatch):
     monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
+    settings = Settings(_env_file=None)
 
-    settings = Settings(
-        auth_secret_key="super-secret",
-        client_portal_secret="client-secret",
-        worker_portal_secret="worker-secret",
-        metrics_enabled=False,
-        trust_proxy_headers=True,
-        trusted_proxy_ips=["127.0.0.1"],
-        _env_file=None,
-    )
-
-    assert settings.app_env == "prod"
+    assert settings.app_env == "dev"
 
 
 def test_prod_requires_non_default_secrets(monkeypatch):

@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "cleaning-economy-bot"
     cors_origins_raw: str | None = Field(None, validation_alias="cors_origins")
-    app_env: Literal["dev", "prod"] = Field("prod")
+    app_env: Literal["dev", "local", "test", "ci", "e2e", "prod"] = Field("dev")
     strict_cors: bool = Field(False)
     strict_policy_mode: bool = Field(False)
     admin_read_only: bool = Field(False)
@@ -454,7 +454,10 @@ class Settings(BaseSettings):
 
         if self.e2e_proxy_auth_enabled:
             if self.app_env == "prod":
-                raise ValueError("E2E_PROXY_AUTH_ENABLED is not allowed in prod")
+                raise ValueError(
+                    "E2E_PROXY_AUTH_ENABLED is not allowed in prod "
+                    f"(APP_ENV={self.app_env}). Set APP_ENV=ci in the E2E workflow."
+                )
             if not self.e2e_proxy_auth_secret:
                 raise ValueError("E2E_PROXY_AUTH_ENABLED requires E2E_PROXY_AUTH_SECRET")
             if not (self.testing or os.getenv("CI", "").lower() == "true"):
