@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     admin_proxy_auth_header_user: str = Field("X-Admin-User")
     admin_proxy_auth_header_email: str = Field("X-Admin-Email")
     admin_proxy_auth_header_roles: str = Field("X-Admin-Roles")
+    admin_proxy_auth_header_mfa: str = Field("X-Auth-MFA")
     admin_proxy_auth_secret: str | None = Field(None)
     auth_secret_key: str = Field("dev-auth-secret")
     auth_token_ttl_minutes: int = Field(60 * 24)

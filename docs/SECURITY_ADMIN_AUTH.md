@@ -27,6 +27,8 @@ Proxy authentication provides better security by:
 - Reducing the attack surface of the backend
 - Allowing centralized authentication policy management
 
+**Requirement**: All admin access must pass through an IdP or access layer that enforces MFA. The proxy must only forward requests when MFA is satisfied, and the backend will reject admin requests without an MFA assertion header.
+
 ---
 
 ## Authentication Modes
@@ -95,6 +97,7 @@ Reverse proxy authenticates users and injects trusted headers. Backend validates
 | `X-Admin-Email` | User's email address | No |
 | `X-Admin-Roles` | Comma-separated roles (e.g., `owner,admin`) | No (defaults to `viewer`) |
 | `X-Proxy-Auth-Secret` | Shared secret for verification | Yes |
+| `X-Auth-MFA` | MFA assertion (`true`) | Yes |
 
 ### Role Hierarchy
 
@@ -126,6 +129,7 @@ ADMIN_PROXY_AUTH_SECRET=your-very-long-and-secure-shared-secret-here
 ADMIN_PROXY_AUTH_HEADER_USER=X-Admin-User
 ADMIN_PROXY_AUTH_HEADER_EMAIL=X-Admin-Email
 ADMIN_PROXY_AUTH_HEADER_ROLES=X-Admin-Roles
+ADMIN_PROXY_AUTH_HEADER_MFA=X-Auth-MFA
 
 # Disable legacy Basic Auth (recommended)
 LEGACY_BASIC_AUTH_ENABLED=false
@@ -138,6 +142,9 @@ LEGACY_BASIC_AUTH_ENABLED=false
 
 @admin path /v1/admin /v1/admin/*
 handle @admin {
+    @admin_mfa_missing not header X-Auth-MFA "true"
+    respond @admin_mfa_missing "Admin access requires MFA." 403
+
     basicauth {
         owner {env.ADMIN_PROXY_AUTH_HASH_OWNER}
         admin {env.ADMIN_PROXY_AUTH_HASH_ADMIN}
@@ -150,6 +157,8 @@ handle @admin {
     request_header -Authorization
 
     # Inject trusted headers
+    request_header -X-Auth-MFA
+    request_header X-Auth-MFA "true"
     request_header X-Admin-User {http.auth.user.id}
     request_header X-Admin-Roles {http.auth.user.id}
     request_header X-Proxy-Auth-Secret {env.ADMIN_PROXY_AUTH_SECRET}
@@ -171,6 +180,17 @@ ADMIN_PROXY_AUTH_HASH_VIEWER=$2a$14$...
 # Shared secret (must match backend configuration)
 ADMIN_PROXY_AUTH_SECRET=your-very-long-and-secure-shared-secret-here
 ```
+
+### MFA Enforcement at IdP/Access Layer
+
+MFA is enforced outside the backend by the IdP or access gateway protecting the proxy. The access policy **must** require MFA for every admin identity and only allow the request to reach Caddy when MFA is satisfied. Configure the access layer to add the `X-Auth-MFA: true` assertion header after MFA is verified.
+
+**Accepted MFA methods** (must be enforced by policy):
+- TOTP (RFC6238 authenticator apps)
+- Push-based verification (IdP-native push)
+- Hardware security keys (WebAuthn/FIDO2)
+
+SMS-based MFA is not acceptable for admin access.
 
 ### Generating Password Hashes
 
@@ -197,7 +217,8 @@ The backend trusts proxy headers **only when**:
 1. **No credentials in backend**: The backend never sees or validates passwords when proxy auth is enabled
 2. **Secret verification**: Every request with proxy headers must include the correct shared secret
 3. **Header stripping**: The proxy strips the `Authorization` header before forwarding to prevent credential leakage
-4. **Direct access blocked**: When `ADMIN_PROXY_AUTH_REQUIRED=true`, requests without valid proxy headers are rejected with 401
+4. **MFA enforced at the edge**: The proxy only forwards admin requests when `X-Auth-MFA=true`
+5. **Direct access blocked**: When `ADMIN_PROXY_AUTH_REQUIRED=true`, requests without valid proxy headers are rejected with 401
 
 ### Attack Vectors Mitigated
 
@@ -282,6 +303,13 @@ All admin actions are logged in the `admin_audit_logs` table, including:
 - Role (from `X-Admin-Roles` header)
 - Action performed
 - Timestamp
+
+### MFA Recovery Process
+
+If an admin loses access to their MFA device:
+1. Use the IdP’s recovery workflow (backup codes or recovery key) to re-enroll MFA.
+2. If recovery is not possible, revoke the admin’s access at the IdP, rotate their proxy credentials, and issue a new MFA-protected account.
+3. Validate that `X-Auth-MFA=true` is present in proxy auth logs before restoring access.
 
 ---
 

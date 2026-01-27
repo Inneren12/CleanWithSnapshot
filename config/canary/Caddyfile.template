@@ -68,6 +68,9 @@ api.panidobro.com {
   # Admin routes: proxy-level authentication (see main Caddyfile for documentation)
   @admin path /v1/admin /v1/admin/*
   handle @admin {
+    @admin_mfa_missing not header X-Auth-MFA "true"
+    respond @admin_mfa_missing "Admin access requires MFA." 403
+
     basicauth {
       owner {env.ADMIN_PROXY_AUTH_HASH_OWNER}
       admin {env.ADMIN_PROXY_AUTH_HASH_ADMIN}
@@ -77,6 +80,8 @@ api.panidobro.com {
     }
 
     request_header -Authorization
+    request_header -X-Auth-MFA
+    request_header X-Auth-MFA "true"
     request_header X-Admin-User {http.auth.user.id}
     request_header X-Admin-Roles {http.auth.user.id}
     request_header X-Proxy-Auth-Secret {env.ADMIN_PROXY_AUTH_SECRET}

@@ -82,6 +82,10 @@ api.panidobro.com {
   # Example generating password hash: caddy hash-password --plaintext 'your-password'
   @admin path /v1/admin /v1/admin/*
   handle @admin {
+    # Require MFA assertion from upstream IdP/access layer
+    @admin_mfa_missing not header X-Auth-MFA "true"
+    respond @admin_mfa_missing "Admin access requires MFA." 403
+
     # IP allowlist for admin routes (optional, add IPs/CIDRs via env var)
     # @admin_ip_deny not remote_ip 127.0.0.1 ::1 {env.ADMIN_ALLOWED_IPS}
     # respond @admin_ip_deny "Admin access denied from this IP." 403
@@ -105,6 +109,8 @@ api.panidobro.com {
 
     # Inject trusted proxy headers for the backend
     # The backend verifies X-Proxy-Auth-Secret matches its configured secret
+    request_header -X-Auth-MFA
+    request_header X-Auth-MFA "true"
     request_header X-Admin-User {http.auth.user.id}
     request_header X-Admin-Roles {http.auth.user.id}
     request_header X-Proxy-Auth-Secret {env.ADMIN_PROXY_AUTH_SECRET}
