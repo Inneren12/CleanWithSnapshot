@@ -8,6 +8,49 @@
   }
 }
 
+(admin_proxy) {
+  # Require MFA assertion from upstream IdP/access layer
+  @admin_mfa_missing not header X-Auth-MFA "true"
+  respond @admin_mfa_missing "Admin access requires MFA." 403
+
+  # Authenticate admin users at proxy level
+  # Credentials are configured via environment variables:
+  # - ADMIN_PROXY_AUTH_HASH_OWNER: bcrypt hash for owner user
+  # - ADMIN_PROXY_AUTH_HASH_ADMIN: bcrypt hash for admin user
+  # - ADMIN_PROXY_AUTH_HASH_DISPATCHER: bcrypt hash for dispatcher user
+  # - ADMIN_PROXY_AUTH_HASH_VIEWER: bcrypt hash for viewer user
+  basicauth {
+    owner {env.ADMIN_PROXY_AUTH_HASH_OWNER}
+    admin {env.ADMIN_PROXY_AUTH_HASH_ADMIN}
+    dispatcher {env.ADMIN_PROXY_AUTH_HASH_DISPATCHER}
+    accountant {env.ADMIN_PROXY_AUTH_HASH_ACCOUNTANT}
+    viewer {env.ADMIN_PROXY_AUTH_HASH_VIEWER}
+  }
+
+  # Strip the original Authorization header to prevent backend from seeing credentials
+  request_header -Authorization
+
+  # Inject trusted proxy headers for the backend
+  # The backend verifies X-Proxy-Auth-Secret matches its configured secret
+  request_header -X-Auth-MFA
+  request_header X-Auth-MFA "true"
+  request_header X-Admin-User {http.auth.user.id}
+  request_header X-Admin-Roles {http.auth.user.id}
+  request_header X-Proxy-Auth-Secret {env.ADMIN_PROXY_AUTH_SECRET}
+
+  # Prevent caching of admin responses
+  header Cache-Control "no-store, no-cache, must-revalidate, private"
+  header Pragma "no-cache"
+
+  reverse_proxy api:8000 {
+    transport http {
+      dial_timeout 10s
+      read_timeout 90s
+      write_timeout 90s
+    }
+  }
+}
+
 panidobro.com, www.panidobro.com {
   encode zstd gzip
 
@@ -82,49 +125,23 @@ api.panidobro.com {
   # Example generating password hash: caddy hash-password --plaintext 'your-password'
   @admin path /v1/admin /v1/admin/*
   handle @admin {
-    # Require MFA assertion from upstream IdP/access layer
-    @admin_mfa_missing not header X-Auth-MFA "true"
-    respond @admin_mfa_missing "Admin access requires MFA." 403
+    # Enable allowlisting only when ADMIN_ALLOWED_IPS is non-empty.
+    @admin_allowlist_enabled expression `{env.ADMIN_ALLOWED_IPS} != ""`
+    @admin_ip_allowlist remote_ip 127.0.0.1 ::1 {env.ADMIN_ALLOWED_IPS}
+    @admin_break_glass header X-Break-Glass-Token *
 
-    # IP allowlist for admin routes (optional, add IPs/CIDRs via env var)
-    # @admin_ip_deny not remote_ip 127.0.0.1 ::1 {env.ADMIN_ALLOWED_IPS}
-    # respond @admin_ip_deny "Admin access denied from this IP." 403
-
-    # Authenticate admin users at proxy level
-    # Credentials are configured via environment variables:
-    # - ADMIN_PROXY_AUTH_HASH_OWNER: bcrypt hash for owner user
-    # - ADMIN_PROXY_AUTH_HASH_ADMIN: bcrypt hash for admin user
-    # - ADMIN_PROXY_AUTH_HASH_DISPATCHER: bcrypt hash for dispatcher user
-    # - ADMIN_PROXY_AUTH_HASH_VIEWER: bcrypt hash for viewer user
-    basicauth {
-      owner {env.ADMIN_PROXY_AUTH_HASH_OWNER}
-      admin {env.ADMIN_PROXY_AUTH_HASH_ADMIN}
-      dispatcher {env.ADMIN_PROXY_AUTH_HASH_DISPATCHER}
-      accountant {env.ADMIN_PROXY_AUTH_HASH_ACCOUNTANT}
-      viewer {env.ADMIN_PROXY_AUTH_HASH_VIEWER}
+    handle @admin_allowlist_enabled {
+      handle @admin_break_glass {
+        import admin_proxy
+      }
+      handle @admin_ip_allowlist {
+        import admin_proxy
+      }
+      respond "Admin access denied from this IP." 403
     }
 
-    # Strip the original Authorization header to prevent backend from seeing credentials
-    request_header -Authorization
-
-    # Inject trusted proxy headers for the backend
-    # The backend verifies X-Proxy-Auth-Secret matches its configured secret
-    request_header -X-Auth-MFA
-    request_header X-Auth-MFA "true"
-    request_header X-Admin-User {http.auth.user.id}
-    request_header X-Admin-Roles {http.auth.user.id}
-    request_header X-Proxy-Auth-Secret {env.ADMIN_PROXY_AUTH_SECRET}
-
-    # Prevent caching of admin responses
-    header Cache-Control "no-store, no-cache, must-revalidate, private"
-    header Pragma "no-cache"
-
-    reverse_proxy api:8000 {
-      transport http {
-        dial_timeout 10s
-        read_timeout 90s
-        write_timeout 90s
-      }
+    handle {
+      import admin_proxy
     }
   }
 
