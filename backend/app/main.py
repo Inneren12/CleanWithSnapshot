@@ -65,7 +65,8 @@ from app.infra.logging import clear_log_context, configure_logging, update_log_c
 from app.infra.metrics import configure_metrics, metrics
 from app.infra.security import RateLimiter, resolve_client_key
 from app.infra.tracing import configure_tracing, instrument_fastapi
-from app.settings import SECURE_ENVIRONMENTS, settings
+from app.infra.environment import SECURE_ENVIRONMENTS
+from app.settings import settings
 from app.services import build_app_services
 
 logger = logging.getLogger(__name__)

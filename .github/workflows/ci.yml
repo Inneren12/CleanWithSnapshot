@@ -226,9 +226,9 @@ jobs:
           # Prod mode with CI-safe dummy secrets (validates prod enforcement still works)
           APP_ENV: "prod"
           TESTING: "false"
-          AUTH_SECRET_KEY: "ci-auth-secret-not-default-12345678"
-          CLIENT_PORTAL_SECRET: "ci-client-secret-not-default-12345678"
-          WORKER_PORTAL_SECRET: "ci-worker-secret-not-default-12345678"
+          SECRETS_BACKEND: "aws_secrets_manager"
+          AWS_SECRETS_MANAGER_SECRET_JSON: |
+            {"AUTH_SECRET_KEY":"ci-auth-secret-not-default-12345678","CLIENT_PORTAL_SECRET":"ci-client-secret-not-default-12345678","WORKER_PORTAL_SECRET":"ci-worker-secret-not-default-12345678","ADMIN_PROXY_AUTH_SECRET":"ci-admin-proxy-secret-not-default-12345678"}
           METRICS_ENABLED: "false"
           STRICT_CORS: "false"
 

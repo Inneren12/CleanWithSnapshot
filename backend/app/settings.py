@@ -1,14 +1,13 @@
 import json
 import uuid
 from ipaddress import ip_network
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-SECURE_ENVIRONMENTS = {"prod", "staging"}
-DEV_DEFAULT_ENVIRONMENTS = {"dev", "ci", "e2e", "test", "local"}
+from app.infra.environment import DEV_DEFAULT_ENVIRONMENTS, SECURE_ENVIRONMENTS
+from app.infra.secrets_backend import load_secrets_backend
 
 
 class Settings(BaseSettings):
@@ -105,7 +104,9 @@ class Settings(BaseSettings):
     admin_proxy_auth_header_email: str = Field("X-Admin-Email")
     admin_proxy_auth_header_roles: str = Field("X-Admin-Roles")
     admin_proxy_auth_header_mfa: str = Field("X-Auth-MFA")
-    admin_proxy_auth_secret: str | None = Field(None)
+    admin_proxy_auth_secret: str | None = Field(
+        None, validation_alias=AliasChoices("ADMIN_PROXY_AUTH_SECRET", "admin_proxy_auth_secret")
+    )
     admin_proxy_auth_e2e_enabled: bool = Field(False)
     admin_proxy_auth_e2e_secret: str | None = Field(None)
     admin_proxy_auth_e2e_ttl_seconds: int = Field(300)
@@ -118,6 +119,28 @@ class Settings(BaseSettings):
     )
     auth_refresh_token_ttl_minutes: int = Field(60 * 24 * 14)
     auth_session_ttl_minutes: int = Field(60 * 24)
+    secrets_backend: Literal["aws_secrets_manager", "aws_ssm"] | None = Field(
+        None, validation_alias=AliasChoices("SECRETS_BACKEND", "secrets_backend")
+    )
+    aws_region: str | None = Field(
+        None,
+        validation_alias=AliasChoices("AWS_REGION", "AWS_DEFAULT_REGION", "aws_region"),
+    )
+    aws_secrets_manager_secret_id: str | None = Field(
+        None,
+        validation_alias=AliasChoices(
+            "AWS_SECRETS_MANAGER_SECRET_ID", "aws_secrets_manager_secret_id"
+        ),
+    )
+    aws_secrets_manager_secret_json: str | None = Field(
+        None,
+        validation_alias=AliasChoices(
+            "AWS_SECRETS_MANAGER_SECRET_JSON", "aws_secrets_manager_secret_json"
+        ),
+    )
+    aws_ssm_parameter_path: str | None = Field(
+        None, validation_alias=AliasChoices("AWS_SSM_PARAMETER_PATH", "aws_ssm_parameter_path")
+    )
     password_hash_scheme: Literal["argon2id", "bcrypt"] = Field("argon2id")
     password_hash_argon2_time_cost: int = Field(3)
     password_hash_argon2_memory_cost: int = Field(65536)
@@ -332,6 +355,40 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", enable_decoding=False)
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        def secrets_settings() -> dict[str, Any]:
+            combined: dict[str, Any] = {}
+            for source in (env_settings, dotenv_settings):
+                try:
+                    combined.update(source())
+                except Exception:
+                    continue
+            app_env = combined.get("app_env", cls.app_env)
+            secrets_backend = combined.get("secrets_backend")
+            if not secrets_backend:
+                return {}
+            return load_secrets_backend(
+                backend=secrets_backend,
+                app_env=str(app_env),
+                config=combined,
+            )
+
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            secrets_settings,
+            file_secret_settings,
+        )
+
     @field_validator(
         "cors_origins_raw",
         "trusted_proxy_ips_raw",
@@ -415,6 +472,11 @@ class Settings(BaseSettings):
         if self.legacy_basic_auth_enabled is None:
             self.legacy_basic_auth_enabled = False
 
+        if self.app_env in SECURE_ENVIRONMENTS and not self.secrets_backend:
+            raise ValueError(
+                f"APP_ENV={self.app_env} requires SECRETS_BACKEND to be configured for secrets loading"
+            )
+
         if self.app_env in SECURE_ENVIRONMENTS and self.legacy_basic_auth_enabled:
             if not _basic_auth_creds_configured():
                 raise ValueError(
@@ -457,6 +519,11 @@ class Settings(BaseSettings):
             self.worker_portal_secret,
             "WORKER_PORTAL_SECRET",
             {"dev-worker-portal-secret"},
+        )
+        _require_secret(
+            self.admin_proxy_auth_secret,
+            "ADMIN_PROXY_AUTH_SECRET",
+            set(),
         )
 
         if self.strict_cors:
