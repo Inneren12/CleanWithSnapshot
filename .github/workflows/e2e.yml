@@ -70,7 +70,7 @@ jobs:
           admin_username = "e2e"
           admin_password = f"ci-{secrets.token_hex(32)}"
           overrides = {
-            "APP_ENV": "dev",
+            "APP_ENV": "ci",
             "ADMIN_BASIC_USERNAME": admin_username,
             "ADMIN_BASIC_PASSWORD": admin_password,
             "LEGACY_BASIC_AUTH_ENABLED": "false",
@@ -99,6 +99,9 @@ jobs:
             + f"ADMIN_PROXY_AUTH_E2E_ENABLED={overrides['ADMIN_PROXY_AUTH_E2E_ENABLED']}\n"
             + f"ADMIN_PROXY_AUTH_E2E_SECRET={overrides['ADMIN_PROXY_AUTH_E2E_SECRET']}\n"
             + f"ADMIN_PROXY_AUTH_ROLE=admin\n"
+            + f"ADMIN_PROXY_AUTH_E2E_USER={admin_username}\n"
+            + f"ADMIN_PROXY_AUTH_E2E_EMAIL={admin_username}@e2e.invalid\n"
+            + f"ADMIN_PROXY_AUTH_E2E_ROLES=admin\n"
             + f"TRUST_PROXY_HEADERS={overrides['TRUST_PROXY_HEADERS']}\n"
             + f"TRUSTED_PROXY_CIDRS={overrides['TRUSTED_PROXY_CIDRS']}\n"
             + "ENV_FILE=backend/.env.e2e.ci\n",
@@ -146,6 +149,7 @@ jobs:
               "ADMIN_PROXY_AUTH_E2E_ENABLED",
               "ADMIN_PROXY_AUTH_E2E_SECRET",
               "TRUST_PROXY_HEADERS",
+              "TRUSTED_PROXY_IPS",
               "TRUSTED_PROXY_CIDRS",
             }
           )
@@ -385,27 +389,47 @@ jobs:
 
       - name: Preflight admin auth
         run: |
+          signature_payload=$(python - <<'PY'
+          import os
+          import time
+
+          user = os.environ.get("ADMIN_PROXY_AUTH_E2E_USER", "")
+          email = os.environ.get("ADMIN_PROXY_AUTH_E2E_EMAIL", "")
+          roles = os.environ.get("ADMIN_PROXY_AUTH_E2E_ROLES", "")
+          timestamp = str(int(time.time()))
+          mfa = "true"
+          print("\n".join([user, email, roles, timestamp, mfa]))
+          print(timestamp)
+          PY
+          )
+          payload=$(echo "$signature_payload" | head -n 5)
+          timestamp=$(echo "$signature_payload" | tail -n 1)
           signature=$(python - <<'PY'
           import hmac
           import os
           import hashlib
+          import sys
 
           secret = os.environ.get("ADMIN_PROXY_AUTH_E2E_SECRET", "")
+          payload = sys.stdin.read().encode()
           if not secret:
             print("")
           else:
-            digest = hmac.new(secret.encode(), b"e2e-proxy-auth", hashlib.sha256).hexdigest()
+            digest = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
             print(digest)
           PY
+          <<< "$payload"
           )
 
           headers_file=$(mktemp)
           body_file=$(mktemp)
           status=$(curl -sS -o "$body_file" -D "$headers_file" -w "%{http_code}" \
-            -H "X-Admin-User=${ADMIN_BASIC_USERNAME}" \
-            -H "X-Admin-Roles=admin" \
             -H "X-Proxy-Auth-Secret=${ADMIN_PROXY_AUTH_SECRET}" \
             -H "X-Auth-MFA=true" \
+            -H "X-E2E-Admin-User=${ADMIN_PROXY_AUTH_E2E_USER}" \
+            -H "X-E2E-Admin-Email=${ADMIN_PROXY_AUTH_E2E_EMAIL}" \
+            -H "X-E2E-Admin-Roles=${ADMIN_PROXY_AUTH_E2E_ROLES}" \
+            -H "X-E2E-Proxy-Timestamp=${timestamp}" \
             -H "X-E2E-Proxy-Signature=${signature}" \
             http://127.0.0.1:8000/v1/admin/profile || true)
 
@@ -445,6 +469,9 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_ENABLED: ${{ env.ADMIN_PROXY_AUTH_E2E_ENABLED }}
           ADMIN_PROXY_AUTH_E2E_SECRET: ${{ env.ADMIN_PROXY_AUTH_E2E_SECRET }}
           ADMIN_PROXY_AUTH_ROLE: ${{ env.ADMIN_PROXY_AUTH_ROLE }}
+          ADMIN_PROXY_AUTH_E2E_USER: ${{ env.ADMIN_PROXY_AUTH_E2E_USER }}
+          ADMIN_PROXY_AUTH_E2E_EMAIL: ${{ env.ADMIN_PROXY_AUTH_E2E_EMAIL }}
+          ADMIN_PROXY_AUTH_E2E_ROLES: ${{ env.ADMIN_PROXY_AUTH_E2E_ROLES }}
         run: |
           PW_CHANNEL=chrome PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
           PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
@@ -457,6 +484,9 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_ENABLED="$ADMIN_PROXY_AUTH_E2E_ENABLED" \
           ADMIN_PROXY_AUTH_E2E_SECRET="$ADMIN_PROXY_AUTH_E2E_SECRET" \
           ADMIN_PROXY_AUTH_ROLE="$ADMIN_PROXY_AUTH_ROLE" \
+          ADMIN_PROXY_AUTH_E2E_USER="$ADMIN_PROXY_AUTH_E2E_USER" \
+          ADMIN_PROXY_AUTH_E2E_EMAIL="$ADMIN_PROXY_AUTH_E2E_EMAIL" \
+          ADMIN_PROXY_AUTH_E2E_ROLES="$ADMIN_PROXY_AUTH_E2E_ROLES" \
           npx playwright test --config e2e/playwright.config.ts
 
       - name: Collect compose diagnostics

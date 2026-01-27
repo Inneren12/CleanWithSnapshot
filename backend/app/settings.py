@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "cleaning-economy-bot"
     cors_origins_raw: str | None = Field(None, validation_alias="cors_origins")
-    app_env: Literal["dev", "prod"] = Field("prod")
+    app_env: Literal["dev", "prod", "ci", "e2e"] = Field("prod")
     strict_cors: bool = Field(False)
     strict_policy_mode: bool = Field(False)
     admin_read_only: bool = Field(False)
@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     admin_proxy_auth_secret: str | None = Field(None)
     admin_proxy_auth_e2e_enabled: bool = Field(False)
     admin_proxy_auth_e2e_secret: str | None = Field(None)
+    admin_proxy_auth_e2e_ttl_seconds: int = Field(300)
     auth_secret_key: str = Field("dev-auth-secret")
     auth_token_ttl_minutes: int = Field(60 * 24)
     auth_access_token_ttl_minutes: int = Field(
@@ -370,6 +371,8 @@ class Settings(BaseSettings):
             )
 
         if self.admin_proxy_auth_e2e_enabled:
+            if self.app_env not in {"ci", "e2e"}:
+                raise ValueError("ADMIN_PROXY_AUTH_E2E_ENABLED requires APP_ENV=ci or APP_ENV=e2e")
             if not self.admin_proxy_auth_e2e_secret or not self.admin_proxy_auth_e2e_secret.strip():
                 raise ValueError("ADMIN_PROXY_AUTH_E2E_SECRET must be set when E2E proxy auth is enabled")
 

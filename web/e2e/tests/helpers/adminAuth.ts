@@ -17,6 +17,9 @@ const ADMIN_PROXY_AUTH_ROLE = process.env.ADMIN_PROXY_AUTH_ROLE ?? 'admin';
 const ADMIN_PROXY_AUTH_E2E_ENABLED =
   (process.env.ADMIN_PROXY_AUTH_E2E_ENABLED ?? '').toLowerCase() === 'true';
 const ADMIN_PROXY_AUTH_E2E_SECRET = process.env.ADMIN_PROXY_AUTH_E2E_SECRET ?? '';
+const ADMIN_PROXY_AUTH_E2E_USER = process.env.ADMIN_PROXY_AUTH_E2E_USER ?? '';
+const ADMIN_PROXY_AUTH_E2E_EMAIL = process.env.ADMIN_PROXY_AUTH_E2E_EMAIL ?? '';
+const ADMIN_PROXY_AUTH_E2E_ROLES = process.env.ADMIN_PROXY_AUTH_E2E_ROLES ?? '';
 
 export const defaultAdminCredentials = (): AdminCredentials => ({
   username: process.env.ADMIN_BASIC_USERNAME ?? 'admin',
@@ -28,21 +31,33 @@ export const defaultAdminCredentials = (): AdminCredentials => ({
 });
 
 const buildProxyHeaders = (credentials: AdminCredentials): Record<string, string> => {
+  const mfaValue = 'true';
   const headers: Record<string, string> = {
-    'X-Admin-User': credentials.username,
-    'X-Admin-Roles': ADMIN_PROXY_AUTH_ROLE,
     'X-Proxy-Auth-Secret': ADMIN_PROXY_AUTH_SECRET,
-    'X-Auth-MFA': 'true',
+    'X-Auth-MFA': mfaValue,
   };
 
   if (ADMIN_PROXY_AUTH_E2E_ENABLED && ADMIN_PROXY_AUTH_E2E_SECRET) {
+    const user = ADMIN_PROXY_AUTH_E2E_USER || credentials.username;
+    const email =
+      ADMIN_PROXY_AUTH_E2E_EMAIL || `${credentials.username}@e2e.invalid`;
+    const roles = ADMIN_PROXY_AUTH_E2E_ROLES || ADMIN_PROXY_AUTH_ROLE;
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const payload = [user, email, roles, timestamp, mfaValue].join('\n');
     const signature = crypto
       .createHmac('sha256', ADMIN_PROXY_AUTH_E2E_SECRET)
-      .update('e2e-proxy-auth')
+      .update(payload)
       .digest('hex');
+    headers['X-E2E-Admin-User'] = user;
+    headers['X-E2E-Admin-Email'] = email;
+    headers['X-E2E-Admin-Roles'] = roles;
+    headers['X-E2E-Proxy-Timestamp'] = timestamp;
     headers['X-E2E-Proxy-Signature'] = signature;
+    return headers;
   }
 
+  headers['X-Admin-User'] = credentials.username;
+  headers['X-Admin-Roles'] = ADMIN_PROXY_AUTH_ROLE;
   return headers;
 };
 

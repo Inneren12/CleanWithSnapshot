@@ -2,6 +2,7 @@ import base64
 import hmac
 import logging
 import secrets
+import time
 import uuid
 from ipaddress import ip_address, ip_network
 from dataclasses import dataclass
@@ -22,6 +23,10 @@ from app.infra.org_context import set_current_org_id
 
 PROXY_AUTH_HEADER_SECRET = "X-Proxy-Auth-Secret"
 PROXY_E2E_SIGNATURE_HEADER = "X-E2E-Proxy-Signature"
+PROXY_E2E_TIMESTAMP_HEADER = "X-E2E-Proxy-Timestamp"
+PROXY_E2E_ADMIN_USER_HEADER = "X-E2E-Admin-User"
+PROXY_E2E_ADMIN_EMAIL_HEADER = "X-E2E-Admin-Email"
+PROXY_E2E_ADMIN_ROLES_HEADER = "X-E2E-Admin-Roles"
 MFA_TRUE_VALUES = {"true", "1", "yes"}
 
 logger = logging.getLogger(__name__)
@@ -177,19 +182,16 @@ def _is_trusted_proxy_request(request: Request) -> bool:
     return False
 
 
-def _is_valid_e2e_proxy_signature(request: Request) -> bool:
-    if not settings.admin_proxy_auth_e2e_enabled:
-        return True
-    signature = request.headers.get(PROXY_E2E_SIGNATURE_HEADER, "")
-    secret = settings.admin_proxy_auth_e2e_secret
-    if not signature or not secret:
-        return False
-    expected = hmac.new(
-        secret.encode("utf-8"),
-        b"e2e-proxy-auth",
-        "sha256",
-    ).hexdigest()
-    return hmac.compare_digest(signature, expected)
+def _build_e2e_signature_payload(
+    *,
+    user: str,
+    email: str,
+    roles: str,
+    timestamp: str,
+    mfa: str,
+) -> bytes:
+    normalized = "\n".join([user, email, roles, timestamp, mfa])
+    return normalized.encode("utf-8")
 
 
 def _mfa_verified_from_header(request: Request) -> bool:
@@ -222,7 +224,6 @@ def _log_admin_auth_failure(
         "mfa_header_present": bool(request.headers.get(mfa_header)),
         "proxy_trusted": _is_trusted_proxy_request(request),
         "e2e_proxy_signature_present": bool(request.headers.get(PROXY_E2E_SIGNATURE_HEADER)),
-        "e2e_proxy_signature_valid": _is_valid_e2e_proxy_signature(request),
     }
     if credentials and credentials.username:
         payload["presented_username"] = credentials.username
@@ -329,19 +330,52 @@ def _require_trusted_proxy(request: Request) -> None:
             reason="untrusted_proxy",
             detail="Admin access requires a trusted proxy",
         )
-    if not _is_valid_e2e_proxy_signature(request):
-        logger.warning(
-            "admin_proxy_auth_invalid_e2e_signature",
-            extra={
-                "extra": {
-                    "path": request.url.path,
-                    "method": request.method,
-                    "signature_header": PROXY_E2E_SIGNATURE_HEADER,
-                }
-            },
-        )
+
+
+def _require_e2e_signature(
+    request: Request,
+    *,
+    user: str,
+    email: str,
+    roles: str,
+) -> None:
+    signature = request.headers.get(PROXY_E2E_SIGNATURE_HEADER, "")
+    timestamp = request.headers.get(PROXY_E2E_TIMESTAMP_HEADER, "")
+    secret = settings.admin_proxy_auth_e2e_secret or ""
+    if not signature or not timestamp or not secret:
         raise _build_auth_exception(
-            reason="invalid_proxy_signature",
+            reason="bad_signature",
+            detail="Invalid proxy signature",
+        )
+    try:
+        timestamp_value = int(timestamp)
+    except ValueError as exc:
+        raise _build_auth_exception(
+            reason="bad_signature",
+            detail="Invalid proxy signature",
+        ) from exc
+    now = int(time.time())
+    if abs(now - timestamp_value) > settings.admin_proxy_auth_e2e_ttl_seconds:
+        raise _build_auth_exception(
+            reason="expired_timestamp",
+            detail="Proxy signature expired",
+        )
+    mfa_header_value = request.headers.get(settings.admin_proxy_auth_header_mfa, "").strip().lower()
+    payload = _build_e2e_signature_payload(
+        user=user,
+        email=email,
+        roles=roles,
+        timestamp=timestamp,
+        mfa=mfa_header_value,
+    )
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        payload,
+        "sha256",
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise _build_auth_exception(
+            reason="bad_signature",
             detail="Invalid proxy signature",
         )
 
@@ -386,6 +420,35 @@ def _require_mfa_header(request: Request) -> bool:
     return mfa_verified
 
 
+def _resolve_proxy_identity_headers(request: Request) -> tuple[str, str, str, str] | None:
+    user_header = settings.admin_proxy_auth_header_user
+    email_header = settings.admin_proxy_auth_header_email
+    roles_header = settings.admin_proxy_auth_header_roles
+
+    admin_user = request.headers.get(user_header, "").strip()
+    admin_email = request.headers.get(email_header, "").strip()
+    admin_roles = request.headers.get(roles_header, "").strip()
+
+    has_proxy_headers = bool(admin_user or admin_email)
+    if has_proxy_headers:
+        if not admin_user:
+            raise _build_auth_exception(
+                reason="missing_headers",
+                detail="Proxy authentication missing required headers",
+            )
+        return admin_user, admin_email, admin_roles, "proxy"
+
+    if not settings.admin_proxy_auth_e2e_enabled:
+        return None
+
+    e2e_user = request.headers.get(PROXY_E2E_ADMIN_USER_HEADER, "").strip()
+    e2e_email = request.headers.get(PROXY_E2E_ADMIN_EMAIL_HEADER, "").strip()
+    e2e_roles = request.headers.get(PROXY_E2E_ADMIN_ROLES_HEADER, "").strip()
+    if not e2e_user:
+        return None
+    return e2e_user, e2e_email, e2e_roles, "e2e"
+
+
 def _authenticate_proxy_headers(request: Request) -> AdminIdentity | None:
     """Authenticate admin using trusted proxy headers.
 
@@ -396,17 +459,9 @@ def _authenticate_proxy_headers(request: Request) -> AdminIdentity | None:
     if not settings.admin_proxy_auth_enabled:
         return None
 
-    user_header = settings.admin_proxy_auth_header_user
-    email_header = settings.admin_proxy_auth_header_email
-    roles_header = settings.admin_proxy_auth_header_roles
-
-    admin_user = request.headers.get(user_header, "").strip()
-    admin_email = request.headers.get(email_header, "").strip()
-    admin_roles = request.headers.get(roles_header, "").strip()
-
-    has_proxy_headers = bool(admin_user or admin_email)
-
-    if not has_proxy_headers:
+    _require_trusted_proxy(request)
+    identity_headers = _resolve_proxy_identity_headers(request)
+    if identity_headers is None:
         if settings.admin_proxy_auth_required:
             logger.warning(
                 "admin_proxy_auth_required_missing_headers",
@@ -414,8 +469,6 @@ def _authenticate_proxy_headers(request: Request) -> AdminIdentity | None:
                     "extra": {
                         "path": request.url.path,
                         "method": request.method,
-                        "has_user_header": bool(admin_user),
-                        "has_email_header": bool(admin_email),
                     }
                 },
             )
@@ -425,8 +478,7 @@ def _authenticate_proxy_headers(request: Request) -> AdminIdentity | None:
             )
         return None
 
-    _require_trusted_proxy(request)
-
+    admin_user, admin_email, admin_roles, source = identity_headers
     if not _verify_proxy_secret(request):
         logger.warning(
             "admin_proxy_auth_invalid_secret",
@@ -443,23 +495,14 @@ def _authenticate_proxy_headers(request: Request) -> AdminIdentity | None:
             detail="Invalid proxy authentication",
         )
 
-    if not admin_user:
-        logger.warning(
-            "admin_proxy_auth_missing_user",
-            extra={
-                "extra": {
-                    "path": request.url.path,
-                    "method": request.method,
-                    "has_email": bool(admin_email),
-                }
-            },
-        )
-        raise _build_auth_exception(
-            reason="missing_proxy_user",
-            detail="Proxy authentication missing user identity",
-        )
-
     mfa_verified = _require_mfa_header(request)
+    if source == "e2e":
+        _require_e2e_signature(
+            request,
+            user=admin_user,
+            email=admin_email,
+            roles=admin_roles,
+        )
     role = _parse_proxy_roles(admin_roles)
 
     logger.info(
@@ -469,7 +512,7 @@ def _authenticate_proxy_headers(request: Request) -> AdminIdentity | None:
                 "username": admin_user,
                 "email": admin_email,
                 "role": role.value,
-                "auth_method": "proxy",
+                "auth_method": source,
                 "mfa": mfa_verified,
             }
         },
@@ -549,19 +592,16 @@ async def get_admin_identity(
 
     identity: AdminIdentity | None = None
 
-    proxy_identity = _authenticate_proxy_headers(request)
-    if proxy_identity is not None:
+    if settings.admin_proxy_auth_enabled:
+        proxy_identity = _authenticate_proxy_headers(request)
+        if proxy_identity is None:
+            raise _build_auth_exception(
+                reason="proxy_auth_required",
+                detail="Admin access requires proxy authentication",
+            )
         identity = proxy_identity
-    elif not settings.admin_proxy_auth_required:
-        mfa_verified = False
-        if settings.admin_proxy_auth_enabled:
-            mfa_verified = _require_mfa_header(request)
-        identity = _authenticate_credentials(credentials, mfa_verified=mfa_verified)
     else:
-        raise _build_auth_exception(
-            reason="proxy_auth_required",
-            detail="Admin access requires proxy authentication",
-        )
+        identity = _authenticate_credentials(credentials, mfa_verified=False)
 
     request.state.admin_identity = identity
     request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id

@@ -98,7 +98,11 @@ Reverse proxy authenticates users and injects trusted headers. Backend validates
 | `X-Admin-Roles` | Comma-separated roles (e.g., `owner,admin`) | No (defaults to `viewer`) |
 | `X-Proxy-Auth-Secret` | Shared secret for verification | Yes |
 | `X-Auth-MFA` | MFA assertion (`true`/`1`, case-insensitive) | Yes |
-| `X-E2E-Proxy-Signature` | CI-only signed proxy assertion (HMAC, see below) | No |
+| `X-E2E-Admin-User` | CI-only admin username (see below) | CI only |
+| `X-E2E-Admin-Email` | CI-only admin email (see below) | CI only |
+| `X-E2E-Admin-Roles` | CI-only roles (see below) | CI only |
+| `X-E2E-Proxy-Timestamp` | CI-only UNIX epoch timestamp (seconds) | CI only |
+| `X-E2E-Proxy-Signature` | CI-only signed proxy assertion (HMAC, see below) | CI only |
 
 ### Role Hierarchy
 
@@ -134,6 +138,11 @@ ADMIN_PROXY_AUTH_HEADER_MFA=X-Auth-MFA
 
 # Disable legacy Basic Auth (recommended)
 LEGACY_BASIC_AUTH_ENABLED=false
+
+# CI/E2E proxy auth (non-production only)
+ADMIN_PROXY_AUTH_E2E_ENABLED=true
+ADMIN_PROXY_AUTH_E2E_SECRET=ci-only-signing-secret
+ADMIN_PROXY_AUTH_E2E_TTL_SECONDS=300
 ```
 
 ### Caddy Configuration
@@ -195,9 +204,16 @@ SMS-based MFA is not acceptable for admin access.
 
 ### CI/E2E Proxy Signature (non-production only)
 
-For end-to-end tests that call the API directly (without a real proxy), CI can add a signed proxy assertion header. When enabled, the backend requires both:
+For end-to-end tests that call the API directly (without a real proxy), CI can send a signed proxy identity. When enabled, the backend requires:
 - a trusted proxy source (trusted IPs/CIDRs), and
-- `X-E2E-Proxy-Signature`, an HMAC-SHA256 of the literal string `e2e-proxy-auth` using `ADMIN_PROXY_AUTH_E2E_SECRET`.
+- `X-E2E-Admin-User`, `X-E2E-Admin-Email`, `X-E2E-Admin-Roles`, `X-E2E-Proxy-Timestamp`, and
+- `X-E2E-Proxy-Signature`, an HMAC-SHA256 of:
+  ```
+  <user>\n<email>\n<roles>\n<timestamp>\n<mfa>
+  ```
+  where `<mfa>` is the lowercase value of `X-Auth-MFA`.
+
+E2E signature mode is only allowed when `APP_ENV=ci` or `APP_ENV=e2e`.
 
 ### Generating Password Hashes
 
