@@ -3,7 +3,7 @@ groups:
     interval: 30s
     rules:
       - alert: AdminAuthFailuresHigh
-        expr: sum(increase(admin_auth_events_total{outcome="failure"}[10m])) > 10
+        expr: sum(increase(admin_auth_failure_total[10m])) > 10
         for: 5m
         labels:
           severity: warning
@@ -14,10 +14,10 @@ groups:
             Admin authentication failures exceeded 10 attempts in 10 minutes.
             Next: review admin auth audit logs for failure_reason and source_ip,
             validate MFA enforcement, and confirm whether this is legitimate admin activity.
-          runbook: "docs/SECURITY_ADMIN_AUTH_AUDIT.md"
+          runbook: "docs/runbooks/ADMIN_AUTH_ALERTS.md"
 
       - alert: AdminAuthSuccessNoMFA
-        expr: sum(increase(admin_auth_events_total{outcome="success", mfa="false"}[5m])) > 0
+        expr: sum(increase(admin_auth_success_total{mfa="false"}[5m])) > 0
         for: 0m
         labels:
           severity: critical
@@ -28,4 +28,39 @@ groups:
             An admin authentication succeeded without MFA.
             Next: validate proxy/IdP policy, confirm if an allowlisted exception exists,
             and rotate admin proxy secrets if needed.
-          runbook: "docs/SECURITY_ADMIN_AUTH_AUDIT.md"
+          runbook: "docs/runbooks/ADMIN_AUTH_ALERTS.md"
+
+      - alert: AdminBreakGlassUsed
+        expr: increase(admin_break_glass_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "Break-glass access used for admin authentication"
+          description: |
+            Break-glass access was used during an admin authentication attempt.
+            Next: validate the incident ticket, confirm approval, and ensure
+            break-glass access is revoked after use.
+          runbook: "docs/runbooks/ADMIN_AUTH_ALERTS.md"
+
+      - alert: AdminAuthNewCIDR
+        expr: |
+          (
+            sum by (source_cidr) (increase(admin_auth_success_total{source_cidr!="unknown"}[15m])) > 0
+          )
+          and on (source_cidr)
+          (
+            sum by (source_cidr) (increase(admin_auth_success_total{source_cidr!="unknown"}[30d] offset 15m)) == 0
+          )
+        for: 0m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Admin login from new source CIDR"
+          description: |
+            An admin login succeeded from a source CIDR that has not been seen in the last 30 days.
+            Next: verify the admin identity, confirm the IP allowlist posture, and check for
+            related failed attempts from the same source.
+          runbook: "docs/runbooks/ADMIN_AUTH_ALERTS.md"

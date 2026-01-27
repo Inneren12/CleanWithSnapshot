@@ -56,6 +56,9 @@ class Metrics:
             self.http_429_total = None
             self.auth_failures_total = None
             self.admin_auth_events_total = None
+            self.admin_auth_success_total = None
+            self.admin_auth_failure_total = None
+            self.admin_break_glass_total = None
             self.data_export_rate_limited_total = None
             self.data_export_denied_total = None
             self.outbox_failures_total = None
@@ -342,6 +345,23 @@ class Metrics:
             ["outcome", "method", "mfa", "reason"],
             registry=self.registry,
         )
+        self.admin_auth_success_total = Counter(
+            "admin_auth_success_total",
+            "Admin authentication successes by method, MFA, and source CIDR.",
+            ["method", "mfa", "source_cidr"],
+            registry=self.registry,
+        )
+        self.admin_auth_failure_total = Counter(
+            "admin_auth_failure_total",
+            "Admin authentication failures by method, reason, and source CIDR.",
+            ["method", "reason", "source_cidr"],
+            registry=self.registry,
+        )
+        self.admin_break_glass_total = Counter(
+            "admin_break_glass_total",
+            "Admin authentication attempts using break-glass access.",
+            registry=self.registry,
+        )
         self.data_export_rate_limited_total = Counter(
             "data_export_rate_limited_total",
             "Data export rate limits by endpoint.",
@@ -562,6 +582,47 @@ class Metrics:
             mfa=safe_mfa,
             reason=safe_reason,
         ).inc()
+
+    def record_admin_auth_success(
+        self,
+        *,
+        method: str | None,
+        mfa: bool | None,
+        source_cidr: str | None,
+    ) -> None:
+        if not self.enabled or self.admin_auth_success_total is None:
+            return
+        safe_method = method or "unknown"
+        safe_mfa = "unknown" if mfa is None else ("true" if mfa else "false")
+        safe_cidr = source_cidr or "unknown"
+        self.admin_auth_success_total.labels(
+            method=safe_method,
+            mfa=safe_mfa,
+            source_cidr=safe_cidr,
+        ).inc()
+
+    def record_admin_auth_failure(
+        self,
+        *,
+        method: str | None,
+        reason: str | None,
+        source_cidr: str | None,
+    ) -> None:
+        if not self.enabled or self.admin_auth_failure_total is None:
+            return
+        safe_method = method or "unknown"
+        safe_reason = reason or "unknown"
+        safe_cidr = source_cidr or "unknown"
+        self.admin_auth_failure_total.labels(
+            method=safe_method,
+            reason=safe_reason,
+            source_cidr=safe_cidr,
+        ).inc()
+
+    def record_admin_break_glass(self) -> None:
+        if not self.enabled or self.admin_break_glass_total is None:
+            return
+        self.admin_break_glass_total.inc()
 
     def record_data_export_rate_limited(self, endpoint: str) -> None:
         if not self.enabled or self.data_export_rate_limited_total is None:
