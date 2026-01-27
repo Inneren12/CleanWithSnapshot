@@ -16,11 +16,11 @@ fail builds on critical findings while retaining artifact reports for review.
 - Any critical findings cause the Grype job to fail.
 - JSON reports are uploaded as CI artifacts for auditing.
 
-## SBOM (Optional)
+## SBOM (Enabled)
 
-- When SBOM generation is enabled in the CI workflow, Syft produces SPDX JSON artifacts for the
-  API and web images.
+- Syft produces SPDX JSON artifacts for the API and web images on every CI run.
 - SBOM artifacts are uploaded alongside the Grype reports.
+- SBOM artifacts are stored in the `grype-reports` artifact (`sbom-cleanwithsnapshot-*.json`) and retained for **30 days**.
 
 ## Exceptions
 
