@@ -74,6 +74,16 @@ def _resolve_source_ip(request: Request) -> str:
     )
 
 
+def _resolve_source_cidr(request: Request) -> str | None:
+    source_ip = _resolve_source_ip(request)
+    try:
+        client_ip = ip_address(source_ip)
+    except ValueError:
+        return None
+    prefix = 24 if client_ip.version == 4 else 64
+    return str(ip_network(f"{client_ip}/{prefix}", strict=False))
+
+
 def _parse_roles_list(roles_header: str | None) -> list[str]:
     if not roles_header:
         return []
@@ -264,15 +274,22 @@ def _log_admin_auth_failure(
     mfa_header = settings.admin_proxy_auth_header_mfa
     normalized_reason = _normalize_failure_reason(reason)
     auth_method = extra_detail.get("auth_method") if extra_detail else None
+    roles_header = request.headers.get(settings.admin_proxy_auth_header_roles) or request.headers.get(
+        PROXY_E2E_ADMIN_ROLES_HEADER
+    )
+    parsed_roles = _parse_roles_list(roles_header)
+    source_cidr = _resolve_source_cidr(request)
     payload = {
         "event": "admin_auth_attempt",
         "outcome": "failure",
+        "event_id": str(uuid.uuid4()),
         "failure_reason": normalized_reason,
         "failure_reason_detail": reason,
         "path": request.url.path,
         "method": request.method,
         "request_id": _resolve_request_id(request),
         "source_ip": _resolve_source_ip(request),
+        "source_cidr": source_cidr,
         "user_agent": request.headers.get("User-Agent"),
         "auth_method": auth_method,
         "has_authorization_header": authorization_header is not None,
@@ -286,6 +303,8 @@ def _log_admin_auth_failure(
     }
     if credentials and credentials.username:
         payload["admin_user"] = credentials.username
+    if parsed_roles:
+        payload["roles"] = parsed_roles
     if extra_detail:
         payload.update(extra_detail)
     logger.warning("admin_auth_failed", extra={"extra": payload})
@@ -296,6 +315,13 @@ def _log_admin_auth_failure(
         mfa=_mfa_verified_from_header(request),
         reason=normalized_reason,
     )
+    metrics.record_admin_auth_failure(
+        method=auth_method,
+        reason=normalized_reason,
+        source_cidr=source_cidr,
+    )
+    if payload["break_glass"]:
+        metrics.record_admin_break_glass()
     request.state.admin_auth_logged = True
 
 
@@ -309,13 +335,17 @@ def _log_admin_auth_success(
     email: str | None = None,
     extra_detail: dict | None = None,
 ) -> None:
+    source_cidr = _resolve_source_cidr(request)
+    break_glass = bool(getattr(request.state, "break_glass", False))
     payload = {
         "event": "admin_auth_attempt",
         "outcome": "success",
+        "event_id": str(uuid.uuid4()),
         "path": request.url.path,
         "method": request.method,
         "request_id": _resolve_request_id(request),
         "source_ip": _resolve_source_ip(request),
+        "source_cidr": source_cidr,
         "user_agent": request.headers.get("User-Agent"),
         "admin_user": identity.username,
         "admin_email": email,
@@ -324,7 +354,7 @@ def _log_admin_auth_success(
         "auth_method": auth_method,
         "mfa": mfa_verified,
         "proxy_trusted": _is_trusted_proxy_request(request),
-        "break_glass": bool(getattr(request.state, "break_glass", False)),
+        "break_glass": break_glass,
     }
     if extra_detail:
         payload.update(extra_detail)
@@ -335,6 +365,13 @@ def _log_admin_auth_success(
         mfa=mfa_verified,
         reason=None,
     )
+    metrics.record_admin_auth_success(
+        method=auth_method,
+        mfa=mfa_verified,
+        source_cidr=source_cidr,
+    )
+    if break_glass:
+        metrics.record_admin_break_glass()
     request.state.admin_auth_logged = True
 
 
