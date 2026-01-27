@@ -11,13 +11,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "cleaning-economy-bot"
     cors_origins_raw: str | None = Field(None, validation_alias="cors_origins")
-    app_env: Literal["dev", "local", "test", "ci", "e2e", "prod"] = Field("dev")
+    app_env: Literal["dev", "local", "test", "ci", "e2e", "prod"] = Field(
+        "dev", validation_alias=AliasChoices("APP_ENV", "app_env")
+    )
     strict_cors: bool = Field(False)
     strict_policy_mode: bool = Field(False)
     admin_read_only: bool = Field(False)
-    admin_proxy_auth_enabled: bool = Field(True)
-    e2e_proxy_auth_enabled: bool = Field(False)
-    e2e_proxy_auth_secret: str | None = Field(None)
+    admin_proxy_auth_enabled: bool = Field(
+        True, validation_alias=AliasChoices("ADMIN_PROXY_AUTH_ENABLED", "admin_proxy_auth_enabled")
+    )
+    e2e_proxy_auth_enabled: bool = Field(
+        False, validation_alias=AliasChoices("E2E_PROXY_AUTH_ENABLED", "e2e_proxy_auth_enabled")
+    )
+    e2e_proxy_auth_secret: str | None = Field(
+        None, validation_alias=AliasChoices("E2E_PROXY_AUTH_SECRET", "e2e_proxy_auth_secret")
+    )
     admin_ip_allowlist_cidrs_raw: str | None = Field(
         None, validation_alias="admin_ip_allowlist_cidrs"
     )
@@ -30,7 +38,9 @@ class Settings(BaseSettings):
     time_overrun_reason_threshold: float = Field(1.2)
     break_glass_default_ttl_minutes: int = Field(30)
     break_glass_max_ttl_minutes: int = Field(60)
-    trust_proxy_headers: bool = Field(False)
+    trust_proxy_headers: bool = Field(
+        False, validation_alias=AliasChoices("TRUST_PROXY_HEADERS", "trust_proxy_headers")
+    )
     trusted_proxy_ips_raw: str | None = Field(None, validation_alias="trusted_proxy_ips")
     trusted_proxy_cidrs_raw: str | None = Field(None, validation_alias="trusted_proxy_cidrs")
     pricing_config_path: str = Field("pricing/economy_v1.json")

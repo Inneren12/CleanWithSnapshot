@@ -351,6 +351,11 @@ jobs:
           fi
           exit $status
 
+      - name: Verify API config flags (no secrets)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api \
+            python -c "from app.settings import settings; print('admin_proxy_auth_enabled=', settings.admin_proxy_auth_enabled, 'trust_proxy_headers=', settings.trust_proxy_headers, 'app_env=', settings.app_env)"
+
       - name: Compose diagnostics (post-up)
         run: |
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true

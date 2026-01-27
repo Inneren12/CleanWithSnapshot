@@ -170,7 +170,7 @@ def _build_auth_exception(
 
 
 def _build_proxy_auth_exception(
-    *, detail: str = "Admin access requires proxy authentication", reason: str = "proxy_disabled"
+    *, detail: str = "Admin access requires proxy authentication", reason: str = "untrusted_proxy"
 ) -> HTTPException:
     exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
     setattr(exc, "reason", reason)
@@ -216,8 +216,10 @@ def _attach_admin_auth_fail_reason(response, reason: str | None):
 
 
 def _ensure_trusted_proxy_source(request: Request) -> None:
-    if not settings.trust_proxy_headers:
+    if not settings.admin_proxy_auth_enabled:
         raise _build_proxy_auth_exception(reason="proxy_disabled")
+    if not settings.trust_proxy_headers:
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
     if not is_trusted_proxy_source(
         request,
         settings.trusted_proxy_ips,
@@ -365,12 +367,30 @@ def _has_e2e_proxy_headers(request: Request) -> bool:
     )
 
 
+def _has_proxy_headers(request: Request) -> bool:
+    return any(
+        request.headers.get(header)
+        for header in (
+            ADMIN_PROXY_AUTH_HEADER,
+            ADMIN_PROXY_USER_HEADER,
+            ADMIN_PROXY_EMAIL_HEADER,
+            ADMIN_PROXY_ROLES_HEADER,
+            E2E_PROXY_USER_HEADER,
+            E2E_PROXY_EMAIL_HEADER,
+            E2E_PROXY_TIMESTAMP_HEADER,
+            E2E_PROXY_SIGNATURE_HEADER,
+        )
+    )
+
+
 def _authenticate_e2e_proxy_headers(request: Request) -> AdminIdentity:
-    if not _is_e2e_proxy_auth_allowed():
+    if not settings.admin_proxy_auth_enabled:
         raise _build_proxy_auth_exception(reason="proxy_disabled")
+    if not _is_e2e_proxy_auth_allowed():
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
     secret = settings.e2e_proxy_auth_secret
     if not secret:
-        raise _build_proxy_auth_exception(reason="proxy_disabled")
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
     user = request.headers.get(E2E_PROXY_USER_HEADER)
     email = request.headers.get(E2E_PROXY_EMAIL_HEADER)
     roles = request.headers.get(E2E_PROXY_ROLES_HEADER, "")
@@ -565,6 +585,14 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
         if saas_identity_error:
             return await http_exception_handler(request, saas_identity_error)
 
+        if not settings.admin_proxy_auth_enabled and _has_proxy_headers(request):
+            reason = "proxy_disabled"
+            _log_admin_auth_failure(request, reason=reason, credentials=None)
+            response = await http_exception_handler(
+                request, _build_proxy_auth_exception(reason=reason)
+            )
+            return _attach_admin_auth_fail_reason(response, reason)
+
         authorization: str = request.headers.get("Authorization", "")
         has_bearer = authorization.lower().startswith("bearer ")
 
@@ -575,7 +603,10 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                     reason="admin_identity_source_mismatch",
                     credentials=None,
                 )
-                return await http_exception_handler(request, _build_proxy_auth_exception())
+                return await http_exception_handler(
+                    request,
+                    _build_proxy_auth_exception(reason="admin_identity_source_mismatch"),
+                )
             if has_bearer:
                 _log_admin_auth_failure(
                     request,

@@ -338,6 +338,19 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
     if tracer_provider is None:
         configure_tracing(service_name="api")
     configure_logging()
+    if app_settings.app_env in {"ci", "e2e", "dev", "local", "test"}:
+        logger.info(
+            "admin_proxy_auth_config",
+            extra={
+                "extra": {
+                    "admin_proxy_auth_enabled": bool(app_settings.admin_proxy_auth_enabled),
+                    "trust_proxy_headers": bool(app_settings.trust_proxy_headers),
+                    "trusted_proxy_cidrs_present": bool(app_settings.trusted_proxy_cidrs),
+                    "e2e_proxy_auth_enabled": bool(app_settings.e2e_proxy_auth_enabled),
+                    "app_env": app_settings.app_env,
+                }
+            },
+        )
     metrics_client = configure_metrics(
         app_settings.metrics_enabled, service_name=app_settings.app_name
     )

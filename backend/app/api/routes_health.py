@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.domain.ops.db_models import JobHeartbeat
+from app.settings import settings as app_settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -258,5 +259,12 @@ async def readyz(request: Request) -> JSONResponse:
     overall_ok = all(check["ok"] for check in checks)
     status_code = 200 if overall_ok else 503
 
-    payload = {"ok": overall_ok, "checks": checks}
+    payload: dict[str, Any] = {"ok": overall_ok, "checks": checks}
+    if app_settings.app_env in {"ci", "e2e", "dev", "local", "test"}:
+        payload["config"] = {
+            "admin_proxy_auth_enabled": bool(app_settings.admin_proxy_auth_enabled),
+            "trust_proxy_headers": bool(app_settings.trust_proxy_headers),
+            "trusted_proxy_cidrs_present": bool(app_settings.trusted_proxy_cidrs),
+            "e2e_proxy_auth_enabled": bool(app_settings.e2e_proxy_auth_enabled),
+        }
     return JSONResponse(status_code=status_code, content=payload)

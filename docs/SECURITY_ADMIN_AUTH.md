@@ -49,6 +49,19 @@ The proxy must:
 
 See `Caddyfile` for a working example.
 
+## CI /readyz Diagnostics
+
+In non-prod environments (`ci`, `e2e`, `dev`, `local`, `test`), `/readyz` includes a `config`
+block with non-secret admin proxy flags:
+
+- `admin_proxy_auth_enabled`
+- `trust_proxy_headers`
+- `trusted_proxy_cidrs_present`
+- `e2e_proxy_auth_enabled`
+
+Use this output to confirm the API is reading `ADMIN_PROXY_AUTH_ENABLED`,
+`TRUST_PROXY_HEADERS`, and `TRUSTED_PROXY_CIDRS` in CI without exposing secrets.
+
 ## Rollback Instructions
 
 If you need to temporarily roll back to legacy Basic Auth:
