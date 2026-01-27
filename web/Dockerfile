@@ -23,6 +23,10 @@ ENV NEXT_PUBLIC_SHOW_ADMIN_LINK=$NEXT_PUBLIC_SHOW_ADMIN_LINK
 ENV NEXT_PUBLIC_E2E_MODE=$NEXT_PUBLIC_E2E_MODE
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 COPY --from=build /app ./
+RUN addgroup -S app \
+    && adduser -S -G app -h /app -s /sbin/nologin app \
+    && chown -R app:app /app
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 EXPOSE 3000
+USER app
 CMD ["node","node_modules/next/dist/bin/next","start","-p","3000","-H","0.0.0.0"]
