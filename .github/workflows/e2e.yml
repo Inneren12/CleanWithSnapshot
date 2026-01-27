@@ -50,6 +50,15 @@ jobs:
               "ADMIN_BASIC_USERNAME",
               "ADMIN_BASIC_PASSWORD",
               "LEGACY_BASIC_AUTH_ENABLED",
+              "APP_ENV",
+              "ADMIN_PROXY_AUTH_ENABLED",
+              "ADMIN_PROXY_AUTH_REQUIRED",
+              "ADMIN_PROXY_AUTH_SECRET",
+              "ADMIN_PROXY_AUTH_E2E_ENABLED",
+              "ADMIN_PROXY_AUTH_E2E_SECRET",
+              "TRUST_PROXY_HEADERS",
+              "TRUSTED_PROXY_IPS",
+              "TRUSTED_PROXY_CIDRS",
             }
           )
           keys = sorted(keys)
@@ -61,9 +70,18 @@ jobs:
           admin_username = "e2e"
           admin_password = f"ci-{secrets.token_hex(32)}"
           overrides = {
+            "APP_ENV": "ci",
             "ADMIN_BASIC_USERNAME": admin_username,
             "ADMIN_BASIC_PASSWORD": admin_password,
-            "LEGACY_BASIC_AUTH_ENABLED": "true",
+            "LEGACY_BASIC_AUTH_ENABLED": "false",
+            "ADMIN_PROXY_AUTH_ENABLED": "true",
+            "ADMIN_PROXY_AUTH_REQUIRED": "true",
+            "ADMIN_PROXY_AUTH_SECRET": f"ci-proxy-{secrets.token_hex(32)}",
+            "ADMIN_PROXY_AUTH_E2E_ENABLED": "true",
+            "ADMIN_PROXY_AUTH_E2E_SECRET": f"ci-e2e-{secrets.token_hex(32)}",
+            "TRUST_PROXY_HEADERS": "true",
+            "TRUSTED_PROXY_IPS": "",
+            "TRUSTED_PROXY_CIDRS": "127.0.0.1/32,::1/128,172.16.0.0/12",
           }
           generated = [
             f"{key}={overrides.get(key, f'ci-{secrets.token_hex(32)}')}" for key in keys
@@ -75,6 +93,17 @@ jobs:
             github_env.read_text(encoding="utf-8")
             + f"ADMIN_BASIC_USERNAME={admin_username}\n"
             + f"ADMIN_BASIC_PASSWORD={admin_password}\n"
+            + f"ADMIN_PROXY_AUTH_ENABLED={overrides['ADMIN_PROXY_AUTH_ENABLED']}\n"
+            + f"ADMIN_PROXY_AUTH_REQUIRED={overrides['ADMIN_PROXY_AUTH_REQUIRED']}\n"
+            + f"ADMIN_PROXY_AUTH_SECRET={overrides['ADMIN_PROXY_AUTH_SECRET']}\n"
+            + f"ADMIN_PROXY_AUTH_E2E_ENABLED={overrides['ADMIN_PROXY_AUTH_E2E_ENABLED']}\n"
+            + f"ADMIN_PROXY_AUTH_E2E_SECRET={overrides['ADMIN_PROXY_AUTH_E2E_SECRET']}\n"
+            + f"ADMIN_PROXY_AUTH_ROLE=admin\n"
+            + f"ADMIN_PROXY_AUTH_E2E_USER={admin_username}\n"
+            + f"ADMIN_PROXY_AUTH_E2E_EMAIL={admin_username}@e2e.invalid\n"
+            + f"ADMIN_PROXY_AUTH_E2E_ROLES=admin\n"
+            + f"TRUST_PROXY_HEADERS={overrides['TRUST_PROXY_HEADERS']}\n"
+            + f"TRUSTED_PROXY_CIDRS={overrides['TRUSTED_PROXY_CIDRS']}\n"
             + "ENV_FILE=backend/.env.e2e.ci\n",
             encoding="utf-8",
           )
@@ -84,7 +113,7 @@ jobs:
         run: |
           echo "ENV_FILE=$ENV_FILE"
           grep -q '^AUTH_SECRET_KEY=' backend/.env.e2e.ci
-          grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN|ADMIN_BASIC_USERNAME|ADMIN_BASIC_PASSWORD|LEGACY_BASIC_AUTH_ENABLED)=' backend/.env.e2e.ci \
+          grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN|ADMIN_BASIC_USERNAME|ADMIN_BASIC_PASSWORD|LEGACY_BASIC_AUTH_ENABLED|ADMIN_PROXY_AUTH_ENABLED|ADMIN_PROXY_AUTH_REQUIRED|ADMIN_PROXY_AUTH_SECRET|ADMIN_PROXY_AUTH_E2E_ENABLED|ADMIN_PROXY_AUTH_E2E_SECRET|TRUST_PROXY_HEADERS|TRUSTED_PROXY_IPS|TRUSTED_PROXY_CIDRS|APP_ENV)=' backend/.env.e2e.ci \
             | sed -E 's/=.*/=<redacted>/'
 
       - name: Validate E2E env file completeness
@@ -113,6 +142,15 @@ jobs:
               "ADMIN_BASIC_USERNAME",
               "ADMIN_BASIC_PASSWORD",
               "LEGACY_BASIC_AUTH_ENABLED",
+              "APP_ENV",
+              "ADMIN_PROXY_AUTH_ENABLED",
+              "ADMIN_PROXY_AUTH_REQUIRED",
+              "ADMIN_PROXY_AUTH_SECRET",
+              "ADMIN_PROXY_AUTH_E2E_ENABLED",
+              "ADMIN_PROXY_AUTH_E2E_SECRET",
+              "TRUST_PROXY_HEADERS",
+              "TRUSTED_PROXY_IPS",
+              "TRUSTED_PROXY_CIDRS",
             }
           )
 
@@ -351,12 +389,7 @@ jobs:
 
       - name: Preflight admin auth
         run: |
-          if ! curl -fsS -u "$ADMIN_BASIC_USERNAME:$ADMIN_BASIC_PASSWORD" http://127.0.0.1:8000/v1/admin/profile >/dev/null; then
-            echo "Admin auth preflight failed."
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
-            exit 1
-          fi
+          python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:8000/v1/admin/profile
 
       - name: Install web dependencies
         working-directory: web
@@ -379,13 +412,41 @@ jobs:
           PLAYWRIGHT_API_BASE_URL: http://127.0.0.1:8000
           ADMIN_BASIC_USERNAME: ${{ env.ADMIN_BASIC_USERNAME }}
           ADMIN_BASIC_PASSWORD: ${{ env.ADMIN_BASIC_PASSWORD }}
+          ADMIN_PROXY_AUTH_ENABLED: ${{ env.ADMIN_PROXY_AUTH_ENABLED }}
+          ADMIN_PROXY_AUTH_REQUIRED: ${{ env.ADMIN_PROXY_AUTH_REQUIRED }}
+          ADMIN_PROXY_AUTH_SECRET: ${{ env.ADMIN_PROXY_AUTH_SECRET }}
+          ADMIN_PROXY_AUTH_E2E_ENABLED: ${{ env.ADMIN_PROXY_AUTH_E2E_ENABLED }}
+          ADMIN_PROXY_AUTH_E2E_SECRET: ${{ env.ADMIN_PROXY_AUTH_E2E_SECRET }}
+          ADMIN_PROXY_AUTH_ROLE: ${{ env.ADMIN_PROXY_AUTH_ROLE }}
+          ADMIN_PROXY_AUTH_E2E_USER: ${{ env.ADMIN_PROXY_AUTH_E2E_USER }}
+          ADMIN_PROXY_AUTH_E2E_EMAIL: ${{ env.ADMIN_PROXY_AUTH_E2E_EMAIL }}
+          ADMIN_PROXY_AUTH_E2E_ROLES: ${{ env.ADMIN_PROXY_AUTH_E2E_ROLES }}
         run: |
           PW_CHANNEL=chrome PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
           PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
           PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:8000 \
           ADMIN_BASIC_USERNAME="$ADMIN_BASIC_USERNAME" \
           ADMIN_BASIC_PASSWORD="$ADMIN_BASIC_PASSWORD" \
+          ADMIN_PROXY_AUTH_ENABLED="$ADMIN_PROXY_AUTH_ENABLED" \
+          ADMIN_PROXY_AUTH_REQUIRED="$ADMIN_PROXY_AUTH_REQUIRED" \
+          ADMIN_PROXY_AUTH_SECRET="$ADMIN_PROXY_AUTH_SECRET" \
+          ADMIN_PROXY_AUTH_E2E_ENABLED="$ADMIN_PROXY_AUTH_E2E_ENABLED" \
+          ADMIN_PROXY_AUTH_E2E_SECRET="$ADMIN_PROXY_AUTH_E2E_SECRET" \
+          ADMIN_PROXY_AUTH_ROLE="$ADMIN_PROXY_AUTH_ROLE" \
+          ADMIN_PROXY_AUTH_E2E_USER="$ADMIN_PROXY_AUTH_E2E_USER" \
+          ADMIN_PROXY_AUTH_E2E_EMAIL="$ADMIN_PROXY_AUTH_E2E_EMAIL" \
+          ADMIN_PROXY_AUTH_E2E_ROLES="$ADMIN_PROXY_AUTH_E2E_ROLES" \
           npx playwright test --config e2e/playwright.config.ts
+
+      - name: Assert no unauthenticated admin probes
+        if: always()
+        run: |
+          logs=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api || true)
+          if echo "$logs" | grep -q "admin_proxy_auth_required_missing_headers"; then
+            echo "Detected unauthenticated admin probes in API logs."
+            echo "$logs" | grep -n "admin_proxy_auth_required_missing_headers" || true
+            exit 1
+          fi
 
       - name: Collect compose diagnostics
         if: always()

@@ -1,31 +1,30 @@
-# E2E CI (Playwright) — Local Run Guide
+# CI/E2E Admin Auth Helper
 
-This repo runs Playwright E2E with Docker Compose and ephemeral Playwright deps.
+CI runs with `ADMIN_PROXY_AUTH_ENABLED=true`, so every `/v1/admin/*` call must include proxy
+identity headers and an MFA assertion. The workflow uses the signed proxy helper to avoid
+unauthenticated admin probes.
 
-> Note: `web/vitest.config.ts` is excluded from Next.js typechecking in production builds,
-> so Vitest is not required for the Docker image.
+## Helper script
 
-## Local run (mirrors CI)
+`backend/scripts/e2e_admin_probe.py` builds signed admin headers and calls `/v1/admin/profile`.
 
-```bash
-ADMIN_BASIC_USERNAME=e2e ADMIN_BASIC_PASSWORD=pass \
-docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait
+Required env vars:
+- `ADMIN_PROXY_AUTH_SECRET`
+- `ADMIN_PROXY_AUTH_E2E_SECRET`
+- `ADMIN_PROXY_AUTH_E2E_USER`
+- `ADMIN_PROXY_AUTH_E2E_EMAIL`
+- `ADMIN_PROXY_AUTH_E2E_ROLES`
 
-cd web
-npm ci
-npm i -D --no-save --no-package-lock @playwright/test playwright
+The helper always sends:
+- `X-Proxy-Auth-Secret`
+- `X-Auth-MFA: true`
+- `X-E2E-Admin-User`
+- `X-E2E-Admin-Email`
+- `X-E2E-Admin-Roles`
+- `X-E2E-Proxy-Timestamp`
+- `X-E2E-Proxy-Signature`
 
-PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
-PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:8000 \
-ADMIN_BASIC_USERNAME=e2e \
-ADMIN_BASIC_PASSWORD=pass \
-PW_CHANNEL=chrome \
-PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
-npx playwright test --config e2e/playwright.config.ts
-```
+## Why this exists
 
-## Cleanup
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v
-```
+Admin endpoints reject unauthenticated requests when proxy auth is enabled. CI must not
+probe `/v1/admin/profile` without the signed proxy headers or MFA assertion.

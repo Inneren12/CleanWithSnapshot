@@ -17,6 +17,10 @@ def _enable_proxy_auth(monkeypatch: pytest.MonkeyPatch, *, required: bool = Fals
     monkeypatch.setattr(settings, "admin_proxy_auth_required", required)
     monkeypatch.setattr(settings, "admin_proxy_auth_secret", secret)
     monkeypatch.setattr(settings, "legacy_basic_auth_enabled", False)
+    monkeypatch.setattr(settings, "trust_proxy_headers", True)
+    monkeypatch.setattr(settings, "trusted_proxy_ips", ["testclient"])
+    monkeypatch.setattr(settings, "trusted_proxy_cidrs", [])
+    monkeypatch.setattr(settings, "admin_proxy_auth_e2e_enabled", False)
     return secret
 
 
@@ -47,6 +51,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "admin",
                 "X-Admin-Roles": "admin",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -64,6 +69,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "owner-user",
                 "X-Admin-Roles": "owner",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -82,6 +88,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "viewer-user",
                 "X-Admin-Roles": "viewer",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -100,6 +107,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "admin",
                 "X-Admin-Roles": "admin",
                 "X-Proxy-Auth-Secret": "wrong-secret",
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -114,6 +122,7 @@ class TestProxyAuthEnabled:
             headers={
                 "X-Admin-User": "admin",
                 "X-Admin-Roles": "admin",
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -128,6 +137,7 @@ class TestProxyAuthEnabled:
             headers={
                 "X-Admin-Roles": "admin",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -143,6 +153,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "multi-role-user",
                 "X-Admin-Roles": "viewer,dispatcher,admin",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -185,17 +196,17 @@ class TestProxyAuthRequired:
                 "X-Admin-User": "admin",
                 "X-Admin-Roles": "admin",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
         assert response.status_code == 200
 
 
-class TestProxyAuthFallback:
-    """Tests for fallback to Basic Auth when proxy auth is enabled but not required."""
+class TestProxyAuthStrict:
+    """Tests that proxy auth blocks Basic Auth when enabled."""
 
-    def test_basic_auth_works_when_proxy_enabled_not_required(self, client, monkeypatch):
-        """Basic auth should work when proxy auth is enabled but not required."""
+    def test_basic_auth_rejected_when_proxy_enabled(self, client, monkeypatch):
         _enable_proxy_auth(monkeypatch, required=False)
         _set_basic_auth_creds(monkeypatch)
 
@@ -204,26 +215,7 @@ class TestProxyAuthFallback:
             auth=("admin", "super-secure-pass"),
         )
 
-        assert response.status_code == 200
-
-    def test_proxy_headers_take_precedence_over_basic_auth(self, client, monkeypatch):
-        """Proxy headers should take precedence over Basic Auth."""
-        secret = _enable_proxy_auth(monkeypatch, required=False)
-        _set_basic_auth_creds(monkeypatch, username="basic-user")
-
-        response = client.get(
-            "/v1/admin/profile",
-            auth=("basic-user", "super-secure-pass"),
-            headers={
-                "X-Admin-User": "proxy-user",
-                "X-Admin-Roles": "owner",
-                "X-Proxy-Auth-Secret": secret,
-            },
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data.get("username") == "proxy-user"
+        assert response.status_code == 401
 
 
 class TestNonAdminRoutesUnaffected:
