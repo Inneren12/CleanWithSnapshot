@@ -22,10 +22,10 @@ ENV NODE_ENV=production
 ENV NEXT_PUBLIC_SHOW_ADMIN_LINK=$NEXT_PUBLIC_SHOW_ADMIN_LINK
 ENV NEXT_PUBLIC_E2E_MODE=$NEXT_PUBLIC_E2E_MODE
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
-COPY --from=build /app ./
 RUN addgroup -S app \
-    && adduser -S -G app -h /app -s /sbin/nologin app \
-    && chown -R app:app /app
+    && adduser -S -G app -h /app -s /sbin/nologin app
+COPY --from=build --chown=app:app /app ./
+# Remove npm/npx at runtime to reduce image size and minimize attack surface.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 EXPOSE 3000
 USER app

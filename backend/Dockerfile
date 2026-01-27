@@ -22,7 +22,7 @@ RUN apt-get update \
 
 RUN groupadd -r app \
     && useradd -r -g app -d /app -s /usr/sbin/nologin app \
-    && chown -R app:app /app
+    && install -d -o app -g app /app/tmp /app/var/uploads /app/var/uploads/orders
 
 COPY --chown=app:app . .
 
