@@ -7,11 +7,13 @@ The CI pipeline runs Trivy container image scans on every pull request and merge
 - Images scanned: `cleanwithsnapshot-api:ci` and `cleanwithsnapshot-web:ci` built from the repo Dockerfiles.
 - Severity gate: **CRITICAL** only.
 - Reports: JSON and SARIF artifacts are uploaded for every run.
+- SBOMs: SPDX JSON SBOMs are generated for each image and uploaded as CI artifacts.
 
 ## CI Behavior
 - The Trivy job builds the API and web images and runs `trivy image` with `--severity CRITICAL --exit-code 1`.
 - Any CRITICAL finding fails the job, which blocks the PR merge.
 - Reports are always uploaded as artifacts, even when the scan fails.
+- SBOM artifacts are stored in the `trivy-reports` artifact (`sbom-trivy-cleanwithsnapshot-*.json`) and retained for **30 days**.
 
 ## Trivy Ignore Policy
 The default posture is to **not** use `.trivyignore`. If an ignore file is required, it must:

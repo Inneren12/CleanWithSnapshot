@@ -448,6 +448,24 @@ jobs:
           severity: ${{ env.TRIVY_SEVERITY }}
           exit-code: "1"
           limit-severities-for-sarif: true
+
+      - name: Generate SBOM (api, Trivy SPDX)
+        uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
+        with:
+          scan-type: image
+          image-ref: cleanwithsnapshot-api:ci
+          format: spdx-json
+          output: sbom-trivy-cleanwithsnapshot-api.json
+          exit-code: "0"
+
+      - name: Generate SBOM (web, Trivy SPDX)
+        uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
+        with:
+          scan-type: image
+          image-ref: cleanwithsnapshot-web:ci
+          format: spdx-json
+          output: sbom-trivy-cleanwithsnapshot-web.json
+          exit-code: "0"
       
       - name: Upload Trivy reports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -457,7 +475,9 @@ jobs:
           path: |
             trivy-cleanwithsnapshot-*.json
             trivy-cleanwithsnapshot-*.sarif
+            sbom-trivy-cleanwithsnapshot-*.json
             built-image-ids.txt
+          retention-days: 30
 
       - name: Enforce Trivy CRITICAL gate
         if: always()
@@ -477,7 +497,7 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
       GRYPE_FAIL_ON: "critical"
-      SBOM_ENABLED: "false"
+      SBOM_ENABLED: "true"
 
     steps:
       - name: Checkout code
@@ -532,6 +552,7 @@ jobs:
           path: |
             grype-cleanwithsnapshot-*.json
             sbom-cleanwithsnapshot-*.json
+          retention-days: 30
 
 
   secrets-scan:
