@@ -65,7 +65,7 @@ from app.infra.logging import clear_log_context, configure_logging, update_log_c
 from app.infra.metrics import configure_metrics, metrics
 from app.infra.security import RateLimiter, resolve_client_key
 from app.infra.tracing import configure_tracing, instrument_fastapi
-from app.settings import settings
+from app.settings import SECURE_ENVIRONMENTS, settings
 from app.services import build_app_services
 
 logger = logging.getLogger(__name__)
@@ -287,10 +287,11 @@ def _try_include_style_guide(app: FastAPI) -> None:
 
 
 def _validate_prod_config(app_settings) -> None:
-    if app_settings.app_env != "prod":
+    if app_settings.app_env not in SECURE_ENVIRONMENTS:
         return
 
     errors: list[str] = []
+    context_label = f"APP_ENV={app_settings.app_env}"
 
     def _validate_secret(
         value: str | None,
@@ -298,7 +299,7 @@ def _validate_prod_config(app_settings) -> None:
         *,
         minimum: int = 32,
         forbidden: set[str] | None = None,
-        context: str = "APP_ENV=prod",
+        context: str = context_label,
     ) -> None:
         if not value or not value.strip():
             errors.append(f"{context} requires {name} to be configured")
@@ -330,7 +331,7 @@ def _validate_prod_config(app_settings) -> None:
             app_settings.metrics_token,
             "METRICS_TOKEN",
             minimum=16,
-            context="METRICS_ENABLED=true in prod",
+            context=f"METRICS_ENABLED=true in {context_label}",
         )
 
     admin_credentials = [

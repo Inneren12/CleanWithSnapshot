@@ -7,10 +7,14 @@ from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+SECURE_ENVIRONMENTS = {"prod", "staging"}
+DEV_DEFAULT_ENVIRONMENTS = {"dev", "ci", "e2e", "test", "local"}
+
+
 class Settings(BaseSettings):
     app_name: str = "cleaning-economy-bot"
     cors_origins_raw: str | None = Field(None, validation_alias="cors_origins")
-    app_env: Literal["dev", "prod", "ci", "e2e"] = Field("prod")
+    app_env: Literal["dev", "prod", "ci", "e2e", "staging", "test", "local"] = Field("prod")
     strict_cors: bool = Field(False)
     strict_policy_mode: bool = Field(False)
     admin_read_only: bool = Field(False)
@@ -105,7 +109,9 @@ class Settings(BaseSettings):
     admin_proxy_auth_e2e_enabled: bool = Field(False)
     admin_proxy_auth_e2e_secret: str | None = Field(None)
     admin_proxy_auth_e2e_ttl_seconds: int = Field(300)
-    auth_secret_key: str | None = Field(None)
+    auth_secret_key: str | None = Field(
+        None, validation_alias=AliasChoices("AUTH_SECRET_KEY", "auth_secret_key")
+    )
     auth_token_ttl_minutes: int = Field(60 * 24)
     auth_access_token_ttl_minutes: int = Field(
         15, validation_alias=AliasChoices("auth_access_token_ttl_minutes", "auth_token_ttl_minutes")
@@ -225,8 +231,12 @@ class Settings(BaseSettings):
     stripe_circuit_recovery_seconds: float = Field(30.0)
     stripe_circuit_window_seconds: float = Field(60.0)
     stripe_circuit_half_open_max_calls: int = Field(2)
-    client_portal_secret: str | None = Field(None)
-    worker_portal_secret: str | None = Field(None)
+    client_portal_secret: str | None = Field(
+        None, validation_alias=AliasChoices("CLIENT_PORTAL_SECRET", "client_portal_secret")
+    )
+    worker_portal_secret: str | None = Field(
+        None, validation_alias=AliasChoices("WORKER_PORTAL_SECRET", "worker_portal_secret")
+    )
     client_portal_token_ttl_minutes: int = Field(30)
     client_portal_base_url: str | None = Field(None)
     deposit_percent: float = Field(0.25)
@@ -376,7 +386,7 @@ class Settings(BaseSettings):
             if not self.admin_proxy_auth_e2e_secret or not self.admin_proxy_auth_e2e_secret.strip():
                 raise ValueError("ADMIN_PROXY_AUTH_E2E_SECRET must be set when E2E proxy auth is enabled")
 
-        if self.app_env != "prod":
+        if self.app_env in DEV_DEFAULT_ENVIRONMENTS:
             if not self.auth_secret_key or not self.auth_secret_key.strip():
                 self.auth_secret_key = "dev-auth-secret"
             if not self.client_portal_secret or not self.client_portal_secret.strip():
@@ -393,18 +403,22 @@ class Settings(BaseSettings):
             return self
 
         if self.admin_proxy_auth_e2e_enabled:
-            raise ValueError("APP_ENV=prod does not allow ADMIN_PROXY_AUTH_E2E_ENABLED")
+            raise ValueError(
+                f"APP_ENV={self.app_env} does not allow ADMIN_PROXY_AUTH_E2E_ENABLED"
+            )
 
         if self.testing:
-            raise ValueError("APP_ENV=prod disables testing mode and X-Test-Org overrides")
+            raise ValueError(
+                f"APP_ENV={self.app_env} disables testing mode and X-Test-Org overrides"
+            )
 
         if self.legacy_basic_auth_enabled is None:
             self.legacy_basic_auth_enabled = False
 
-        if self.app_env == "prod" and self.legacy_basic_auth_enabled:
+        if self.app_env in SECURE_ENVIRONMENTS and self.legacy_basic_auth_enabled:
             if not _basic_auth_creds_configured():
                 raise ValueError(
-                    "APP_ENV=prod with LEGACY_BASIC_AUTH_ENABLED=true requires at least one Basic Auth username/password"
+                    f"APP_ENV={self.app_env} with LEGACY_BASIC_AUTH_ENABLED=true requires at least one Basic Auth username/password"
                 )
             weak_passwords = {"change-me", "secret", "password", "admin", "123456", "qwerty"}
 
@@ -423,16 +437,16 @@ class Settings(BaseSettings):
             ):
                 if password and _is_weak(password):
                     raise ValueError(
-                        "APP_ENV=prod requires strong legacy Basic Auth passwords (min 12 chars, not a default placeholder)"
+                        f"APP_ENV={self.app_env} requires strong legacy Basic Auth passwords (min 12 chars, not a default placeholder)"
                     )
 
         def _require_secret(value: str | None, field_name: str, placeholders: set[str]) -> None:
             if value is None:
-                raise ValueError(f"APP_ENV=prod requires {field_name} to be configured")
+                raise ValueError(f"APP_ENV={self.app_env} requires {field_name} to be configured")
             normalized = value.strip()
             if not normalized or normalized in placeholders:
                 raise ValueError(
-                    f"APP_ENV=prod requires {field_name} to be set to a non-default value"
+                    f"APP_ENV={self.app_env} requires {field_name} to be set to a non-default value"
                 )
 
         _require_secret(self.auth_secret_key, "AUTH_SECRET_KEY", {"dev-auth-secret"})
@@ -447,14 +461,18 @@ class Settings(BaseSettings):
 
         if self.strict_cors:
             if not self.cors_origins:
-                raise ValueError("STRICT_CORS=true in prod requires explicit CORS_ORIGINS")
+                raise ValueError(
+                    f"STRICT_CORS=true in APP_ENV={self.app_env} requires explicit CORS_ORIGINS"
+                )
             if any(origin == "*" for origin in self.cors_origins):
                 raise ValueError(
-                    "STRICT_CORS=true in prod does not allow wildcard CORS_ORIGINS entries"
+                    f"STRICT_CORS=true in APP_ENV={self.app_env} does not allow wildcard CORS_ORIGINS entries"
                 )
 
         if self.metrics_enabled and (not self.metrics_token or not self.metrics_token.strip()):
-            raise ValueError("METRICS_TOKEN is required when METRICS_ENABLED=true in prod")
+            raise ValueError(
+                f"METRICS_TOKEN is required when METRICS_ENABLED=true in APP_ENV={self.app_env}"
+            )
 
         if self.admin_proxy_auth_required and not self.admin_proxy_auth_enabled:
             raise ValueError(
@@ -464,11 +482,11 @@ class Settings(BaseSettings):
         if self.admin_proxy_auth_enabled:
             if not self.admin_proxy_auth_secret or not self.admin_proxy_auth_secret.strip():
                 raise ValueError(
-                    "ADMIN_PROXY_AUTH_SECRET is required when ADMIN_PROXY_AUTH_ENABLED=true in prod"
+                    f"ADMIN_PROXY_AUTH_SECRET is required when ADMIN_PROXY_AUTH_ENABLED=true in APP_ENV={self.app_env}"
                 )
             if len(self.admin_proxy_auth_secret.strip()) < 32:
                 raise ValueError(
-                    "ADMIN_PROXY_AUTH_SECRET must be at least 32 characters in prod"
+                    f"ADMIN_PROXY_AUTH_SECRET must be at least 32 characters in APP_ENV={self.app_env}"
                 )
 
         if self.admin_ip_allowlist_cidrs_raw:
