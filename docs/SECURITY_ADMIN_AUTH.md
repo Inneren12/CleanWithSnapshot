@@ -205,6 +205,10 @@ MFA is enforced outside the backend by the IdP or access gateway protecting the 
 
 SMS-based MFA is not acceptable for admin access.
 
+### Device Posture Enforcement at IdP/Access Layer
+
+Device posture requirements for **admin access only** are enforced at the edge (Cloudflare Access / IdP). The backend does **not** evaluate device posture and only trusts requests that have passed the edge policy. See the posture policy, enforcement status, and exceptions in [SECURITY_ADMIN_DEVICE_POSTURE.md](SECURITY_ADMIN_DEVICE_POSTURE.md).
+
 ### CI/E2E Proxy Signature (non-production only)
 
 For end-to-end tests that call the API directly (without a real proxy), CI can send a signed proxy identity. When enabled, the backend requires:
