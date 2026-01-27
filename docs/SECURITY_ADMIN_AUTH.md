@@ -62,6 +62,13 @@ block with non-secret admin proxy flags:
 Use this output to confirm the API is reading `ADMIN_PROXY_AUTH_ENABLED`,
 `TRUST_PROXY_HEADERS`, and `TRUSTED_PROXY_CIDRS` in CI without exposing secrets.
 
+## CI E2E Preflight Source
+
+CI runs the admin preflight from a helper container on the same Docker network as the API
+so the TCP peer IP is a bridge address covered by `TRUSTED_PROXY_CIDRS`. If a preflight fails
+with `untrusted_proxy`, the API returns `X-Admin-Auth-Peer-IP` in non-prod environments to
+surface the computed peer IP for debugging.
+
 ## Rollback Instructions
 
 If you need to temporarily roll back to legacy Basic Auth:

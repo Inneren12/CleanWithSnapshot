@@ -74,7 +74,7 @@ jobs:
             "LEGACY_BASIC_AUTH_ENABLED": "true",
             "ADMIN_PROXY_AUTH_ENABLED": "true",
             "TRUST_PROXY_HEADERS": "true",
-            "TRUSTED_PROXY_CIDRS": "172.16.0.0/12",
+            "TRUSTED_PROXY_CIDRS": "172.28.0.0/16",
             "E2E_PROXY_AUTH_ENABLED": "true",
             "E2E_PROXY_AUTH_SECRET": e2e_proxy_secret,
           }
@@ -90,7 +90,7 @@ jobs:
             + f"ADMIN_BASIC_PASSWORD={admin_password}\n"
             + "ADMIN_PROXY_AUTH_ENABLED=true\n"
             + "TRUST_PROXY_HEADERS=true\n"
-            + "TRUSTED_PROXY_CIDRS=172.16.0.0/12\n"
+            + "TRUSTED_PROXY_CIDRS=172.28.0.0/16\n"
             + "E2E_PROXY_AUTH_ENABLED=true\n"
             + f"E2E_PROXY_AUTH_SECRET={e2e_proxy_secret}\n"
             + "APP_ENV=ci\n"
@@ -395,9 +395,9 @@ jobs:
           wait_on "http://127.0.0.1:8000/readyz" "api readyz"
           wait_on "http://127.0.0.1:3000/" "web"
 
-      - name: Preflight admin auth
+      - name: Preflight admin auth (compose network)
         run: |
-          python - <<'PY'
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm e2e-helper python - <<'PY'
           import hmac
           import hashlib
           import os
@@ -412,7 +412,7 @@ jobs:
           ts = str(int(time.time()))
           canonical = f"{user}|{email}|{roles}|{ts}"
           signature = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
-          req = urllib.request.Request("http://127.0.0.1:8000/v1/admin/profile")
+          req = urllib.request.Request("http://api:8000/v1/admin/profile")
           req.add_header("X-Proxy-Admin-User", user)
           req.add_header("X-Proxy-Admin-Email", email)
           req.add_header("X-Proxy-Admin-Roles", roles)
@@ -422,9 +422,12 @@ jobs:
             urllib.request.urlopen(req, timeout=5).read()
           except urllib.error.HTTPError as exc:
             reason = exc.headers.get("X-Admin-Auth-Fail-Reason")
+            peer_ip = exc.headers.get("X-Admin-Auth-Peer-IP")
             print(f"Admin proxy auth preflight failed: {exc}")
             if reason:
               print(f"X-Admin-Auth-Fail-Reason: {reason}")
+            if peer_ip:
+              print(f"X-Admin-Auth-Peer-IP: {peer_ip}")
             raise SystemExit(1) from exc
           except Exception as exc:
             raise SystemExit(f"Admin proxy auth preflight failed: {exc}") from exc

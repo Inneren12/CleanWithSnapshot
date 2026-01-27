@@ -10,6 +10,7 @@ from redis.exceptions import RedisError, ResponseError
 
 from starlette.requests import Request
 
+from app.infra.ip import get_tcp_peer_ip
 
 logger = logging.getLogger("app.rate_limit")
 
@@ -247,7 +248,7 @@ def resolve_client_key(
     trusted_proxy_ips: list[str],
     trusted_proxy_cidrs: list[str],
 ) -> str:
-    client_host = request.client.host if request.client else "unknown"
+    client_host = get_tcp_peer_ip(request)
     if not trust_proxy_headers or not _is_trusted_proxy(client_host, trusted_proxy_ips, trusted_proxy_cidrs):
         return client_host
     forwarded_for = request.headers.get("x-forwarded-for")
@@ -277,12 +278,20 @@ def _is_trusted_proxy(client_host: str, trusted_ips: list[str], trusted_cidrs: l
     return False
 
 
+def is_trusted_proxy_peer(
+    peer_ip: str,
+    trusted_proxy_ips: list[str],
+    trusted_proxy_cidrs: list[str],
+) -> bool:
+    return _is_trusted_proxy(peer_ip, trusted_proxy_ips, trusted_proxy_cidrs)
+
+
 def is_trusted_proxy_source(
     request: Request,
     trusted_proxy_ips: list[str],
     trusted_proxy_cidrs: list[str],
 ) -> bool:
-    client_host = request.client.host if request.client else "unknown"
+    client_host = get_tcp_peer_ip(request)
     return _is_trusted_proxy(client_host, trusted_proxy_ips, trusted_proxy_cidrs)
 
 

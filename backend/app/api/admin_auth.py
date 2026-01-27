@@ -18,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.settings import settings
 from app.domain.iam import permissions as iam_permissions
+from app.infra.ip import get_tcp_peer_ip
 from app.infra.security import is_trusted_proxy_source
 from app.infra.logging import update_log_context
 from app.infra.metrics import metrics
@@ -39,6 +40,7 @@ ADMIN_IDENTITY_SOURCE_PROXY = "proxy"
 ADMIN_IDENTITY_SOURCE_SAAS = "saas"
 ADMIN_IDENTITY_SOURCE_BASIC = "basic"
 ADMIN_AUTH_FAIL_HEADER = "X-Admin-Auth-Fail-Reason"
+ADMIN_AUTH_PEER_HEADER = "X-Admin-Auth-Peer-IP"
 ADMIN_AUTH_FAIL_REASONS = {
     "untrusted_proxy",
     "bad_signature",
@@ -215,6 +217,15 @@ def _attach_admin_auth_fail_reason(response, reason: str | None):
     return response
 
 
+def _attach_admin_auth_peer_ip(response, request: Request, reason: str | None):
+    if not _should_emit_admin_auth_reason():
+        return response
+    if reason != "untrusted_proxy":
+        return response
+    response.headers[ADMIN_AUTH_PEER_HEADER] = get_tcp_peer_ip(request)
+    return response
+
+
 def _ensure_trusted_proxy_source(request: Request) -> None:
     if not settings.admin_proxy_auth_enabled:
         raise _build_proxy_auth_exception(reason="proxy_disabled")
@@ -225,6 +236,17 @@ def _ensure_trusted_proxy_source(request: Request) -> None:
         settings.trusted_proxy_ips,
         settings.trusted_proxy_cidrs,
     ):
+        if settings.app_env in ADMIN_AUTH_FAIL_ENVS:
+            logger.info(
+                "admin_proxy_untrusted_peer",
+                extra={
+                    "extra": {
+                        "peer_ip": get_tcp_peer_ip(request),
+                        "trusted_proxy_ips": settings.trusted_proxy_ips,
+                        "trusted_proxy_cidrs": settings.trusted_proxy_cidrs,
+                    }
+                },
+            )
         raise _build_proxy_auth_exception(reason="untrusted_proxy")
 
 
@@ -591,7 +613,8 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             response = await http_exception_handler(
                 request, _build_proxy_auth_exception(reason=reason)
             )
-            return _attach_admin_auth_fail_reason(response, reason)
+            response = _attach_admin_auth_fail_reason(response, reason)
+            return _attach_admin_auth_peer_ip(response, request, reason)
 
         authorization: str = request.headers.get("Authorization", "")
         has_bearer = authorization.lower().startswith("bearer ")
@@ -622,7 +645,8 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                 reason = getattr(exc, "reason", None) or "proxy_auth_required"
                 _log_admin_auth_failure(request, reason=reason, credentials=None)
                 response = await http_exception_handler(request, exc)
-                return _attach_admin_auth_fail_reason(response, reason)
+                response = _attach_admin_auth_fail_reason(response, reason)
+                return _attach_admin_auth_peer_ip(response, request, reason)
 
         saas_identity = getattr(request.state, "saas_identity", None)
         if saas_identity:
@@ -662,7 +686,8 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                 reason = reason or "missing_credentials"
             _log_admin_auth_failure(request, reason=reason, credentials=credentials)
             response = await http_exception_handler(request, exc)
-            return _attach_admin_auth_fail_reason(response, reason)
+            response = _attach_admin_auth_fail_reason(response, reason)
+            return _attach_admin_auth_peer_ip(response, request, reason)
 
 
 class AdminAuditMiddleware(BaseHTTPMiddleware):
