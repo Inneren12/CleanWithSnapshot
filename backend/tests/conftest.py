@@ -194,6 +194,8 @@ def restore_admin_settings():
     original_dispatcher_username = settings.dispatcher_basic_username
     original_dispatcher_password = settings.dispatcher_basic_password
     original_admin_proxy_auth_enabled = getattr(settings, "admin_proxy_auth_enabled", True)
+    original_e2e_proxy_auth_enabled = getattr(settings, "e2e_proxy_auth_enabled", False)
+    original_e2e_proxy_auth_secret = getattr(settings, "e2e_proxy_auth_secret", None)
     original_testing = getattr(settings, "testing", False)
     original_deposits = getattr(settings, "deposits_enabled", True)
     original_metrics = getattr(settings, "metrics_enabled", True)
@@ -248,6 +250,8 @@ def restore_admin_settings():
     settings.dispatcher_basic_username = original_dispatcher_username
     settings.dispatcher_basic_password = original_dispatcher_password
     settings.admin_proxy_auth_enabled = original_admin_proxy_auth_enabled
+    settings.e2e_proxy_auth_enabled = original_e2e_proxy_auth_enabled
+    settings.e2e_proxy_auth_secret = original_e2e_proxy_auth_secret
     settings.testing = original_testing
     settings.deposits_enabled = original_deposits
     settings.metrics_enabled = original_metrics
@@ -306,6 +310,8 @@ def enable_test_mode():
     settings.email_mode = "sendgrid"
     settings.legacy_basic_auth_enabled = True
     settings.admin_proxy_auth_enabled = True
+    settings.e2e_proxy_auth_enabled = False
+    settings.e2e_proxy_auth_secret = None
     settings.trust_proxy_headers = True
     settings.trusted_proxy_ips = ["testclient"]
     settings.trusted_proxy_cidrs = []

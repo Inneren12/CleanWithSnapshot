@@ -53,6 +53,8 @@ jobs:
               "ADMIN_PROXY_AUTH_ENABLED",
               "TRUST_PROXY_HEADERS",
               "TRUSTED_PROXY_IPS",
+              "E2E_PROXY_AUTH_ENABLED",
+              "E2E_PROXY_AUTH_SECRET",
             }
           )
           keys = sorted(keys)
@@ -63,6 +65,7 @@ jobs:
           ]
           admin_username = "e2e"
           admin_password = f"ci-{secrets.token_hex(32)}"
+          e2e_proxy_secret = secrets.token_hex(32)
           overrides = {
             "ADMIN_BASIC_USERNAME": admin_username,
             "ADMIN_BASIC_PASSWORD": admin_password,
@@ -70,6 +73,8 @@ jobs:
             "ADMIN_PROXY_AUTH_ENABLED": "true",
             "TRUST_PROXY_HEADERS": "true",
             "TRUSTED_PROXY_IPS": "127.0.0.1",
+            "E2E_PROXY_AUTH_ENABLED": "true",
+            "E2E_PROXY_AUTH_SECRET": e2e_proxy_secret,
           }
           generated = [
             f"{key}={overrides.get(key, f'ci-{secrets.token_hex(32)}')}" for key in keys
@@ -84,6 +89,8 @@ jobs:
             + "ADMIN_PROXY_AUTH_ENABLED=true\n"
             + "TRUST_PROXY_HEADERS=true\n"
             + "TRUSTED_PROXY_IPS=127.0.0.1\n"
+            + "E2E_PROXY_AUTH_ENABLED=true\n"
+            + f"E2E_PROXY_AUTH_SECRET={e2e_proxy_secret}\n"
             + "ENV_FILE=backend/.env.e2e.ci\n",
             encoding="utf-8",
           )
@@ -94,6 +101,7 @@ jobs:
           echo "ENV_FILE=$ENV_FILE"
           echo "ADMIN_PROXY_AUTH_ENABLED=${ADMIN_PROXY_AUTH_ENABLED}"
           echo "TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS}"
+          echo "E2E_PROXY_AUTH_ENABLED=${E2E_PROXY_AUTH_ENABLED}"
           grep -q '^AUTH_SECRET_KEY=' backend/.env.e2e.ci
           grep -E '^(AUTH_SECRET_KEY|CLIENT_PORTAL_SECRET|WORKER_PORTAL_SECRET|METRICS_TOKEN|ADMIN_BASIC_USERNAME|ADMIN_BASIC_PASSWORD|LEGACY_BASIC_AUTH_ENABLED)=' backend/.env.e2e.ci \
             | sed -E 's/=.*/=<redacted>/'
@@ -362,12 +370,31 @@ jobs:
 
       - name: Preflight admin auth
         run: |
-          if ! curl -fsS -u "$ADMIN_BASIC_USERNAME:$ADMIN_BASIC_PASSWORD" http://127.0.0.1:8000/v1/admin/profile >/dev/null; then
-            echo "Admin auth preflight failed."
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=200 api || true
-            exit 1
-          fi
+          python - <<'PY'
+          import hmac
+          import hashlib
+          import os
+          import time
+          import urllib.request
+
+          user = os.environ["ADMIN_BASIC_USERNAME"]
+          email = os.environ.get("E2E_PROXY_ADMIN_EMAIL", user)
+          roles = os.environ.get("E2E_PROXY_ADMIN_ROLES", "admin")
+          secret = os.environ["E2E_PROXY_AUTH_SECRET"]
+          ts = str(int(time.time()))
+          canonical = f"{user}|{email}|{roles}|{ts}"
+          signature = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+          req = urllib.request.Request("http://127.0.0.1:8000/v1/admin/profile")
+          req.add_header("X-Proxy-Admin-User", user)
+          req.add_header("X-Proxy-Admin-Email", email)
+          req.add_header("X-Proxy-Admin-Roles", roles)
+          req.add_header("X-Proxy-Admin-Timestamp", ts)
+          req.add_header("X-Proxy-Admin-Signature", signature)
+          try:
+            urllib.request.urlopen(req, timeout=5).read()
+          except Exception as exc:
+            raise SystemExit(f"Admin proxy auth preflight failed: {exc}") from exc
+          PY
 
       - name: Install web dependencies
         working-directory: web
@@ -390,12 +417,18 @@ jobs:
           PLAYWRIGHT_API_BASE_URL: http://127.0.0.1:8000
           ADMIN_BASIC_USERNAME: ${{ env.ADMIN_BASIC_USERNAME }}
           ADMIN_BASIC_PASSWORD: ${{ env.ADMIN_BASIC_PASSWORD }}
+          ADMIN_PROXY_AUTH_ENABLED: ${{ env.ADMIN_PROXY_AUTH_ENABLED }}
+          E2E_PROXY_AUTH_ENABLED: ${{ env.E2E_PROXY_AUTH_ENABLED }}
+          E2E_PROXY_AUTH_SECRET: ${{ env.E2E_PROXY_AUTH_SECRET }}
         run: |
           PW_CHANNEL=chrome PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
           PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
           PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:8000 \
           ADMIN_BASIC_USERNAME="$ADMIN_BASIC_USERNAME" \
           ADMIN_BASIC_PASSWORD="$ADMIN_BASIC_PASSWORD" \
+          ADMIN_PROXY_AUTH_ENABLED="$ADMIN_PROXY_AUTH_ENABLED" \
+          E2E_PROXY_AUTH_ENABLED="$E2E_PROXY_AUTH_ENABLED" \
+          E2E_PROXY_AUTH_SECRET="$E2E_PROXY_AUTH_SECRET" \
           npx playwright test --config e2e/playwright.config.ts
 
       - name: Collect compose diagnostics

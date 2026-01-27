@@ -1,4 +1,5 @@
 import json
+import os
 import uuid
 from ipaddress import ip_network
 from typing import Literal
@@ -15,6 +16,8 @@ class Settings(BaseSettings):
     strict_policy_mode: bool = Field(False)
     admin_read_only: bool = Field(False)
     admin_proxy_auth_enabled: bool = Field(True)
+    e2e_proxy_auth_enabled: bool = Field(False)
+    e2e_proxy_auth_secret: str | None = Field(None)
     admin_ip_allowlist_cidrs_raw: str | None = Field(
         None, validation_alias="admin_ip_allowlist_cidrs"
     )
@@ -448,6 +451,14 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "ADMIN_PROXY_AUTH_ENABLED=true requires TRUSTED_PROXY_IPS or TRUSTED_PROXY_CIDRS"
                 )
+
+        if self.e2e_proxy_auth_enabled:
+            if self.app_env == "prod":
+                raise ValueError("E2E_PROXY_AUTH_ENABLED is not allowed in prod")
+            if not self.e2e_proxy_auth_secret:
+                raise ValueError("E2E_PROXY_AUTH_ENABLED requires E2E_PROXY_AUTH_SECRET")
+            if not (self.testing or os.getenv("CI", "").lower() == "true"):
+                raise ValueError("E2E_PROXY_AUTH_ENABLED requires TESTING=true or CI=true")
 
         return self
 

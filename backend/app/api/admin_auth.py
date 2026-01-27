@@ -1,6 +1,10 @@
 import base64
+import hashlib
+import hmac
 import logging
+import os
 import secrets
+import time
 import uuid
 from dataclasses import dataclass
 from enum import Enum
@@ -25,6 +29,12 @@ ADMIN_PROXY_USER_HEADER = "X-Admin-User"
 ADMIN_PROXY_EMAIL_HEADER = "X-Admin-Email"
 ADMIN_PROXY_ROLES_HEADER = "X-Admin-Roles"
 ADMIN_PROXY_AUTH_HEADER = "X-Proxy-Auth"
+E2E_PROXY_USER_HEADER = "X-Proxy-Admin-User"
+E2E_PROXY_EMAIL_HEADER = "X-Proxy-Admin-Email"
+E2E_PROXY_ROLES_HEADER = "X-Proxy-Admin-Roles"
+E2E_PROXY_TIMESTAMP_HEADER = "X-Proxy-Admin-Timestamp"
+E2E_PROXY_SIGNATURE_HEADER = "X-Proxy-Admin-Signature"
+E2E_PROXY_CLOCK_SKEW_SECONDS = 60
 ADMIN_IDENTITY_SOURCE_PROXY = "proxy"
 ADMIN_IDENTITY_SOURCE_SAAS = "saas"
 ADMIN_IDENTITY_SOURCE_BASIC = "basic"
@@ -172,6 +182,18 @@ def _set_admin_identity(request: Request, identity: AdminIdentity, source: str) 
     set_current_org_id(request.state.current_org_id)
 
 
+def _is_e2e_proxy_auth_allowed() -> bool:
+    if not settings.e2e_proxy_auth_enabled:
+        return False
+    if not settings.admin_proxy_auth_enabled:
+        return False
+    if not settings.trust_proxy_headers:
+        return False
+    if settings.app_env == "prod":
+        return False
+    return bool(settings.testing or os.getenv("CI", "").lower() == "true")
+
+
 def _log_admin_auth_failure(
     request: Request,
     *,
@@ -307,6 +329,61 @@ def _authenticate_proxy_headers(request: Request) -> AdminIdentity:
     )
 
 
+def _has_e2e_proxy_headers(request: Request) -> bool:
+    return all(
+        request.headers.get(header)
+        for header in (
+            E2E_PROXY_USER_HEADER,
+            E2E_PROXY_EMAIL_HEADER,
+            E2E_PROXY_TIMESTAMP_HEADER,
+            E2E_PROXY_SIGNATURE_HEADER,
+        )
+    )
+
+
+def _authenticate_e2e_proxy_headers(request: Request) -> AdminIdentity:
+    if not _is_e2e_proxy_auth_allowed():
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+    secret = settings.e2e_proxy_auth_secret
+    if not secret:
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+    user = request.headers.get(E2E_PROXY_USER_HEADER)
+    email = request.headers.get(E2E_PROXY_EMAIL_HEADER)
+    roles = request.headers.get(E2E_PROXY_ROLES_HEADER, "")
+    timestamp_raw = request.headers.get(E2E_PROXY_TIMESTAMP_HEADER)
+    signature = request.headers.get(E2E_PROXY_SIGNATURE_HEADER)
+    if not user or not email or not timestamp_raw or not signature:
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+    try:
+        timestamp = int(timestamp_raw)
+    except ValueError:
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+    now = int(time.time())
+    if abs(now - timestamp) > E2E_PROXY_CLOCK_SKEW_SECONDS:
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+    canonical = f"{user}|{email}|{roles}|{timestamp}"
+    expected = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        raise _build_proxy_auth_exception(reason="untrusted_proxy")
+    role = _role_from_proxy_headers(roles, user)
+    return AdminIdentity(
+        username=user,
+        role=role,
+        org_id=settings.default_org_id,
+        admin_id=email or user,
+        auth_method="e2e-proxy",
+    )
+
+
+def _authenticate_admin_via_proxy(request: Request) -> AdminIdentity:
+    try:
+        return _authenticate_proxy_headers(request)
+    except HTTPException as exc:
+        if _has_e2e_proxy_headers(request):
+            return _authenticate_e2e_proxy_headers(request)
+        raise exc
+
+
 def _resolve_permission_keys(request: Request, identity: AdminIdentity) -> set[str]:
     saas_identity = getattr(request.state, "saas_identity", None)
     if saas_identity is not None:
@@ -370,7 +447,7 @@ async def get_admin_identity(
                 payload["org_id"] = str(org_for_log)
             update_log_context(**payload)
             return cached
-        identity = _authenticate_proxy_headers(request)
+        identity = _authenticate_admin_via_proxy(request)
         _set_admin_identity(request, identity, ADMIN_IDENTITY_SOURCE_PROXY)
     else:
         if cached:
@@ -484,7 +561,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                     credentials=None,
                 )
             try:
-                identity = _authenticate_proxy_headers(request)
+                identity = _authenticate_admin_via_proxy(request)
                 _assert_permissions(request, identity, [AdminPermission.VIEW])
                 _set_admin_identity(request, identity, ADMIN_IDENTITY_SOURCE_PROXY)
                 return await call_next(request)
