@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     legacy_basic_auth_enabled: bool | None = Field(None)
     admin_mfa_required: bool = Field(False)
     admin_mfa_required_roles_raw: str | None = Field(None, validation_alias="admin_mfa_required_roles")
+    admin_proxy_auth_enabled: bool = Field(False)
+    admin_proxy_auth_required: bool = Field(False)
+    admin_proxy_auth_header_user: str = Field("X-Admin-User")
+    admin_proxy_auth_header_email: str = Field("X-Admin-Email")
+    admin_proxy_auth_header_roles: str = Field("X-Admin-Roles")
+    admin_proxy_auth_secret: str | None = Field(None)
     auth_secret_key: str = Field("dev-auth-secret")
     auth_token_ttl_minutes: int = Field(60 * 24)
     auth_access_token_ttl_minutes: int = Field(
@@ -430,6 +436,21 @@ class Settings(BaseSettings):
 
         if self.metrics_enabled and (not self.metrics_token or not self.metrics_token.strip()):
             raise ValueError("METRICS_TOKEN is required when METRICS_ENABLED=true in prod")
+
+        if self.admin_proxy_auth_required and not self.admin_proxy_auth_enabled:
+            raise ValueError(
+                "ADMIN_PROXY_AUTH_REQUIRED=true requires ADMIN_PROXY_AUTH_ENABLED=true"
+            )
+
+        if self.admin_proxy_auth_enabled:
+            if not self.admin_proxy_auth_secret or not self.admin_proxy_auth_secret.strip():
+                raise ValueError(
+                    "ADMIN_PROXY_AUTH_SECRET is required when ADMIN_PROXY_AUTH_ENABLED=true in prod"
+                )
+            if len(self.admin_proxy_auth_secret.strip()) < 32:
+                raise ValueError(
+                    "ADMIN_PROXY_AUTH_SECRET must be at least 32 characters in prod"
+                )
 
         if self.admin_ip_allowlist_cidrs_raw:
             for cidr in self.admin_ip_allowlist_cidrs:

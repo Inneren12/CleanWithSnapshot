@@ -70,6 +70,58 @@ api.panidobro.com {
   header @docs -Content-Security-Policy
   header @docs Content-Security-Policy "default-src 'self'; img-src 'self' data: https://fastapi.tiangolo.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;"
 
+  # Admin routes: proxy-level authentication
+  # When ADMIN_PROXY_AUTH_ENABLED=true, all /v1/admin/* requests are authenticated here.
+  # The backend trusts headers injected by this proxy (verified via X-Proxy-Auth-Secret).
+  #
+  # To enable:
+  # 1. Set ADMIN_PROXY_AUTH_HASH_<USERNAME> env vars with bcrypt hashes (use `caddy hash-password`)
+  # 2. Set ADMIN_PROXY_AUTH_SECRET to a shared 32+ char secret (same in backend)
+  # 3. Set ADMIN_PROXY_AUTH_ENABLED=true and ADMIN_PROXY_AUTH_REQUIRED=true in backend
+  #
+  # Example generating password hash: caddy hash-password --plaintext 'your-password'
+  @admin path /v1/admin /v1/admin/*
+  handle @admin {
+    # IP allowlist for admin routes (optional, add IPs/CIDRs via env var)
+    # @admin_ip_deny not remote_ip 127.0.0.1 ::1 {env.ADMIN_ALLOWED_IPS}
+    # respond @admin_ip_deny "Admin access denied from this IP." 403
+
+    # Authenticate admin users at proxy level
+    # Credentials are configured via environment variables:
+    # - ADMIN_PROXY_AUTH_HASH_OWNER: bcrypt hash for owner user
+    # - ADMIN_PROXY_AUTH_HASH_ADMIN: bcrypt hash for admin user
+    # - ADMIN_PROXY_AUTH_HASH_DISPATCHER: bcrypt hash for dispatcher user
+    # - ADMIN_PROXY_AUTH_HASH_VIEWER: bcrypt hash for viewer user
+    basicauth {
+      owner {env.ADMIN_PROXY_AUTH_HASH_OWNER}
+      admin {env.ADMIN_PROXY_AUTH_HASH_ADMIN}
+      dispatcher {env.ADMIN_PROXY_AUTH_HASH_DISPATCHER}
+      accountant {env.ADMIN_PROXY_AUTH_HASH_ACCOUNTANT}
+      viewer {env.ADMIN_PROXY_AUTH_HASH_VIEWER}
+    }
+
+    # Strip the original Authorization header to prevent backend from seeing credentials
+    request_header -Authorization
+
+    # Inject trusted proxy headers for the backend
+    # The backend verifies X-Proxy-Auth-Secret matches its configured secret
+    request_header X-Admin-User {http.auth.user.id}
+    request_header X-Admin-Roles {http.auth.user.id}
+    request_header X-Proxy-Auth-Secret {env.ADMIN_PROXY_AUTH_SECRET}
+
+    # Prevent caching of admin responses
+    header Cache-Control "no-store, no-cache, must-revalidate, private"
+    header Pragma "no-cache"
+
+    reverse_proxy api:8000 {
+      transport http {
+        dial_timeout 10s
+        read_timeout 90s
+        write_timeout 90s
+      }
+    }
+  }
+
   reverse_proxy api:8000 {
     header_up Authorization {header.Authorization}
     transport http {

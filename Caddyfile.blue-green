@@ -71,6 +71,29 @@ api.panidobro.com {
   header @docs -Content-Security-Policy
   header @docs Content-Security-Policy "default-src 'self'; img-src 'self' data: https://fastapi.tiangolo.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;"
 
-  # Use the imported api_upstream snippet
+  # Admin routes: proxy-level authentication (see main Caddyfile for documentation)
+  @admin path /v1/admin /v1/admin/*
+  handle @admin {
+    basicauth {
+      owner {env.ADMIN_PROXY_AUTH_HASH_OWNER}
+      admin {env.ADMIN_PROXY_AUTH_HASH_ADMIN}
+      dispatcher {env.ADMIN_PROXY_AUTH_HASH_DISPATCHER}
+      accountant {env.ADMIN_PROXY_AUTH_HASH_ACCOUNTANT}
+      viewer {env.ADMIN_PROXY_AUTH_HASH_VIEWER}
+    }
+
+    request_header -Authorization
+    request_header X-Admin-User {http.auth.user.id}
+    request_header X-Admin-Roles {http.auth.user.id}
+    request_header X-Proxy-Auth-Secret {env.ADMIN_PROXY_AUTH_SECRET}
+
+    header Cache-Control "no-store, no-cache, must-revalidate, private"
+    header Pragma "no-cache"
+
+    # Use the imported api_upstream snippet for admin routes
+    import api_upstream
+  }
+
+  # Use the imported api_upstream snippet for non-admin routes
   import api_upstream
 }
