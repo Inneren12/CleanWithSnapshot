@@ -27,3 +27,20 @@ remote script execution and ensure tooling is pinned and verifiable.
   changes from silently altering CI behavior.
 - **Version control for tools:** Explicit tool versions ensure deterministic,
   auditable scans across CI runs.
+
+## Gate semantics (deterministic outcomes)
+- **Tool failure:** If a scanner fails to produce its JSON/SARIF output, CI fails
+  with a clear "tool failure" message so operational issues are not mistaken for
+  vulnerabilities.
+- **Vulnerability failure:** If output exists and the scanner exit status shows a
+  CRITICAL-severity breach, CI fails with a "critical vulnerabilities found"
+  message.
+- **Reports:** JSON/SARIF outputs and SBOMs are uploaded as CI artifacts (see
+  `trivy-reports`, `grype-reports`, and `sbom-reports`).
+
+## Update cadence
+- **Frequency:** Pinned action SHAs and tool versions are reviewed monthly.
+- **Owner:** DevOps owns the review and update process.
+- **Process:** Verify upstream release notes, update the pinned SHA/version in CI,
+  run the security workflow, and document any changes in the release checklist
+  before merging.
