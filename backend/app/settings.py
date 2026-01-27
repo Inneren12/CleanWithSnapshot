@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     admin_proxy_auth_e2e_enabled: bool = Field(False)
     admin_proxy_auth_e2e_secret: str | None = Field(None)
     admin_proxy_auth_e2e_ttl_seconds: int = Field(300)
-    auth_secret_key: str = Field("dev-auth-secret")
+    auth_secret_key: str | None = Field(None)
     auth_token_ttl_minutes: int = Field(60 * 24)
     auth_access_token_ttl_minutes: int = Field(
         15, validation_alias=AliasChoices("auth_access_token_ttl_minutes", "auth_token_ttl_minutes")
@@ -225,7 +225,7 @@ class Settings(BaseSettings):
     stripe_circuit_recovery_seconds: float = Field(30.0)
     stripe_circuit_window_seconds: float = Field(60.0)
     stripe_circuit_half_open_max_calls: int = Field(2)
-    client_portal_secret: str = Field("dev-client-portal-secret")
+    client_portal_secret: str | None = Field(None)
     worker_portal_secret: str | None = Field(None)
     client_portal_token_ttl_minutes: int = Field(30)
     client_portal_base_url: str | None = Field(None)
@@ -377,6 +377,12 @@ class Settings(BaseSettings):
                 raise ValueError("ADMIN_PROXY_AUTH_E2E_SECRET must be set when E2E proxy auth is enabled")
 
         if self.app_env != "prod":
+            if not self.auth_secret_key or not self.auth_secret_key.strip():
+                self.auth_secret_key = "dev-auth-secret"
+            if not self.client_portal_secret or not self.client_portal_secret.strip():
+                self.client_portal_secret = "dev-client-portal-secret"
+            if not self.worker_portal_secret or not self.worker_portal_secret.strip():
+                self.worker_portal_secret = "dev-worker-portal-secret"
             if self.testing:
                 self.captcha_enabled = False
                 self.captcha_mode = "off"

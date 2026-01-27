@@ -1,6 +1,4 @@
 import logging
-import os
-import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -289,20 +287,28 @@ def _try_include_style_guide(app: FastAPI) -> None:
 
 
 def _validate_prod_config(app_settings) -> None:
-    if app_settings.app_env == "dev" or getattr(app_settings, "testing", False) or os.getenv("PYTEST_CURRENT_TEST") or "pytest" in sys.argv[0]:
+    if app_settings.app_env != "prod":
         return
 
     errors: list[str] = []
 
-    def _validate_secret(value: str | None, name: str, *, minimum: int = 32, forbidden: set[str] | None = None) -> None:
+    def _validate_secret(
+        value: str | None,
+        name: str,
+        *,
+        minimum: int = 32,
+        forbidden: set[str] | None = None,
+        context: str = "APP_ENV=prod",
+    ) -> None:
         if not value or not value.strip():
-            errors.append(f"{name} is required outside dev")
+            errors.append(f"{context} requires {name} to be configured")
             return
-        if len(value.strip()) < minimum:
-            errors.append(f"{name} must be at least {minimum} characters")
+        normalized = value.strip()
+        if len(normalized) < minimum:
+            errors.append(f"{context} requires {name} to be at least {minimum} characters")
             return
-        if forbidden and value in forbidden:
-            errors.append(f"{name} must not use default or placeholder values")
+        if forbidden and normalized in forbidden:
+            errors.append(f"{context} requires {name} to be set to a non-default value")
 
     _validate_secret(
         app_settings.auth_secret_key,
@@ -314,9 +320,18 @@ def _validate_prod_config(app_settings) -> None:
         "CLIENT_PORTAL_SECRET",
         forbidden={"dev-client-portal-secret"},
     )
-    _validate_secret(app_settings.worker_portal_secret, "WORKER_PORTAL_SECRET")
+    _validate_secret(
+        app_settings.worker_portal_secret,
+        "WORKER_PORTAL_SECRET",
+        forbidden={"dev-worker-portal-secret"},
+    )
     if getattr(app_settings, "metrics_enabled", False):
-        _validate_secret(app_settings.metrics_token, "METRICS_TOKEN", minimum=16)
+        _validate_secret(
+            app_settings.metrics_token,
+            "METRICS_TOKEN",
+            minimum=16,
+            context="METRICS_ENABLED=true in prod",
+        )
 
     admin_credentials = [
         (app_settings.owner_basic_username, app_settings.owner_basic_password),
@@ -325,8 +340,18 @@ def _validate_prod_config(app_settings) -> None:
         (app_settings.accountant_basic_username, app_settings.accountant_basic_password),
         (app_settings.viewer_basic_username, app_settings.viewer_basic_password),
     ]
-    if not any(username and password for username, password in admin_credentials):
-        errors.append("At least one admin credential pair must be configured outside dev")
+    if getattr(app_settings, "legacy_basic_auth_enabled", False):
+        if not any(username and password for username, password in admin_credentials):
+            errors.append(
+                "APP_ENV=prod requires at least one Basic Auth username/password pair when legacy auth is enabled"
+            )
+
+    if getattr(app_settings, "admin_proxy_auth_enabled", False):
+        _validate_secret(
+            app_settings.admin_proxy_auth_secret,
+            "ADMIN_PROXY_AUTH_SECRET",
+            minimum=32,
+        )
 
     if errors:
         for error in errors:
