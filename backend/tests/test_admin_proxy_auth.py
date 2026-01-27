@@ -17,6 +17,10 @@ def _enable_proxy_auth(monkeypatch: pytest.MonkeyPatch, *, required: bool = Fals
     monkeypatch.setattr(settings, "admin_proxy_auth_required", required)
     monkeypatch.setattr(settings, "admin_proxy_auth_secret", secret)
     monkeypatch.setattr(settings, "legacy_basic_auth_enabled", False)
+    monkeypatch.setattr(settings, "trust_proxy_headers", True)
+    monkeypatch.setattr(settings, "trusted_proxy_ips", ["testclient"])
+    monkeypatch.setattr(settings, "trusted_proxy_cidrs", [])
+    monkeypatch.setattr(settings, "admin_proxy_auth_e2e_enabled", False)
     return secret
 
 
@@ -47,6 +51,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "admin",
                 "X-Admin-Roles": "admin",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -64,6 +69,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "owner-user",
                 "X-Admin-Roles": "owner",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -82,6 +88,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "viewer-user",
                 "X-Admin-Roles": "viewer",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -100,6 +107,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "admin",
                 "X-Admin-Roles": "admin",
                 "X-Proxy-Auth-Secret": "wrong-secret",
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -114,6 +122,7 @@ class TestProxyAuthEnabled:
             headers={
                 "X-Admin-User": "admin",
                 "X-Admin-Roles": "admin",
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -128,6 +137,7 @@ class TestProxyAuthEnabled:
             headers={
                 "X-Admin-Roles": "admin",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -143,6 +153,7 @@ class TestProxyAuthEnabled:
                 "X-Admin-User": "multi-role-user",
                 "X-Admin-Roles": "viewer,dispatcher,admin",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -185,6 +196,7 @@ class TestProxyAuthRequired:
                 "X-Admin-User": "admin",
                 "X-Admin-Roles": "admin",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 
@@ -202,6 +214,7 @@ class TestProxyAuthFallback:
         response = client.get(
             "/v1/admin/profile",
             auth=("admin", "super-secure-pass"),
+            headers={"X-Auth-MFA": "true"},
         )
 
         assert response.status_code == 200
@@ -218,6 +231,7 @@ class TestProxyAuthFallback:
                 "X-Admin-User": "proxy-user",
                 "X-Admin-Roles": "owner",
                 "X-Proxy-Auth-Secret": secret,
+                "X-Auth-MFA": "true",
             },
         )
 

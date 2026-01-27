@@ -97,7 +97,8 @@ Reverse proxy authenticates users and injects trusted headers. Backend validates
 | `X-Admin-Email` | User's email address | No |
 | `X-Admin-Roles` | Comma-separated roles (e.g., `owner,admin`) | No (defaults to `viewer`) |
 | `X-Proxy-Auth-Secret` | Shared secret for verification | Yes |
-| `X-Auth-MFA` | MFA assertion (`true`) | Yes |
+| `X-Auth-MFA` | MFA assertion (`true`/`1`, case-insensitive) | Yes |
+| `X-E2E-Proxy-Signature` | CI-only signed proxy assertion (HMAC, see below) | No |
 
 ### Role Hierarchy
 
@@ -191,6 +192,12 @@ MFA is enforced outside the backend by the IdP or access gateway protecting the 
 - Hardware security keys (WebAuthn/FIDO2)
 
 SMS-based MFA is not acceptable for admin access.
+
+### CI/E2E Proxy Signature (non-production only)
+
+For end-to-end tests that call the API directly (without a real proxy), CI can add a signed proxy assertion header. When enabled, the backend requires both:
+- a trusted proxy source (trusted IPs/CIDRs), and
+- `X-E2E-Proxy-Signature`, an HMAC-SHA256 of the literal string `e2e-proxy-auth` using `ADMIN_PROXY_AUTH_E2E_SECRET`.
 
 ### Generating Password Hashes
 

@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     admin_proxy_auth_header_roles: str = Field("X-Admin-Roles")
     admin_proxy_auth_header_mfa: str = Field("X-Auth-MFA")
     admin_proxy_auth_secret: str | None = Field(None)
+    admin_proxy_auth_e2e_enabled: bool = Field(False)
+    admin_proxy_auth_e2e_secret: str | None = Field(None)
     auth_secret_key: str = Field("dev-auth-secret")
     auth_token_ttl_minutes: int = Field(60 * 24)
     auth_access_token_ttl_minutes: int = Field(
@@ -367,6 +369,10 @@ class Settings(BaseSettings):
                 )
             )
 
+        if self.admin_proxy_auth_e2e_enabled:
+            if not self.admin_proxy_auth_e2e_secret or not self.admin_proxy_auth_e2e_secret.strip():
+                raise ValueError("ADMIN_PROXY_AUTH_E2E_SECRET must be set when E2E proxy auth is enabled")
+
         if self.app_env != "prod":
             if self.testing:
                 self.captcha_enabled = False
@@ -376,6 +382,9 @@ class Settings(BaseSettings):
             if not self.captcha_enabled:
                 self.captcha_mode = "off"
             return self
+
+        if self.admin_proxy_auth_e2e_enabled:
+            raise ValueError("APP_ENV=prod does not allow ADMIN_PROXY_AUTH_E2E_ENABLED")
 
         if self.testing:
             raise ValueError("APP_ENV=prod disables testing mode and X-Test-Org overrides")
