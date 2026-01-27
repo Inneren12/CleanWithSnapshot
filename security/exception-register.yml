@@ -1,0 +1,3 @@
+# Security exception register
+# Approved exceptions only. See docs/SECURITY_EXCEPTION_POLICY.md for process.
+exceptions: []
