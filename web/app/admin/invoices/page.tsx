@@ -532,15 +532,16 @@ export default function InvoicesPage() {
 
   if (!username || !password) {
     return (
-      <div className="admin-page">
+      <div className="admin-page" data-testid="invoices-login-page">
         <div className="admin-card">
           <h2>Admin Login</h2>
-          <form onSubmit={handleLogin} style={{ maxWidth: "400px" }}>
+          <form onSubmit={handleLogin} style={{ maxWidth: "400px" }} data-testid="invoices-login-form">
             <div className="form-field">
               <label htmlFor="username">Username</label>
               <input
                 type="text"
                 id="username"
+                data-testid="invoices-username-input"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
@@ -551,12 +552,13 @@ export default function InvoicesPage() {
               <input
                 type="password"
                 id="password"
+                data-testid="invoices-password-input"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </div>
-            <button type="submit" className="btn">
+            <button type="submit" className="btn" data-testid="invoices-login-btn">
               Login
             </button>
           </form>
@@ -579,14 +581,14 @@ export default function InvoicesPage() {
   const totalPages = Math.ceil(total / pageSize);
 
   return (
-    <div className="admin-page">
+    <div className="admin-page" data-testid="invoices-page">
       <AdminNav links={navLinks} activeKey="invoices" />
       <div className="admin-content">
         <div className="admin-card">
           <h2>Invoices</h2>
           <p className="muted">Search, filter and manage invoices with bulk actions</p>
 
-          <section className="overdue-summary" aria-label="Overdue invoice summary">
+          <section className="overdue-summary" aria-label="Overdue invoice summary" data-testid="overdue-summary">
             <div className="overdue-summary-header">
               <div>
                 <h3>Overdue invoices</h3>
@@ -836,11 +838,11 @@ export default function InvoicesPage() {
           )}
 
           {/* Invoices Table */}
-          {loading && <div>Loading...</div>}
-          {error && <div className="error">{error}</div>}
+          {loading && <div data-testid="invoices-loading">Loading...</div>}
+          {error && <div className="error" data-testid="invoices-error">{error}</div>}
           {!loading && !error && (
             <>
-              <table className="invoices-table">
+              <table className="invoices-table" data-testid="invoices-table">
                 <thead>
                   <tr>
                     <th>

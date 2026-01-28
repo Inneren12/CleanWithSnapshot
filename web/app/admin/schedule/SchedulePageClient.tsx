@@ -1980,7 +1980,7 @@ export default function SchedulePage() {
   }
 
   return (
-    <div className="schedule-page">
+    <div className="schedule-page" data-testid="schedule-page">
       <AdminNav links={navLinks} activeKey="schedule" />
       <header className="schedule-header">
         <div>
@@ -1990,17 +1990,18 @@ export default function SchedulePage() {
           </p>
         </div>
         {toast ? (
-          <div className={`schedule-toast ${toast.kind}`}>{toast.message}</div>
+          <div className={`schedule-toast ${toast.kind}`} data-testid="schedule-toast">{toast.message}</div>
         ) : null}
       </header>
 
-      <section className="card">
+      <section className="card" data-testid="schedule-auth-section">
         <div className="card-body">
           <div className="schedule-auth">
             <div className="schedule-auth-fields">
               <input
                 className="input"
                 type="text"
+                data-testid="schedule-username-input"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
                 placeholder="admin"
@@ -2008,6 +2009,7 @@ export default function SchedulePage() {
               <input
                 className="input"
                 type="password"
+                data-testid="schedule-password-input"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="password"
@@ -2017,6 +2019,7 @@ export default function SchedulePage() {
               <button
                 className="btn btn-primary"
                 type="button"
+                data-testid="schedule-save-btn"
                 onClick={() => {
                   if (username && password) {
                     window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
@@ -2033,6 +2036,7 @@ export default function SchedulePage() {
               <button
                 className="btn btn-secondary"
                 type="button"
+                data-testid="schedule-clear-btn"
                 onClick={() => {
                   setUsername("");
                   setPassword("");
