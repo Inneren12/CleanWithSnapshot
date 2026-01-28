@@ -5,6 +5,12 @@
 set -e
 
 WAL_ARCHIVE_DIR="/var/lib/postgresql/wal_archive"
+ENABLE_WAL_ARCHIVE_INIT="${ENABLE_WAL_ARCHIVE_INIT:-true}"
+
+if [ "$ENABLE_WAL_ARCHIVE_INIT" != "true" ]; then
+    echo "[init-wal-archive] Skipping WAL archive init (ENABLE_WAL_ARCHIVE_INIT=$ENABLE_WAL_ARCHIVE_INIT)"
+    exit 0
+fi
 
 # Create WAL archive directory if it doesn't exist
 if [ ! -d "$WAL_ARCHIVE_DIR" ]; then

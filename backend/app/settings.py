@@ -364,20 +364,34 @@ class Settings(BaseSettings):
         dotenv_settings,
         file_secret_settings,
     ):
+        def _resolve_app_env(config: dict[str, Any]) -> str:
+            for key in ("app_env", "APP_ENV"):
+                value = config.get(key)
+                if value:
+                    return str(value)
+            return "dev"
+
+        def _resolve_secrets_backend(config: dict[str, Any]) -> str | None:
+            for key in ("secrets_backend", "SECRETS_BACKEND"):
+                value = config.get(key)
+                if value and str(value).strip():
+                    return str(value)
+            return None
+
         def secrets_settings() -> dict[str, Any]:
             combined: dict[str, Any] = {}
-            for source in (env_settings, dotenv_settings):
+            for source in (dotenv_settings, env_settings):
                 try:
                     combined.update(source())
                 except Exception:
                     continue
-            app_env = combined.get("app_env", cls.app_env)
-            secrets_backend = combined.get("secrets_backend")
+            app_env = _resolve_app_env(combined)
+            secrets_backend = _resolve_secrets_backend(combined)
             if not secrets_backend:
                 return {}
             return load_secrets_backend(
                 backend=secrets_backend,
-                app_env=str(app_env),
+                app_env=app_env,
                 config=combined,
             )
 
