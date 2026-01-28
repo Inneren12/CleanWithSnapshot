@@ -14,6 +14,8 @@ from app.domain.bookings import photos_service
 from app.domain.bookings.db_models import Booking
 from app.domain.clients.db_models import ClientUser
 from app.domain.documents import service as document_service
+from app.domain.admin_audit import service as audit_service
+from app.domain.admin_audit.db_models import AdminAuditActionType, AdminAuditSensitivity
 from app.domain.feature_modules import service as feature_service
 from app.domain.invoices import schemas as invoice_schemas, service as invoice_service, statuses as invoice_statuses
 from app.domain.nps import schemas as nps_schemas, service as nps_service
@@ -438,13 +440,8 @@ async def unsubscribe(token: str, session: AsyncSession = Depends(get_db_session
             status_text="Preference updated",
         )
     )
-@router.get(
-    "/i/{token}.pdf",
-    response_class=Response,
-    name="public_invoice_pdf",
-)
-async def download_invoice_pdf(
-    token: str, request: Request, session: AsyncSession = Depends(get_db_session)
+async def _download_invoice_pdf(
+    token: str, request: Request, session: AsyncSession
 ) -> Response:
     invoice = await invoice_service.get_invoice_by_public_token(session, token)
     if invoice is None:
@@ -454,6 +451,16 @@ async def download_invoice_pdf(
     lead = await invoice_service.fetch_customer(session, invoice)
     try:
         document = await document_service.get_or_create_invoice_document(session, invoice=invoice, lead=lead)
+        await audit_service.record_system_action(
+            session,
+            org_id=invoice.org_id,
+            action="PUBLIC_INVOICE_PDF_DOWNLOAD",
+            resource_type="invoice",
+            resource_id=invoice.invoice_id,
+            action_type=AdminAuditActionType.READ,
+            sensitivity_level=AdminAuditSensitivity.SENSITIVE,
+            context={"token_hash_prefix": invoice_service.hash_public_token(token)[:8]},
+        )
         await session.commit()
     except storage_quota_service.OrgStorageQuotaExceeded as exc:
         await session.rollback()
@@ -477,6 +484,28 @@ async def download_invoice_pdf(
     filename = f"{invoice.invoice_number}.pdf"
     headers = {"Content-Disposition": f"inline; filename=\"{filename}\""}
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+
+
+@router.get(
+    "/i/{token}.pdf",
+    response_class=Response,
+    name="public_invoice_pdf",
+)
+async def download_invoice_pdf(
+    token: str, request: Request, session: AsyncSession = Depends(get_db_session)
+) -> Response:
+    return await _download_invoice_pdf(token, request, session)
+
+
+@router.get(
+    "/v1/public/invoices/{token}/pdf",
+    response_class=Response,
+    name="public_invoice_pdf_api",
+)
+async def download_invoice_pdf_api(
+    token: str, request: Request, session: AsyncSession = Depends(get_db_session)
+) -> Response:
+    return await _download_invoice_pdf(token, request, session)
 
 
 @router.get(

@@ -304,10 +304,11 @@ the series link is cleared while historical bookings remain.
 #### Public Link Token
 - Service: `backend/app/domain/invoices/service.py::create_public_token()`
 - Table: `invoice_public_tokens`
-- Public endpoint: `/v1/public/invoices/{token}`
+- Public endpoint: `/i/{token}` (HTML view), `/i/{token}.pdf` (PDF), `/v1/public/invoices/{token}/pdf` (API)
 
 #### PDF Generation
-- Location: TBD (not yet implemented, placeholder exists)
+- Location: `backend/app/domain/documents/service.py` (template-based PDF rendering + storage in `documents`)
+- Approach: built-in minimal PDF renderer (no external deps) with stored document snapshots
 
 ---
 
