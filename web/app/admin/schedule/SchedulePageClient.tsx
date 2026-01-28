@@ -2056,7 +2056,7 @@ export default function SchedulePage() {
       <section className="card">
         <div className="card-body">
           <div className="schedule-controls">
-            <div className="schedule-view-tabs" role="tablist">
+            <div className="schedule-view-tabs" role="tablist" data-testid="schedule-view-tabs">
               {[
                 { key: "day", label: "Day" },
                 { key: "week", label: "Week" },

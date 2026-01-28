@@ -343,12 +343,13 @@ export default function LeadsPage() {
           <h2>Pipeline</h2>
           <p className="muted">Filter by stage, search, and update lead notes.</p>
         </div>
-        <div className="admin-actions" style={{ flexWrap: "wrap" }}>
+        <div className="admin-actions" style={{ flexWrap: "wrap" }} data-testid="leads-pipeline">
           <div className="admin-actions">
             <button
               type="button"
               className={`btn ${statusFilter ? "btn-ghost" : "btn-primary"}`}
               onClick={() => setStatusFilter("")}
+              data-testid="pipeline-stage-all"
             >
               All
             </button>
@@ -358,6 +359,7 @@ export default function LeadsPage() {
                 type="button"
                 className={`btn ${statusFilter === status ? "btn-primary" : "btn-ghost"}`}
                 onClick={() => setStatusFilter(status)}
+                data-testid={`pipeline-stage-${status.toLowerCase()}`}
               >
                 {status}
               </button>

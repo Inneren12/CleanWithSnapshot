@@ -21,3 +21,17 @@ export async function newContextWithBaseUrl({
 
   return browser.newContext({ baseURL });
 }
+
+export async function waitForAdminPage({
+  page,
+  path,
+  rootTestId,
+}: {
+  page: Page;
+  path: string;
+  rootTestId: string;
+}) {
+  await page.goto(path);
+  await page.waitForURL('**/admin/**');
+  await page.getByTestId(rootTestId).waitFor();
+}

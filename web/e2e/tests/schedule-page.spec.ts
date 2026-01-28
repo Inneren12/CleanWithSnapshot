@@ -5,6 +5,7 @@ import {
   seedAdminStorage,
   verifyAdminCredentials,
 } from './helpers/adminAuth';
+import { waitForAdminPage } from './helpers/playwrightContext';
 
 test.describe('Schedule page', () => {
   test.beforeEach(async ({ page, request }) => {
@@ -14,7 +15,7 @@ test.describe('Schedule page', () => {
   });
 
   test('schedule page loads with auth section', async ({ page }) => {
-    await page.goto('/admin/schedule');
+    await waitForAdminPage({ page, path: '/admin/schedule', rootTestId: 'schedule-page' });
 
     await expect(page.getByTestId('schedule-page')).toBeVisible();
     await expect(page.getByTestId('schedule-auth-section')).toBeVisible();
@@ -24,10 +25,10 @@ test.describe('Schedule page', () => {
   });
 
   test('schedule page displays view tabs', async ({ page }) => {
-    await page.goto('/admin/schedule');
+    await waitForAdminPage({ page, path: '/admin/schedule', rootTestId: 'schedule-page' });
 
     await expect(page.getByTestId('schedule-page')).toBeVisible();
-    await expect(page.getByRole('tablist')).toBeVisible();
+    await expect(page.getByTestId('schedule-view-tabs')).toBeVisible();
 
     // Check view tabs are present
     await expect(page.getByRole('tab', { name: 'Day' })).toBeVisible();
@@ -36,10 +37,10 @@ test.describe('Schedule page', () => {
   });
 
   test('schedule page can switch between views', async ({ page }) => {
-    await page.goto('/admin/schedule');
+    await waitForAdminPage({ page, path: '/admin/schedule', rootTestId: 'schedule-page' });
 
     await expect(page.getByTestId('schedule-page')).toBeVisible();
-    await expect(page.getByRole('tablist')).toBeVisible();
+    await expect(page.getByTestId('schedule-view-tabs')).toBeVisible();
 
     // Click on Week tab
     const weekTab = page.getByRole('tab', { name: 'Week' });
@@ -58,7 +59,7 @@ test.describe('Schedule page', () => {
   test('schedule credentials can be saved', async ({ page }) => {
     const admin = defaultAdminCredentials();
 
-    await page.goto('/admin/schedule');
+    await waitForAdminPage({ page, path: '/admin/schedule', rootTestId: 'schedule-page' });
     await expect(page.getByTestId('schedule-page')).toBeVisible();
 
     // Fill in credentials
