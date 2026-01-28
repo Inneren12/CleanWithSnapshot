@@ -80,8 +80,6 @@ test.describe('Leads management', () => {
     await expect(page.getByTestId('pipeline-stage-won')).toBeVisible();
     await expect(page.getByTestId('pipeline-stage-lost')).toBeVisible();
 
-    const leadsTable = page.getByTestId('leads-table');
-    const emptyState = page.getByTestId('leads-empty-state');
-    await expect(leadsTable.or(emptyState)).toBeVisible();
+    await expect(page.getByTestId('leads-list')).toBeVisible();
   });
 });

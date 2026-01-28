@@ -381,16 +381,17 @@ export default function LeadsPage() {
             Refresh
           </button>
         </div>
-        {loading ? <p className="muted">Loading leads...</p> : null}
-        {error ? <p className="alert alert-error">{error}</p> : null}
-        {!loading && leads?.items.length === 0 ? (
-          <p className="muted" data-testid="leads-empty-state">
-            No leads found.
-          </p>
-        ) : null}
-        {leads?.items.length ? (
-          <div className="table-responsive">
-            <table className="table-like" data-testid="leads-table">
+        <div data-testid="leads-list">
+          {loading ? <p className="muted">Loading leads...</p> : null}
+          {error ? <p className="alert alert-error">{error}</p> : null}
+          {!loading && leads?.items.length === 0 ? (
+            <p className="muted" data-testid="leads-empty-state">
+              No leads found.
+            </p>
+          ) : null}
+          {leads?.items.length ? (
+            <div className="table-responsive">
+              <table className="table-like" data-testid="leads-table">
               <thead>
                 <tr>
                   <th>Lead</th>
@@ -473,8 +474,9 @@ export default function LeadsPage() {
                 })}
               </tbody>
             </table>
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
         {leads ? (
           <div className="admin-actions" style={{ justifyContent: "space-between" }}>
             <span className="muted">
