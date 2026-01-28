@@ -779,7 +779,7 @@ jobs:
   perf-baseline:
     name: Performance - Baseline Comparison (Warn-only)
     runs-on: ubuntu-latest
-    if: ${{ secrets.PERF_BASE_URL != '' }}
+    if: ${{ vars.PERF_BASE_URL != '' }}
 
     steps:
       - name: Checkout code
