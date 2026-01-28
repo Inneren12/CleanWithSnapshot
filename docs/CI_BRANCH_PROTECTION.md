@@ -8,6 +8,7 @@ The following checks must complete successfully before merges to `main`:
 
 - **API - Build & Test**: Runs in the `api` job and performs Python dependency installation, a syntax-only Ruff pass (`ruff check app tests --select E9`), and pytest unit tests (`pytest -v -m "not smoke and not postgres" --ignore=tests/smoke --tb=short`).
 - **Web - Build**: Runs in the `web` job and ensures the frontend passes TypeScript compilation (`npx tsc --noEmit`), optional linting (`npm run lint --if-present`), and a production build (`npm run build`).
+- **Web - Vitest (Coverage)**: Runs in the `web-vitest` job and enforces Vitest coverage runs (`npx vitest run --coverage`) as a hard gate.
 - **API - Prod Config Validation**: Validates that production-only settings still parse and enforce required secrets using the `api-prod-config` job.
 - **Infrastructure - Validation**: Verifies `docker-compose.yml` syntax and bash script validity inside the `infra` job.
 

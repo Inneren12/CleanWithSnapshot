@@ -149,11 +149,15 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000"
 
   web-vitest:
-    name: Web - Vitest (Coverage, Soft Gate)
+    name: Web - Vitest (Coverage)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: web
+    env:
+      CI: "true"
+      NODE_ENV: "test"
+      TZ: "UTC"
 
     steps:
       - name: Checkout code
@@ -170,8 +174,7 @@ jobs:
       - name: Install ephemeral Vitest deps
         run: npm install --no-save vitest @testing-library/react @testing-library/jest-dom jsdom
 
-      - name: Run Vitest with coverage (soft gate)
-        continue-on-error: true
+      - name: Run Vitest with coverage
         run: npx vitest run --coverage
 
       - name: Upload Vitest coverage artifacts
