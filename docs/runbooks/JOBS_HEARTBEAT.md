@@ -28,6 +28,12 @@ docker compose logs --tail=300 jobs
 - Database connectivity problems preventing heartbeat writes.
 - Clock drift or long pauses preventing heartbeat updates.
 
+## E2E/CI note
+
+- In E2E, `JOBS_ENABLED=false` by default, so `/readyz` only gates on DB + migrations.
+- The jobs container still starts in E2E, but it should wait for `/readyz` to be green
+  before running; ensure `DATABASE_URL` points at the `db` service and Redis is reachable.
+
 ## Safe remediation steps
 
 1. **Restart the jobs runner container:**
