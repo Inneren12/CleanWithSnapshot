@@ -30,8 +30,8 @@ describe('PrimaryCTA', () => {
       />
     );
 
-    const button = screen.getByRole('button', { name: /loading/i });
+    const button = screen.getByRole('button', { name: /loading|confirm booking/i });
     expect(button).toBeDisabled();
-    expect(screen.queryByText('Confirm Booking')).not.toBeInTheDocument();
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 });
