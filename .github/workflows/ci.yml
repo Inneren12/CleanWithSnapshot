@@ -353,7 +353,6 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
       TRIVY_SEVERITY: "CRITICAL"
-      SBOM_ENABLED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
     steps:
       - name: Checkout code
@@ -476,7 +475,6 @@ jobs:
           echo "Trivy exit codes (api json=${api_json_exit}, api sarif=${api_sarif_exit}, web json=${web_json_exit}, web sarif=${web_sarif_exit})"
 
       - name: Generate SBOM (api, Trivy SPDX)
-        if: env.SBOM_ENABLED == 'true'
         uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
         with:
           scan-type: image
@@ -486,7 +484,6 @@ jobs:
           exit-code: "0"
 
       - name: Generate SBOM (web, Trivy SPDX)
-        if: env.SBOM_ENABLED == 'true'
         uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
         with:
           scan-type: image
@@ -550,7 +547,6 @@ jobs:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
       GRYPE_FAIL_ON: "critical"
       GRYPE_VERSION: "v0.105.0"
-      SBOM_ENABLED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       SYFT_VERSION: "v1.40.1"
 
     steps:
@@ -598,7 +594,6 @@ jobs:
           grype-version: ${{ env.GRYPE_VERSION }}
 
       - name: Generate SBOM (api, optional)
-        if: env.SBOM_ENABLED == 'true'
         uses: anchore/sbom-action@62ad5284b8ced813296287a0b63906cb364b73ee
         with:
           image: cleanwithsnapshot-api:ci
@@ -607,7 +602,6 @@ jobs:
           syft-version: ${{ env.SYFT_VERSION }}
 
       - name: Generate SBOM (web, optional)
-        if: env.SBOM_ENABLED == 'true'
         uses: anchore/sbom-action@62ad5284b8ced813296287a0b63906cb364b73ee
         with:
           image: cleanwithsnapshot-web:ci
@@ -661,7 +655,7 @@ jobs:
 
       - name: Upload SBOM reports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always() && env.SBOM_ENABLED == 'true'
+        if: always()
         with:
           name: sbom-reports
           path: |

@@ -20,7 +20,7 @@ fail builds on critical findings while retaining artifact reports for review.
 
 - Syft produces SPDX JSON artifacts for the API and web images on every CI run.
 - SBOM artifacts are uploaded alongside the Grype reports.
-- SBOM artifacts are stored in the `grype-reports` artifact (`sbom-cleanwithsnapshot-*.json`) and retained for **30 days**.
+- SBOM artifacts are stored in the `grype-reports` and `sbom-reports` artifacts (`sbom-cleanwithsnapshot-*.json`) and retained for **30 days**.
 
 ## Exceptions
 

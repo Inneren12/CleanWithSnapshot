@@ -35,8 +35,9 @@ remote script execution and ensure tooling is pinned and verifiable.
 - **Vulnerability failure:** If output exists and the scanner exit status shows a
   CRITICAL-severity breach, CI fails with a "critical vulnerabilities found"
   message.
-- **Reports:** JSON/SARIF outputs and SBOMs are uploaded as CI artifacts (see
-  `trivy-reports`, `grype-reports`, and `sbom-reports`).
+- **Reports:** JSON/SARIF outputs and SBOMs are uploaded as CI artifacts on every
+  run (see `trivy-reports`, `grype-reports`, and `sbom-reports`) and retained for
+  **30 days**.
 
 ## Update cadence
 - **Frequency:** Pinned action SHAs and tool versions are reviewed monthly.
