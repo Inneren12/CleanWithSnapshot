@@ -136,6 +136,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install ephemeral TypeScript test deps
+        run: npm i -D --no-save --no-package-lock vitest @testing-library/react @testing-library/jest-dom jsdom
+
       - name: Typecheck
         run: npx tsc --noEmit
 
@@ -172,7 +175,7 @@ jobs:
         run: npm ci
 
       - name: Install ephemeral Vitest deps
-        run: npm install --no-save vitest @testing-library/react @testing-library/jest-dom jsdom
+        run: npm install --no-save --no-package-lock vitest @vitest/coverage-v8 @testing-library/react @testing-library/jest-dom jsdom
 
       - name: Run Vitest with coverage
         run: npx vitest run --coverage
@@ -230,6 +233,8 @@ jobs:
           APP_ENV: "prod"
           TESTING: "false"
           SECRETS_BACKEND: "aws_secrets_manager"
+          AWS_REGION: "us-east-1"
+          AWS_SECRETS_MANAGER_SECRET_ID: "ci-dummy"
           AWS_SECRETS_MANAGER_SECRET_JSON: |
             {"AUTH_SECRET_KEY":"ci-auth-secret-not-default-12345678","CLIENT_PORTAL_SECRET":"ci-client-secret-not-default-12345678","WORKER_PORTAL_SECRET":"ci-worker-secret-not-default-12345678","ADMIN_PROXY_AUTH_SECRET":"ci-admin-proxy-secret-not-default-12345678"}
           METRICS_ENABLED: "false"
