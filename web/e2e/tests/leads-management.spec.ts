@@ -60,16 +60,22 @@ test.describe('Leads management', () => {
   test('dedicated leads page loads', async ({ page }) => {
     await page.goto('/admin/leads');
 
+    await expect(page.getByTestId('leads-page')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible();
+    await expect(page.getByTestId('leads-pipeline-section')).toBeVisible();
   });
 
   test('leads page shows pipeline stages', async ({ page }) => {
     await page.goto('/admin/leads');
 
-    await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible();
+    await expect(page.getByTestId('leads-page')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible();
 
-    // Check for pipeline stage columns
-    await expect(page.getByText('New')).toBeVisible();
+    // Check for pipeline stage controls
+    await expect(page.getByRole('button', { name: 'NEW' })).toBeVisible();
+
+    const leadsTable = page.getByTestId('leads-table');
+    const emptyState = page.getByTestId('leads-empty-state');
+    await expect(leadsTable.or(emptyState)).toBeVisible();
   });
 });

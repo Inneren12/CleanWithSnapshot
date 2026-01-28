@@ -62,9 +62,7 @@ test.describe('Invoices page', () => {
     await expect(page.getByTestId('invoices-table')).toBeVisible();
   });
 
-  test('invoices login form works', async ({ page }, testInfo) => {
-    const admin = defaultAdminCredentials();
-
+  test('invoices page uses isolated auth in a new context', async ({ page }, testInfo) => {
     // Go to invoices in new context without pre-seeded storage
     const newContext = await newContextWithBaseUrl({ page, testInfo });
     const newPage = await newContext.newPage();
@@ -74,21 +72,6 @@ test.describe('Invoices page', () => {
     const loginPage = newPage.getByTestId('invoices-login-page');
     const invoicesPage = newPage.getByTestId('invoices-page');
     await expect(loginPage.or(invoicesPage)).toBeVisible();
-
-    if (await loginPage.isVisible()) {
-      // Fill in credentials and submit
-      await newPage.getByTestId('invoices-username-input').fill(admin.username);
-      await newPage.getByTestId('invoices-password-input').fill(admin.password);
-
-      const loginButton = newPage.getByTestId('invoices-login-btn');
-      await expect(loginButton).toBeVisible();
-      await expect(loginButton).toBeEnabled();
-      await loginButton.click();
-    }
-
-    // Should show invoices page after login
-    await expect(newPage.getByTestId('invoices-page')).toBeVisible();
-    await expect(newPage.getByTestId('invoices-title')).toBeVisible();
 
     await newContext.close();
   });

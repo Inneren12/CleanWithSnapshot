@@ -27,6 +27,7 @@ test.describe('Schedule page', () => {
     await page.goto('/admin/schedule');
 
     await expect(page.getByTestId('schedule-page')).toBeVisible();
+    await expect(page.getByRole('tablist')).toBeVisible();
 
     // Check view tabs are present
     await expect(page.getByRole('tab', { name: 'Day' })).toBeVisible();
@@ -38,6 +39,7 @@ test.describe('Schedule page', () => {
     await page.goto('/admin/schedule');
 
     await expect(page.getByTestId('schedule-page')).toBeVisible();
+    await expect(page.getByRole('tablist')).toBeVisible();
 
     // Click on Week tab
     const weekTab = page.getByRole('tab', { name: 'Week' });
