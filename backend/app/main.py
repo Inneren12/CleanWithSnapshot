@@ -227,9 +227,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.exempt_paths = {
             "/v1/payments/stripe/webhook",
             "/stripe/webhook",
+            "/healthz",
+            "/readyz",
+            "/healthz/backup",
         }
 
     async def dispatch(self, request: Request, call_next: Callable):
+        if request.method == "OPTIONS":
+            return await call_next(request)
         path = request.url.path
         normalized = path.rstrip("/") or "/"
         if path in self.exempt_paths or normalized in self.exempt_paths:
