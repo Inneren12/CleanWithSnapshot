@@ -1,0 +1,75 @@
+import { expect, test } from '@playwright/test';
+
+import {
+  defaultAdminCredentials,
+  seedAdminStorage,
+  verifyAdminCredentials,
+} from './helpers/adminAuth';
+
+test.describe('Leads management', () => {
+  test.beforeEach(async ({ page, request }) => {
+    const admin = defaultAdminCredentials();
+    await verifyAdminCredentials(request, admin);
+    await seedAdminStorage(page, admin);
+  });
+
+  test('leads section loads on admin dashboard', async ({ page }) => {
+    await page.goto('/admin');
+
+    await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    await expect(page.getByTestId('admin-leads-section')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible();
+  });
+
+  test('leads table is displayed', async ({ page }) => {
+    await page.goto('/admin');
+
+    await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    await expect(page.getByTestId('leads-table')).toBeVisible();
+  });
+
+  test('leads status filter is functional', async ({ page }) => {
+    await page.goto('/admin');
+
+    await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+
+    const statusFilter = page.getByTestId('leads-status-filter');
+    await expect(statusFilter).toBeVisible();
+
+    // Type a filter value
+    await statusFilter.fill('CONTACTED');
+    await expect(statusFilter).toHaveValue('CONTACTED');
+  });
+
+  test('leads refresh button is functional', async ({ page }) => {
+    await page.goto('/admin');
+
+    await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+
+    const refreshButton = page.getByTestId('leads-refresh-btn');
+    await expect(refreshButton).toBeVisible();
+    await expect(refreshButton).toBeEnabled();
+
+    // Click refresh button
+    await refreshButton.click();
+
+    // Table should still be visible after refresh
+    await expect(page.getByTestId('leads-table')).toBeVisible();
+  });
+
+  test('dedicated leads page loads', async ({ page }) => {
+    await page.goto('/admin/leads');
+
+    await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible();
+  });
+
+  test('leads page shows pipeline stages', async ({ page }) => {
+    await page.goto('/admin/leads');
+
+    await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible();
+
+    // Check for pipeline stage columns
+    await expect(page.getByText('New')).toBeVisible();
+  });
+});

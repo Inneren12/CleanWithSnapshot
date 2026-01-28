@@ -632,25 +632,26 @@ return (
       </div>
     ) : null}
 
-    <div className="admin-card">
+    <div className="admin-card" data-testid="admin-credentials-card">
         <div className="admin-section">
           <h2>Credentials</h2>
           <div className="admin-actions">
-            <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
+            <input data-testid="admin-username-input" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
             <input
+              data-testid="admin-password-input"
               placeholder="Password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            <button className="btn btn-primary" type="button" onClick={saveCredentials}>
+            <button data-testid="admin-save-credentials-btn" className="btn btn-primary" type="button" onClick={saveCredentials}>
               Save
             </button>
-            <button className="btn btn-ghost" type="button" onClick={clearCredentials}>
+            <button data-testid="admin-clear-credentials-btn" className="btn btn-ghost" type="button" onClick={clearCredentials}>
               Clear
             </button>
           </div>
-          {message ? <p className="alert alert-success">{message}</p> : null}
+          {message ? <p className="alert alert-success" data-testid="admin-message">{message}</p> : null}
         </div>
       </div>
 
@@ -804,7 +805,7 @@ return (
       ) : null}
 
       <div className="admin-grid">
-        <section className="admin-card admin-section">
+        <section className="admin-card admin-section" data-testid="admin-leads-section">
           <div className="section-heading">
             <h2>Leads</h2>
             <p className="muted">Filter and set statuses directly.</p>
@@ -813,16 +814,17 @@ return (
             <label style={{ width: "100%" }}>
               <span className="label">Status filter</span>
               <input
+                data-testid="leads-status-filter"
                 value={leadStatusFilter}
                 onChange={(e) => setLeadStatusFilter(e.target.value.toUpperCase())}
                 placeholder="e.g. CONTACTED"
               />
             </label>
-            <button className="btn btn-ghost" type="button" onClick={() => void loadLeads()}>
+            <button data-testid="leads-refresh-btn" className="btn btn-ghost" type="button" onClick={() => void loadLeads()}>
               Refresh
             </button>
           </div>
-          <table className="table-like">
+          <table className="table-like" data-testid="leads-table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -921,7 +923,7 @@ return (
         </section>
       </div>
 
-      <section className="admin-card admin-section">
+      <section className="admin-card admin-section" data-testid="admin-bookings-section">
         <div className="section-heading">
           <h2>Bookings</h2>
           <p className="muted">Day view with actions, plus a quick week glance.</p>
@@ -929,13 +931,13 @@ return (
         <div className="admin-actions">
           <label>
             <span className="label">Date</span>
-            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+            <input data-testid="bookings-date-input" type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
           </label>
-          <button className="btn btn-ghost" type="button" onClick={() => void loadBookings()}>
+          <button data-testid="bookings-refresh-btn" className="btn btn-ghost" type="button" onClick={() => void loadBookings()}>
             Refresh
           </button>
         </div>
-        <table className="table-like">
+        <table className="table-like" data-testid="bookings-table">
           <thead>
             <tr>
               <th>When</th>

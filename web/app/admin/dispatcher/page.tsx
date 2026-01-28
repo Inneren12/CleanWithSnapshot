@@ -1875,7 +1875,7 @@ export default function DispatcherPage() {
   }
 
   return (
-    <div className="dispatcher-page">
+    <div className="dispatcher-page" data-testid="dispatcher-page">
       <AdminNav links={navLinks} activeKey="dispatcher" />
       {settingsError ? <p className="alert alert-warning">{settingsError}</p> : null}
       {orgSettingsError ? <p className="alert alert-warning">{orgSettingsError}</p> : null}
@@ -1891,7 +1891,7 @@ export default function DispatcherPage() {
           />
         </>
       ) : null}
-      <header className="dispatcher-header">
+      <header className="dispatcher-header" data-testid="dispatcher-header">
         <div>
           <h1>Dispatcher Timeline</h1>
           <p className="muted">Live schedule for today in {orgTimezone}.</p>

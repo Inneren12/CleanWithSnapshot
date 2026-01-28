@@ -597,9 +597,9 @@ export default function InventoryItemsPage() {
   }
 
   return (
-    <div className="admin-page">
+    <div className="admin-page" data-testid="inventory-page">
       <AdminNav links={navLinks} activeKey="inventory" />
-      <section className="admin-card admin-section">
+      <section className="admin-card admin-section" data-testid="inventory-header-section">
         <div className="section-heading" style={{ alignItems: "flex-start" }}>
           <div>
             <h1>Inventory items</h1>
@@ -617,27 +617,28 @@ export default function InventoryItemsPage() {
         <div className="admin-actions" style={{ flexWrap: "wrap" }}>
           <label style={{ minWidth: 200 }}>
             <span className="label">Username</span>
-            <input value={username} onChange={(event) => setUsername(event.target.value)} />
+            <input data-testid="inventory-username-input" value={username} onChange={(event) => setUsername(event.target.value)} />
           </label>
           <label style={{ minWidth: 200 }}>
             <span className="label">Password</span>
             <input
+              data-testid="inventory-password-input"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
           </label>
           <div className="admin-actions">
-            <button className="btn btn-primary" type="button" onClick={saveCredentials}>
+            <button data-testid="inventory-save-btn" className="btn btn-primary" type="button" onClick={saveCredentials}>
               Save
             </button>
-            <button className="btn btn-ghost" type="button" onClick={clearCredentials}>
+            <button data-testid="inventory-clear-btn" className="btn btn-ghost" type="button" onClick={clearCredentials}>
               Clear
             </button>
           </div>
         </div>
-      {statusMessage ? <p className="alert">{statusMessage}</p> : null}
-      {settingsError ? <p className="alert alert-error">{settingsError}</p> : null}
+      {statusMessage ? <p className="alert" data-testid="inventory-status-message">{statusMessage}</p> : null}
+      {settingsError ? <p className="alert alert-error" data-testid="inventory-settings-error">{settingsError}</p> : null}
     </section>
 
     {analyticsVisible ? (
@@ -755,11 +756,11 @@ export default function InventoryItemsPage() {
       </section>
     ) : null}
 
-    <section className="admin-card admin-section">
+    <section className="admin-card admin-section" data-testid="inventory-low-stock-section">
       <div className="section-heading" style={{ alignItems: "flex-start" }}>
         <div>
           <h2>Low stock</h2>
-            <p className="muted">
+            <p className="muted" data-testid="low-stock-count">
               {lowStockItems.length
                 ? `${lowStockItems.length} item${lowStockItems.length === 1 ? "" : "s"} below minimum on this page.`
                 : "No items are below minimum stock on this page."}
@@ -773,7 +774,7 @@ export default function InventoryItemsPage() {
         </div>
         {lowStockItems.length ? (
           <div className="table-responsive">
-            <table className="admin-table">
+            <table className="admin-table" data-testid="low-stock-table">
               <thead>
                 <tr>
                   <th>Item</th>
@@ -832,7 +833,7 @@ export default function InventoryItemsPage() {
         ) : null}
       </section>
 
-      <section className="admin-card admin-section">
+      <section className="admin-card admin-section" data-testid="inventory-list-section">
         <div className="section-heading" style={{ alignItems: "flex-start" }}>
           <div>
             <h2>Inventory list</h2>
@@ -841,7 +842,7 @@ export default function InventoryItemsPage() {
             </p>
           </div>
           {canManageInventory ? (
-            <button className="btn btn-primary" type="button" onClick={openCreateModal}>
+            <button data-testid="inventory-create-btn" className="btn btn-primary" type="button" onClick={openCreateModal}>
               Create item
             </button>
           ) : null}
@@ -850,6 +851,7 @@ export default function InventoryItemsPage() {
           <label style={{ minWidth: 220 }}>
             <span className="label">Search</span>
             <input
+              data-testid="inventory-search-input"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Name or SKU"
@@ -884,10 +886,10 @@ export default function InventoryItemsPage() {
           </label>
         </div>
 
-        {itemsError ? <p className="alert alert-error">{itemsError}</p> : null}
+        {itemsError ? <p className="alert alert-error" data-testid="inventory-error">{itemsError}</p> : null}
 
         <div className="table-responsive">
-          <table className="admin-table">
+          <table className="admin-table" data-testid="inventory-table">
             <thead>
               <tr>
                 <th>Item</th>
