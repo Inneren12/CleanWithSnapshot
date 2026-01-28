@@ -31,6 +31,7 @@ from app.jobs import (
     nps_send_runner,
     notifications_digests,
     outbox,
+    quota_alerts,
     qbo_sync,
     storage_quota,
     storage_janitor,
@@ -203,6 +204,8 @@ def _job_runner(name: str, base_url: str | None = None) -> Callable:
         return lambda session: leads_nurture_runner.run_leads_nurture_runner(
             session, _ADAPTER, _COMMUNICATION
         )
+    if name == "quota-alerts":
+        return lambda session: quota_alerts.run_quota_alerts(session)
     raise ValueError(f"unknown_job:{name}")
 
 
@@ -246,6 +249,7 @@ async def run(argv: list[str] | None = None) -> None:
             "gcal-sync",
             "qbo-sync",
             "leads-nurture-runner",
+            "quota-alerts",
         ]
         runners = [_job_runner(name, base_url=args.base_url) for name in job_names]
 

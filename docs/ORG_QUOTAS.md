@@ -31,6 +31,13 @@ The count reflects **active memberships** and is optimized with an index on `(or
 
 > Note: Metrics intentionally avoid org/user identifiers to keep label cardinality low.
 
+## Alerts
+- **Thresholds:** Notifications are emitted at **80%** and **90%** usage for both user and storage quotas.
+- **Delivery:** Alerts are sent to the Notifications Center when `module.notifications_center` is enabled.
+- **Cooldown:** Each threshold emits at most once per org per calendar month (entity dedupe is keyed by month).
+- **Ack/Silence:** Mark the notification as read to acknowledge; to silence, disable Notifications Center
+  or set the quota to `NULL` (unlimited).
+
 ## Examples
 
 ### Set a cap of 10 users
