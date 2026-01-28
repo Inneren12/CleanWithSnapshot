@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from html import escape
 import logging
 import time
@@ -115,14 +114,6 @@ def _stripe_client(request: Request):
 
 def _format_currency(cents: int, currency: str) -> str:
     return f"{currency} {cents / 100:,.2f}"
-
-
-def _ensure_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
 
 
 def _render_invoice_html(context: dict) -> str:
@@ -531,12 +522,6 @@ async def download_receipt_pdf(
     payment = next((p for p in invoice.payments if p.payment_id == payment_id), None)
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found")
-    received_at = _ensure_utc(payment.received_at)
-    created_at = _ensure_utc(payment.created_at)
-    if received_at and created_at and created_at > received_at:
-        payment.received_at = created_at
-    elif received_at or created_at:
-        payment.received_at = received_at or created_at
     if payment.status != invoice_statuses.PAYMENT_STATUS_SUCCEEDED:
         raise HTTPException(status_code=400, detail="Receipt available only for successful payments")
     lead = await invoice_service.fetch_customer(session, invoice)

@@ -160,6 +160,7 @@ def _invoice_snapshot(invoice: Invoice, lead: Lead | None) -> dict[str, Any]:
 
 
 def _receipt_snapshot(invoice: Invoice, payment: Payment, lead: Lead | None) -> dict[str, Any]:
+    received_at = payment.received_at or payment.created_at
     return {
         "payment": {
             "payment_id": payment.payment_id,
@@ -167,7 +168,7 @@ def _receipt_snapshot(invoice: Invoice, payment: Payment, lead: Lead | None) -> 
             "amount_cents": payment.amount_cents,
             "currency": payment.currency,
             "status": payment.status,
-            "received_at": _serialize_date(payment.received_at),
+            "received_at": _serialize_date(received_at),
             "reference": payment.reference,
         },
         "invoice": {
