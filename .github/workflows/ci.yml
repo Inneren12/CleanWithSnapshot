@@ -225,6 +225,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Debug prod-config env (masked)
+        run: |
+          python - <<'PY'
+          import os
+          print("AWS_REGION set:", bool(os.getenv("AWS_REGION")))
+          print("AWS_SECRETS_MANAGER_SECRET_ID set:", bool(os.getenv("AWS_SECRETS_MANAGER_SECRET_ID")))
+          print("SECRETS_BACKEND:", os.getenv("SECRETS_BACKEND"))
+          PY
+        env:
+          AWS_REGION: "us-east-1"
+          AWS_SECRETS_MANAGER_SECRET_ID: "ci-dummy"
+          SECRETS_BACKEND: "aws_secrets_manager" 
+ 
       - name: Validate prod config requirements
         run: |
           python -c "from app.settings import Settings; s = Settings(); print(f'✓ Prod config validation passed: APP_ENV={s.app_env}')"
