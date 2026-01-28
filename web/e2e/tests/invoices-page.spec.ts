@@ -5,6 +5,7 @@ import {
   seedAdminStorage,
   verifyAdminCredentials,
 } from './helpers/adminAuth';
+import { newContextWithBaseUrl } from './helpers/playwrightContext';
 
 test.describe('Invoices page', () => {
   test.beforeEach(async ({ page, request }) => {
@@ -13,9 +14,11 @@ test.describe('Invoices page', () => {
     await seedAdminStorage(page, admin);
   });
 
-  test('invoices page shows login form when not authenticated', async ({ page }) => {
+  test('invoices page shows login form when not authenticated', async ({
+    page,
+  }, testInfo) => {
     // Go to invoices without pre-seeded storage in a new context
-    const newContext = await page.context().browser()!.newContext();
+    const newContext = await newContextWithBaseUrl({ page, testInfo });
     const newPage = await newContext.newPage();
 
     await newPage.goto('/admin/invoices');
@@ -59,11 +62,11 @@ test.describe('Invoices page', () => {
     await expect(page.getByTestId('invoices-table')).toBeVisible();
   });
 
-  test('invoices login form works', async ({ page }) => {
+  test('invoices login form works', async ({ page }, testInfo) => {
     const admin = defaultAdminCredentials();
 
     // Go to invoices in new context without pre-seeded storage
-    const newContext = await page.context().browser()!.newContext();
+    const newContext = await newContextWithBaseUrl({ page, testInfo });
     const newPage = await newContext.newPage();
 
     await newPage.goto('/admin/invoices');
