@@ -9,9 +9,8 @@ export type AdminNavLink = {
 };
 
 export default function AdminNav({ links, activeKey }: { links: AdminNavLink[]; activeKey?: string }) {
-  if (!links.length) return null;
   return (
-    <nav className="admin-nav" aria-label="Admin navigation">
+    <nav className="admin-nav" aria-label="Admin navigation" data-testid="admin-nav">
       {links.map((link) => (
         <Link
           key={link.key}

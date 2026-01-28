@@ -34,7 +34,7 @@ test.describe('Dispatcher page', () => {
     await expect(page.getByTestId('dispatcher-page')).toBeVisible();
 
     // Navigation should be present
-    await expect(page.getByRole('navigation')).toBeVisible();
+    await expect(page.getByTestId('admin-nav')).toBeVisible();
   });
 
   test('dispatcher page accessible from admin dashboard', async ({ page }) => {

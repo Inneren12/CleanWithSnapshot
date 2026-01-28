@@ -36,7 +36,7 @@ test.describe('Invoices page', () => {
     await page.goto('/admin/invoices');
 
     await expect(page.getByTestId('invoices-page')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible();
+    await expect(page.getByTestId('invoices-title')).toBeVisible();
   });
 
   test('invoices page shows overdue summary section', async ({ page }) => {
@@ -76,11 +76,15 @@ test.describe('Invoices page', () => {
     // Fill in credentials and submit
     await newPage.getByTestId('invoices-username-input').fill(admin.username);
     await newPage.getByTestId('invoices-password-input').fill(admin.password);
-    await newPage.getByTestId('invoices-login-btn').click();
+
+    const loginButton = newPage.getByTestId('invoices-login-btn');
+    await expect(loginButton).toBeVisible();
+    await expect(loginButton).toBeEnabled();
+    await loginButton.click();
 
     // Should show invoices page after login
     await expect(newPage.getByTestId('invoices-page')).toBeVisible();
-    await expect(newPage.getByRole('heading', { name: 'Invoices' })).toBeVisible();
+    await expect(newPage.getByTestId('invoices-title')).toBeVisible();
 
     await newContext.close();
   });
