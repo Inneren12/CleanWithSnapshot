@@ -50,5 +50,74 @@ compatibility):
 - `AUTH_SECRET_KEY` (legacy: `auth_secret_key`)
 - `CLIENT_PORTAL_SECRET` (legacy: `client_portal_secret`)
 - `WORKER_PORTAL_SECRET` (legacy: `worker_portal_secret`)
+- `ADMIN_PROXY_AUTH_SECRET` (legacy: `admin_proxy_auth_secret`)
 
 Set the uppercase names in production and staging to ensure audit-friendly configuration.
+
+## Secrets backend (production)
+
+Production and staging environments must load secrets from a managed backend via `SECRETS_BACKEND`. The application
+fails fast if the backend is missing or if the required secrets are absent.
+
+Supported backends:
+
+- `aws_secrets_manager`
+- `aws_ssm`
+
+### AWS Secrets Manager
+
+Store a single JSON secret containing the required keys:
+
+```json
+{
+  "AUTH_SECRET_KEY": "...",
+  "CLIENT_PORTAL_SECRET": "...",
+  "WORKER_PORTAL_SECRET": "...",
+  "ADMIN_PROXY_AUTH_SECRET": "..."
+}
+```
+
+Configuration:
+
+- `SECRETS_BACKEND=aws_secrets_manager`
+- `AWS_REGION`
+- `AWS_SECRETS_MANAGER_SECRET_ID`
+
+Optional (for local testing only): `AWS_SECRETS_MANAGER_SECRET_JSON` with the JSON payload.
+
+### AWS SSM Parameter Store
+
+Store each secret as a SecureString under a shared path, for example:
+
+```
+/cleanwithsnapshot/prod/AUTH_SECRET_KEY
+/cleanwithsnapshot/prod/CLIENT_PORTAL_SECRET
+/cleanwithsnapshot/prod/WORKER_PORTAL_SECRET
+/cleanwithsnapshot/prod/ADMIN_PROXY_AUTH_SECRET
+```
+
+Configuration:
+
+- `SECRETS_BACKEND=aws_ssm`
+- `AWS_REGION`
+- `AWS_SSM_PARAMETER_PATH` (e.g. `/cleanwithsnapshot/prod/`)
+
+## Secret lifecycle
+
+### Where secrets live
+
+- Primary storage is AWS Secrets Manager or AWS SSM Parameter Store (SecureString).
+- Environment variables only reference the backend location (`SECRETS_BACKEND`, region, secret ID/path).
+
+### How to rotate
+
+1. Generate new values (min 32 characters, high entropy).
+2. Update the secret in the chosen backend.
+3. Deploy or restart the service to load the new values.
+4. Validate auth flows and rotate any downstream integrations that depend on the secrets.
+
+### Who has access
+
+- Production secrets access is restricted to the platform/DevOps IAM role(s).
+- Application runtime identity has read-only access to the specific secret path/ID.
+- Human access is audited and limited to on-call or security-approved personnel.

@@ -28,3 +28,8 @@ The helper always sends:
 
 Admin endpoints reject unauthenticated requests when proxy auth is enabled. CI must not
 probe `/v1/admin/profile` without the signed proxy headers or MFA assertion.
+
+## Postgres init behavior in CI
+
+The WAL archive init script is disabled in E2E/CI via `ENABLE_WAL_ARCHIVE_INIT=false` to
+avoid privileged `chown` operations inside the container that can trigger recovery loops.
