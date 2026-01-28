@@ -7,7 +7,7 @@ The CI pipeline runs Trivy container image scans on every pull request and merge
 - Images scanned: `cleanwithsnapshot-api:ci` and `cleanwithsnapshot-web:ci` built from the repo Dockerfiles.
 - Severity gate: **CRITICAL** only.
 - Reports: JSON and SARIF artifacts are uploaded for every run.
-- SBOMs: SPDX JSON SBOMs are generated for each image and uploaded as CI artifacts.
+- SBOMs: SPDX JSON SBOMs are generated for each image on every CI run and uploaded as CI artifacts.
 
 ## CI Behavior
 - The Trivy job builds the API and web images and runs `trivy image` with `--severity CRITICAL --exit-code 1`.
