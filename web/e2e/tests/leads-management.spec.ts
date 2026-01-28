@@ -5,6 +5,7 @@ import {
   seedAdminStorage,
   verifyAdminCredentials,
 } from './helpers/adminAuth';
+import { waitForAdminPage } from './helpers/playwrightContext';
 
 test.describe('Leads management', () => {
   test.beforeEach(async ({ page, request }) => {
@@ -58,18 +59,27 @@ test.describe('Leads management', () => {
   });
 
   test('dedicated leads page loads', async ({ page }) => {
-    await page.goto('/admin/leads');
+    await waitForAdminPage({ page, path: '/admin/leads', rootTestId: 'leads-page' });
 
+    await expect(page.getByTestId('leads-page')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible();
+    await expect(page.getByTestId('leads-pipeline-section')).toBeVisible();
   });
 
   test('leads page shows pipeline stages', async ({ page }) => {
-    await page.goto('/admin/leads');
+    await waitForAdminPage({ page, path: '/admin/leads', rootTestId: 'leads-page' });
 
-    await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible();
+    await expect(page.getByTestId('leads-page')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible();
 
-    // Check for pipeline stage columns
-    await expect(page.getByText('New')).toBeVisible();
+    // Check for pipeline stage controls
+    await expect(page.getByTestId('leads-pipeline')).toBeVisible();
+    await expect(page.getByTestId('pipeline-stage-new')).toBeVisible();
+    await expect(page.getByTestId('pipeline-stage-contacted')).toBeVisible();
+    await expect(page.getByTestId('pipeline-stage-quoted')).toBeVisible();
+    await expect(page.getByTestId('pipeline-stage-won')).toBeVisible();
+    await expect(page.getByTestId('pipeline-stage-lost')).toBeVisible();
+
+    await expect(page.getByTestId('leads-list')).toBeVisible();
   });
 });

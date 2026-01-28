@@ -29,6 +29,13 @@ The helper always sends:
 Admin endpoints reject unauthenticated requests when proxy auth is enabled. CI must not
 probe `/v1/admin/profile` without the signed proxy headers or MFA assertion.
 
+## Playwright dependencies in CI
+
+The E2E workflow installs Playwright browsers with `npx playwright install --with-deps`,
+which also pulls in the ffmpeg binary required for video/trace artifacts. If you disable
+the install step, ensure the CI cache restores `~/.cache/ms-playwright` for the matching
+Playwright version, including the ffmpeg directory.
+
 ## Postgres init behavior in CI
 
 The WAL archive init script is disabled in E2E/CI via `ENABLE_WAL_ARCHIVE_INIT=false` to

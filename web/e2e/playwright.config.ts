@@ -19,6 +19,7 @@ export default defineConfig({
     video: 'retain-on-failure',
     channel: process.env.PW_CHANNEL ?? 'chrome',
     headless: true,
+    viewport: { width: 1280, height: 720 },
     launchOptions: {
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     },

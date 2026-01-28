@@ -305,7 +305,7 @@ export default function LeadsPage() {
   const totalPages = leads ? Math.max(1, Math.ceil(leads.total / leads.page_size)) : 1;
 
   return (
-    <div className="page">
+    <div className="page" data-testid="leads-page">
       <AdminNav links={navLinks} activeKey="leads" />
       <section className="admin-card admin-section">
         <div className="section-heading">
@@ -338,17 +338,18 @@ export default function LeadsPage() {
         {settingsError ? <p className="alert alert-error">{settingsError}</p> : null}
       </section>
 
-      <section className="admin-card admin-section">
+      <section className="admin-card admin-section" data-testid="leads-pipeline-section">
         <div className="section-heading">
           <h2>Pipeline</h2>
           <p className="muted">Filter by stage, search, and update lead notes.</p>
         </div>
-        <div className="admin-actions" style={{ flexWrap: "wrap" }}>
+        <div className="admin-actions" style={{ flexWrap: "wrap" }} data-testid="leads-pipeline">
           <div className="admin-actions">
             <button
               type="button"
               className={`btn ${statusFilter ? "btn-ghost" : "btn-primary"}`}
               onClick={() => setStatusFilter("")}
+              data-testid="pipeline-stage-all"
             >
               All
             </button>
@@ -358,6 +359,7 @@ export default function LeadsPage() {
                 type="button"
                 className={`btn ${statusFilter === status ? "btn-primary" : "btn-ghost"}`}
                 onClick={() => setStatusFilter(status)}
+                data-testid={`pipeline-stage-${status.toLowerCase()}`}
               >
                 {status}
               </button>
@@ -379,12 +381,17 @@ export default function LeadsPage() {
             Refresh
           </button>
         </div>
-        {loading ? <p className="muted">Loading leads...</p> : null}
-        {error ? <p className="alert alert-error">{error}</p> : null}
-        {!loading && leads?.items.length === 0 ? <p className="muted">No leads found.</p> : null}
-        {leads?.items.length ? (
-          <div className="table-responsive">
-            <table className="table-like">
+        <div data-testid="leads-list">
+          {loading ? <p className="muted">Loading leads...</p> : null}
+          {error ? <p className="alert alert-error">{error}</p> : null}
+          {!loading && leads?.items.length === 0 ? (
+            <p className="muted" data-testid="leads-empty-state">
+              No leads found.
+            </p>
+          ) : null}
+          {leads?.items.length ? (
+            <div className="table-responsive">
+              <table className="table-like" data-testid="leads-table">
               <thead>
                 <tr>
                   <th>Lead</th>
@@ -467,8 +474,9 @@ export default function LeadsPage() {
                 })}
               </tbody>
             </table>
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
         {leads ? (
           <div className="admin-actions" style={{ justifyContent: "space-between" }}>
             <span className="muted">

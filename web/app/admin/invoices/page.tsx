@@ -585,7 +585,7 @@ export default function InvoicesPage() {
       <AdminNav links={navLinks} activeKey="invoices" />
       <div className="admin-content">
         <div className="admin-card">
-          <h2>Invoices</h2>
+          <h2 data-testid="invoices-title">Invoices</h2>
           <p className="muted">Search, filter and manage invoices with bulk actions</p>
 
           <section className="overdue-summary" aria-label="Overdue invoice summary" data-testid="overdue-summary">

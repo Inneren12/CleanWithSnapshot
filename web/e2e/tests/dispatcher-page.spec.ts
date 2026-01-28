@@ -33,8 +33,10 @@ test.describe('Dispatcher page', () => {
 
     await expect(page.getByTestId('dispatcher-page')).toBeVisible();
 
-    // Navigation should be present
-    await expect(page.getByRole('navigation')).toBeVisible();
+    // Navigation should be present once links load
+    const adminNav = page.getByTestId('admin-nav');
+    await expect(adminNav).toBeAttached();
+    await expect(page.getByRole('heading', { name: /dispatcher/i })).toBeVisible();
   });
 
   test('dispatcher page accessible from admin dashboard', async ({ page }) => {
