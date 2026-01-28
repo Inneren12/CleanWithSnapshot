@@ -30,9 +30,20 @@ def load_secrets_backend(backend: str, app_env: str, config: dict[str, Any]) -> 
 
 
 def _load_from_secrets_manager(app_env: str, config: dict[str, Any]) -> dict[str, Any]:
-    region = config.get("aws_region")
-    secret_id = config.get("aws_secrets_manager_secret_id")
-    explicit_json = config.get("aws_secrets_manager_secret_json")
+    region = (
+        config.get("aws_region")
+        or config.get("AWS_REGION")
+        or config.get("AWS_DEFAULT_REGION")
+        or config.get("AWS_SECRETS_MANAGER_REGION")
+    )
+    secret_id = (
+        config.get("aws_secrets_manager_secret_id")
+        or config.get("AWS_SECRETS_MANAGER_SECRET_ID")
+        or config.get("AWS_SECRETS_MANAGER_SECRET_ARN")
+    )
+    explicit_json = config.get("aws_secrets_manager_secret_json") or config.get(
+        "AWS_SECRETS_MANAGER_SECRET_JSON"
+    )
     if explicit_json:
         secrets_payload = explicit_json
     else:

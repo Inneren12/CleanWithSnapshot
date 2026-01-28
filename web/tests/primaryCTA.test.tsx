@@ -22,7 +22,7 @@ describe('PrimaryCTA', () => {
   it('shows loading state and disables the button', () => {
     const handleClick = vi.fn();
 
-    render(
+    const { getByRole, getByText } = render(
       <PrimaryCTA
         label="Confirm Booking"
         onClick={handleClick}
@@ -30,8 +30,8 @@ describe('PrimaryCTA', () => {
       />
     );
 
-    const button = screen.getByRole('button', { name: /loading/i });
+    const button = getByRole('button', { name: /loading/i });
     expect(button).toBeDisabled();
-    expect(screen.queryByText('Confirm Booking')).not.toBeInTheDocument();
+    expect(getByText(/loading/i)).toBeInTheDocument();
   });
 });

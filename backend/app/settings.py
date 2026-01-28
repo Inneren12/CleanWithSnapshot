@@ -124,12 +124,19 @@ class Settings(BaseSettings):
     )
     aws_region: str | None = Field(
         None,
-        validation_alias=AliasChoices("AWS_REGION", "AWS_DEFAULT_REGION", "aws_region"),
+        validation_alias=AliasChoices(
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AWS_SECRETS_MANAGER_REGION",
+            "aws_region",
+        ),
     )
     aws_secrets_manager_secret_id: str | None = Field(
         None,
         validation_alias=AliasChoices(
-            "AWS_SECRETS_MANAGER_SECRET_ID", "aws_secrets_manager_secret_id"
+            "AWS_SECRETS_MANAGER_SECRET_ID",
+            "AWS_SECRETS_MANAGER_SECRET_ARN",
+            "aws_secrets_manager_secret_id",
         ),
     )
     aws_secrets_manager_secret_json: str | None = Field(

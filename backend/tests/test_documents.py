@@ -121,6 +121,36 @@ async def test_receipt_pdf_uses_snapshot(client, async_session_maker):
 
 
 @pytest.mark.anyio
+async def test_receipt_pdf_accepts_mixed_timezone_timestamps(client, async_session_maker):
+    invoice_id, _, token = await _seed_invoice(async_session_maker)
+
+    async with async_session_maker() as session:
+        invoice = await session.get(Invoice, invoice_id)
+        payment = await invoice_service.register_payment(
+            session,
+            invoice,
+            provider="manual",
+            method=statuses.PAYMENT_METHOD_CASH,
+            amount_cents=5000,
+            currency=invoice.currency,
+            status=statuses.PAYMENT_STATUS_SUCCEEDED,
+            received_at=datetime.datetime.utcnow(),
+        )
+        original_received_at = payment.received_at
+        payment.created_at = datetime.datetime.now(tz=datetime.timezone.utc)
+        await session.commit()
+        payment_id = payment.payment_id
+
+    resp = client.get(f"/i/{token}/receipts/{payment_id}.pdf")
+    assert resp.status_code == 200
+    assert resp.content
+
+    async with async_session_maker() as session:
+        payment = await session.get(Payment, payment_id)
+        assert payment.received_at == original_received_at
+
+
+@pytest.mark.anyio
 async def test_service_agreement_downloadable(client, async_session_maker):
     invoice_id, booking_id, token = await _seed_invoice(async_session_maker)
 
