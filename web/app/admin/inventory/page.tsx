@@ -586,7 +586,8 @@ export default function InventoryItemsPage() {
     );
   }
 
-  if (!canViewInventory) {
+  const permissionsReady = profile !== null;
+  if (permissionsReady && !canViewInventory) {
     return (
       <div className="admin-page">
         <div className="card">

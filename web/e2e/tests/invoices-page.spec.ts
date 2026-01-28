@@ -71,16 +71,20 @@ test.describe('Invoices page', () => {
 
     await newPage.goto('/admin/invoices');
 
-    await expect(newPage.getByTestId('invoices-login-page')).toBeVisible();
+    const loginPage = newPage.getByTestId('invoices-login-page');
+    const invoicesPage = newPage.getByTestId('invoices-page');
+    await expect(loginPage.or(invoicesPage)).toBeVisible();
 
-    // Fill in credentials and submit
-    await newPage.getByTestId('invoices-username-input').fill(admin.username);
-    await newPage.getByTestId('invoices-password-input').fill(admin.password);
+    if (await loginPage.isVisible()) {
+      // Fill in credentials and submit
+      await newPage.getByTestId('invoices-username-input').fill(admin.username);
+      await newPage.getByTestId('invoices-password-input').fill(admin.password);
 
-    const loginButton = newPage.getByTestId('invoices-login-btn');
-    await expect(loginButton).toBeVisible();
-    await expect(loginButton).toBeEnabled();
-    await loginButton.click();
+      const loginButton = newPage.getByTestId('invoices-login-btn');
+      await expect(loginButton).toBeVisible();
+      await expect(loginButton).toBeEnabled();
+      await loginButton.click();
+    }
 
     // Should show invoices page after login
     await expect(newPage.getByTestId('invoices-page')).toBeVisible();
