@@ -29,10 +29,10 @@ def _proxy_headers(secret: str, *, include_mfa: bool = True) -> dict[str, str]:
     return headers
 
 
-def test_proxy_auth_missing_mfa_header_rejected(client, monkeypatch):
+def test_proxy_auth_missing_mfa_header_rejected(unauthenticated_client, monkeypatch):
     secret = _enable_proxy_auth(monkeypatch, trusted=True)
 
-    response = client.get(
+    response = unauthenticated_client.get(
         "/v1/admin/profile",
         headers=_proxy_headers(secret, include_mfa=False),
     )
@@ -41,10 +41,10 @@ def test_proxy_auth_missing_mfa_header_rejected(client, monkeypatch):
     assert response.headers.get("X-Admin-Auth-Fail-Reason") == "mfa_required"
 
 
-def test_proxy_auth_with_mfa_header_allowed(client, monkeypatch):
+def test_proxy_auth_with_mfa_header_allowed(unauthenticated_client, monkeypatch):
     secret = _enable_proxy_auth(monkeypatch, trusted=True)
 
-    response = client.get(
+    response = unauthenticated_client.get(
         "/v1/admin/profile",
         headers=_proxy_headers(secret, include_mfa=True),
     )
@@ -52,10 +52,10 @@ def test_proxy_auth_with_mfa_header_allowed(client, monkeypatch):
     assert response.status_code == 200
 
 
-def test_untrusted_proxy_rejects_mfa_header(client, monkeypatch):
+def test_untrusted_proxy_rejects_mfa_header(unauthenticated_client, monkeypatch):
     secret = _enable_proxy_auth(monkeypatch, trusted=False)
 
-    response = client.get(
+    response = unauthenticated_client.get(
         "/v1/admin/profile",
         headers=_proxy_headers(secret, include_mfa=True),
     )

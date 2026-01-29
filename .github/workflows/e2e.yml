@@ -377,6 +377,8 @@ jobs:
             local name=$2
             if ! curl -fsS --max-time 2 --retry 60 --retry-connrefused --retry-delay 2 "$url" >/dev/null; then
               echo "Timed out waiting for ${name} at ${url}"
+              echo "--- ${name} response (if available) ---"
+              curl -sS -i --max-time 2 "$url" || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
@@ -391,7 +393,7 @@ jobs:
 
       - name: Preflight admin auth
         run: |
-          python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:8000/v1/admin/profile
+          PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:8000/v1/admin/profile
 
       - name: Install web dependencies
         working-directory: web

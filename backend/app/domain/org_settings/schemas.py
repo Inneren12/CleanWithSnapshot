@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, Field, field_validator
 
 
-AllowedLanguage = Literal["en", "ru"]
+AllowedLanguage = Literal["en", "ru", "es"]
 AllowedCurrency = Literal["CAD", "USD"]
 ReferralCreditTrigger = Literal["deposit_paid", "booking_confirmed", "booking_or_payment"]
 

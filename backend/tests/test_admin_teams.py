@@ -1,4 +1,3 @@
-import base64
 from datetime import date, datetime, timezone
 
 import pytest
@@ -7,61 +6,35 @@ from app.domain.bookings.db_models import Booking
 from app.domain.bookings.service import ensure_default_team
 from app.domain.invoices.db_models import Invoice
 from app.domain.workers.db_models import Worker
-from app.settings import settings
-
-
-def _basic_auth(username: str, password: str) -> dict[str, str]:
-    token = base64.b64encode(f"{username}:{password}".encode()).decode()
-    return {"Authorization": f"Basic {token}"}
-
-
-@pytest.fixture(autouse=True)
-def _reset_admin_creds():
-    original = {
-        "admin_basic_username": settings.admin_basic_username,
-        "admin_basic_password": settings.admin_basic_password,
-        "viewer_basic_username": settings.viewer_basic_username,
-        "viewer_basic_password": settings.viewer_basic_password,
-    }
-    settings.admin_basic_username = "admin"
-    settings.admin_basic_password = "secret"
-    settings.viewer_basic_username = "viewer"
-    settings.viewer_basic_password = "secret"
-    yield
-    for key, value in original.items():
-        setattr(settings, key, value)
 
 
 @pytest.mark.anyio
-async def test_admin_can_create_team_and_booking_form_lists_teams(client, async_session_maker):
+async def test_admin_can_create_team_and_booking_form_lists_teams(admin_client, async_session_maker):
     async with async_session_maker() as session:
         default_team = await ensure_default_team(session)
         await session.commit()
 
-    headers = _basic_auth("admin", "secret")
-    create_resp = client.post(
-        "/v1/admin/teams",
-        headers=headers,
-        json={"name": "Crew B"},
-    )
+    create_resp = admin_client.post("/v1/admin/teams", json={"name": "Crew B"})
     assert create_resp.status_code == 200
 
-    list_resp = client.get("/v1/admin/teams", headers=headers)
+    list_resp = admin_client.get("/v1/admin/teams")
     assert list_resp.status_code == 200
     payload = list_resp.json()
     team_names = {team["name"] for team in payload}
     assert default_team.name in team_names
     assert "Crew B" in team_names
 
-    form_resp = client.get("/v1/admin/ui/bookings/new", headers=headers)
+    form_resp = admin_client.get("/v1/admin/ui/bookings/new")
     assert form_resp.status_code == 200
     assert default_team.name in form_resp.text
     assert "Crew B" in form_resp.text
 
 
 @pytest.mark.anyio
-async def test_team_list_and_detail_shapes_are_permissioned(client, async_session_maker):
-    unauth = client.get("/v1/admin/teams")
+async def test_team_list_and_detail_shapes_are_permissioned(
+    anon_client, viewer_client, async_session_maker
+):
+    unauth = anon_client.get("/v1/admin/teams")
     assert unauth.status_code == 401
 
     async with async_session_maker() as session:
@@ -103,8 +76,7 @@ async def test_team_list_and_detail_shapes_are_permissioned(client, async_sessio
         session.add(invoice)
         await session.commit()
 
-    headers = _basic_auth("viewer", "secret")
-    list_resp = client.get("/v1/admin/teams", headers=headers)
+    list_resp = viewer_client.get("/v1/admin/teams")
     assert list_resp.status_code == 200
     payload = list_resp.json()
     target = next((entry for entry in payload if entry["team_id"] == team.team_id), None)
@@ -114,7 +86,7 @@ async def test_team_list_and_detail_shapes_are_permissioned(client, async_sessio
     assert "monthly_revenue_cents" in target
     assert "rating_avg" in target
 
-    detail_resp = client.get(f"/v1/admin/teams/{team.team_id}", headers=headers)
+    detail_resp = viewer_client.get(f"/v1/admin/teams/{team.team_id}")
     assert detail_resp.status_code == 200
     detail = detail_resp.json()
     assert detail["team_id"] == team.team_id

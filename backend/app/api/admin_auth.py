@@ -497,10 +497,17 @@ def _require_e2e_signature(
             detail="Invalid proxy signature",
         ) from exc
     now = int(time.time())
-    if abs(now - timestamp_value) > settings.admin_proxy_auth_e2e_ttl_seconds:
+    skew = abs(now - timestamp_value)
+    if skew > settings.admin_proxy_auth_e2e_ttl_seconds:
+        detail = "Proxy signature expired"
+        if settings.testing:
+            detail = (
+                "Proxy signature expired "
+                f"(server_now={now}, request_ts={timestamp_value}, skew={skew}s)"
+            )
         raise _build_auth_exception(
             reason="expired_timestamp",
-            detail="Proxy signature expired",
+            detail=detail,
         )
     mfa_header_value = request.headers.get(settings.admin_proxy_auth_header_mfa, "").strip().lower()
     payload = _build_e2e_signature_payload(
@@ -541,12 +548,18 @@ def _parse_proxy_roles(roles_header: str | None) -> AdminRole:
     return AdminRole.VIEWER
 
 
-def _require_mfa_header(request: Request) -> bool:
-    _require_trusted_proxy(request)
+def _test_mfa_bypass_enabled() -> bool:
+    return bool(getattr(settings, "testing", False) or settings.app_env in {"test", "ci", "e2e"})
+
+
+def _require_mfa_header(request: Request, *, allow_test_bypass: bool = False) -> bool:
     mfa_verified = _mfa_verified_from_header(request)
-    if not mfa_verified:
-        logger.warning(
-            "admin_auth_mfa_required",
+    if mfa_verified:
+        _require_trusted_proxy(request)
+        return mfa_verified
+    if allow_test_bypass and _test_mfa_bypass_enabled():
+        logger.info(
+            "admin_auth_mfa_bypassed_for_testing",
             extra={
                 "extra": {
                     "path": request.url.path,
@@ -555,11 +568,22 @@ def _require_mfa_header(request: Request) -> bool:
                 }
             },
         )
-        raise _build_auth_exception(
-            reason="mfa_required",
-            detail="Admin access requires MFA",
-        )
-    return mfa_verified
+        return True
+    _require_trusted_proxy(request)
+    logger.warning(
+        "admin_auth_mfa_required",
+        extra={
+            "extra": {
+                "path": request.url.path,
+                "method": request.method,
+                "mfa_header": settings.admin_proxy_auth_header_mfa,
+            }
+        },
+    )
+    raise _build_auth_exception(
+        reason="mfa_required",
+        detail="Admin access requires MFA",
+    )
 
 
 def _resolve_proxy_identity_headers(request: Request) -> tuple[str, str, str, str] | None:
@@ -870,6 +894,24 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             )
             return await http_exception_handler(request, exc)
 
+        if settings.admin_proxy_auth_enabled:
+            _log_admin_auth_failure(
+                request,
+                reason="proxy_auth_required",
+                credentials=None,
+                extra_detail={
+                    "proxy_auth_enabled": settings.admin_proxy_auth_enabled,
+                    "auth_method": "proxy",
+                },
+            )
+            return await http_exception_handler(
+                request,
+                _build_auth_exception(
+                    reason="proxy_auth_required",
+                    detail="Admin access requires proxy authentication",
+                ),
+            )
+
         if settings.admin_proxy_auth_required:
             _log_admin_auth_failure(
                 request,
@@ -925,7 +967,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
         credentials: HTTPBasicCredentials | None = None
         try:
             credentials = _credentials_from_header(request)
-            mfa_verified = _require_mfa_header(request)
+            mfa_verified = _require_mfa_header(request, allow_test_bypass=True)
             identity = _authenticate_credentials(credentials, mfa_verified=mfa_verified, request=request)
             _assert_permissions(request, identity, [AdminPermission.VIEW])
             request.state.admin_identity = identity

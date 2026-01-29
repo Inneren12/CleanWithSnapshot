@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -237,7 +238,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         path = request.url.path
         normalized = path.rstrip("/") or "/"
-        if path in self.exempt_paths or normalized in self.exempt_paths:
+        disable_exemptions = getattr(self.app_settings, "rate_limit_disable_exempt_paths", False)
+        if not disable_exemptions and (path in self.exempt_paths or normalized in self.exempt_paths):
             return await call_next(request)
 
         client = resolve_client_key(

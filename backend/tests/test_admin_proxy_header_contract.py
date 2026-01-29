@@ -28,10 +28,10 @@ def _e2e_signature(user: str, email: str, roles: str, timestamp: str, mfa: str) 
     return hmac.new(settings.admin_proxy_auth_e2e_secret.encode("utf-8"), payload, "sha256").hexdigest()
 
 
-def test_proxy_headers_allow_access(client, monkeypatch):
+def test_proxy_headers_allow_access(unauthenticated_client, monkeypatch):
     secret = _enable_proxy_auth(monkeypatch)
 
-    response = client.get(
+    response = unauthenticated_client.get(
         "/v1/admin/profile",
         headers={
             "X-Admin-User": "admin",
@@ -45,12 +45,12 @@ def test_proxy_headers_allow_access(client, monkeypatch):
     assert response.status_code == 200
 
 
-def test_e2e_signature_headers_allow_access(client, monkeypatch):
+def test_e2e_signature_headers_allow_access(unauthenticated_client, monkeypatch):
     secret = _enable_proxy_auth(monkeypatch)
     timestamp = str(int(time.time()))
     signature = _e2e_signature("e2e-user", "e2e@example.com", "admin", timestamp, "true")
 
-    response = client.get(
+    response = unauthenticated_client.get(
         "/v1/admin/profile",
         headers={
             "X-Proxy-Auth-Secret": secret,
@@ -66,10 +66,10 @@ def test_e2e_signature_headers_allow_access(client, monkeypatch):
     assert response.status_code == 200
 
 
-def test_missing_identity_and_signature_rejected(client, monkeypatch):
+def test_missing_identity_and_signature_rejected(unauthenticated_client, monkeypatch):
     secret = _enable_proxy_auth(monkeypatch)
 
-    response = client.get(
+    response = unauthenticated_client.get(
         "/v1/admin/profile",
         headers={
             "X-Proxy-Auth-Secret": secret,
@@ -81,11 +81,11 @@ def test_missing_identity_and_signature_rejected(client, monkeypatch):
     assert response.headers.get("X-Admin-Auth-Fail-Reason") == "proxy_auth_required"
 
 
-def test_invalid_signature_rejected(client, monkeypatch):
+def test_invalid_signature_rejected(unauthenticated_client, monkeypatch):
     secret = _enable_proxy_auth(monkeypatch)
     timestamp = str(int(time.time()))
 
-    response = client.get(
+    response = unauthenticated_client.get(
         "/v1/admin/profile",
         headers={
             "X-Proxy-Auth-Secret": secret,
@@ -102,10 +102,10 @@ def test_invalid_signature_rejected(client, monkeypatch):
     assert response.headers.get("X-Admin-Auth-Fail-Reason") == "bad_signature"
 
 
-def test_mfa_missing_rejected(client, monkeypatch):
+def test_mfa_missing_rejected(unauthenticated_client, monkeypatch):
     secret = _enable_proxy_auth(monkeypatch)
 
-    response = client.get(
+    response = unauthenticated_client.get(
         "/v1/admin/profile",
         headers={
             "X-Admin-User": "admin",

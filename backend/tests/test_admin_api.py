@@ -1,5 +1,4 @@
 import asyncio
-import base64
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -10,37 +9,18 @@ from app.domain.bookings.service import LOCAL_TZ
 from app.settings import settings
 
 
-def _basic_auth_header(username: str, password: str) -> dict[str, str]:
-    token = base64.b64encode(f"{username}:{password}".encode()).decode()
-    return {"Authorization": f"Basic {token}"}
+def test_admin_leads_requires_auth(anon_client_no_raise, admin_client):
+    response = anon_client_no_raise.get("/v1/admin/leads")
+    assert response.status_code == 401
+
+    authorized = admin_client.get("/v1/admin/leads")
+    assert authorized.status_code == 200
+    payload = authorized.json()
+    assert isinstance(payload, dict)
+    assert "items" in payload
 
 
-def test_admin_leads_requires_auth(client_no_raise):
-    original_username = settings.admin_basic_username
-    original_password = settings.admin_basic_password
-    settings.admin_basic_username = "admin"
-    settings.admin_basic_password = "secret"
-
-    try:
-        response = client_no_raise.get("/v1/admin/leads")
-        assert response.status_code == 401
-        assert response.headers.get("WWW-Authenticate") == "Basic"
-
-        auth_headers = _basic_auth_header("admin", "secret")
-        authorized = client_no_raise.get("/v1/admin/leads", headers=auth_headers)
-        assert authorized.status_code == 200
-        payload = authorized.json()
-        assert isinstance(payload, dict)
-        assert "items" in payload
-    finally:
-        settings.admin_basic_username = original_username
-        settings.admin_basic_password = original_password
-
-
-def test_admin_cleanup_removes_old_pending_bookings(client, async_session_maker):
-    settings.admin_basic_username = "admin"
-    settings.admin_basic_password = "secret"
-
+def test_admin_cleanup_removes_old_pending_bookings(admin_client, async_session_maker):
     async def _seed() -> None:
         from datetime import datetime, timedelta, timezone
 
@@ -68,31 +48,14 @@ def test_admin_cleanup_removes_old_pending_bookings(client, async_session_maker)
 
     asyncio.run(_seed())
 
-    headers = _basic_auth_header("admin", "secret")
-    response = client.post("/v1/admin/cleanup", headers=headers)
+    response = admin_client.post("/v1/admin/cleanup")
     assert response.status_code == 202
     assert response.json()["deleted"] == 1
 
 
-def test_admin_auth_missing_config_returns_401(client_no_raise):
-    original_admin_username = settings.admin_basic_username
-    original_admin_password = settings.admin_basic_password
-    original_dispatcher_username = settings.dispatcher_basic_username
-    original_dispatcher_password = settings.dispatcher_basic_password
-    settings.admin_basic_username = None
-    settings.admin_basic_password = None
-    settings.dispatcher_basic_username = None
-    settings.dispatcher_basic_password = None
-
-    try:
-        response = client_no_raise.get("/v1/admin/leads")
-        assert response.status_code == 401
-        assert response.headers.get("WWW-Authenticate") == "Basic"
-    finally:
-        settings.admin_basic_username = original_admin_username
-        settings.admin_basic_password = original_admin_password
-        settings.dispatcher_basic_username = original_dispatcher_username
-        settings.dispatcher_basic_password = original_dispatcher_password
+def test_admin_auth_missing_config_returns_401(anon_client_no_raise):
+    response = anon_client_no_raise.get("/v1/admin/leads")
+    assert response.status_code == 401
 
 
 def _create_lead(client) -> str:
@@ -140,22 +103,17 @@ def _create_booking(client, lead_id: str | None = None, days_ahead: int = 1) -> 
     return response.json()["booking_id"]
 
 
-def test_admin_updates_lead_status_with_valid_transition(client, async_session_maker):
-    settings.admin_basic_username = "admin"
-    settings.admin_basic_password = "secret"
+def test_admin_updates_lead_status_with_valid_transition(admin_client, async_session_maker):
+    lead_id = _create_lead(admin_client)
 
-    lead_id = _create_lead(client)
-    headers = _basic_auth_header("admin", "secret")
-
-    transition = client.patch(
+    transition = admin_client.patch(
         f"/v1/admin/leads/{lead_id}",
-        headers=headers,
         json={"status": "CONTACTED"},
     )
     assert transition.status_code == 200
     assert transition.json()["status"] == "CONTACTED"
 
-    filtered = client.get("/v1/admin/leads", headers=headers, params={"status": "CONTACTED"})
+    filtered = admin_client.get("/v1/admin/leads", params={"status": "CONTACTED"})
     assert filtered.status_code == 200
     assert any(lead["lead_id"] == lead_id for lead in filtered.json()["items"])
 
@@ -167,70 +125,48 @@ def test_admin_updates_lead_status_with_valid_transition(client, async_session_m
 
     assert asyncio.run(_fetch_status()) == "CONTACTED"
 
-    invalid = client.patch(
+    invalid = admin_client.patch(
         f"/v1/admin/leads/{lead_id}",
-        headers=headers,
         json={"status": "NEW"},
     )
     assert invalid.status_code == 400
 
 
-def test_viewer_cannot_update_leads(client):
-    original_admin_username = settings.admin_basic_username
-    original_admin_password = settings.admin_basic_password
-    original_viewer_username = settings.viewer_basic_username
-    original_viewer_password = settings.viewer_basic_password
-    settings.admin_basic_username = "admin"
-    settings.admin_basic_password = "secret"
-    settings.viewer_basic_username = "viewer"
-    settings.viewer_basic_password = "view-secret"
+def test_viewer_cannot_update_leads(admin_client, viewer_client):
+    lead_id = _create_lead(admin_client)
 
-    try:
-        lead_id = _create_lead(client)
-        viewer_headers = _basic_auth_header("viewer", "view-secret")
+    list_response = viewer_client.get("/v1/admin/leads")
+    assert list_response.status_code == 200
 
-        list_response = client.get("/v1/admin/leads", headers=viewer_headers)
-        assert list_response.status_code == 200
-
-        update = client.patch(
-            f"/v1/admin/leads/{lead_id}",
-            headers=viewer_headers,
-            json={"status": "CONTACTED"},
-        )
-        assert update.status_code == 403
-    finally:
-        settings.admin_basic_username = original_admin_username
-        settings.admin_basic_password = original_admin_password
-        settings.viewer_basic_username = original_viewer_username
-        settings.viewer_basic_password = original_viewer_password
+    update = viewer_client.patch(
+        f"/v1/admin/leads/{lead_id}",
+        json={"status": "CONTACTED"},
+    )
+    assert update.status_code == 403
 
 
-def test_dispatcher_can_manage_bookings_but_not_pricing(client, async_session_maker):
-    settings.admin_basic_username = "admin"
-    settings.admin_basic_password = "secret"
-    settings.dispatcher_basic_username = "dispatcher"
-    settings.dispatcher_basic_password = "dispatch-secret"
+def test_dispatcher_can_manage_bookings_but_not_pricing(
+    admin_client, dispatcher_client, async_session_maker
+):
     original_stripe_key = settings.stripe_secret_key
     settings.stripe_secret_key = "sk_test_key"
     original_deposit_percent = settings.deposit_percent
     settings.deposit_percent = 0
 
     try:
-        lead_id = _create_lead(client)
-        booking_id = _create_booking(client, lead_id=lead_id)
+        lead_id = _create_lead(admin_client)
+        booking_id = _create_booking(admin_client, lead_id=lead_id)
 
-        dispatcher_headers = _basic_auth_header("dispatcher", "dispatch-secret")
-        leads_response = client.get("/v1/admin/leads", headers=dispatcher_headers)
+        leads_response = dispatcher_client.get("/v1/admin/leads")
         assert leads_response.status_code == 200
 
-        update = client.patch(
+        update = dispatcher_client.patch(
             f"/v1/admin/leads/{lead_id}",
-            headers=dispatcher_headers,
             json={"status": "CONTACTED"},
         )
         assert update.status_code == 200
 
-        confirm = client.post(f"/v1/admin/bookings/{booking_id}/confirm", headers=dispatcher_headers)
+        confirm = dispatcher_client.post(f"/v1/admin/bookings/{booking_id}/confirm")
         assert confirm.status_code == 200
         assert confirm.json()["status"] == "CONFIRMED"
 
@@ -243,30 +179,28 @@ def test_dispatcher_can_manage_bookings_but_not_pricing(client, async_session_ma
             ),
             "time_on_site_hours": 1.5,
         }
-        reschedule = client.post(
-            f"/v1/admin/bookings/{booking_id}/reschedule", headers=dispatcher_headers, json=reschedule_payload
+        reschedule = dispatcher_client.post(
+            f"/v1/admin/bookings/{booking_id}/reschedule", json=reschedule_payload
         )
         assert reschedule.status_code == 200
 
-        cancel = client.post(f"/v1/admin/bookings/{booking_id}/cancel", headers=dispatcher_headers)
+        cancel = dispatcher_client.post(f"/v1/admin/bookings/{booking_id}/cancel")
         assert cancel.status_code == 200
         assert cancel.json()["status"] == "CANCELLED"
 
-        pricing_attempt = client.post("/v1/admin/pricing/reload", headers=dispatcher_headers)
+        pricing_attempt = dispatcher_client.post("/v1/admin/pricing/reload")
         assert pricing_attempt.status_code == 403
 
-        admin_headers = _basic_auth_header("admin", "secret")
-        admin_pricing = client.post("/v1/admin/pricing/reload", headers=admin_headers)
+        admin_pricing = admin_client.post("/v1/admin/pricing/reload")
         assert admin_pricing.status_code == 202
     finally:
         settings.stripe_secret_key = original_stripe_key
         settings.deposit_percent = original_deposit_percent
 
 
-def test_dispatcher_reassign_and_reschedule_validation(client, async_session_maker):
-    settings.dispatcher_basic_username = "dispatcher"
-    settings.dispatcher_basic_password = "dispatch-secret"
-
+def test_dispatcher_reassign_and_reschedule_validation(
+    dispatcher_client, async_session_maker
+):
     async def _seed_data() -> tuple[str, int]:
         async with async_session_maker() as session:
             from app.domain.bookings.db_models import Booking
@@ -285,26 +219,21 @@ def test_dispatcher_reassign_and_reschedule_validation(client, async_session_mak
             return booking.booking_id, worker.worker_id
 
     booking_id, worker_id = asyncio.run(_seed_data())
-    dispatcher_headers = _basic_auth_header("dispatcher", "dispatch-secret")
-
-    response = client.post(
+    response = dispatcher_client.post(
         f"/v1/admin/dispatcher/bookings/{booking_id}/reassign",
-        headers=dispatcher_headers,
         json={"worker_id": worker_id},
     )
     assert response.status_code == 200
     assert response.json()["assigned_worker"]["id"] == worker_id
 
-    invalid_worker = client.post(
+    invalid_worker = dispatcher_client.post(
         f"/v1/admin/dispatcher/bookings/{booking_id}/reassign",
-        headers=dispatcher_headers,
         json={"worker_id": 99999},
     )
     assert invalid_worker.status_code == 404
 
-    invalid_reschedule = client.post(
+    invalid_reschedule = dispatcher_client.post(
         f"/v1/admin/dispatcher/bookings/{booking_id}/reschedule",
-        headers=dispatcher_headers,
         json={
             "starts_at": datetime.now(tz=timezone.utc).isoformat(),
             "ends_at": datetime.now(tz=timezone.utc).isoformat(),

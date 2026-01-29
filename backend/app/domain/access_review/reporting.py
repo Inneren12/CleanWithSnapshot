@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,16 @@ def _sha256_file(path: Path) -> str:
 
 def _stable_json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, indent=2)
+
+
+def _normalize_org_ids(snapshot: dict[str, Any]) -> list[uuid.UUID]:
+    org_ids = [entry.get("org_id") for entry in snapshot.get("orgs", []) if entry.get("org_id")]
+    if not org_ids and snapshot.get("org_id"):
+        org_ids = [snapshot.get("org_id")]
+    return [
+        org_id if isinstance(org_id, uuid.UUID) else uuid.UUID(str(org_id))
+        for org_id in org_ids
+    ]
 
 
 def _summarize_anomalies(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -79,9 +90,7 @@ async def build_audit_extract_payload(
     break_glass_lookback_days = int(config.get("break_glass_lookback_days", 0))
     window_start = as_of - timedelta(days=lookback_days)
     break_glass_window_start = as_of - timedelta(days=break_glass_lookback_days)
-    org_ids = [entry.get("org_id") for entry in snapshot.get("orgs", []) if entry.get("org_id")]
-    if not org_ids and snapshot.get("org_id"):
-        org_ids = [snapshot.get("org_id")]
+    org_ids = _normalize_org_ids(snapshot)
 
     events: list[dict[str, Any]] = []
     break_glass_events: list[dict[str, Any]] = []

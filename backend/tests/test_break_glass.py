@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -12,8 +13,8 @@ from app.settings import settings
 
 @pytest.mark.anyio
 async def test_break_glass_start_requires_reason_and_audits(async_session_maker, client):
-    settings.admin_basic_username = "owner"
-    settings.admin_basic_password = "secret"
+    settings.owner_basic_username = "owner"
+    settings.owner_basic_password = "secret"
 
     response = client.post(
         "/v1/admin/break-glass/start",
@@ -41,8 +42,8 @@ async def test_break_glass_start_requires_reason_and_audits(async_session_maker,
 
 @pytest.mark.anyio
 async def test_break_glass_token_expires(async_session_maker, client):
-    settings.admin_basic_username = "owner"
-    settings.admin_basic_password = "secret"
+    settings.owner_basic_username = "owner"
+    settings.owner_basic_password = "secret"
     settings.admin_read_only = True
 
     start = client.post(
@@ -80,8 +81,8 @@ async def test_break_glass_token_expires(async_session_maker, client):
 
 @pytest.mark.anyio
 async def test_read_only_allows_break_glass_write(async_session_maker, client):
-    settings.admin_basic_username = "owner"
-    settings.admin_basic_password = "secret"
+    settings.owner_basic_username = "owner"
+    settings.owner_basic_password = "secret"
     settings.admin_read_only = True
 
     start = client.post(
@@ -115,8 +116,8 @@ async def test_read_only_allows_break_glass_write(async_session_maker, client):
 
 @pytest.mark.anyio
 async def test_break_glass_ttl_is_capped(async_session_maker, client):
-    settings.admin_basic_username = "owner"
-    settings.admin_basic_password = "secret"
+    settings.owner_basic_username = "owner"
+    settings.owner_basic_password = "secret"
     settings.break_glass_max_ttl_minutes = 60
     settings.break_glass_default_ttl_minutes = 30
 
@@ -132,8 +133,8 @@ async def test_break_glass_ttl_is_capped(async_session_maker, client):
 
 @pytest.mark.anyio
 async def test_break_glass_metrics_emitted(client):
-    settings.admin_basic_username = "owner"
-    settings.admin_basic_password = "secret"
+    settings.owner_basic_username = "owner"
+    settings.owner_basic_password = "secret"
     settings.metrics_enabled = True
     app_metrics = configure_metrics(True, service_name=settings.app_name)
 
@@ -150,15 +151,15 @@ async def test_break_glass_metrics_emitted(client):
 
 @pytest.mark.anyio
 async def test_break_glass_review_requires_closure(async_session_maker, client):
-    settings.admin_basic_username = "owner"
-    settings.admin_basic_password = "secret"
+    settings.owner_basic_username = "owner"
+    settings.owner_basic_password = "secret"
 
     start = client.post(
         "/v1/admin/break-glass/start",
         json={"reason": "review flow", "incident_ref": "INC-600"},
         auth=("owner", "secret"),
     )
-    session_id = start.json()["session_id"]
+    session_id = uuid.UUID(start.json()["session_id"])
 
     active_review = client.post(
         f"/v1/admin/break-glass/{session_id}/review",

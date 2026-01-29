@@ -233,7 +233,7 @@ async def upsert_org_feature_overrides(
     record = await session.get(OrgFeatureConfig, org_id)
     before_overrides = normalize_feature_overrides(record.feature_overrides) if record else {}
     changed_keys = set(before_overrides.keys()) | set(overrides.keys())
-    audits: list[tuple[str, dict | None, dict | None, FeatureFlagAuditAction]] = []
+    audits: list[tuple[str, dict | None, dict | None, FeatureFlagAuditAction, bool | None]] = []
     for key in sorted(changed_keys):
         before_override = before_overrides.get(key)
         after_override = overrides.get(key)
@@ -277,16 +277,21 @@ async def upsert_org_feature_overrides(
             before_override=before_override,
             after_override=after_override,
         )
-        audits.append((key, before_state, after_state, action))
+        audits.append((key, before_state, after_state, action, after_override))
     if record:
         record.feature_overrides = overrides
     else:
         record = OrgFeatureConfig(org_id=org_id, feature_overrides=overrides)
         session.add(record)
     await session.flush()
-    for key, before_state, after_state, action in audits:
+    for key, before_state, after_state, action, after_override in audits:
+        enabled_value = after_override if after_override is not None else after_state["enabled"]
+        if action == FeatureFlagAuditAction.ENABLE:
+            enabled_value = True
+        elif action == FeatureFlagAuditAction.DISABLE:
+            enabled_value = False
         rollout_context = feature_flag_audit_service.build_rollout_context(
-            enabled=after_state["enabled"],
+            enabled=enabled_value,
             targeting_rules=after_state.get("targeting_rules"),
             reason=rollout_reason,
         )

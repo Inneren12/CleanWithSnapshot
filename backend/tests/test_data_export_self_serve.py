@@ -103,7 +103,9 @@ async def test_export_job_generates_bundle(async_session_maker):
 async def test_download_scoped_to_subject_and_admin(async_session_maker, client):
     storage = InMemoryStorageBackend()
     original_storage = getattr(client.app.state, "storage_backend", None)
+    original_backend = settings.order_storage_backend
     client.app.state.storage_backend = storage
+    settings.order_storage_backend = "memory"
     async with async_session_maker() as session:
         lead = await _seed_lead(session, org_id=settings.default_org_id, email="download@example.com")
         client_user = await _seed_client(session, org_id=settings.default_org_id, email=lead.email)
@@ -137,6 +139,7 @@ async def test_download_scoped_to_subject_and_admin(async_session_maker, client)
         subject_response = client.get(
             f"/v1/data-rights/exports/{record.export_id}/download",
             headers=_client_auth_header(token),
+            follow_redirects=False,
         )
         assert subject_response.status_code == 307
 
@@ -144,10 +147,12 @@ async def test_download_scoped_to_subject_and_admin(async_session_maker, client)
         admin_response = client.get(
             f"/v1/data-rights/exports/{record.export_id}/download",
             headers={"Authorization": f"Bearer {admin_token}"},
+            follow_redirects=False,
         )
         assert admin_response.status_code == 307
     finally:
         client.app.state.storage_backend = original_storage
+        settings.order_storage_backend = original_backend
 
 
 @pytest.mark.anyio

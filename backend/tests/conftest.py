@@ -8,6 +8,7 @@ os.environ["APP_ENV"] = "dev"
 os.environ["TESTING"] = "true"
 
 import asyncio
+import base64
 import inspect
 import sys
 from pathlib import Path
@@ -82,6 +83,7 @@ from app.domain.feature_flags import db_models as feature_flags_db_models  # noq
 from app.domain.feature_modules import service as feature_service
 from app.domain.audit_retention import db_models as audit_retention_db_models  # noqa: F401
 from app.domain.access_review import db_models as access_review_db_models  # noqa: F401
+from app.infra.admin_proxy_auth import build_e2e_proxy_headers, build_proxy_headers
 from app.infra.bot_store import InMemoryBotStore
 from app.infra.db import Base, get_db_session
 from app.infra.org_context import set_current_org_id
@@ -99,6 +101,58 @@ def pytest_collection_modifyitems(items):
         # Check if test is in smoke directory (handle both Unix and Windows paths)
         if "/tests/smoke/" in test_path or "\\tests\\smoke\\" in test_path:
             item.add_marker(pytest.mark.smoke)
+
+
+def make_admin_headers(
+    *,
+    username: str | None = None,
+    password: str | None = None,
+    role: str | None = None,
+    org_id: uuid.UUID | None = DEFAULT_ORG_ID,
+    mfa_verified: bool = True,
+) -> dict[str, str]:
+    if settings.admin_proxy_auth_enabled:
+        admin_user = username or settings.admin_basic_username or "admin"
+        admin_role = role or "admin"
+        admin_email = f"{admin_user}@example.com"
+        proxy_secret = settings.admin_proxy_auth_secret or ""
+        if settings.admin_proxy_auth_e2e_enabled:
+            headers = build_e2e_proxy_headers(
+                proxy_secret=proxy_secret,
+                e2e_secret=settings.admin_proxy_auth_e2e_secret or "",
+                user=admin_user,
+                email=admin_email,
+                roles=admin_role,
+                mfa_verified=mfa_verified,
+                timestamp=None,
+            )
+        else:
+            headers = build_proxy_headers(
+                proxy_secret=proxy_secret,
+                user=admin_user,
+                email=admin_email,
+                roles=admin_role,
+                mfa_verified=mfa_verified,
+            )
+    else:
+        role_defaults = {
+            "viewer": (settings.viewer_basic_username, settings.viewer_basic_password),
+            "dispatcher": (settings.dispatcher_basic_username, settings.dispatcher_basic_password),
+            "accountant": (settings.accountant_basic_username, settings.accountant_basic_password),
+            "owner": (settings.owner_basic_username, settings.owner_basic_password),
+        }
+        default_user, default_password = role_defaults.get(role or "", (None, None))
+        auth_user = username or default_user or settings.admin_basic_username
+        auth_password = password or default_password or settings.admin_basic_password
+        token = base64.b64encode(f"{auth_user}:{auth_password}".encode("utf-8")).decode("utf-8")
+        headers = {
+            "Authorization": f"Basic {token}",
+            settings.admin_proxy_auth_header_mfa: "true" if mfa_verified else "false",
+        }
+
+    if org_id is not None:
+        headers["X-Test-Org"] = str(org_id)
+    return headers
 
 
 @pytest.fixture(scope="session")
@@ -201,9 +255,18 @@ def restore_admin_settings():
     original_email_mode = getattr(settings, "email_mode", "off")
     original_legacy_basic_auth_enabled = getattr(settings, "legacy_basic_auth_enabled", True)
     original_auth_secret_key = getattr(settings, "auth_secret_key", "")
+    original_default_org_id = getattr(settings, "default_org_id", None)
     original_admin_mfa_required = getattr(settings, "admin_mfa_required", False)
     original_admin_mfa_roles = getattr(settings, "admin_mfa_required_roles_raw", None)
     original_admin_read_only = getattr(settings, "admin_read_only", False)
+    original_admin_proxy_auth_enabled = getattr(settings, "admin_proxy_auth_enabled", False)
+    original_admin_proxy_auth_required = getattr(settings, "admin_proxy_auth_required", False)
+    original_admin_proxy_auth_secret = getattr(settings, "admin_proxy_auth_secret", None)
+    original_admin_proxy_auth_e2e_enabled = getattr(settings, "admin_proxy_auth_e2e_enabled", False)
+    original_admin_proxy_auth_e2e_secret = getattr(settings, "admin_proxy_auth_e2e_secret", None)
+    original_admin_proxy_auth_e2e_ttl_seconds = getattr(
+        settings, "admin_proxy_auth_e2e_ttl_seconds", 300
+    )
     original_admin_ip_allowlist = getattr(settings, "admin_ip_allowlist_cidrs_raw", None)
     original_trust_proxy_headers = getattr(settings, "trust_proxy_headers", False)
     original_trusted_proxy_ips = getattr(settings, "trusted_proxy_ips_raw", None)
@@ -240,6 +303,9 @@ def restore_admin_settings():
         settings, "data_export_download_lockout_window_seconds", 1800
     )
     original_data_export_cooldown_minutes = getattr(settings, "data_export_cooldown_minutes", 30)
+    original_rate_limit_disable_exempt_paths = getattr(
+        settings, "rate_limit_disable_exempt_paths", False
+    )
     yield
     settings.admin_basic_username = original_username
     settings.admin_basic_password = original_password
@@ -253,10 +319,18 @@ def restore_admin_settings():
     settings.job_heartbeat_ttl_seconds = original_job_heartbeat_ttl
     settings.legacy_basic_auth_enabled = original_legacy_basic_auth_enabled
     settings.auth_secret_key = original_auth_secret_key
+    if original_default_org_id is not None:
+        settings.default_org_id = original_default_org_id
     settings.email_mode = original_email_mode
     settings.admin_mfa_required = original_admin_mfa_required
     settings.admin_mfa_required_roles_raw = original_admin_mfa_roles
     settings.admin_read_only = original_admin_read_only
+    settings.admin_proxy_auth_enabled = original_admin_proxy_auth_enabled
+    settings.admin_proxy_auth_required = original_admin_proxy_auth_required
+    settings.admin_proxy_auth_secret = original_admin_proxy_auth_secret
+    settings.admin_proxy_auth_e2e_enabled = original_admin_proxy_auth_e2e_enabled
+    settings.admin_proxy_auth_e2e_secret = original_admin_proxy_auth_e2e_secret
+    settings.admin_proxy_auth_e2e_ttl_seconds = original_admin_proxy_auth_e2e_ttl_seconds
     settings.admin_ip_allowlist_cidrs_raw = original_admin_ip_allowlist
     settings.trust_proxy_headers = original_trust_proxy_headers
     settings.trusted_proxy_ips_raw = original_trusted_proxy_ips
@@ -293,6 +367,7 @@ def restore_admin_settings():
         original_data_export_download_lockout_window_seconds
     )
     settings.data_export_cooldown_minutes = original_data_export_cooldown_minutes
+    settings.rate_limit_disable_exempt_paths = original_rate_limit_disable_exempt_paths
 
 
 @pytest.fixture(autouse=True)
@@ -304,8 +379,21 @@ def enable_test_mode():
     settings.legacy_basic_auth_enabled = True
     settings.admin_basic_username = "admin"
     settings.admin_basic_password = "admin123"
+    settings.dispatcher_basic_username = "dispatcher"
+    settings.dispatcher_basic_password = "dispatcher123"
+    settings.accountant_basic_username = "accountant"
+    settings.accountant_basic_password = "accountant123"
     settings.viewer_basic_username = "viewer"
     settings.viewer_basic_password = "viewer123"
+    settings.admin_proxy_auth_enabled = False
+    settings.admin_proxy_auth_required = False
+    settings.admin_proxy_auth_secret = "test-proxy-auth-secret-32-characters-long"
+    settings.admin_proxy_auth_e2e_enabled = False
+    settings.admin_proxy_auth_e2e_secret = "test-e2e-proxy-auth-secret-32chars"
+    settings.admin_proxy_auth_e2e_ttl_seconds = 3600
+    settings.trust_proxy_headers = True
+    settings.trusted_proxy_ips = ["testclient"]
+    settings.trusted_proxy_cidrs = []
     from app.infra.email import resolve_email_adapter
 
     app.state.email_adapter = resolve_email_adapter(settings)
@@ -403,6 +491,18 @@ def clean_database(test_engine):
                     for day in range(7)
                 ],
             )
+            await session.execute(
+                sa.insert(feature_flags_db_models.FeatureFlagDefinition),
+                [
+                    {
+                        "key": key,
+                        "owner": "test-suite",
+                        "purpose": "Seeded for tests.",
+                        "lifecycle_state": "active",
+                    }
+                    for key in feature_service.FEATURE_KEYS
+                ],
+            )
             await session.commit()
 
     asyncio.run(truncate_tables())
@@ -433,8 +533,7 @@ def clean_database(test_engine):
     yield
 
 
-@pytest.fixture()
-def client(async_session_maker):
+def _build_test_client(async_session_maker, *, headers=None, raise_server_exceptions=True):
     ensure_event_loop()
 
     async def override_db_session():
@@ -445,25 +544,69 @@ def client(async_session_maker):
     app.state.bot_store = InMemoryBotStore()
     original_factory = getattr(app.state, "db_session_factory", None)
     app.state.db_session_factory = async_session_maker
-    with TestClient(app) as test_client:
+    with TestClient(
+        app,
+        raise_server_exceptions=raise_server_exceptions,
+        headers=headers,
+    ) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     app.state.db_session_factory = original_factory
 
 
 @pytest.fixture()
-def client_no_raise(async_session_maker):
+def admin_client(async_session_maker):
+    default_headers = make_admin_headers(role="admin")
+    yield from _build_test_client(async_session_maker, headers=default_headers)
+
+
+@pytest.fixture()
+def viewer_client(async_session_maker):
+    default_headers = make_admin_headers(role="viewer")
+    yield from _build_test_client(async_session_maker, headers=default_headers)
+
+
+@pytest.fixture()
+def dispatcher_client(async_session_maker):
+    default_headers = make_admin_headers(role="dispatcher")
+    yield from _build_test_client(async_session_maker, headers=default_headers)
+
+
+@pytest.fixture()
+def accountant_client(async_session_maker):
+    default_headers = make_admin_headers(role="accountant")
+    yield from _build_test_client(async_session_maker, headers=default_headers)
+
+
+@pytest.fixture()
+def anon_client(async_session_maker):
+    yield from _build_test_client(async_session_maker)
+
+
+@pytest.fixture()
+def admin_client_no_raise(async_session_maker):
+    default_headers = make_admin_headers(role="admin")
+    yield from _build_test_client(
+        async_session_maker, headers=default_headers, raise_server_exceptions=False
+    )
+
+
+@pytest.fixture()
+def anon_client_no_raise(async_session_maker):
     """Test client that returns HTTP responses instead of raising server exceptions."""
+    yield from _build_test_client(async_session_maker, raise_server_exceptions=False)
 
-    async def override_db_session():
-        async with async_session_maker() as session:
-            yield session
 
-    app.dependency_overrides[get_db_session] = override_db_session
-    app.state.bot_store = InMemoryBotStore()
-    original_factory = getattr(app.state, "db_session_factory", None)
-    app.state.db_session_factory = async_session_maker
-    with TestClient(app, raise_server_exceptions=False) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
-    app.state.db_session_factory = original_factory
+@pytest.fixture()
+def client(anon_client):
+    yield anon_client
+
+
+@pytest.fixture()
+def client_no_raise(anon_client_no_raise):
+    yield anon_client_no_raise
+
+
+@pytest.fixture()
+def unauthenticated_client(anon_client):
+    yield anon_client

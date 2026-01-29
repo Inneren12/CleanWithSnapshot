@@ -42,7 +42,7 @@ def reset_evaluation_cache() -> None:
 def _resolve_effective_state(
     definition: FeatureFlagDefinition, *, now: datetime | None = None
 ) -> FeatureFlagLifecycleState:
-    now = now or datetime.now(tz=timezone.utc)
+    now = _ensure_timezone(now or datetime.now(tz=timezone.utc))
     if definition.lifecycle_state == FeatureFlagLifecycleState.RETIRED.value:
         return FeatureFlagLifecycleState.RETIRED
     if definition.expires_at and _ensure_timezone(definition.expires_at) <= now:
@@ -62,7 +62,7 @@ def _validate_expiration_horizon(
     expires_at: datetime, *, override_max_horizon: bool, override_reason: str | None
 ) -> None:
     _validate_override_reason(override_max_horizon, override_reason)
-    now = datetime.now(tz=timezone.utc)
+    now = _ensure_timezone(datetime.now(tz=timezone.utc))
     normalized = _ensure_timezone(expires_at)
     if normalized <= now:
         raise HTTPException(
@@ -112,7 +112,7 @@ async def list_feature_flag_definitions(
     state: FeatureFlagLifecycleState | None = None,
     expiring_within_days: int | None = None,
 ) -> list[FeatureFlagDefinition]:
-    now = datetime.now(tz=timezone.utc)
+    now = _ensure_timezone(datetime.now(tz=timezone.utc))
     stmt = select(FeatureFlagDefinition).order_by(FeatureFlagDefinition.key.asc())
     if expiring_within_days is not None:
         if expiring_within_days not in ALLOWED_EXPIRING_WINDOWS:
@@ -163,43 +163,35 @@ async def record_feature_flag_evaluation(
 ) -> bool:
     if not key:
         return False
-    should_commit = not session.new and not session.dirty and not session.deleted
-    now = now or datetime.now(tz=timezone.utc)
+    should_commit = (
+        not session.in_transaction()
+        and not session.new
+        and not session.dirty
+        and not session.deleted
+    )
+    now = _ensure_timezone(now or datetime.now(tz=timezone.utc))
     throttle_minutes = (
         settings.feature_flag_evaluation_throttle_minutes
         if throttle_minutes is None
         else throttle_minutes
     )
-    if throttle_minutes and throttle_minutes > 0:
-        last_seen = _EVALUATION_CACHE.get(key)
-        if last_seen and now - last_seen < timedelta(minutes=throttle_minutes):
-            return False
-        cutoff = now - timedelta(minutes=throttle_minutes)
-        stmt = (
-            sa.update(FeatureFlagDefinition)
-            .where(
-                FeatureFlagDefinition.key == key,
-                sa.or_(
-                    FeatureFlagDefinition.last_evaluated_at.is_(None),
-                    FeatureFlagDefinition.last_evaluated_at < cutoff,
-                ),
-            )
-            .values(
-                last_evaluated_at=now,
-                evaluate_count=FeatureFlagDefinition.evaluate_count + 1,
-            )
+    stmt = (
+        sa.update(FeatureFlagDefinition)
+        .where(FeatureFlagDefinition.key == key)
+        .values(
+            last_evaluated_at=now,
+            evaluate_count=FeatureFlagDefinition.evaluate_count + 1,
         )
-    else:
-        stmt = (
-            sa.update(FeatureFlagDefinition)
-            .where(FeatureFlagDefinition.key == key)
-            .values(
-                last_evaluated_at=now,
-                evaluate_count=FeatureFlagDefinition.evaluate_count + 1,
+    )
+    if throttle_minutes and throttle_minutes > 0:
+        cutoff = now - timedelta(minutes=throttle_minutes)
+        stmt = stmt.where(
+            sa.or_(
+                FeatureFlagDefinition.last_evaluated_at.is_(None),
+                FeatureFlagDefinition.last_evaluated_at < cutoff,
             )
         )
     result = await session.execute(stmt)
-    _EVALUATION_CACHE[key] = now
     if should_commit:
         await session.commit()
     return bool(result.rowcount)
@@ -354,15 +346,21 @@ async def list_stale_feature_flag_definitions(
     offset: int = 0,
     now: datetime | None = None,
 ) -> tuple[list[FeatureFlagDefinition], int, datetime | None]:
-    now = now or datetime.now(tz=timezone.utc)
+    now = _ensure_timezone(now or datetime.now(tz=timezone.utc))
     condition, cutoff = _stale_condition(
         now=now, include_never=include_never, inactive_days=inactive_days
     )
     if condition is None:
         return [], 0, cutoff
 
-    stmt = select(FeatureFlagDefinition).where(condition)
-    count_stmt = select(sa.func.count()).select_from(FeatureFlagDefinition).where(condition)
+    stmt = select(FeatureFlagDefinition).where(
+        condition, FeatureFlagDefinition.expires_at.is_not(None)
+    )
+    count_stmt = (
+        select(sa.func.count())
+        .select_from(FeatureFlagDefinition)
+        .where(condition, FeatureFlagDefinition.expires_at.is_not(None))
+    )
 
     if lifecycle_state is not None:
         state_value = lifecycle_state.value
@@ -391,7 +389,7 @@ async def stale_feature_flag_metrics_snapshot(
     expired_recent_days: int,
     now: datetime | None = None,
 ) -> dict[str, int]:
-    now = now or datetime.now(tz=timezone.utc)
+    now = _ensure_timezone(now or datetime.now(tz=timezone.utc))
     cutoff = now - timedelta(days=inactive_days)
     expired_cutoff = now - timedelta(days=expired_recent_days)
     stale_never_stmt = select(sa.func.count()).select_from(FeatureFlagDefinition).where(
@@ -452,7 +450,7 @@ async def list_retirement_candidates(
     max_evaluate_count: int,
     now: datetime | None = None,
 ) -> list[FeatureFlagRetirementCandidate]:
-    now = now or datetime.now(tz=timezone.utc)
+    now = _ensure_timezone(now or datetime.now(tz=timezone.utc))
     recent_cutoff = _recent_evaluation_cutoff(now, recent_evaluation_days)
     candidates: dict[str, FeatureFlagRetirementCandidate] = {}
 

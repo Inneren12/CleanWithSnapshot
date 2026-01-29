@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """CI helper for signed admin proxy probes."""
 
-from __future__ import annotations
-
 import argparse
-import hmac
 import os
 import time
 import urllib.request
 from dataclasses import dataclass
 from typing import Mapping
 
+from app.infra.admin_proxy_auth import build_e2e_proxy_headers
 
 @dataclass(frozen=True)
 class ProbeConfig:
@@ -41,28 +39,32 @@ def build_probe_config() -> ProbeConfig:
     )
 
 
-def _signature_payload(config: ProbeConfig) -> bytes:
-    payload = "\n".join(
-        [config.e2e_user, config.e2e_email, config.e2e_roles, config.timestamp, config.mfa]
-    )
-    return payload.encode("utf-8")
-
-
 def build_signed_headers(config: ProbeConfig) -> dict[str, str]:
-    signature = hmac.new(
-        config.e2e_secret.encode("utf-8"),
-        _signature_payload(config),
-        "sha256",
-    ).hexdigest()
-    return {
-        "X-Proxy-Auth-Secret": config.proxy_secret,
-        "X-Auth-MFA": config.mfa,
-        "X-E2E-Admin-User": config.e2e_user,
-        "X-E2E-Admin-Email": config.e2e_email,
-        "X-E2E-Admin-Roles": config.e2e_roles,
-        "X-E2E-Proxy-Timestamp": config.timestamp,
-        "X-E2E-Proxy-Signature": signature,
-    }
+    missing = [
+        name
+        for name, value in {
+            "ADMIN_PROXY_AUTH_SECRET": config.proxy_secret,
+            "ADMIN_PROXY_AUTH_E2E_USER": config.e2e_user,
+            "ADMIN_PROXY_AUTH_E2E_EMAIL": config.e2e_email,
+            "ADMIN_PROXY_AUTH_E2E_SECRET": config.e2e_secret,
+            "ADMIN_PROXY_AUTH_E2E_ROLES": config.e2e_roles,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise ValueError(f"Missing required values: {', '.join(missing)}")
+    headers = build_e2e_proxy_headers(
+        proxy_secret=config.proxy_secret,
+        e2e_secret=config.e2e_secret,
+        user=config.e2e_user,
+        email=config.e2e_email,
+        roles=config.e2e_roles,
+        mfa_verified=config.mfa == "true",
+        timestamp=int(config.timestamp),
+    )
+    if not isinstance(headers, dict):
+        raise ValueError("Proxy headers must be a mapping")
+    return headers
 
 
 def _validate_config(config: ProbeConfig) -> None:

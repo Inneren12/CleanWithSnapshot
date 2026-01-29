@@ -6,8 +6,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
+import asyncio
 
 import sqlalchemy as sa
+from sqlalchemy import event
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +35,28 @@ from app.settings import settings
 
 DEFAULT_ORG_NAME = "Default Org"
 logger = logging.getLogger(__name__)
+_ORG_USER_QUOTA_LOCKS: dict[uuid.UUID, asyncio.Lock] = {}
+
+
+async def _ensure_org_user_quota_lock(session: AsyncSession, org_id: uuid.UUID) -> None:
+    lock = _ORG_USER_QUOTA_LOCKS.setdefault(org_id, asyncio.Lock())
+    if session.info.get("org_user_quota_lock") is lock:
+        return
+    await lock.acquire()
+    session.info["org_user_quota_lock"] = lock
+
+    def _release_lock(session_sync) -> None:  # noqa: ANN001
+        held_lock = session_sync.info.pop("org_user_quota_lock", None)
+        if held_lock and held_lock.locked():
+            held_lock.release()
+
+    event.listen(session.sync_session, "after_commit", _release_lock, once=True)
+    event.listen(session.sync_session, "after_rollback", _release_lock, once=True)
+
+
+def _is_sqlite(session: AsyncSession) -> bool:
+    bind = session.get_bind()
+    return getattr(getattr(bind, "dialect", None), "name", "") == "sqlite"
 
 
 @dataclass(frozen=True)
@@ -214,6 +238,17 @@ async def count_active_memberships(session: AsyncSession, org_id: uuid.UUID) -> 
     return int(result.scalar_one() or 0)
 
 
+async def count_billable_memberships(session: AsyncSession, org_id: uuid.UUID) -> int:
+    result = await session.execute(
+        sa.select(sa.func.count(Membership.membership_id)).where(
+            Membership.org_id == org_id,
+            Membership.is_active.is_(True),
+            Membership.role.notin_([MembershipRole.OWNER, MembershipRole.ADMIN]),
+        )
+    )
+    return int(result.scalar_one() or 0)
+
+
 async def get_org_user_quota_snapshot(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -221,9 +256,16 @@ async def get_org_user_quota_snapshot(
     lock_org: bool = False,
 ) -> OrgUserQuotaSnapshot:
     if lock_org:
-        await session.execute(
-            sa.select(Organization).where(Organization.org_id == org_id).with_for_update()
-        )
+        if _is_sqlite(session):
+            await session.execute(
+                sa.update(Organization)
+                .where(Organization.org_id == org_id)
+                .values(name=Organization.name)
+            )
+        else:
+            await session.execute(
+                sa.select(Organization).where(Organization.org_id == org_id).with_for_update()
+            )
     settings_record = await org_settings_service.get_or_create_org_settings(session, org_id)
     current_users = await count_active_memberships(session, org_id)
     return OrgUserQuotaSnapshot(
@@ -245,10 +287,34 @@ async def enforce_org_user_quota(
     This is a hard gate (not a soft limit) so user creation fails before any membership write,
     ensuring deterministic, race-safe enforcement under concurrent requests.
     """
+    if _is_sqlite(session):
+        await _ensure_org_user_quota_lock(session, org_id)
+        return await _enforce_org_user_quota_inner(
+            session,
+            org_id,
+            attempted_action=attempted_action,
+            audit_identity=audit_identity,
+        )
+    return await _enforce_org_user_quota_inner(
+        session,
+        org_id,
+        attempted_action=attempted_action,
+        audit_identity=audit_identity,
+    )
+
+
+async def _enforce_org_user_quota_inner(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    attempted_action: str,
+    audit_identity: AdminIdentity | None = None,
+) -> OrgUserQuotaSnapshot:
     snapshot = await get_org_user_quota_snapshot(session, org_id, lock_org=True)
+    billable_users_count = await count_billable_memberships(session, org_id)
     if snapshot.max_users is None:
         return snapshot
-    if snapshot.current_users_count >= snapshot.max_users:
+    if billable_users_count >= snapshot.max_users:
         if audit_identity is not None:
             await admin_audit_service.record_action(
                 session,
@@ -261,6 +327,7 @@ async def enforce_org_user_quota(
                 after={
                     "attempted_action": attempted_action,
                     "current_users_count": snapshot.current_users_count,
+                    "billable_users_count": billable_users_count,
                     "max_users": snapshot.max_users,
                 },
             )
@@ -271,6 +338,7 @@ async def enforce_org_user_quota(
                     "org_id": str(org_id),
                     "attempted_action": attempted_action,
                     "current_users_count": snapshot.current_users_count,
+                    "billable_users_count": billable_users_count,
                     "max_users": snapshot.max_users,
                 }
             },

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from fastapi.encoders import jsonable_encoder
@@ -207,6 +207,7 @@ async def audit_integration_config_change(
     )
 
     log = IntegrationAuditLog(
+        occurred_at=datetime.now(timezone.utc),
         actor_type=actor.actor_type.value,
         actor_id=actor.actor_id,
         actor_role=actor.actor_role,

@@ -8619,7 +8619,7 @@ async def list_invoices(
     _admin: AdminIdentity = Depends(require_permission_keys("invoices.view")),
     ) -> invoice_schemas.InvoiceListResponse:
     org_id = entitlements.resolve_org_id(http_request)
-    return await _query_invoice_list(
+    response = await _query_invoice_list(
         session=session,
         org_id=org_id,
         status_filter=status_filter,
@@ -8635,6 +8635,28 @@ async def list_invoices(
         page=page,
         page_size=page_size,
     )
+    if http_request is not None:
+        http_request.state.explicit_admin_audit = True
+        session_factory = getattr(http_request.app.state, "db_session_factory", None)
+        if session_factory is not None:
+            from app.domain.admin_audit import service as audit_service
+            from app.domain.admin_audit.db_models import AdminAuditActionType, AdminAuditSensitivity
+
+            async with session_factory() as audit_session:
+                await audit_service.audit_admin_action(
+                    audit_session,
+                    identity=_admin,
+                    org_id=org_id,
+                    action=f"{http_request.method} {http_request.url.path}",
+                    action_type=AdminAuditActionType.READ,
+                    sensitivity_level=AdminAuditSensitivity.SENSITIVE,
+                    resource_type="invoice",
+                    resource_id=None,
+                    before=None,
+                    after=None,
+                )
+                await audit_session.commit()
+    return response
 
 
 @router.get(

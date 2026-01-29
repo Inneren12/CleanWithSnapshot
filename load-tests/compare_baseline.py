@@ -39,7 +39,14 @@ def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def percentile_value(metric: Dict[str, Any], percentile: int) -> float:
+def percentile_value(
+    metric: Dict[str, Any],
+    percentile: int,
+    *,
+    mode: str,
+    warnings: List[str],
+    fallback_percentiles: List[int] | None = None,
+) -> float:
     direct_keys = [f"p({percentile})", f"p({percentile}.0)"]
     for key in direct_keys:
         if key in metric:
@@ -47,14 +54,46 @@ def percentile_value(metric: Dict[str, Any], percentile: int) -> float:
     for key, value in metric.items():
         if key.startswith(f"p({percentile}"):
             return float(value)
+    fallback_percentiles = fallback_percentiles or []
+    for fallback in fallback_percentiles:
+        for key in (f"p({fallback})", f"p({fallback}.0)"):
+            if key in metric:
+                warnings.append(
+                    f"Percentile p({percentile}) missing; falling back to p({fallback})."
+                )
+                return float(metric[key])
+        for key, value in metric.items():
+            if key.startswith(f"p({fallback}"):
+                warnings.append(
+                    f"Percentile p({percentile}) missing; falling back to p({fallback})."
+                )
+                return float(value)
+    if "max" in metric:
+        warnings.append(f"Percentile p({percentile}) missing; falling back to max.")
+        return float(metric["max"])
+    if mode == "warn":
+        warnings.append(f"Percentile p({percentile}) missing; using 0.0.")
+        return 0.0
     raise KeyError(f"Percentile p({percentile}) missing from metric: {metric.keys()}")
 
 
-def metric_rate(metrics: Dict[str, Any], metric_name: str) -> float:
+def metric_rate(
+    metrics: Dict[str, Any],
+    metric_name: str,
+    *,
+    mode: str,
+    warnings: List[str],
+) -> float:
     metric = metrics.get(metric_name)
     if metric is None:
+        if mode == "warn":
+            warnings.append(f"Metric '{metric_name}' missing from summary; using 0.0.")
+            return 0.0
         raise KeyError(f"Metric '{metric_name}' missing from summary")
     if "rate" not in metric:
+        if mode == "warn":
+            warnings.append(f"Metric '{metric_name}' missing rate field; using 0.0.")
+            return 0.0
         raise KeyError(f"Metric '{metric_name}' missing rate field")
     return float(metric["rate"])
 
@@ -118,12 +157,31 @@ def main() -> int:
 
     results_data = load_json(args.results)
     metrics = results_data.get("metrics", {})
+    warnings: List[str] = []
+
+    duration_metric = metrics.get("http_req_duration", {})
+    duration_count = int(duration_metric.get("count") or 0)
+    reqs_count = int(metrics.get("http_reqs", {}).get("count") or 0)
+    if args.mode == "warn" and (duration_count == 0 or reqs_count == 0):
+        print("Perf baseline skipped: no request data recorded in k6 results.")
+        return 0
 
     current = {
-        "p95_ms": percentile_value(metrics.get("http_req_duration", {}), 95),
-        "p99_ms": percentile_value(metrics.get("http_req_duration", {}), 99),
-        "error_rate": metric_rate(metrics, "http_req_failed"),
-        "rps": metric_rate(metrics, "http_reqs"),
+        "p95_ms": percentile_value(
+            duration_metric,
+            95,
+            mode=args.mode,
+            warnings=warnings,
+        ),
+        "p99_ms": percentile_value(
+            duration_metric,
+            99,
+            mode=args.mode,
+            warnings=warnings,
+            fallback_percentiles=[95],
+        ),
+        "error_rate": metric_rate(metrics, "http_req_failed", mode=args.mode, warnings=warnings),
+        "rps": metric_rate(metrics, "http_reqs", mode=args.mode, warnings=warnings),
     }
 
     baseline = scenarios[args.scenario]
@@ -140,6 +198,13 @@ def main() -> int:
     print(f"Mode     : {args.mode}")
     print(f"Baseline : {args.baseline}")
     print(f"Results  : {args.results}")
+    if warnings:
+        print("")
+        print("Warnings")
+        for warning in warnings:
+            print(f"- {warning}")
+        print("")
+
     print("")
     print(f"{'Metric':<12} {'Baseline':>12} {'Current':>12} {'Delta':>12} {'Status':>12}")
     print("-" * 64)

@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     rate_limit_cleanup_minutes: int = Field(10)
     rate_limit_fail_open_seconds: int = Field(300)
     rate_limit_redis_probe_seconds: float = Field(5.0)
+    rate_limit_disable_exempt_paths: bool = Field(
+        False, validation_alias="RATE_LIMIT_DISABLE_EXEMPT_PATHS"
+    )
     time_overrun_reason_threshold: float = Field(1.2)
     break_glass_default_ttl_minutes: int = Field(30)
     break_glass_max_ttl_minutes: int = Field(60)
@@ -124,12 +127,19 @@ class Settings(BaseSettings):
     )
     aws_region: str | None = Field(
         None,
-        validation_alias=AliasChoices("AWS_REGION", "AWS_DEFAULT_REGION", "aws_region"),
+        validation_alias=AliasChoices(
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AWS_SECRETS_MANAGER_REGION",
+            "aws_region",
+        ),
     )
     aws_secrets_manager_secret_id: str | None = Field(
         None,
         validation_alias=AliasChoices(
-            "AWS_SECRETS_MANAGER_SECRET_ID", "aws_secrets_manager_secret_id"
+            "AWS_SECRETS_MANAGER_SECRET_ID",
+            "AWS_SECRETS_MANAGER_SECRET_ARN",
+            "aws_secrets_manager_secret_id",
         ),
     )
     aws_secrets_manager_secret_json: str | None = Field(
@@ -485,11 +495,6 @@ class Settings(BaseSettings):
 
         if self.legacy_basic_auth_enabled is None:
             self.legacy_basic_auth_enabled = False
-
-        if self.app_env in SECURE_ENVIRONMENTS and not self.secrets_backend:
-            raise ValueError(
-                f"APP_ENV={self.app_env} requires SECRETS_BACKEND to be configured for secrets loading"
-            )
 
         if self.app_env in SECURE_ENVIRONMENTS and self.legacy_basic_auth_enabled:
             if not _basic_auth_creds_configured():

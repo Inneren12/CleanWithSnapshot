@@ -169,6 +169,8 @@ async def revoke_break_glass(
     identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
 ) -> BreakGlassReviewResponse:
     _require_break_glass_eligibility(request, identity)
+    if isinstance(session_id, str):
+        session_id = uuid.UUID(session_id)
     record = await session.get(BreakGlassSession, session_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Break-glass session not found")
@@ -219,6 +221,8 @@ async def review_break_glass(
     identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
 ) -> BreakGlassReviewResponse:
     _require_break_glass_eligibility(request, identity)
+    if isinstance(session_id, str):
+        session_id = uuid.UUID(session_id)
     record = await session.get(BreakGlassSession, session_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Break-glass session not found")

@@ -136,6 +136,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install ephemeral TypeScript test deps
+        run: npm i -D --no-save --no-package-lock vitest @testing-library/react @testing-library/jest-dom jsdom
+
       - name: Typecheck
         run: npx tsc --noEmit
 
@@ -172,10 +175,10 @@ jobs:
         run: npm ci
 
       - name: Install ephemeral Vitest deps
-        run: npm install --no-save vitest @testing-library/react @testing-library/jest-dom jsdom
+        run: npm install --no-save --no-package-lock vitest @vitest/coverage-v8 @testing-library/react @testing-library/jest-dom jsdom@22
 
       - name: Run Vitest with coverage
-        run: npx vitest run --coverage
+        run: npx vitest run --coverage --pool=threads
 
       - name: Upload Vitest coverage artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -230,6 +233,10 @@ jobs:
           APP_ENV: "prod"
           TESTING: "false"
           SECRETS_BACKEND: "aws_secrets_manager"
+          AWS_REGION: "us-east-1"
+          AWS_DEFAULT_REGION: "us-east-1"
+          AWS_SECRETS_MANAGER_REGION: "us-east-1"
+          AWS_SECRETS_MANAGER_SECRET_ID: "ci-dummy"
           AWS_SECRETS_MANAGER_SECRET_JSON: |
             {"AUTH_SECRET_KEY":"ci-auth-secret-not-default-12345678","CLIENT_PORTAL_SECRET":"ci-client-secret-not-default-12345678","WORKER_PORTAL_SECRET":"ci-worker-secret-not-default-12345678","ADMIN_PROXY_AUTH_SECRET":"ci-admin-proxy-secret-not-default-12345678"}
           METRICS_ENABLED: "false"
@@ -793,16 +800,28 @@ jobs:
       - name: Install k6
         uses: grafana/setup-k6-action@ffe7d7290dfa715e48c2ccc924d068444c94bde2 # v1
 
-      - name: Run healthz load test + baseline compare
+      - name: Preflight perf baseline target
         env:
-          BASE_URL: ${{ secrets.PERF_BASE_URL }}
+          BASE_URL: ${{ vars.PERF_BASE_URL }}
+        run: |
+          if ! curl -fsS --max-time 2 "${BASE_URL}/healthz" >/dev/null; then
+            echo "Perf baseline skipped: ${BASE_URL} unreachable."
+            echo "PERF_SKIP=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+      - name: Run healthz load test + baseline compare
+        if: env.PERF_SKIP != '1'
+        env:
+          BASE_URL: ${{ vars.PERF_BASE_URL }}
         run: |
           k6 run --no-thresholds --summary-export k6-healthz.json load-tests/k6/healthz.js
           python load-tests/compare_baseline.py --scenario healthz --results k6-healthz.json --mode warn
 
       - name: Run admin load test + baseline compare
+        if: env.PERF_SKIP != '1'
         env:
-          BASE_URL: ${{ secrets.PERF_BASE_URL }}
+          BASE_URL: ${{ vars.PERF_BASE_URL }}
           ADMIN_USER: ${{ secrets.PERF_ADMIN_USER }}
           ADMIN_PASSWORD: ${{ secrets.PERF_ADMIN_PASSWORD }}
           ADMIN_AUTH_HEADER: ${{ secrets.PERF_ADMIN_AUTH_HEADER }}
@@ -815,8 +834,9 @@ jobs:
           python load-tests/compare_baseline.py --scenario admin_list --results k6-admin.json --mode warn
 
       - name: Run booking flow load test + baseline compare
+        if: env.PERF_SKIP != '1'
         env:
-          BASE_URL: ${{ secrets.PERF_BASE_URL }}
+          BASE_URL: ${{ vars.PERF_BASE_URL }}
           BOOKING_CAPTCHA_TOKEN: ${{ secrets.PERF_BOOKING_CAPTCHA_TOKEN }}
         run: |
           k6 run --no-thresholds --summary-export k6-booking.json load-tests/k6/booking_flow.js

@@ -11,7 +11,7 @@ from app.domain.saas.db_models import MembershipRole
 from app.jobs import quota_alerts
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_quota_alerts_emit_once_per_threshold(db_session):
     org_id = uuid.uuid4()
     org = await saas_service.ensure_org(db_session, org_id, name="Quota Alerts Org")
@@ -67,7 +67,7 @@ async def test_quota_alerts_emit_once_per_threshold(db_session):
     assert entity_ids == {f"80:{period}", f"90:{period}"}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_quota_alerts_storage_threshold(db_session):
     org_id = uuid.uuid4()
     await saas_service.ensure_org(db_session, org_id, name="Storage Alerts Org")
