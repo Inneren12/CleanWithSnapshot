@@ -222,15 +222,21 @@ def async_session_maker(test_engine):
 
 @pytest.fixture
 async def db_session(async_session_maker):
-    async with async_session_maker() as session:
+    session = async_session_maker()
+    try:
         yield session
+    finally:
+        await session.close()
 
 
 @pytest.fixture(autouse=True)
 def override_db_session(async_session_maker):
     async def _override_db_session():
-        async with async_session_maker() as session:
+        session = async_session_maker()
+        try:
             yield session
+        finally:
+            await session.close()
 
     app.dependency_overrides[get_db_session] = _override_db_session
     original_factory = getattr(app.state, "db_session_factory", None)
@@ -374,14 +380,15 @@ def restore_admin_settings():
 def close_event_loop():
     loop = ensure_event_loop()
     yield
-    if not loop.is_closed() and not loop.is_running():
-        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
-        for task in pending:
-            task.cancel()
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
+    if loop.is_closed():
+        return
+    pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    loop.run_until_complete(loop.shutdown_asyncgens())
+    loop.close()
 
 
 @pytest.fixture(autouse=True)
@@ -551,8 +558,11 @@ def _build_test_client(async_session_maker, *, headers=None, raise_server_except
     ensure_event_loop()
 
     async def override_db_session():
-        async with async_session_maker() as session:
+        session = async_session_maker()
+        try:
             yield session
+        finally:
+            await session.close()
 
     app.dependency_overrides[get_db_session] = override_db_session
     app.state.bot_store = InMemoryBotStore()
