@@ -337,6 +337,10 @@ def _derive_feature_flag_action(
             return FeatureFlagAuditAction.ENABLE if after_enabled else FeatureFlagAuditAction.DISABLE
         if before_state.get("percentage") != after_state.get("percentage"):
             return FeatureFlagAuditAction.ROLLOUT_CHANGE
+        if before_override is None and after_override is not None:
+            return FeatureFlagAuditAction.ENABLE if after_override else FeatureFlagAuditAction.DISABLE
+        if before_override is not None and after_override is None:
+            return FeatureFlagAuditAction.ENABLE if after_enabled else FeatureFlagAuditAction.DISABLE
     if before_override is None and after_override is not None:
         return FeatureFlagAuditAction.CREATE
     if before_override is not None and after_override is None:
