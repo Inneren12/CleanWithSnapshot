@@ -35,6 +35,19 @@ DEFAULT_ORG_NAME = "Default Org"
 logger = logging.getLogger(__name__)
 
 
+def _is_sqlite(session: AsyncSession) -> bool:
+    bind = session.get_bind()
+    return getattr(getattr(bind, "dialect", None), "name", "") == "sqlite"
+
+
+async def _acquire_sqlite_write_lock(session: AsyncSession) -> None:
+    if not _is_sqlite(session):
+        return
+    if session.in_transaction():
+        return
+    await session.execute(sa.text("BEGIN IMMEDIATE"))
+
+
 @dataclass(frozen=True)
 class OrgUserQuotaSnapshot:
     org_id: uuid.UUID
@@ -221,6 +234,7 @@ async def get_org_user_quota_snapshot(
     lock_org: bool = False,
 ) -> OrgUserQuotaSnapshot:
     if lock_org:
+        await _acquire_sqlite_write_lock(session)
         await session.execute(
             sa.select(Organization).where(Organization.org_id == org_id).with_for_update()
         )

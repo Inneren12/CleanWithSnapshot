@@ -303,6 +303,9 @@ def restore_admin_settings():
         settings, "data_export_download_lockout_window_seconds", 1800
     )
     original_data_export_cooldown_minutes = getattr(settings, "data_export_cooldown_minutes", 30)
+    original_rate_limit_disable_exempt_paths = getattr(
+        settings, "rate_limit_disable_exempt_paths", False
+    )
     yield
     settings.admin_basic_username = original_username
     settings.admin_basic_password = original_password
@@ -364,6 +367,7 @@ def restore_admin_settings():
         original_data_export_download_lockout_window_seconds
     )
     settings.data_export_cooldown_minutes = original_data_export_cooldown_minutes
+    settings.rate_limit_disable_exempt_paths = original_rate_limit_disable_exempt_paths
 
 
 @pytest.fixture(autouse=True)

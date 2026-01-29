@@ -21,6 +21,19 @@ from app.settings import settings
 logger = logging.getLogger(__name__)
 
 
+def _is_sqlite(session: AsyncSession) -> bool:
+    bind = session.get_bind()
+    return getattr(getattr(bind, "dialect", None), "name", "") == "sqlite"
+
+
+async def _acquire_sqlite_write_lock(session: AsyncSession) -> None:
+    if not _is_sqlite(session):
+        return
+    if session.in_transaction():
+        return
+    await session.execute(sa.text("BEGIN IMMEDIATE"))
+
+
 class StorageReservationStatus(str, Enum):
     PENDING = "pending"
     FINALIZED = "finalized"
@@ -101,6 +114,7 @@ def _now_for_db(session: AsyncSession) -> datetime:
 
 
 async def _lock_org_settings(session: AsyncSession, org_id: uuid.UUID) -> OrganizationSettings:
+    await _acquire_sqlite_write_lock(session)
     await org_settings_service.get_or_create_org_settings(session, org_id)
     result = await session.execute(
         sa.select(OrganizationSettings)

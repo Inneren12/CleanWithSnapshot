@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     rate_limit_cleanup_minutes: int = Field(10)
     rate_limit_fail_open_seconds: int = Field(300)
     rate_limit_redis_probe_seconds: float = Field(5.0)
+    rate_limit_disable_exempt_paths: bool = Field(
+        False, validation_alias="RATE_LIMIT_DISABLE_EXEMPT_PATHS"
+    )
     time_overrun_reason_threshold: float = Field(1.2)
     break_glass_default_ttl_minutes: int = Field(30)
     break_glass_max_ttl_minutes: int = Field(60)
