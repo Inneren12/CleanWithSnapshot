@@ -227,6 +227,17 @@ async def count_active_memberships(session: AsyncSession, org_id: uuid.UUID) -> 
     return int(result.scalar_one() or 0)
 
 
+async def count_billable_memberships(session: AsyncSession, org_id: uuid.UUID) -> int:
+    result = await session.execute(
+        sa.select(sa.func.count(Membership.membership_id)).where(
+            Membership.org_id == org_id,
+            Membership.is_active.is_(True),
+            Membership.role.notin_([MembershipRole.OWNER, MembershipRole.ADMIN]),
+        )
+    )
+    return int(result.scalar_one() or 0)
+
+
 async def get_org_user_quota_snapshot(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -260,9 +271,10 @@ async def enforce_org_user_quota(
     ensuring deterministic, race-safe enforcement under concurrent requests.
     """
     snapshot = await get_org_user_quota_snapshot(session, org_id, lock_org=True)
+    billable_users_count = await count_billable_memberships(session, org_id)
     if snapshot.max_users is None:
         return snapshot
-    if snapshot.current_users_count >= snapshot.max_users:
+    if billable_users_count >= snapshot.max_users:
         if audit_identity is not None:
             await admin_audit_service.record_action(
                 session,
@@ -275,6 +287,7 @@ async def enforce_org_user_quota(
                 after={
                     "attempted_action": attempted_action,
                     "current_users_count": snapshot.current_users_count,
+                    "billable_users_count": billable_users_count,
                     "max_users": snapshot.max_users,
                 },
             )
@@ -285,6 +298,7 @@ async def enforce_org_user_quota(
                     "org_id": str(org_id),
                     "attempted_action": attempted_action,
                     "current_users_count": snapshot.current_users_count,
+                    "billable_users_count": billable_users_count,
                     "max_users": snapshot.max_users,
                 }
             },

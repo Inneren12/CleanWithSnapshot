@@ -163,30 +163,38 @@ async def record_feature_flag_evaluation(
 ) -> bool:
     if not key:
         return False
-    should_commit = not session.new and not session.dirty and not session.deleted
+    should_commit = (
+        not session.in_transaction()
+        and not session.new
+        and not session.dirty
+        and not session.deleted
+    )
     now = _ensure_timezone(now or datetime.now(tz=timezone.utc))
     throttle_minutes = (
         settings.feature_flag_evaluation_throttle_minutes
         if throttle_minutes is None
         else throttle_minutes
     )
-    record = await session.get(FeatureFlagDefinition, key)
-    if record is None:
-        return False
-    last_evaluated = (
-        _ensure_timezone(record.last_evaluated_at)
-        if record.last_evaluated_at is not None
-        else None
+    stmt = (
+        sa.update(FeatureFlagDefinition)
+        .where(FeatureFlagDefinition.key == key)
+        .values(
+            last_evaluated_at=now,
+            evaluate_count=FeatureFlagDefinition.evaluate_count + 1,
+        )
     )
-    if throttle_minutes and throttle_minutes > 0 and last_evaluated is not None:
-        if now - last_evaluated < timedelta(minutes=throttle_minutes):
-            return False
-    record.last_evaluated_at = now
-    record.evaluate_count = int(record.evaluate_count or 0) + 1
-    await session.flush()
+    if throttle_minutes and throttle_minutes > 0:
+        cutoff = now - timedelta(minutes=throttle_minutes)
+        stmt = stmt.where(
+            sa.or_(
+                FeatureFlagDefinition.last_evaluated_at.is_(None),
+                FeatureFlagDefinition.last_evaluated_at < cutoff,
+            )
+        )
+    result = await session.execute(stmt)
     if should_commit:
         await session.commit()
-    return True
+    return bool(result.rowcount)
 
 
 async def create_feature_flag_definition(
