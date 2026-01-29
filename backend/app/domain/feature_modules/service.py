@@ -290,6 +290,9 @@ async def upsert_org_feature_overrides(
             enabled_value = True
         elif action == FeatureFlagAuditAction.DISABLE:
             enabled_value = False
+        audit_after_state = dict(after_state)
+        audit_after_state["enabled"] = bool(enabled_value)
+        audit_after_state["percentage"] = 100 if enabled_value else 0
         rollout_context = feature_flag_audit_service.build_rollout_context(
             enabled=enabled_value,
             targeting_rules=after_state.get("targeting_rules"),
@@ -302,7 +305,7 @@ async def upsert_org_feature_overrides(
             flag_key=key,
             action=action,
             before_state=before_state,
-            after_state=after_state,
+            after_state=audit_after_state,
             rollout_context=rollout_context,
             request_id=request_id,
         )
