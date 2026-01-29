@@ -57,7 +57,7 @@ class Team(Base):
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lead_worker_id: Mapped[int | None] = mapped_column(
-        ForeignKey("workers.worker_id"),
+        ForeignKey("workers.worker_id", use_alter=True, name="fk_teams_lead_worker_id"),
         nullable=True,
     )
     zones: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False, server_default="[]")

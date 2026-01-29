@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import case, func, select, or_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,7 +107,7 @@ async def create_category(
         org_id=org_id,
         name=data.name,
         sort_order=data.sort_order,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     session.add(category)
     await session.flush()
@@ -318,7 +318,7 @@ async def create_item(
         min_qty=data.min_qty,
         location_label=data.location_label,
         active=data.active,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     session.add(item)
     await session.flush()
@@ -486,7 +486,7 @@ async def create_supplier(
         delivery_days=data.delivery_days,
         min_order_cents=data.min_order_cents,
         notes=data.notes,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     session.add(supplier)
     await session.flush()
@@ -768,7 +768,7 @@ async def mark_purchase_order_ordered(
         raise ValueError("Only draft purchase orders can be marked as ordered")
 
     purchase_order.status = schemas.PurchaseOrderStatus.ordered.value
-    purchase_order.ordered_at = datetime.utcnow()
+    purchase_order.ordered_at = datetime.now(timezone.utc)
     await session.flush()
     return purchase_order
 
@@ -807,7 +807,7 @@ async def mark_purchase_order_received(
         inventory_item.current_qty = inventory_item.current_qty + po_item.qty
 
     purchase_order.status = schemas.PurchaseOrderStatus.received.value
-    purchase_order.received_at = datetime.utcnow()
+    purchase_order.received_at = datetime.now(timezone.utc)
     await session.flush()
     return purchase_order
 
@@ -864,7 +864,7 @@ async def record_consumption(
         qty=data.qty,
         unit_cost_cents=data.unit_cost_cents,
         total_cost_cents=total_cost_cents,
-        consumed_at=data.consumed_at or datetime.utcnow(),
+        consumed_at=data.consumed_at or datetime.now(timezone.utc),
         recorded_by=recorded_by,
     )
     session.add(consumption)

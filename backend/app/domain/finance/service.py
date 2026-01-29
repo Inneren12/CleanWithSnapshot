@@ -88,7 +88,7 @@ async def create_expense_category(
         name=name,
         default=default,
         sort_order=sort_order,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     session.add(category)
     await session.flush()
@@ -566,7 +566,7 @@ async def create_cash_snapshot(
         as_of_date=as_of_date,
         cash_cents=cash_cents,
         note=note,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     session.add(snapshot)
     await session.flush()
@@ -649,7 +649,7 @@ async def create_expense(
         tax_cents=tax_cents,
         receipt_url=receipt_url,
         payment_method=payment_method,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         created_by_user_id=created_by_user_id,
     )
     session.add(expense)
@@ -775,7 +775,7 @@ async def create_budget(
         month_yyyymm=month_yyyymm,
         category_id=category_id,
         amount_cents=amount_cents,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     session.add(budget)
     await session.flush()
@@ -1071,7 +1071,7 @@ async def create_tax_instalment(
         amount_cents=amount_cents,
         paid_on=paid_on,
         note=note,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         created_by_user_id=created_by_user_id,
     )
     session.add(instalment)
@@ -1122,7 +1122,7 @@ async def create_tax_export_log(
         org_id=org_id,
         from_date=from_date,
         to_date=to_date,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         created_by_user_id=created_by_user_id,
     )
     session.add(export_log)

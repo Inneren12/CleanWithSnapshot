@@ -4,7 +4,7 @@ import hmac
 import secrets
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 TIME_STEP_SECONDS = 30
@@ -36,7 +36,7 @@ def _hotp(secret: bytes, counter: int) -> str:
 
 def generate_totp_code(secret_base32: str, *, for_time: datetime | None = None) -> str:
     secret = _decode_secret(secret_base32)
-    timestamp = int((for_time or datetime.utcnow()).timestamp())
+    timestamp = int((for_time or datetime.now(timezone.utc)).timestamp())
     counter = timestamp // TIME_STEP_SECONDS
     return _hotp(secret, counter)
 
@@ -48,7 +48,7 @@ def verify_totp_code(secret_base32: str, code: str, *, window: int = 1, now: dat
         secret = _decode_secret(secret_base32)
     except Exception:  # noqa: BLE001
         return False
-    timestamp = int((now or datetime.utcnow()).timestamp())
+    timestamp = int((now or datetime.now(timezone.utc)).timestamp())
     current_counter = timestamp // TIME_STEP_SECONDS
     for offset in range(-window, window + 1):
         candidate = _hotp(secret, current_counter + offset)
