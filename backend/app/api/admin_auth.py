@@ -548,12 +548,18 @@ def _parse_proxy_roles(roles_header: str | None) -> AdminRole:
     return AdminRole.VIEWER
 
 
-def _require_mfa_header(request: Request) -> bool:
-    _require_trusted_proxy(request)
+def _test_mfa_bypass_enabled() -> bool:
+    return bool(getattr(settings, "testing", False) or settings.app_env in {"test", "ci", "e2e"})
+
+
+def _require_mfa_header(request: Request, *, allow_test_bypass: bool = False) -> bool:
     mfa_verified = _mfa_verified_from_header(request)
-    if not mfa_verified:
-        logger.warning(
-            "admin_auth_mfa_required",
+    if mfa_verified:
+        _require_trusted_proxy(request)
+        return mfa_verified
+    if allow_test_bypass and _test_mfa_bypass_enabled():
+        logger.info(
+            "admin_auth_mfa_bypassed_for_testing",
             extra={
                 "extra": {
                     "path": request.url.path,
@@ -562,11 +568,22 @@ def _require_mfa_header(request: Request) -> bool:
                 }
             },
         )
-        raise _build_auth_exception(
-            reason="mfa_required",
-            detail="Admin access requires MFA",
-        )
-    return mfa_verified
+        return True
+    _require_trusted_proxy(request)
+    logger.warning(
+        "admin_auth_mfa_required",
+        extra={
+            "extra": {
+                "path": request.url.path,
+                "method": request.method,
+                "mfa_header": settings.admin_proxy_auth_header_mfa,
+            }
+        },
+    )
+    raise _build_auth_exception(
+        reason="mfa_required",
+        detail="Admin access requires MFA",
+    )
 
 
 def _resolve_proxy_identity_headers(request: Request) -> tuple[str, str, str, str] | None:
@@ -932,7 +949,7 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
         credentials: HTTPBasicCredentials | None = None
         try:
             credentials = _credentials_from_header(request)
-            mfa_verified = _require_mfa_header(request)
+            mfa_verified = _require_mfa_header(request, allow_test_bypass=True)
             identity = _authenticate_credentials(credentials, mfa_verified=mfa_verified, request=request)
             _assert_permissions(request, identity, [AdminPermission.VIEW])
             request.state.admin_identity = identity

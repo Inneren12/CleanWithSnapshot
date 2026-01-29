@@ -145,7 +145,10 @@ def make_admin_headers(
         auth_user = username or default_user or settings.admin_basic_username
         auth_password = password or default_password or settings.admin_basic_password
         token = base64.b64encode(f"{auth_user}:{auth_password}".encode("utf-8")).decode("utf-8")
-        headers = {"Authorization": f"Basic {token}"}
+        headers = {
+            "Authorization": f"Basic {token}",
+            settings.admin_proxy_auth_header_mfa: "true" if mfa_verified else "false",
+        }
 
     if org_id is not None:
         headers["X-Test-Org"] = str(org_id)
