@@ -65,6 +65,16 @@ def build_e2e_proxy_headers(
     mfa_verified: bool = True,
     timestamp: int | None = None,
 ) -> dict[str, str]:
+    if not proxy_secret:
+        raise ValueError("proxy_secret is required")
+    if not e2e_secret:
+        raise ValueError("e2e_secret is required")
+    if not user:
+        raise ValueError("user is required")
+    if not email:
+        raise ValueError("email is required")
+    if not roles:
+        raise ValueError("roles is required")
     mfa_value = "true" if mfa_verified else "false"
     timestamp_value = str(int(time.time() if timestamp is None else timestamp))
     signature = sign_e2e_proxy_payload(
