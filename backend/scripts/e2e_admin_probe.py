@@ -42,7 +42,7 @@ def build_probe_config() -> ProbeConfig:
 
 
 def build_signed_headers(config: ProbeConfig) -> dict[str, str]:
-    return build_e2e_proxy_headers(
+    headers = build_e2e_proxy_headers(
         proxy_secret=config.proxy_secret,
         e2e_secret=config.e2e_secret,
         user=config.e2e_user,
@@ -51,6 +51,9 @@ def build_signed_headers(config: ProbeConfig) -> dict[str, str]:
         mfa_verified=config.mfa == "true",
         timestamp=int(config.timestamp),
     )
+    if not isinstance(headers, dict):
+        raise ValueError("Proxy headers must be a mapping")
+    return headers
 
 
 def _validate_config(config: ProbeConfig) -> None:

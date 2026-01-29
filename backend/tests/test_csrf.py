@@ -20,15 +20,15 @@ def _csrf_cookie_attributes(response) -> list[str]:
 async def test_csrf_enforced_when_testing_disabled(client):
     original = {
         "testing": settings.testing,
-        "dispatcher_basic_username": settings.dispatcher_basic_username,
-        "dispatcher_basic_password": settings.dispatcher_basic_password,
+        "admin_basic_username": settings.admin_basic_username,
+        "admin_basic_password": settings.admin_basic_password,
     }
     settings.testing = False
-    settings.dispatcher_basic_username = "dispatch"
-    settings.dispatcher_basic_password = "secret"
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
 
     try:
-        headers = _basic_auth("dispatch", "secret")
+        headers = _basic_auth("admin", "secret")
         get_resp = client.get("/v1/admin/ui/workers", headers=headers)
         assert get_resp.status_code == 200
 
@@ -45,8 +45,8 @@ async def test_csrf_enforced_when_testing_disabled(client):
         assert post_resp.status_code == 403
     finally:
         settings.testing = original["testing"]
-        settings.dispatcher_basic_username = original["dispatcher_basic_username"]
-        settings.dispatcher_basic_password = original["dispatcher_basic_password"]
+        settings.admin_basic_username = original["admin_basic_username"]
+        settings.admin_basic_password = original["admin_basic_password"]
 
 
 @pytest.mark.anyio

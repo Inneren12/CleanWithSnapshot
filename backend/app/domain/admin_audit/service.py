@@ -120,12 +120,10 @@ async def audit_admin_action(
 
     sanitized_before = None
     sanitized_after = None
-    sanitized_context = None
+    sanitized_context = _sanitize_payload(context) if context else None
     if resolved_action_type == AdminAuditActionType.WRITE:
         sanitized_before = _sanitize_payload(before)
         sanitized_after = _sanitize_payload(after)
-    else:
-        sanitized_context = _sanitize_payload(context) if context else None
 
     log = AdminAuditLog(
         org_id=resolved_org_id,

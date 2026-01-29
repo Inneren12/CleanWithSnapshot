@@ -543,11 +543,11 @@ async def list_config_audit_logs(
     _identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
     session: AsyncSession = Depends(get_db_session),
     org_id_filter: uuid.UUID | None = Query(None, alias="org_id"),
-    config_scope: ConfigScope | None = None,
-    start: str | None = None,
-    end: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    config_scope: ConfigScope | None = Query(None),
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ) -> config_audit_schemas.ConfigAuditLogListResponse:
     if org_id_filter is not None and org_id_filter != org_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
