@@ -31,7 +31,7 @@ def _resolve_title(status_code: int, fallback: str | None) -> str:
 def _resolve_type(status_code: int, type_override: str | None) -> str:
     if type_override:
         return type_override
-    if status_code == status.HTTP_422_UNPROCESSABLE_ENTITY:
+    if status_code == status.HTTP_422_UNPROCESSABLE_CONTENT:
         return PROBLEM_TYPE_VALIDATION
     if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
         return PROBLEM_TYPE_RATE_LIMIT

@@ -134,7 +134,7 @@ async def test_receipt_pdf_accepts_mixed_timezone_timestamps(client, async_sessi
             amount_cents=5000,
             currency=invoice.currency,
             status=statuses.PAYMENT_STATUS_SUCCEEDED,
-            received_at=datetime.datetime.utcnow(),
+            received_at=datetime.datetime.now(tz=datetime.timezone.utc),
         )
         original_received_at = payment.received_at
         payment.created_at = datetime.datetime.now(tz=datetime.timezone.utc)

@@ -60,6 +60,15 @@ def _get_session_factory() -> async_sessionmaker[AsyncSession]:
     return _session_factory
 
 
+async def dispose_engine() -> None:
+    global _engine, _session_factory
+    if _engine is None:
+        return
+    await _engine.dispose()
+    _engine = None
+    _session_factory = None
+
+
 async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
     session_factory = _get_session_factory()
     org_id = getattr(request.state, "current_org_id", None) or settings.default_org_id

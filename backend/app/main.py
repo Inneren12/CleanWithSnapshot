@@ -60,7 +60,7 @@ from app.api.problem_details import (
 from app.api.mfa import AdminMfaMiddleware
 from app.api.saas_auth import PasswordChangeGateMiddleware, TenantSessionMiddleware
 from app.domain.errors import DomainError
-from app.infra.db import get_session_factory
+from app.infra.db import dispose_engine, get_session_factory
 from app.infra.email import EmailAdapter
 from app.infra.logging import clear_log_context, configure_logging, update_log_context
 from app.infra.metrics import configure_metrics, metrics
@@ -406,6 +406,7 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
         if data_export_limiters:
             for limiter in data_export_limiters.values():
                 await limiter.close()
+        await dispose_engine()
 
     app = FastAPI(title="Cleaning Economy Bot", version="1.0.0", lifespan=lifespan)
 

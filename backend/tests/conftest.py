@@ -370,6 +370,14 @@ def restore_admin_settings():
     settings.rate_limit_disable_exempt_paths = original_rate_limit_disable_exempt_paths
 
 
+@pytest.fixture(scope="session", autouse=True)
+def close_event_loop():
+    loop = ensure_event_loop()
+    yield
+    if not loop.is_closed() and not loop.is_running():
+        loop.close()
+
+
 @pytest.fixture(autouse=True)
 def enable_test_mode():
     settings.testing = True
