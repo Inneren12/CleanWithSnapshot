@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.leads_nurture.statuses import (
     NurtureChannel,
@@ -19,9 +19,7 @@ class NurtureCampaignResponse(BaseModel):
     name: str
     enabled: bool
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NurtureCampaignListResponse(BaseModel):
@@ -50,9 +48,7 @@ class NurtureStepResponse(BaseModel):
     template_key: str | None
     payload_json: dict | None
     active: bool
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NurtureStepListResponse(BaseModel):

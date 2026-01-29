@@ -15,9 +15,7 @@ class FinanceExpenseCategoryResponse(BaseModel):
     default: bool
     sort_order: int
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FinanceExpenseCategoryCreate(BaseModel):
@@ -53,9 +51,7 @@ class FinanceExpenseResponse(BaseModel):
     created_at: datetime
     created_by_user_id: UUID | None
     category_name: str | None = None
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FinanceExpenseCreate(BaseModel):
@@ -95,9 +91,7 @@ class FinanceBudgetResponse(BaseModel):
     amount_cents: int
     created_at: datetime
     category_name: str | None = None
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FinanceBudgetCreate(BaseModel):
@@ -202,9 +196,7 @@ class FinanceCashSnapshotResponse(BaseModel):
     cash_cents: int
     note: str | None
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FinanceCashSnapshotCreate(BaseModel):
@@ -240,9 +232,7 @@ class FinanceTaxInstalmentResponse(BaseModel):
     note: str | None
     created_at: datetime
     created_by_user_id: UUID | None
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FinanceTaxInstalmentCreate(BaseModel):

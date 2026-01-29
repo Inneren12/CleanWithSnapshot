@@ -67,6 +67,14 @@ ACCOUNTING_EXPORT_HEADERS = [
 ]
 
 
+def _normalize_timestamp(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 def _sanitize_row(values: Iterable[object]) -> list[str]:
     return [_safe_csv_value(value) for value in values]
 
@@ -384,6 +392,7 @@ async def register_payment(
         raise ValueError("Payment amount must be positive")
 
     existing_payment: Payment | None = None
+    normalized_received_at = _normalize_timestamp(received_at)
     if provider_ref:
         existing_payment = await session.scalar(
             select(Payment)
@@ -406,7 +415,7 @@ async def register_payment(
         existing_payment.status = status
         existing_payment.amount_cents = amount_cents
         existing_payment.currency = currency.upper()
-        existing_payment.received_at = received_at or existing_payment.received_at
+        existing_payment.received_at = normalized_received_at or existing_payment.received_at
         existing_payment.reference = reference or existing_payment.reference
         existing_payment.payment_intent_id = (
             payment_intent_id or provider_ref or existing_payment.payment_intent_id
@@ -426,7 +435,7 @@ async def register_payment(
         amount_cents=amount_cents,
         currency=currency.upper(),
         status=status,
-        received_at=received_at,
+        received_at=normalized_received_at,
         reference=reference,
     )
     try:

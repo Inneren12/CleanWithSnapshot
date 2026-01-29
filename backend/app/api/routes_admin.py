@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api import entitlements
 from app.api.idempotency import enforce_org_action_rate_limit, require_idempotency
-from app.api.problem_details import problem_details
+from app.api.problem_details import HTTP_422_ENTITY, problem_details
 from app.api.photo_tokens import build_public_photo_response, build_signed_photo_response, normalize_variant
 from app.api.admin_auth import (
     AdminIdentity,
@@ -1079,7 +1079,7 @@ async def get_weather_traffic_context(
     try:
         ZoneInfo(resolved_timezone)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid timezone") from exc
 
     resolved_as_of = _parse_weather_traffic_as_of(as_of)
 
@@ -1311,21 +1311,21 @@ async def list_notifications(
     if normalized_filter not in {"all", "urgent", "unread"}:
         return problem_details(
             request=request,
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status=HTTP_422_ENTITY,
             title="Invalid filter",
             detail="Filter must be one of: all, urgent, unread.",
         )
     if from_ts and to_ts and from_ts > to_ts:
         return problem_details(
             request=request,
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status=HTTP_422_ENTITY,
             title="Invalid date range",
             detail="The from timestamp must be before the to timestamp.",
         )
     if cursor and notifications_service.parse_cursor(cursor) is None:
         return problem_details(
             request=request,
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status=HTTP_422_ENTITY,
             title="Invalid cursor",
             detail="The cursor value is not valid.",
         )
@@ -1409,7 +1409,7 @@ async def update_notification_rules(
     if len(preset_keys) != len(set(preset_keys)):
         return problem_details(
             request=request,
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status=HTTP_422_ENTITY,
             title="Duplicate preset keys",
             detail="Each preset key may only appear once per request.",
         )
@@ -1714,7 +1714,7 @@ async def update_notification_digests(
     if len(digest_keys) != len(set(digest_keys)):
         return problem_details(
             request=request,
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status=HTTP_422_ENTITY,
             title="Duplicate digest keys",
             detail="Each digest key may only appear once per request.",
         )
@@ -2028,12 +2028,12 @@ def _parse_availability_scope(scope: str | None) -> tuple[str | None, int | None
     if normalized == "org":
         return ("org", None)
     if ":" not in normalized:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid scope format")
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid scope format")
     prefix, value = normalized.split(":", 1)
     if prefix not in {"team", "worker"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid scope type")
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid scope type")
     if not value.isdigit():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid scope id")
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid scope id")
     return (prefix, int(value))
 
 
@@ -5272,7 +5272,7 @@ async def list_schedule_external_blocks(
     if to_at.tzinfo is None:
         to_at = to_at.replace(tzinfo=timezone.utc)
     if to_at <= from_at:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_window")
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="invalid_window")
 
     stmt = (
         select(ScheduleExternalBlock)
@@ -5345,7 +5345,7 @@ async def create_availability_block(
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail=str(exc)) from exc
     return availability_schemas.AvailabilityBlockResponse.model_validate(block)
 
 
@@ -5364,7 +5364,7 @@ async def update_availability_block(
 ) -> availability_schemas.AvailabilityBlockResponse:
     fields_set = payload.model_fields_set
     if not fields_set:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No updates provided")
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="No updates provided")
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     try:
         block = await availability_service.update_block(
@@ -5377,7 +5377,7 @@ async def update_availability_block(
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail=str(exc)) from exc
     return availability_schemas.AvailabilityBlockResponse.model_validate(block)
 
 
@@ -5415,7 +5415,7 @@ async def suggest_schedule(
     resolved_end = ends_at
     if resolved_end is None:
         if duration_min is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Missing ends_at or duration_min")
+            raise HTTPException(status_code=HTTP_422_ENTITY, detail="Missing ends_at or duration_min")
         resolved_end = starts_at + timedelta(minutes=duration_min)
     try:
         suggestions = await ops_service.suggest_schedule_resources(
@@ -5427,7 +5427,7 @@ async def suggest_schedule(
             exclude_booking_id=booking_id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail=str(exc)) from exc
 
     ranked_workers = [
         RankedWorkerSuggestion(
@@ -5483,7 +5483,7 @@ async def schedule_optimization_suggestions(
             worker_id=worker_id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail=str(exc)) from exc
     return [ScheduleOptimizationSuggestion(**suggestion) for suggestion in suggestions]
 
 
@@ -5886,7 +5886,7 @@ async def check_schedule_conflicts(
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail=str(exc)) from exc
 
     return ConflictCheckResponse(
         has_conflict=bool(conflicts),
@@ -7730,19 +7730,19 @@ async def update_booking(
 
     fields_set = payload.model_fields_set
     if not fields_set:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No updates provided")
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="No updates provided")
 
     new_starts_at = payload.starts_at if "starts_at" in fields_set and payload.starts_at else booking.starts_at
     if new_starts_at is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="starts_at is required")
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="starts_at is required")
 
     duration_minutes = booking.duration_minutes
     if "ends_at" in fields_set:
         if payload.ends_at is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ends_at is required")
+            raise HTTPException(status_code=HTTP_422_ENTITY, detail="ends_at is required")
         duration_minutes = int((payload.ends_at - new_starts_at).total_seconds() // 60)
         if duration_minutes <= 0:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid time range")
+            raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid time range")
 
     target_team_id = payload.team_id if "team_id" in fields_set and payload.team_id is not None else booking.team_id
     team = await session.get(Team, target_team_id)
@@ -7780,7 +7780,7 @@ async def update_booking(
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail=str(exc)) from exc
 
     if conflicts:
         return JSONResponse(
@@ -8529,7 +8529,7 @@ async def _query_invoice_list(
         try:
             normalized_status = invoice_statuses.normalize_status(status_filter)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(status_code=HTTP_422_ENTITY, detail=str(exc)) from exc
         filters.append(Invoice.status == normalized_status)
     if customer_id:
         filters.append(Invoice.customer_id == customer_id)

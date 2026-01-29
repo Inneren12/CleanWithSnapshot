@@ -44,8 +44,6 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(["team_id"], ["teams.team_id"], name="fk_booking_team"),
-        sa.ForeignKeyConstraint(["lead_id"], ["leads.lead_id"], name="fk_booking_lead"),
     )
     op.create_index("ix_bookings_starts_status", "bookings", ["starts_at", "status"])
     op.create_index("ix_bookings_status", "bookings", ["status"])

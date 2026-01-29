@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import sqlalchemy as sa
@@ -16,8 +16,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    event,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, attributes, mapped_column, relationship
 
 from app.infra.db import UUID_TYPE
 from app.infra.db import Base
@@ -163,6 +164,24 @@ class Payment(Base):
         Index("ix_invoice_payments_checkout_session", "checkout_session_id"),
         UniqueConstraint("provider", "provider_ref", name="uq_invoice_payments_provider_ref"),
     )
+
+
+def _normalize_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+@event.listens_for(Payment, "load")
+def _payment_normalize_timezones(payment: Payment, _context) -> None:
+    normalized_received_at = _normalize_datetime(payment.received_at)
+    if normalized_received_at is not payment.received_at:
+        attributes.set_committed_value(payment, "received_at", normalized_received_at)
+    normalized_created_at = _normalize_datetime(payment.created_at)
+    if normalized_created_at is not payment.created_at:
+        attributes.set_committed_value(payment, "created_at", normalized_created_at)
 
 
 class StripeEvent(Base):

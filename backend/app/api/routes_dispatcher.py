@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, require_dispatch
-from app.api.problem_details import problem_details
+from app.api.problem_details import HTTP_422_ENTITY, problem_details
 from app.api.org_context import require_org_context
 from app.dependencies import get_db_session
 from app.domain.admin_audit import service as audit_service
@@ -126,11 +126,11 @@ async def get_dispatcher_board(
     try:
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid timezone") from exc
     try:
         dispatcher_service.resolve_zone(zone)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid zone") from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid zone") from exc
 
     result = await dispatcher_service.fetch_dispatcher_board(
         session,
@@ -172,11 +172,11 @@ async def get_dispatcher_stats(
     try:
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid timezone") from exc
     try:
         dispatcher_service.resolve_zone(zone)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid zone") from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid zone") from exc
 
     result = await dispatcher_service.fetch_dispatcher_stats(
         session,
@@ -214,7 +214,7 @@ async def get_dispatcher_alerts(
     try:
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid timezone") from exc
 
     result = await dispatcher_service.fetch_dispatcher_alerts(
         session,
@@ -248,7 +248,7 @@ async def get_dispatcher_context(
     try:
         ZoneInfo(tz)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid timezone") from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid timezone") from exc
 
     return await dispatcher_context.fetch_dispatcher_context(tz)
 
@@ -397,7 +397,7 @@ async def reassign_dispatcher_booking(
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail=str(exc)) from exc
 
     if conflicts:
         raise HTTPException(
@@ -452,7 +452,7 @@ async def reschedule_dispatcher_booking(
 
     duration_minutes = int((payload.ends_at - payload.starts_at).total_seconds() // 60)
     if duration_minutes <= 0:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid time range")
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid time range")
 
     conflicts: list[dict] = []
     try:
@@ -470,7 +470,7 @@ async def reschedule_dispatcher_booking(
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail=str(exc)) from exc
 
     if conflicts and not payload.override_conflicts:
         raise HTTPException(
@@ -595,7 +595,7 @@ async def update_dispatcher_booking_status(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
     if payload.status == "CANCELLED" and not payload.reason:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cancellation reason is required")
+        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Cancellation reason is required")
 
     before_state = {"status": booking.status}
     booking.status = payload.status
