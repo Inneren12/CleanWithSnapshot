@@ -83,6 +83,7 @@ from app.domain.feature_flags import db_models as feature_flags_db_models  # noq
 from app.domain.feature_modules import service as feature_service
 from app.domain.audit_retention import db_models as audit_retention_db_models  # noqa: F401
 from app.domain.access_review import db_models as access_review_db_models  # noqa: F401
+from app.infra.admin_proxy_auth import build_e2e_proxy_headers, build_proxy_headers
 from app.infra.bot_store import InMemoryBotStore
 from app.infra.db import Base, get_db_session
 from app.infra.org_context import set_current_org_id
@@ -113,14 +114,26 @@ def make_admin_headers(
     if settings.admin_proxy_auth_enabled:
         admin_user = username or settings.admin_basic_username or "admin"
         admin_role = role or "admin"
-        headers = {
-            settings.admin_proxy_auth_header_user: admin_user,
-            settings.admin_proxy_auth_header_roles: admin_role,
-            settings.admin_proxy_auth_header_mfa: "true" if mfa_verified else "false",
-            "X-Proxy-Auth-Secret": settings.admin_proxy_auth_secret or "",
-        }
-        if settings.admin_proxy_auth_header_email:
-            headers[settings.admin_proxy_auth_header_email] = f"{admin_user}@example.com"
+        admin_email = f"{admin_user}@example.com"
+        proxy_secret = settings.admin_proxy_auth_secret or ""
+        if settings.admin_proxy_auth_e2e_enabled:
+            headers = build_e2e_proxy_headers(
+                proxy_secret=proxy_secret,
+                e2e_secret=settings.admin_proxy_auth_e2e_secret or "",
+                user=admin_user,
+                email=admin_email,
+                roles=admin_role,
+                mfa_verified=mfa_verified,
+                timestamp=1_700_000_000,
+            )
+        else:
+            headers = build_proxy_headers(
+                proxy_secret=proxy_secret,
+                user=admin_user,
+                email=admin_email,
+                roles=admin_role,
+                mfa_verified=mfa_verified,
+            )
     else:
         auth_user = username or settings.admin_basic_username
         auth_password = password or settings.admin_basic_password
@@ -236,6 +249,11 @@ def restore_admin_settings():
     original_admin_mfa_required = getattr(settings, "admin_mfa_required", False)
     original_admin_mfa_roles = getattr(settings, "admin_mfa_required_roles_raw", None)
     original_admin_read_only = getattr(settings, "admin_read_only", False)
+    original_admin_proxy_auth_enabled = getattr(settings, "admin_proxy_auth_enabled", False)
+    original_admin_proxy_auth_required = getattr(settings, "admin_proxy_auth_required", False)
+    original_admin_proxy_auth_secret = getattr(settings, "admin_proxy_auth_secret", None)
+    original_admin_proxy_auth_e2e_enabled = getattr(settings, "admin_proxy_auth_e2e_enabled", False)
+    original_admin_proxy_auth_e2e_secret = getattr(settings, "admin_proxy_auth_e2e_secret", None)
     original_admin_ip_allowlist = getattr(settings, "admin_ip_allowlist_cidrs_raw", None)
     original_trust_proxy_headers = getattr(settings, "trust_proxy_headers", False)
     original_trusted_proxy_ips = getattr(settings, "trusted_proxy_ips_raw", None)
@@ -291,6 +309,11 @@ def restore_admin_settings():
     settings.admin_mfa_required = original_admin_mfa_required
     settings.admin_mfa_required_roles_raw = original_admin_mfa_roles
     settings.admin_read_only = original_admin_read_only
+    settings.admin_proxy_auth_enabled = original_admin_proxy_auth_enabled
+    settings.admin_proxy_auth_required = original_admin_proxy_auth_required
+    settings.admin_proxy_auth_secret = original_admin_proxy_auth_secret
+    settings.admin_proxy_auth_e2e_enabled = original_admin_proxy_auth_e2e_enabled
+    settings.admin_proxy_auth_e2e_secret = original_admin_proxy_auth_e2e_secret
     settings.admin_ip_allowlist_cidrs_raw = original_admin_ip_allowlist
     settings.trust_proxy_headers = original_trust_proxy_headers
     settings.trusted_proxy_ips_raw = original_trusted_proxy_ips
@@ -335,11 +358,19 @@ def enable_test_mode():
     settings.deposits_enabled = False
     settings.app_env = "dev"
     settings.email_mode = "sendgrid"
-    settings.legacy_basic_auth_enabled = True
+    settings.legacy_basic_auth_enabled = False
     settings.admin_basic_username = "admin"
     settings.admin_basic_password = "admin123"
     settings.viewer_basic_username = "viewer"
     settings.viewer_basic_password = "viewer123"
+    settings.admin_proxy_auth_enabled = True
+    settings.admin_proxy_auth_required = True
+    settings.admin_proxy_auth_secret = "test-proxy-auth-secret-32-characters-long"
+    settings.admin_proxy_auth_e2e_enabled = True
+    settings.admin_proxy_auth_e2e_secret = "test-e2e-proxy-auth-secret-32chars"
+    settings.trust_proxy_headers = True
+    settings.trusted_proxy_ips = ["testclient"]
+    settings.trusted_proxy_cidrs = []
     from app.infra.email import resolve_email_adapter
 
     app.state.email_adapter = resolve_email_adapter(settings)
