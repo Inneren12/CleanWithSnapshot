@@ -85,6 +85,12 @@ def _snapshot(
     )
 
 
+def _ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 async def _lock_org_settings(session: AsyncSession, org_id: uuid.UUID) -> OrganizationSettings:
     await org_settings_service.get_or_create_org_settings(session, org_id)
     result = await session.execute(
@@ -214,7 +220,7 @@ async def reserve_bytes(
         reservation_id=reservation.reservation_id,
         org_id=org_id,
         bytes_reserved=reservation.bytes_reserved,
-        expires_at=reservation.expires_at,
+        expires_at=_ensure_utc(reservation.expires_at),
         status=StorageReservationStatus.PENDING,
         resource_type=reservation.resource_type,
         resource_id=reservation.resource_id,
@@ -245,7 +251,7 @@ async def finalize_reservation(
             reservation_id=reservation.reservation_id,
             org_id=reservation.org_id,
             bytes_reserved=reservation.bytes_reserved,
-            expires_at=reservation.expires_at,
+            expires_at=_ensure_utc(reservation.expires_at),
             status=StorageReservationStatus.FINALIZED,
             resource_type=reservation.resource_type,
             resource_id=reservation.resource_id,
@@ -335,7 +341,7 @@ async def finalize_reservation(
         reservation_id=reservation.reservation_id,
         org_id=reservation.org_id,
         bytes_reserved=reservation.bytes_reserved,
-        expires_at=reservation.expires_at,
+        expires_at=_ensure_utc(reservation.expires_at),
         status=StorageReservationStatus.FINALIZED,
         resource_type=reservation.resource_type,
         resource_id=reservation.resource_id,
@@ -366,7 +372,7 @@ async def release_reservation(
             reservation_id=reservation.reservation_id,
             org_id=reservation.org_id,
             bytes_reserved=reservation.bytes_reserved,
-            expires_at=reservation.expires_at,
+            expires_at=_ensure_utc(reservation.expires_at),
             status=StorageReservationStatus(reservation.status),
             resource_type=reservation.resource_type,
             resource_id=reservation.resource_id,
@@ -395,7 +401,7 @@ async def release_reservation(
         reservation_id=reservation.reservation_id,
         org_id=reservation.org_id,
         bytes_reserved=reservation.bytes_reserved,
-        expires_at=reservation.expires_at,
+        expires_at=_ensure_utc(reservation.expires_at),
         status=StorageReservationStatus.RELEASED,
         resource_type=reservation.resource_type,
         resource_id=reservation.resource_id,

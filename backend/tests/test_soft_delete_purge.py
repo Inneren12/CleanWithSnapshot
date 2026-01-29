@@ -24,7 +24,7 @@ def _lead_payload() -> dict:
         "estimate_snapshot": {"quote": 100},
         "pricing_config_version": "v1",
         "config_hash": "hash",
-        "status": default_lead_status,
+        "status": default_lead_status(),
     }
 
 

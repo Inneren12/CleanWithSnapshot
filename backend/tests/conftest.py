@@ -8,6 +8,7 @@ os.environ["APP_ENV"] = "dev"
 os.environ["TESTING"] = "true"
 
 import asyncio
+import base64
 import inspect
 import sys
 from pathlib import Path
@@ -437,6 +438,13 @@ def clean_database(test_engine):
 def client(async_session_maker):
     ensure_event_loop()
 
+    auth_value = f"{settings.admin_basic_username}:{settings.admin_basic_password}"
+    encoded = base64.b64encode(auth_value.encode("utf-8")).decode("utf-8")
+    default_headers = {
+        "Authorization": f"Basic {encoded}",
+        "X-Test-Org": str(DEFAULT_ORG_ID),
+    }
+
     async def override_db_session():
         async with async_session_maker() as session:
             yield session
@@ -445,7 +453,7 @@ def client(async_session_maker):
     app.state.bot_store = InMemoryBotStore()
     original_factory = getattr(app.state, "db_session_factory", None)
     app.state.db_session_factory = async_session_maker
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=default_headers) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     app.state.db_session_factory = original_factory
@@ -455,6 +463,13 @@ def client(async_session_maker):
 def client_no_raise(async_session_maker):
     """Test client that returns HTTP responses instead of raising server exceptions."""
 
+    auth_value = f"{settings.admin_basic_username}:{settings.admin_basic_password}"
+    encoded = base64.b64encode(auth_value.encode("utf-8")).decode("utf-8")
+    default_headers = {
+        "Authorization": f"Basic {encoded}",
+        "X-Test-Org": str(DEFAULT_ORG_ID),
+    }
+
     async def override_db_session():
         async with async_session_maker() as session:
             yield session
@@ -463,7 +478,25 @@ def client_no_raise(async_session_maker):
     app.state.bot_store = InMemoryBotStore()
     original_factory = getattr(app.state, "db_session_factory", None)
     app.state.db_session_factory = async_session_maker
-    with TestClient(app, raise_server_exceptions=False) as test_client:
+    with TestClient(app, raise_server_exceptions=False, headers=default_headers) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    app.state.db_session_factory = original_factory
+
+
+@pytest.fixture()
+def unauthenticated_client(async_session_maker):
+    ensure_event_loop()
+
+    async def override_db_session():
+        async with async_session_maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db_session] = override_db_session
+    app.state.bot_store = InMemoryBotStore()
+    original_factory = getattr(app.state, "db_session_factory", None)
+    app.state.db_session_factory = async_session_maker
+    with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     app.state.db_session_factory = original_factory
