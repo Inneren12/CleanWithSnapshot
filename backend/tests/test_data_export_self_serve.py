@@ -139,6 +139,7 @@ async def test_download_scoped_to_subject_and_admin(async_session_maker, client)
         subject_response = client.get(
             f"/v1/data-rights/exports/{record.export_id}/download",
             headers=_client_auth_header(token),
+            follow_redirects=False,
         )
         assert subject_response.status_code == 307
 
@@ -146,6 +147,7 @@ async def test_download_scoped_to_subject_and_admin(async_session_maker, client)
         admin_response = client.get(
             f"/v1/data-rights/exports/{record.export_id}/download",
             headers={"Authorization": f"Bearer {admin_token}"},
+            follow_redirects=False,
         )
         assert admin_response.status_code == 307
     finally:

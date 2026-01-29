@@ -7,7 +7,7 @@ from app.settings import settings
 
 def _basic_auth(username: str, password: str) -> dict[str, str]:
     token = base64.b64encode(f"{username}:{password}".encode()).decode()
-    return {"Authorization": f"Basic {token}"}
+    return {"Authorization": f"Basic {token}", "X-Auth-MFA": "true"}
 
 
 def _csrf_cookie_attributes(response) -> list[str]:
