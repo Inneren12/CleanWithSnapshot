@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -158,7 +159,7 @@ async def test_break_glass_review_requires_closure(async_session_maker, client):
         json={"reason": "review flow", "incident_ref": "INC-600"},
         auth=("owner", "secret"),
     )
-    session_id = start.json()["session_id"]
+    session_id = uuid.UUID(start.json()["session_id"])
 
     active_review = client.post(
         f"/v1/admin/break-glass/{session_id}/review",
