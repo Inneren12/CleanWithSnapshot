@@ -124,7 +124,7 @@ def make_admin_headers(
                 email=admin_email,
                 roles=admin_role,
                 mfa_verified=mfa_verified,
-                timestamp=1_700_000_000,
+                timestamp=None,
             )
         else:
             headers = build_proxy_headers(
@@ -254,6 +254,9 @@ def restore_admin_settings():
     original_admin_proxy_auth_secret = getattr(settings, "admin_proxy_auth_secret", None)
     original_admin_proxy_auth_e2e_enabled = getattr(settings, "admin_proxy_auth_e2e_enabled", False)
     original_admin_proxy_auth_e2e_secret = getattr(settings, "admin_proxy_auth_e2e_secret", None)
+    original_admin_proxy_auth_e2e_ttl_seconds = getattr(
+        settings, "admin_proxy_auth_e2e_ttl_seconds", 300
+    )
     original_admin_ip_allowlist = getattr(settings, "admin_ip_allowlist_cidrs_raw", None)
     original_trust_proxy_headers = getattr(settings, "trust_proxy_headers", False)
     original_trusted_proxy_ips = getattr(settings, "trusted_proxy_ips_raw", None)
@@ -314,6 +317,7 @@ def restore_admin_settings():
     settings.admin_proxy_auth_secret = original_admin_proxy_auth_secret
     settings.admin_proxy_auth_e2e_enabled = original_admin_proxy_auth_e2e_enabled
     settings.admin_proxy_auth_e2e_secret = original_admin_proxy_auth_e2e_secret
+    settings.admin_proxy_auth_e2e_ttl_seconds = original_admin_proxy_auth_e2e_ttl_seconds
     settings.admin_ip_allowlist_cidrs_raw = original_admin_ip_allowlist
     settings.trust_proxy_headers = original_trust_proxy_headers
     settings.trusted_proxy_ips_raw = original_trusted_proxy_ips
@@ -368,6 +372,7 @@ def enable_test_mode():
     settings.admin_proxy_auth_secret = "test-proxy-auth-secret-32-characters-long"
     settings.admin_proxy_auth_e2e_enabled = True
     settings.admin_proxy_auth_e2e_secret = "test-e2e-proxy-auth-secret-32chars"
+    settings.admin_proxy_auth_e2e_ttl_seconds = 3600
     settings.trust_proxy_headers = True
     settings.trusted_proxy_ips = ["testclient"]
     settings.trusted_proxy_cidrs = []

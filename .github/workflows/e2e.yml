@@ -393,7 +393,7 @@ jobs:
 
       - name: Preflight admin auth
         run: |
-          python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:8000/v1/admin/profile
+          PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:8000/v1/admin/profile
 
       - name: Install web dependencies
         working-directory: web

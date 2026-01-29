@@ -497,10 +497,17 @@ def _require_e2e_signature(
             detail="Invalid proxy signature",
         ) from exc
     now = int(time.time())
-    if abs(now - timestamp_value) > settings.admin_proxy_auth_e2e_ttl_seconds:
+    skew = abs(now - timestamp_value)
+    if skew > settings.admin_proxy_auth_e2e_ttl_seconds:
+        detail = "Proxy signature expired"
+        if settings.testing:
+            detail = (
+                "Proxy signature expired "
+                f"(server_now={now}, request_ts={timestamp_value}, skew={skew}s)"
+            )
         raise _build_auth_exception(
             reason="expired_timestamp",
-            detail="Proxy signature expired",
+            detail=detail,
         )
     mfa_header_value = request.headers.get(settings.admin_proxy_auth_header_mfa, "").strip().lower()
     payload = _build_e2e_signature_payload(
