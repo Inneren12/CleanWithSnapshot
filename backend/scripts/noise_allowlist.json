@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Allowlist for filtering known third-party warning noise. Only applies to third-party warnings; our code warnings are never filtered.",
+  "version": "1.0.0",
+  "updated": "2026-01-29",
+  "patterns": [
+    {
+      "pattern": "pkg_resources",
+      "rationale": "pkg_resources deprecation warnings from setuptools are ubiquitous and not actionable until ecosystem migrates",
+      "review_date": "2026-07-01"
+    },
+    {
+      "pattern": "distutils",
+      "rationale": "distutils deprecation warnings are expected as Python 3.12+ removes distutils",
+      "review_date": "2026-07-01"
+    },
+    {
+      "pattern": "imp module",
+      "rationale": "imp module deprecation from older packages; not actionable",
+      "review_date": "2026-07-01"
+    },
+    {
+      "pattern": "datetime\\.utcnow",
+      "rationale": "datetime.utcnow deprecation in third-party packages; tracked separately",
+      "review_date": "2026-07-01"
+    },
+    {
+      "pattern": "datetime\\.utcfromtimestamp",
+      "rationale": "datetime.utcfromtimestamp deprecation in third-party packages; tracked separately",
+      "review_date": "2026-07-01"
+    },
+    {
+      "pattern": "cgi module",
+      "rationale": "cgi module deprecation warnings from legacy packages",
+      "review_date": "2026-07-01"
+    },
+    {
+      "pattern": "typing\\.NamedTuple",
+      "rationale": "NamedTuple field order warning in older type stubs",
+      "review_date": "2026-07-01"
+    }
+  ],
+  "notes": [
+    "This allowlist ONLY filters third-party (site-packages) warnings.",
+    "High-risk categories (PytestRemovedIn9Warning, SAWarning, coroutine warnings) are NEVER filtered.",
+    "Our code warnings (backend/app/, backend/tests/) are NEVER filtered.",
+    "Review dates indicate when patterns should be re-evaluated."
+  ]
+}

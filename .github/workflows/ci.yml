@@ -82,7 +82,7 @@ jobs:
         run: |
           # Run tests excluding smoke and postgres markers (unit tests that work with SQLite)
           # Also ignore smoke folder entirely as belt-and-suspenders
-          pytest -v -m "not smoke and not postgres" --ignore=backend/tests/smoke --tb=short --cov=backend/app --cov-report=xml --cov-report=term
+          pytest -v -m "not smoke and not postgres" --ignore=backend/tests/smoke --tb=short --cov=backend/app --cov-report=xml --cov-report=term -W default 2>&1 | tee pytest-warnings.log
         env:
           # CI-safe environment variables (no secrets)
           APP_ENV: "dev"
@@ -96,6 +96,24 @@ jobs:
         with:
           name: pytest-coverage
           path: coverage.xml
+
+      - name: Run warnings audit
+        if: always()
+        working-directory: backend
+        run: |
+          mkdir -p warnings-audit
+          python scripts/warnings_audit.py --log ../pytest-warnings.log --out warnings-audit --gate warn
+        env:
+          PYTHONPATH: "."
+
+      - name: Upload warnings audit report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: warnings-audit
+          path: |
+            backend/warnings-audit/
+            pytest-warnings.log
 
   web:
     name: Web - Build
