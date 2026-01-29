@@ -18,6 +18,9 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    is_sqlite = bind.dialect.name == "sqlite"
+    if is_sqlite:
+        bind.execute(sa.text("PRAGMA foreign_keys=OFF"))
 
     duplicate_names = bind.execute(
         sa.text("SELECT name FROM teams GROUP BY name HAVING COUNT(*) > 1")
@@ -54,6 +57,8 @@ def upgrade() -> None:
 
     with op.batch_alter_table("teams") as batch:
         batch.create_unique_constraint("uq_teams_name", ["name"])
+    if is_sqlite:
+        bind.execute(sa.text("PRAGMA foreign_keys=ON"))
 
 
 def downgrade() -> None:

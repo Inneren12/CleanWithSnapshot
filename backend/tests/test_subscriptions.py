@@ -40,7 +40,8 @@ def test_idempotent_generation(client, async_session_maker):
         "base_service_type": "standard",
         "base_price": 12000,
     }
-    response = client.post("/client/subscriptions", json=payload, cookies={"client_session": token})
+    client.cookies.update({"client_session": token})
+    response = client.post("/client/subscriptions", json=payload)
     assert response.status_code == 201, response.text
 
     for _ in range(2):
@@ -106,14 +107,14 @@ def test_paused_subscription_blocks_generation(client, async_session_maker):
         "base_price": 15000,
         "preferred_day_of_month": 1,
     }
-    response = client.post("/client/subscriptions", json=payload, cookies={"client_session": token})
+    client.cookies.update({"client_session": token})
+    response = client.post("/client/subscriptions", json=payload)
     assert response.status_code == 201
     subscription_id = response.json()["subscription_id"]
 
     patch_resp = client.patch(
         f"/client/subscriptions/{subscription_id}",
         json={"status": "PAUSED"},
-        cookies={"client_session": token},
     )
     assert patch_resp.status_code == 200
 

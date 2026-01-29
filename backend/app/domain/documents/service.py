@@ -112,6 +112,14 @@ def _serialize_date(value: date | datetime | None) -> str | None:
     return value.isoformat()
 
 
+def _normalize_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 def _format_currency(cents: int, currency: str) -> str:
     return f"{currency} {cents / 100:,.2f}"
 
@@ -160,7 +168,7 @@ def _invoice_snapshot(invoice: Invoice, lead: Lead | None) -> dict[str, Any]:
 
 
 def _receipt_snapshot(invoice: Invoice, payment: Payment, lead: Lead | None) -> dict[str, Any]:
-    received_at = payment.received_at or payment.created_at
+    received_at = _normalize_datetime(payment.received_at) or _normalize_datetime(payment.created_at)
     return {
         "payment": {
             "payment_id": payment.payment_id,

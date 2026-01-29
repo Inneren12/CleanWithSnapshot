@@ -20,6 +20,7 @@ from app.settings import settings
 
 ALLOWED_EXPIRING_WINDOWS = {7, 14, 30}
 _EVALUATION_CACHE: dict[str, datetime] = {}
+HTTP_422_ENTITY = status.__dict__.get("HTTP_422_UNPROCESSABLE_ENTITY", 422)
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,7 @@ def _resolve_effective_state(
 def _validate_override_reason(override_enabled: bool, override_reason: str | None) -> None:
     if override_enabled and not override_reason:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=HTTP_422_ENTITY,
             detail="override_reason is required when overrides are enabled",
         )
 

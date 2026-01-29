@@ -2,7 +2,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from pathlib import Path
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, event, inspect
 import sqlalchemy as sa
 import pytest
 
@@ -45,6 +45,11 @@ def test_alembic_upgrade_head(tmp_path):
         settings.database_url = original_database_url
 
     engine = create_engine(f"sqlite:///{db_path}")
+    event.listen(
+        engine,
+        "connect",
+        lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=ON"),
+    )
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     assert "leads" in tables
@@ -58,6 +63,7 @@ def test_alembic_upgrade_head(tmp_path):
     lead_columns = {col["name"] for col in inspector.get_columns("leads")}
     assert "referral_code" in lead_columns
     assert "referred_by_code" in lead_columns
+    engine.dispose()
 
 
 def test_default_team_dedupe_is_fk_safe(tmp_path):
@@ -69,6 +75,11 @@ def test_default_team_dedupe_is_fk_safe(tmp_path):
         command.upgrade(config, "0007_referrals")
 
         engine = create_engine(f"sqlite:///{db_path}")
+        event.listen(
+            engine,
+            "connect",
+            lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=ON"),
+        )
         with engine.begin() as conn:
             conn.execute(sa.text("DELETE FROM bookings"))
             conn.execute(sa.text("DELETE FROM teams"))
@@ -102,12 +113,18 @@ def test_default_team_dedupe_is_fk_safe(tmp_path):
                     "status": "CONFIRMED",
                 },
             )
+        engine.dispose()
 
         command.upgrade(config, "head")
     finally:
         settings.database_url = original_database_url
 
     engine = create_engine(f"sqlite:///{db_path}")
+    event.listen(
+        engine,
+        "connect",
+        lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=ON"),
+    )
     with engine.connect() as conn:
         teams = conn.execute(sa.text("SELECT name, COUNT(*) AS c FROM teams GROUP BY name")).fetchall()
         team_map = {row.name: row.c for row in teams}
@@ -116,6 +133,7 @@ def test_default_team_dedupe_is_fk_safe(tmp_path):
 
         booking_teams = conn.execute(sa.text("SELECT booking_id, team_id FROM bookings ORDER BY booking_id")).fetchall()
         assert booking_teams == [("b1", 1), ("b2", 3)]
+    engine.dispose()
 
 
 def test_invoice_tax_backfill_preserves_zero_tax_invoices(tmp_path):
@@ -128,6 +146,11 @@ def test_invoice_tax_backfill_preserves_zero_tax_invoices(tmp_path):
         command.upgrade(config, "0048_admin_totp_mfa")
 
         engine = create_engine(f"sqlite:///{db_path}")
+        event.listen(
+            engine,
+            "connect",
+            lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=ON"),
+        )
         default_org_id = str(settings.default_org_id)
 
         with engine.begin() as conn:
@@ -245,12 +268,18 @@ def test_invoice_tax_backfill_preserves_zero_tax_invoices(tmp_path):
                     ),
                     {"invoice_id": invoice_id},
                 )
+        engine.dispose()
 
         command.upgrade(config, "head")
     finally:
         settings.database_url = original_database_url
 
     engine = create_engine(f"sqlite:///{db_path}")
+    event.listen(
+        engine,
+        "connect",
+        lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=ON"),
+    )
     with engine.connect() as conn:
         rows = conn.execute(
             sa.text(
@@ -270,3 +299,4 @@ def test_invoice_tax_backfill_preserves_zero_tax_invoices(tmp_path):
     assert rows[1].invoice_id == "inv-with-tax"
     assert rows[1].taxable_subtotal_cents == 10000
     assert float(rows[1].tax_rate_basis) == pytest.approx(0.05)
+    engine.dispose()

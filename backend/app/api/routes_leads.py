@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import entitlements
+from app.api.problem_details import HTTP_422_ENTITY
 from app.dependencies import get_db_session
 from app.domain.analytics.service import (
     EventType,
@@ -107,7 +108,7 @@ async def create_lead(
                 mode=settings.captcha_mode,
                 provider=settings.captcha_mode,
             )
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="captcha_required")
+            raise HTTPException(status_code=HTTP_422_ENTITY, detail="captcha_required")
         captcha_ok = await verify_turnstile(request.captcha_token, remote_ip, transport=turnstile_transport)
         if not captcha_ok:
             log_captcha_event(
@@ -116,7 +117,7 @@ async def create_lead(
                 mode=settings.captcha_mode,
                 provider=settings.captcha_mode,
             )
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="captcha_failed")
+            raise HTTPException(status_code=HTTP_422_ENTITY, detail="captcha_failed")
         log_captcha_event(
             "success",
             request_id=request_id,

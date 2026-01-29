@@ -102,19 +102,20 @@ def test_invoice_surfaces_ignore_ui_lang(client, async_session_maker):
         headers = _basic_auth("admin", "secret")
         cookies = {"ui_lang": "ru"}
 
-        list_response = client.get("/v1/admin/ui/invoices", headers=headers, cookies=cookies)
+        client.cookies.update(cookies)
+        list_response = client.get("/v1/admin/ui/invoices", headers=headers)
         assert list_response.status_code == 200
         assert "Invoices" in list_response.text
         assert "Счёт" not in list_response.text
 
-        detail_response = client.get(f"/v1/admin/ui/invoices/{invoice_id}", headers=headers, cookies=cookies)
+        detail_response = client.get(f"/v1/admin/ui/invoices/{invoice_id}", headers=headers)
         assert detail_response.status_code == 200
         for expected in ["Invoice", "Subtotal", "Tax", "Total"]:
             assert expected in detail_response.text
         for forbidden in ["Счёт", "Налог", "Итого"]:
             assert forbidden not in detail_response.text
 
-        public_response = client.get(f"/i/{token}", cookies=cookies)
+        public_response = client.get(f"/i/{token}")
         assert public_response.status_code == 200
         for expected in ["Invoice", "Subtotal", "Tax", "Total"]:
             assert expected in public_response.text

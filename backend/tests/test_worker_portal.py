@@ -119,7 +119,8 @@ async def test_worker_portal_renders_russian_labels(client, async_session_maker)
     login = client.post("/worker/login", headers=_basic_auth("worker", "secret"))
     assert login.status_code == 200
 
-    resp = client.get("/worker", cookies={"ui_lang": "ru"})
+    client.cookies.set("ui_lang", "ru")
+    resp = client.get("/worker")
 
     assert resp.status_code == 200
     assert "Панель" in resp.text
@@ -138,7 +139,8 @@ async def test_worker_job_invoice_text_stays_english_with_ru(client, async_sessi
     login = client.post("/worker/login", headers=_basic_auth("worker", "secret"))
     assert login.status_code == 200
 
-    detail = client.get(f"/worker/jobs/{booking_id}", cookies={"ui_lang": "ru"})
+    client.cookies.set("ui_lang", "ru")
+    detail = client.get(f"/worker/jobs/{booking_id}")
 
     assert detail.status_code == 200
     assert "Invoice" in detail.text
@@ -379,4 +381,3 @@ async def test_worker_price_adjust_requires_note(client, async_session_maker):
         data={"price_adjust_reason": "EXTRA_SERVICE"},
     )
     assert resp.status_code == 400
-
