@@ -20,7 +20,7 @@ from app.settings import settings
 
 ALLOWED_EXPIRING_WINDOWS = {7, 14, 30}
 _EVALUATION_CACHE: dict[str, datetime] = {}
-HTTP_422_ENTITY = status.__dict__.get("HTTP_422_UNPROCESSABLE_ENTITY", 422)
+HTTP_422_ENTITY = getattr(status, "HTTP_422_UNPROCESSABLE_ENTITY", 422)
 
 
 @dataclass(frozen=True)
