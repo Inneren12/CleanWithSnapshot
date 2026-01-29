@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from app.infra.metrics import metrics
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
+_SQLITE_RESERVATION_LOCK = asyncio.Lock()
 
 
 def _is_sqlite(session: AsyncSession) -> bool:
@@ -166,6 +168,38 @@ async def get_org_storage_quota_snapshot(
 
 
 async def reserve_bytes(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    bytes_requested: int,
+    *,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    expires_in_seconds: int | None = None,
+    audit_identity: AdminIdentity | Any | None = None,
+) -> StorageReservation:
+    if _is_sqlite(session):
+        async with _SQLITE_RESERVATION_LOCK:
+            return await _reserve_bytes_locked(
+                session,
+                org_id,
+                bytes_requested,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                expires_in_seconds=expires_in_seconds,
+                audit_identity=audit_identity,
+            )
+    return await _reserve_bytes_locked(
+        session,
+        org_id,
+        bytes_requested,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        expires_in_seconds=expires_in_seconds,
+        audit_identity=audit_identity,
+    )
+
+
+async def _reserve_bytes_locked(
     session: AsyncSession,
     org_id: uuid.UUID,
     bytes_requested: int,
