@@ -2,7 +2,7 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, event, pool
 from sqlalchemy.engine import make_url
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +76,12 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    if connectable.dialect.name == "sqlite":
+        event.listen(
+            connectable,
+            "connect",
+            lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=ON"),
+        )
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
