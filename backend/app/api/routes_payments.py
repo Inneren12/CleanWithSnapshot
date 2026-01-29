@@ -1105,11 +1105,10 @@ async def _stripe_webhook_handler(http_request: Request, session: AsyncSession) 
                 session.add(record)
 
             try:
-                handling_result = await _handle_webhook_event(
-                    session, event, resolve_app_email_adapter(http_request), ctx
-                )
-                processed = handling_result.processed
-                record.status = "succeeded" if processed else "ignored"
+                async with session.begin_nested():
+                    handling_result = await _handle_webhook_event(
+                        session, event, resolve_app_email_adapter(http_request), ctx
+                    )
             except Exception as exc:  # noqa: BLE001
                 processed = False
                 record.status = "error"
@@ -1122,6 +1121,8 @@ async def _stripe_webhook_handler(http_request: Request, session: AsyncSession) 
                 metrics.record_webhook("error")
                 metrics.record_webhook_error("processing_error")
             else:
+                processed = handling_result.processed
+                record.status = "succeeded" if processed else "ignored"
                 record.last_error = None
 
             if processing_error is not None:
