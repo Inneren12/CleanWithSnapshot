@@ -257,6 +257,7 @@ class TestProxyAuthSettingsValidation:
         monkeypatch.setenv("AUTH_SECRET_KEY", "prod-auth-secret-at-least-32-chars")
         monkeypatch.setenv("CLIENT_PORTAL_SECRET", "prod-client-secret")
         monkeypatch.setenv("WORKER_PORTAL_SECRET", "prod-worker-secret")
+        monkeypatch.setenv("ADMIN_PROXY_AUTH_SECRET", "proxy-secret-at-least-32-chars")
         monkeypatch.setenv("METRICS_ENABLED", "false")
         monkeypatch.setenv("ADMIN_PROXY_AUTH_ENABLED", "false")
         monkeypatch.setenv("ADMIN_PROXY_AUTH_REQUIRED", "true")
