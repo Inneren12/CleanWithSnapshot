@@ -104,6 +104,14 @@ def build_proxy_headers(
     roles: str,
     mfa_verified: bool = True,
 ) -> dict[str, str]:
+    if not proxy_secret:
+        raise ValueError("proxy_secret is required")
+    if not user:
+        raise ValueError("user is required")
+    if not email:
+        raise ValueError("email is required")
+    if not roles:
+        raise ValueError("roles is required")
     return {
         PROXY_AUTH_HEADER_SECRET: proxy_secret,
         PROXY_AUTH_HEADER_MFA: "true" if mfa_verified else "false",

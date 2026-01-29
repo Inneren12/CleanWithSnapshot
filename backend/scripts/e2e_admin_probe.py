@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """CI helper for signed admin proxy probes."""
 
-from __future__ import annotations
-
 import argparse
 import os
 import time
@@ -42,6 +40,19 @@ def build_probe_config() -> ProbeConfig:
 
 
 def build_signed_headers(config: ProbeConfig) -> dict[str, str]:
+    missing = [
+        name
+        for name, value in {
+            "ADMIN_PROXY_AUTH_SECRET": config.proxy_secret,
+            "ADMIN_PROXY_AUTH_E2E_USER": config.e2e_user,
+            "ADMIN_PROXY_AUTH_E2E_EMAIL": config.e2e_email,
+            "ADMIN_PROXY_AUTH_E2E_SECRET": config.e2e_secret,
+            "ADMIN_PROXY_AUTH_E2E_ROLES": config.e2e_roles,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise ValueError(f"Missing required values: {', '.join(missing)}")
     headers = build_e2e_proxy_headers(
         proxy_secret=config.proxy_secret,
         e2e_secret=config.e2e_secret,
