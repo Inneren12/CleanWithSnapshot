@@ -249,18 +249,28 @@ class TestNonAdminRoutesUnaffected:
 class TestProxyAuthSettingsValidation:
     """Tests for settings validation related to proxy auth."""
 
+    def _set_prod_env(self, monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
+        baseline = {
+            "APP_ENV": "prod",
+            "TESTING": "false",
+            "AUTH_SECRET_KEY": "auth-secret-32-characters-long",
+            "CLIENT_PORTAL_SECRET": "client-portal-secret-32chars",
+            "WORKER_PORTAL_SECRET": "worker-portal-secret-32chars",
+            "ADMIN_PROXY_AUTH_SECRET": "proxy-secret-32-characters-long",
+            "METRICS_ENABLED": "false",
+        }
+        for key, value in {**baseline, **overrides}.items():
+            monkeypatch.setenv(key, value)
+
     def test_proxy_required_without_enabled_fails_in_prod(self, monkeypatch):
         """Setting proxy_auth_required=True without enabled=True should fail in prod."""
         from app.settings import Settings
 
-        monkeypatch.setenv("APP_ENV", "prod")
-        monkeypatch.setenv("AUTH_SECRET_KEY", "prod-auth-secret-at-least-32-chars")
-        monkeypatch.setenv("CLIENT_PORTAL_SECRET", "prod-client-secret")
-        monkeypatch.setenv("WORKER_PORTAL_SECRET", "prod-worker-secret")
-        monkeypatch.setenv("ADMIN_PROXY_AUTH_SECRET", "proxy-secret-at-least-32-chars")
-        monkeypatch.setenv("METRICS_ENABLED", "false")
-        monkeypatch.setenv("ADMIN_PROXY_AUTH_ENABLED", "false")
-        monkeypatch.setenv("ADMIN_PROXY_AUTH_REQUIRED", "true")
+        self._set_prod_env(
+            monkeypatch,
+            ADMIN_PROXY_AUTH_ENABLED="false",
+            ADMIN_PROXY_AUTH_REQUIRED="true",
+        )
 
         with pytest.raises(ValueError, match="ADMIN_PROXY_AUTH_REQUIRED.*ADMIN_PROXY_AUTH_ENABLED"):
             Settings()
@@ -269,12 +279,11 @@ class TestProxyAuthSettingsValidation:
         """Enabling proxy auth without a secret should fail in prod."""
         from app.settings import Settings
 
-        monkeypatch.setenv("APP_ENV", "prod")
-        monkeypatch.setenv("AUTH_SECRET_KEY", "prod-auth-secret-at-least-32-chars")
-        monkeypatch.setenv("CLIENT_PORTAL_SECRET", "prod-client-secret")
-        monkeypatch.setenv("WORKER_PORTAL_SECRET", "prod-worker-secret")
-        monkeypatch.setenv("METRICS_ENABLED", "false")
-        monkeypatch.setenv("ADMIN_PROXY_AUTH_ENABLED", "true")
+        self._set_prod_env(
+            monkeypatch,
+            ADMIN_PROXY_AUTH_ENABLED="true",
+            ADMIN_PROXY_AUTH_SECRET="",
+        )
 
         with pytest.raises(ValueError, match="ADMIN_PROXY_AUTH_SECRET.*required"):
             Settings()
@@ -283,13 +292,11 @@ class TestProxyAuthSettingsValidation:
         """Proxy auth secret that is too short should fail in prod."""
         from app.settings import Settings
 
-        monkeypatch.setenv("APP_ENV", "prod")
-        monkeypatch.setenv("AUTH_SECRET_KEY", "prod-auth-secret-at-least-32-chars")
-        monkeypatch.setenv("CLIENT_PORTAL_SECRET", "prod-client-secret")
-        monkeypatch.setenv("WORKER_PORTAL_SECRET", "prod-worker-secret")
-        monkeypatch.setenv("METRICS_ENABLED", "false")
-        monkeypatch.setenv("ADMIN_PROXY_AUTH_ENABLED", "true")
-        monkeypatch.setenv("ADMIN_PROXY_AUTH_SECRET", "too-short")
+        self._set_prod_env(
+            monkeypatch,
+            ADMIN_PROXY_AUTH_ENABLED="true",
+            ADMIN_PROXY_AUTH_SECRET="too-short",
+        )
 
         with pytest.raises(ValueError, match="32 characters"):
             Settings()

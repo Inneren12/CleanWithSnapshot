@@ -8,16 +8,17 @@ from app.settings import Settings
 
 def test_cors_strict_blocks_when_empty(monkeypatch):
     monkeypatch.setenv("TESTING", "false")  # Prod mode requires TESTING=false
+    monkeypatch.setenv("ADMIN_PROXY_AUTH_SECRET", "proxy-secret-32-characters-long")
     with pytest.raises(ValidationError, match="CORS_ORIGINS"):
         create_app(
             Settings(
                 app_env="prod",
                 strict_cors=True,
                 cors_origins=[],
-                auth_secret_key="super-secret",
-                client_portal_secret="client-secret",
-                worker_portal_secret="worker-secret",
-                admin_proxy_auth_secret="proxy-secret-at-least-32-chars",
+                auth_secret_key="auth-secret-32-characters-long",
+                client_portal_secret="client-portal-secret-32chars",
+                worker_portal_secret="worker-portal-secret-32chars",
+                admin_proxy_auth_secret="proxy-secret-32-characters-long",
                 metrics_enabled=False,
             )
         )
@@ -25,14 +26,15 @@ def test_cors_strict_blocks_when_empty(monkeypatch):
 
 def test_cors_allows_configured_origin(monkeypatch):
     monkeypatch.setenv("TESTING", "false")  # Prod mode requires TESTING=false
+    monkeypatch.setenv("ADMIN_PROXY_AUTH_SECRET", "proxy-secret-32-characters-long")
     app = create_app(
         Settings(
             app_env="prod",
             cors_origins=["https://example.com"],
-            auth_secret_key="super-secret",
-            client_portal_secret="client-secret",
-            worker_portal_secret="worker-secret",
-            admin_proxy_auth_secret="proxy-secret-at-least-32-chars",
+            auth_secret_key="auth-secret-32-characters-long",
+            client_portal_secret="client-portal-secret-32chars",
+            worker_portal_secret="worker-portal-secret-32chars",
+            admin_proxy_auth_secret="proxy-secret-32-characters-long",
             metrics_enabled=False,
         )
     )
