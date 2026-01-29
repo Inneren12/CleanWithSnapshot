@@ -46,6 +46,10 @@ def _sanitize_deleted_count(deleted: int | None, fallback: int) -> int:
     return deleted
 
 
+def _transaction(session: AsyncSession):
+    return session.begin_nested() if session.in_transaction() else session.begin()
+
+
 async def _delete_event_batch(
     session: AsyncSession,
     *,
@@ -83,7 +87,7 @@ async def purge_raw_events(
     )
 
     if retention_days is None or retention_days <= 0:
-        async with session.begin():
+        async with _transaction(session):
             await admin_audit_service.record_system_action(
                 session,
                 org_id=settings.default_org_id,
@@ -111,7 +115,7 @@ async def purge_raw_events(
         )
 
     total_deleted = 0
-    async with session.begin():
+    async with _transaction(session):
         while True:
             deleted = await _delete_event_batch(
                 session,

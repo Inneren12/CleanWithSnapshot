@@ -54,6 +54,10 @@ def _sanitize_deleted_count(deleted: int | None, fallback: int) -> int:
     return deleted
 
 
+def _transaction(session: AsyncSession):
+    return session.begin_nested() if session.in_transaction() else session.begin()
+
+
 async def _fetch_batch_ids(
     session: AsyncSession,
     cutoff: datetime,
@@ -141,7 +145,7 @@ async def purge_application_logs(
     )
 
     if resolved_retention_days is None or resolved_retention_days <= 0:
-        async with session.begin():
+        async with _transaction(session):
             await admin_audit_service.record_system_action(
                 session,
                 org_id=settings.default_org_id,
@@ -181,7 +185,7 @@ async def purge_application_logs(
             retry_delay_seconds=resolved_retry_delay,
         )
 
-    async with session.begin():
+    async with _transaction(session):
         await admin_audit_service.record_system_action(
             session,
             org_id=settings.default_org_id,

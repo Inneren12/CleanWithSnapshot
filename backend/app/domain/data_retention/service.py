@@ -100,6 +100,10 @@ def _chunked(iterable: Iterable[Any], size: int) -> Iterable[list[Any]]:
         yield chunk
 
 
+def _transaction(session: AsyncSession):
+    return session.begin_nested() if session.in_transaction() else session.begin()
+
+
 async def _delete_in_batches(
     session: AsyncSession,
     target: RetentionTarget,
@@ -141,7 +145,7 @@ async def enforce_retention(
     )
 
     if policy.retention_days is None or policy.retention_days <= 0:
-        async with session.begin():
+        async with _transaction(session):
             await admin_audit_service.record_system_action(
                 session,
                 org_id=settings.default_org_id,
@@ -165,7 +169,7 @@ async def enforce_retention(
         )
 
     if category == RetentionCategory.AUDIT_LOGS:
-        async with session.begin():
+        async with _transaction(session):
             await admin_audit_service.record_system_action(
                 session,
                 org_id=settings.default_org_id,
@@ -189,7 +193,7 @@ async def enforce_retention(
         )
 
     if category == RetentionCategory.SOFT_DELETED_ENTITIES:
-        async with session.begin():
+        async with _transaction(session):
             await admin_audit_service.record_system_action(
                 session,
                 org_id=settings.default_org_id,
@@ -222,7 +226,7 @@ async def enforce_retention(
             status="unsupported",
         )
 
-    async with session.begin():
+    async with _transaction(session):
         deleted = await _delete_in_batches(
             session,
             target,

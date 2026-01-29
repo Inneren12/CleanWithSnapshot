@@ -1,4 +1,3 @@
-import base64
 import datetime as dt
 
 import pytest
@@ -10,41 +9,20 @@ from app.domain.reason_logs.db_models import ReasonLog
 from app.domain.bookings.service import ensure_default_team
 from app.domain.leads.db_models import Lead
 from app.domain.workers.db_models import Worker
-from app.settings import settings
-
-
-def _basic_auth(username: str, password: str) -> dict[str, str]:
-    token = base64.b64encode(f"{username}:{password}".encode()).decode()
-    return {"Authorization": f"Basic {token}"}
-
-
-@pytest.fixture(autouse=True)
-def _reset_dispatch_creds():
-    original = {
-        "dispatcher_basic_username": settings.dispatcher_basic_username,
-        "dispatcher_basic_password": settings.dispatcher_basic_password,
-    }
-    settings.dispatcher_basic_username = "dispatch"
-    settings.dispatcher_basic_password = "secret"
-    yield
-    for key, value in original.items():
-        setattr(settings, key, value)
 
 
 @pytest.mark.anyio
-async def test_admin_can_create_and_edit_team_ui(client, async_session_maker):
+async def test_admin_can_create_and_edit_team_ui(dispatcher_client, async_session_maker):
     async with async_session_maker() as session:
         await ensure_default_team(session)
         await session.commit()
 
-    headers = _basic_auth("dispatch", "secret")
-    form_resp = client.get("/v1/admin/ui/teams/new", headers=headers)
+    form_resp = dispatcher_client.get("/v1/admin/ui/teams/new")
     assert form_resp.status_code == 200
     assert "action=\"/v1/admin/ui/teams/create\"" in form_resp.text
 
-    create_resp = client.post(
+    create_resp = dispatcher_client.post(
         "/v1/admin/ui/teams/create",
-        headers=headers,
         data={"name": "Crew B"},
         follow_redirects=False,
     )
@@ -55,9 +33,8 @@ async def test_admin_can_create_and_edit_team_ui(client, async_session_maker):
             await session.execute(sa.select(Team).where(Team.name == "Crew B"))
         ).scalar_one()
 
-    update_resp = client.post(
+    update_resp = dispatcher_client.post(
         f"/v1/admin/ui/teams/{team.team_id}/update",
-        headers=headers,
         data={"name": "Crew Beta"},
         follow_redirects=False,
     )
@@ -70,7 +47,7 @@ async def test_admin_can_create_and_edit_team_ui(client, async_session_maker):
 
 
 @pytest.mark.anyio
-async def test_admin_team_reassign_and_delete(client, async_session_maker):
+async def test_admin_team_reassign_and_delete(dispatcher_client, async_session_maker):
     async with async_session_maker() as session:
         await ensure_default_team(session)
         team = Team(name="Crew Delete")
@@ -89,10 +66,8 @@ async def test_admin_team_reassign_and_delete(client, async_session_maker):
         session.add(booking)
         await session.commit()
 
-    headers = _basic_auth("dispatch", "secret")
-    reassign_resp = client.post(
+    reassign_resp = dispatcher_client.post(
         f"/v1/admin/ui/teams/{team.team_id}/delete",
-        headers=headers,
         data={"strategy": "reassign", "target_team_id": str(target.team_id), "confirm": "DELETE"},
         follow_redirects=False,
     )
@@ -110,16 +85,14 @@ async def test_admin_team_reassign_and_delete(client, async_session_maker):
 
 
 @pytest.mark.anyio
-async def test_admin_team_delete_empty(client, async_session_maker):
+async def test_admin_team_delete_empty(dispatcher_client, async_session_maker):
     async with async_session_maker() as session:
         team = Team(name="Delete Empty")
         session.add(team)
         await session.commit()
 
-    headers = _basic_auth("dispatch", "secret")
-    delete_resp = client.post(
+    delete_resp = dispatcher_client.post(
         f"/v1/admin/ui/teams/{team.team_id}/delete",
-        headers=headers,
         data={"strategy": "delete", "confirm": "DELETE"},
         follow_redirects=False,
     )
@@ -131,7 +104,7 @@ async def test_admin_team_delete_empty(client, async_session_maker):
 
 
 @pytest.mark.anyio
-async def test_admin_team_cascade_delete(client, async_session_maker):
+async def test_admin_team_cascade_delete(dispatcher_client, async_session_maker):
     async with async_session_maker() as session:
         team = Team(name="Cascade Team")
         session.add(team)
@@ -165,10 +138,8 @@ async def test_admin_team_cascade_delete(client, async_session_maker):
         )
         await session.commit()
 
-    headers = _basic_auth("dispatch", "secret")
-    delete_resp = client.post(
+    delete_resp = dispatcher_client.post(
         f"/v1/admin/ui/teams/{team.team_id}/delete",
-        headers=headers,
         data={"strategy": "cascade", "confirm": "DELETE"},
         follow_redirects=False,
     )
@@ -196,16 +167,14 @@ async def test_admin_team_cascade_delete(client, async_session_maker):
 
 
 @pytest.mark.anyio
-async def test_admin_team_archive_unarchive(client, async_session_maker):
+async def test_admin_team_archive_unarchive(dispatcher_client, async_session_maker):
     async with async_session_maker() as session:
         team = Team(name="Archive Team")
         session.add(team)
         await session.commit()
 
-    headers = _basic_auth("dispatch", "secret")
-    archive_resp = client.post(
+    archive_resp = dispatcher_client.post(
         f"/v1/admin/ui/teams/{team.team_id}/archive",
-        headers=headers,
         follow_redirects=False,
     )
     assert archive_resp.status_code == 303
@@ -215,9 +184,8 @@ async def test_admin_team_archive_unarchive(client, async_session_maker):
         assert archived is not None
         assert archived.archived_at is not None
 
-    unarchive_resp = client.post(
+    unarchive_resp = dispatcher_client.post(
         f"/v1/admin/ui/teams/{team.team_id}/unarchive",
-        headers=headers,
         follow_redirects=False,
     )
     assert unarchive_resp.status_code == 303
@@ -229,7 +197,7 @@ async def test_admin_team_archive_unarchive(client, async_session_maker):
 
 
 @pytest.mark.anyio
-async def test_admin_worker_archive_unarchive(client, async_session_maker):
+async def test_admin_worker_archive_unarchive(dispatcher_client, async_session_maker):
     async with async_session_maker() as session:
         team = await ensure_default_team(session)
         await session.flush()
@@ -237,10 +205,8 @@ async def test_admin_worker_archive_unarchive(client, async_session_maker):
         session.add(worker)
         await session.commit()
 
-    headers = _basic_auth("dispatch", "secret")
-    archive_resp = client.post(
+    archive_resp = dispatcher_client.post(
         f"/v1/admin/ui/workers/{worker.worker_id}/archive",
-        headers=headers,
         follow_redirects=False,
     )
     assert archive_resp.status_code == 303
@@ -251,9 +217,8 @@ async def test_admin_worker_archive_unarchive(client, async_session_maker):
         assert archived.archived_at is not None
         assert archived.is_active is False
 
-    unarchive_resp = client.post(
+    unarchive_resp = dispatcher_client.post(
         f"/v1/admin/ui/workers/{worker.worker_id}/unarchive",
-        headers=headers,
         follow_redirects=False,
     )
     assert unarchive_resp.status_code == 303
@@ -266,7 +231,7 @@ async def test_admin_worker_archive_unarchive(client, async_session_maker):
 
 
 @pytest.mark.anyio
-async def test_admin_worker_detail_stats_and_schedule(client, async_session_maker):
+async def test_admin_worker_detail_stats_and_schedule(dispatcher_client, async_session_maker):
     async with async_session_maker() as session:
         team = await ensure_default_team(session)
         await session.flush()
@@ -324,8 +289,7 @@ async def test_admin_worker_detail_stats_and_schedule(client, async_session_make
         session.add(BookingWorker(booking_id=booking_two.booking_id, worker_id=worker.worker_id))
         await session.commit()
 
-    headers = _basic_auth("dispatch", "secret")
-    detail_resp = client.get(f"/v1/admin/ui/workers/{worker.worker_id}", headers=headers)
+    detail_resp = dispatcher_client.get(f"/v1/admin/ui/workers/{worker.worker_id}")
     assert detail_resp.status_code == 200
     assert "Completed bookings</div><div class=\"value\">2" in detail_resp.text
     assert "Cancelled bookings</div><div class=\"value\">1" in detail_resp.text
@@ -336,7 +300,7 @@ async def test_admin_worker_detail_stats_and_schedule(client, async_session_make
 
 
 @pytest.mark.anyio
-async def test_admin_worker_delete_detach(client, async_session_maker):
+async def test_admin_worker_delete_detach(dispatcher_client, async_session_maker):
     async with async_session_maker() as session:
         team = await ensure_default_team(session)
         await session.flush()
@@ -355,10 +319,8 @@ async def test_admin_worker_delete_detach(client, async_session_maker):
         session.add(BookingWorker(booking_id=booking.booking_id, worker_id=worker.worker_id))
         await session.commit()
 
-    headers = _basic_auth("dispatch", "secret")
-    delete_resp = client.post(
+    delete_resp = dispatcher_client.post(
         f"/v1/admin/ui/workers/{worker.worker_id}/delete",
-        headers=headers,
         data={"strategy": "detach", "confirm": "DELETE"},
         follow_redirects=False,
     )
@@ -379,7 +341,7 @@ async def test_admin_worker_delete_detach(client, async_session_maker):
 
 
 @pytest.mark.anyio
-async def test_admin_worker_delete_cascade(client, async_session_maker):
+async def test_admin_worker_delete_cascade(dispatcher_client, async_session_maker):
     async with async_session_maker() as session:
         team = await ensure_default_team(session)
         await session.flush()
@@ -412,10 +374,8 @@ async def test_admin_worker_delete_cascade(client, async_session_maker):
         )
         await session.commit()
 
-    headers = _basic_auth("dispatch", "secret")
-    delete_resp = client.post(
+    delete_resp = dispatcher_client.post(
         f"/v1/admin/ui/workers/{worker.worker_id}/delete",
-        headers=headers,
         data={"strategy": "cascade", "confirm": "DELETE"},
         follow_redirects=False,
     )
@@ -439,12 +399,12 @@ async def test_admin_worker_delete_cascade(client, async_session_maker):
         ).scalars().all()
         assert event_logs == []
 
-    list_resp = client.get("/v1/admin/ui/workers?active_only=1", headers=headers)
+    list_resp = dispatcher_client.get("/v1/admin/ui/workers?active_only=1")
     assert list_resp.status_code == 200
     assert "Cascade Me" not in list_resp.text
 
 
 @pytest.mark.anyio
-async def test_admin_ui_requires_auth(client):
-    response = client.get("/v1/admin/ui/teams")
+async def test_admin_ui_requires_auth(anon_client):
+    response = anon_client.get("/v1/admin/ui/teams")
     assert response.status_code == 401

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import uuid
 
 import pytest
 import sqlalchemy as sa
@@ -262,7 +263,7 @@ async def test_soft_delete_purge_grace_period_and_legal_hold(async_session_maker
                         created_at=FIXED_NOW - timedelta(days=43),
                     ),
                     LeadTouchpoint(
-                        touchpoint_id="00000000-0000-0000-0000-000000000030",
+                        touchpoint_id=uuid.UUID("00000000-0000-0000-0000-000000000030"),
                         org_id=settings.default_org_id,
                         lead_id=lead_old.lead_id,
                         occurred_at=FIXED_NOW - timedelta(days=42),

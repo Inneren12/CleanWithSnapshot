@@ -515,11 +515,8 @@ def clean_database(test_engine):
     yield
 
 
-@pytest.fixture()
-def client(async_session_maker):
+def _build_test_client(async_session_maker, *, headers=None, raise_server_exceptions=True):
     ensure_event_loop()
-
-    default_headers = make_admin_headers()
 
     async def override_db_session():
         async with async_session_maker() as session:
@@ -529,45 +526,63 @@ def client(async_session_maker):
     app.state.bot_store = InMemoryBotStore()
     original_factory = getattr(app.state, "db_session_factory", None)
     app.state.db_session_factory = async_session_maker
-    with TestClient(app, headers=default_headers) as test_client:
+    with TestClient(
+        app,
+        raise_server_exceptions=raise_server_exceptions,
+        headers=headers,
+    ) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     app.state.db_session_factory = original_factory
 
 
 @pytest.fixture()
-def client_no_raise(async_session_maker):
+def admin_client(async_session_maker):
+    default_headers = make_admin_headers(role="admin")
+    yield from _build_test_client(async_session_maker, headers=default_headers)
+
+
+@pytest.fixture()
+def viewer_client(async_session_maker):
+    default_headers = make_admin_headers(role="viewer")
+    yield from _build_test_client(async_session_maker, headers=default_headers)
+
+
+@pytest.fixture()
+def dispatcher_client(async_session_maker):
+    default_headers = make_admin_headers(role="dispatcher")
+    yield from _build_test_client(async_session_maker, headers=default_headers)
+
+
+@pytest.fixture()
+def anon_client(async_session_maker):
+    yield from _build_test_client(async_session_maker)
+
+
+@pytest.fixture()
+def admin_client_no_raise(async_session_maker):
+    default_headers = make_admin_headers(role="admin")
+    yield from _build_test_client(
+        async_session_maker, headers=default_headers, raise_server_exceptions=False
+    )
+
+
+@pytest.fixture()
+def anon_client_no_raise(async_session_maker):
     """Test client that returns HTTP responses instead of raising server exceptions."""
-
-    default_headers = make_admin_headers()
-
-    async def override_db_session():
-        async with async_session_maker() as session:
-            yield session
-
-    app.dependency_overrides[get_db_session] = override_db_session
-    app.state.bot_store = InMemoryBotStore()
-    original_factory = getattr(app.state, "db_session_factory", None)
-    app.state.db_session_factory = async_session_maker
-    with TestClient(app, raise_server_exceptions=False, headers=default_headers) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
-    app.state.db_session_factory = original_factory
+    yield from _build_test_client(async_session_maker, raise_server_exceptions=False)
 
 
 @pytest.fixture()
-def unauthenticated_client(async_session_maker):
-    ensure_event_loop()
+def client(admin_client):
+    yield admin_client
 
-    async def override_db_session():
-        async with async_session_maker() as session:
-            yield session
 
-    app.dependency_overrides[get_db_session] = override_db_session
-    app.state.bot_store = InMemoryBotStore()
-    original_factory = getattr(app.state, "db_session_factory", None)
-    app.state.db_session_factory = async_session_maker
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
-    app.state.db_session_factory = original_factory
+@pytest.fixture()
+def client_no_raise(admin_client_no_raise):
+    yield admin_client_no_raise
+
+
+@pytest.fixture()
+def unauthenticated_client(anon_client):
+    yield anon_client

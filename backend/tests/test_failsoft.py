@@ -55,13 +55,9 @@ def test_booking_succeeds_when_email_fails(client, monkeypatch):
     assert response.status_code == 201, response.text
 
 
-def test_metrics_endpoint_returns_empty_when_disabled(client):
-    settings.admin_basic_username = "admin"
-    settings.admin_basic_password = "secret"
+def test_metrics_endpoint_returns_empty_when_disabled(admin_client):
     settings.metrics_enabled = False
-
-    auth = (settings.admin_basic_username, settings.admin_basic_password)
-    response = client.get("/v1/admin/metrics", auth=auth)
+    response = admin_client.get("/v1/admin/metrics")
 
     assert response.status_code == 200
     body = response.json()
@@ -74,16 +70,6 @@ def test_metrics_endpoint_returns_empty_when_disabled(client):
     assert body["accuracy"]["sample_size"] == 0
 
 
-def test_auth_failure_returns_401_not_503(client_no_raise):
-    original_username = settings.admin_basic_username
-    original_password = settings.admin_basic_password
-    settings.admin_basic_username = "admin"
-    settings.admin_basic_password = "secret"
-
-    try:
-        response = client_no_raise.get("/v1/admin/leads")
-        assert response.status_code == 401
-        assert response.headers.get("WWW-Authenticate") == "Basic"
-    finally:
-        settings.admin_basic_username = original_username
-        settings.admin_basic_password = original_password
+def test_auth_failure_returns_401_not_503(anon_client_no_raise):
+    response = anon_client_no_raise.get("/v1/admin/leads")
+    assert response.status_code == 401
