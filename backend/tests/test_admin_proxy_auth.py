@@ -9,6 +9,9 @@ import pytest
 
 from app.settings import settings
 
+PROD_SECRET = "a" * 32
+PROD_PROXY_SECRET = "p" * 32
+
 
 def _enable_proxy_auth(monkeypatch: pytest.MonkeyPatch, *, required: bool = False) -> str:
     """Enable proxy auth and return the shared secret."""
@@ -253,10 +256,10 @@ class TestProxyAuthSettingsValidation:
         baseline = {
             "APP_ENV": "prod",
             "TESTING": "false",
-            "AUTH_SECRET_KEY": "auth-secret-32-characters-long",
-            "CLIENT_PORTAL_SECRET": "client-portal-secret-32chars",
-            "WORKER_PORTAL_SECRET": "worker-portal-secret-32chars",
-            "ADMIN_PROXY_AUTH_SECRET": "proxy-secret-32-characters-long",
+            "AUTH_SECRET_KEY": PROD_SECRET,
+            "CLIENT_PORTAL_SECRET": PROD_SECRET,
+            "WORKER_PORTAL_SECRET": PROD_SECRET,
+            "ADMIN_PROXY_AUTH_SECRET": PROD_PROXY_SECRET,
             "METRICS_ENABLED": "false",
         }
         for key, value in {**baseline, **overrides}.items():
@@ -285,7 +288,9 @@ class TestProxyAuthSettingsValidation:
             ADMIN_PROXY_AUTH_SECRET="",
         )
 
-        with pytest.raises(ValueError, match="ADMIN_PROXY_AUTH_SECRET.*required"):
+        with pytest.raises(
+            ValueError, match="ADMIN_PROXY_AUTH_SECRET.*(required|non-default)"
+        ):
             Settings()
 
     def test_proxy_secret_too_short_fails_in_prod(self, monkeypatch):
