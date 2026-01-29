@@ -14,6 +14,8 @@ def _settings(**overrides):
         auth_secret_key = "a" * 32
         client_portal_secret = "c" * 32
         worker_portal_secret = "w" * 32
+        admin_proxy_auth_enabled = True
+        admin_proxy_auth_secret = "p" * 32
         owner_basic_username = "owner"
         owner_basic_password = "password"
         admin_basic_username = None

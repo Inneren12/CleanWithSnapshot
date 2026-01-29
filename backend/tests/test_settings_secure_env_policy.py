@@ -8,7 +8,12 @@ from app.settings import Settings
 def test_secure_envs_require_secrets(monkeypatch, app_env):
     monkeypatch.delenv("TESTING", raising=False)
     with pytest.raises(ValidationError, match="AUTH_SECRET_KEY"):
-        Settings(app_env=app_env, metrics_enabled=False, _env_file=None)
+        Settings(
+            app_env=app_env,
+            admin_proxy_auth_secret="p" * 32,
+            metrics_enabled=False,
+            _env_file=None,
+        )
 
 
 @pytest.mark.parametrize("app_env", ["dev", "ci", "e2e", "test", "local"])

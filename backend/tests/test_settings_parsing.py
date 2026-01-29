@@ -47,6 +47,7 @@ def test_defaults_to_prod_when_env_missing(monkeypatch):
         auth_secret_key="super-secret",
         client_portal_secret="client-secret",
         worker_portal_secret="worker-secret",
+        admin_proxy_auth_secret="p" * 32,
         metrics_enabled=False,
         _env_file=None,
     )
@@ -57,7 +58,7 @@ def test_defaults_to_prod_when_env_missing(monkeypatch):
 def test_prod_requires_non_default_secrets(monkeypatch):
     monkeypatch.delenv("TESTING", raising=False)  # Prod mode requires TESTING unset/false
     with pytest.raises(ValidationError, match="AUTH_SECRET_KEY"):
-        Settings(app_env="prod", _env_file=None)
+        Settings(app_env="prod", admin_proxy_auth_secret="p" * 32, _env_file=None)
 
 
 def test_prod_requires_metrics_token_when_enabled(monkeypatch):
@@ -68,6 +69,7 @@ def test_prod_requires_metrics_token_when_enabled(monkeypatch):
             auth_secret_key="super-secret",
             client_portal_secret="client-secret",
             worker_portal_secret="worker-secret",
+            admin_proxy_auth_secret="p" * 32,
             metrics_enabled=True,
             metrics_token=None,
             _env_file=None,
@@ -82,6 +84,7 @@ def test_prod_rejects_wildcard_cors_with_strict_mode(monkeypatch):
             auth_secret_key="super-secret",
             client_portal_secret="client-secret",
             worker_portal_secret="worker-secret",
+            admin_proxy_auth_secret="p" * 32,
             strict_cors=True,
             cors_origins=["*"],
             _env_file=None,
@@ -96,6 +99,7 @@ def test_prod_validates_admin_allowlist_cidrs(monkeypatch):
             auth_secret_key="super-secret",
             client_portal_secret="client-secret",
             worker_portal_secret="worker-secret",
+            admin_proxy_auth_secret="p" * 32,
             metrics_enabled=False,
             admin_ip_allowlist_cidrs="not-a-cidr",
             _env_file=None,
@@ -122,6 +126,7 @@ def test_prod_accepts_valid_configuration(monkeypatch):
         auth_secret_key="super-secret",
         client_portal_secret="client-secret",
         worker_portal_secret="worker-secret",
+        admin_proxy_auth_secret="p" * 32,
         strict_cors=True,
         cors_origins=["https://example.com"],
         metrics_enabled=True,
@@ -140,6 +145,7 @@ def test_legacy_basic_auth_defaults_disabled_in_prod(monkeypatch):
         auth_secret_key="super-secret",
         client_portal_secret="client-secret",
         worker_portal_secret="worker-secret",
+        admin_proxy_auth_secret="p" * 32,
         metrics_enabled=False,
         _env_file=None,
     )

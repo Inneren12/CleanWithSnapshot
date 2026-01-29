@@ -8,6 +8,7 @@ os.environ["APP_ENV"] = "dev"
 os.environ["TESTING"] = "true"
 
 import asyncio
+import base64
 import inspect
 import sys
 from pathlib import Path
@@ -99,6 +100,36 @@ def pytest_collection_modifyitems(items):
         # Check if test is in smoke directory (handle both Unix and Windows paths)
         if "/tests/smoke/" in test_path or "\\tests\\smoke\\" in test_path:
             item.add_marker(pytest.mark.smoke)
+
+
+def make_admin_headers(
+    *,
+    username: str | None = None,
+    password: str | None = None,
+    role: str | None = None,
+    org_id: uuid.UUID | None = DEFAULT_ORG_ID,
+    mfa_verified: bool = True,
+) -> dict[str, str]:
+    if settings.admin_proxy_auth_enabled:
+        admin_user = username or settings.admin_basic_username or "admin"
+        admin_role = role or "admin"
+        headers = {
+            settings.admin_proxy_auth_header_user: admin_user,
+            settings.admin_proxy_auth_header_roles: admin_role,
+            settings.admin_proxy_auth_header_mfa: "true" if mfa_verified else "false",
+            "X-Proxy-Auth-Secret": settings.admin_proxy_auth_secret or "",
+        }
+        if settings.admin_proxy_auth_header_email:
+            headers[settings.admin_proxy_auth_header_email] = f"{admin_user}@example.com"
+    else:
+        auth_user = username or settings.admin_basic_username
+        auth_password = password or settings.admin_basic_password
+        token = base64.b64encode(f"{auth_user}:{auth_password}".encode("utf-8")).decode("utf-8")
+        headers = {"Authorization": f"Basic {token}"}
+
+    if org_id is not None:
+        headers["X-Test-Org"] = str(org_id)
+    return headers
 
 
 @pytest.fixture(scope="session")
@@ -452,6 +483,8 @@ def clean_database(test_engine):
 def client(async_session_maker):
     ensure_event_loop()
 
+    default_headers = make_admin_headers()
+
     async def override_db_session():
         async with async_session_maker() as session:
             yield session
@@ -460,7 +493,7 @@ def client(async_session_maker):
     app.state.bot_store = InMemoryBotStore()
     original_factory = getattr(app.state, "db_session_factory", None)
     app.state.db_session_factory = async_session_maker
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=default_headers) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     app.state.db_session_factory = original_factory
@@ -470,6 +503,8 @@ def client(async_session_maker):
 def client_no_raise(async_session_maker):
     """Test client that returns HTTP responses instead of raising server exceptions."""
 
+    default_headers = make_admin_headers()
+
     async def override_db_session():
         async with async_session_maker() as session:
             yield session
@@ -478,7 +513,7 @@ def client_no_raise(async_session_maker):
     app.state.bot_store = InMemoryBotStore()
     original_factory = getattr(app.state, "db_session_factory", None)
     app.state.db_session_factory = async_session_maker
-    with TestClient(app, raise_server_exceptions=False) as test_client:
+    with TestClient(app, raise_server_exceptions=False, headers=default_headers) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     app.state.db_session_factory = original_factory
