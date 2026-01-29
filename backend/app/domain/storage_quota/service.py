@@ -91,6 +91,15 @@ def _ensure_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _now_for_db(session: AsyncSession) -> datetime:
+    now = datetime.now(timezone.utc)
+    bind = session.get_bind()
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", "") if bind else ""
+    if dialect_name == "sqlite":
+        return now.replace(tzinfo=None)
+    return now
+
+
 async def _lock_org_settings(session: AsyncSession, org_id: uuid.UUID) -> OrganizationSettings:
     await org_settings_service.get_or_create_org_settings(session, org_id)
     result = await session.execute(
@@ -130,7 +139,7 @@ async def _expire_pending_reservations(session: AsyncSession, org_id: uuid.UUID,
 async def get_org_storage_quota_snapshot(
     session: AsyncSession, org_id: uuid.UUID
 ) -> OrgStorageQuotaSnapshot:
-    now = datetime.now(timezone.utc)
+    now = _now_for_db(session)
     record = await org_settings_service.get_or_create_org_settings(session, org_id)
     pending = await _pending_bytes(session, org_id, now)
     used = int(record.storage_bytes_used or 0)
@@ -155,7 +164,7 @@ async def reserve_bytes(
     if bytes_requested <= 0:
         raise ValueError("bytes_requested must be positive")
 
-    now = datetime.now(timezone.utc)
+    now = _now_for_db(session)
     record = await _lock_org_settings(session, org_id)
     await _expire_pending_reservations(session, org_id, now)
     pending = await _pending_bytes(session, org_id, now)
@@ -237,7 +246,7 @@ async def finalize_reservation(
     if actual_bytes <= 0:
         raise ValueError("actual_bytes must be positive")
 
-    now = datetime.now(timezone.utc)
+    now = _now_for_db(session)
     result = await session.execute(
         sa.select(OrgStorageReservation)
         .where(OrgStorageReservation.reservation_id == reservation_id)
@@ -355,7 +364,7 @@ async def release_reservation(
     reason: str | None = None,
     audit_identity: AdminIdentity | Any | None = None,
 ) -> StorageReservation:
-    now = datetime.now(timezone.utc)
+    now = _now_for_db(session)
     result = await session.execute(
         sa.select(OrgStorageReservation)
         .where(OrgStorageReservation.reservation_id == reservation_id)
@@ -438,7 +447,7 @@ async def decrement_storage_usage(
             after={"storage_bytes_used": new_used, "bytes_released": bytes_to_release},
         )
 
-    pending = await _pending_bytes(session, org_id, datetime.now(timezone.utc))
+    pending = await _pending_bytes(session, org_id, _now_for_db(session))
     await session.flush()
     return _snapshot(
         org_id,

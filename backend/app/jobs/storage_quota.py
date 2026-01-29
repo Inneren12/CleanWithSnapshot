@@ -20,13 +20,22 @@ from app.settings import settings
 logger = logging.getLogger(__name__)
 
 
+def _now_for_db(session: AsyncSession) -> datetime:
+    now = datetime.now(timezone.utc)
+    bind = session.get_bind()
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", "") if bind else ""
+    if dialect_name == "sqlite":
+        return now.replace(tzinfo=None)
+    return now
+
+
 async def run_storage_quota_cleanup(
     session: AsyncSession,
     *,
     batch_size: int | None = None,
 ) -> dict[str, int]:
     limit = batch_size if batch_size is not None else settings.storage_quota_cleanup_batch_size
-    now = datetime.now(timezone.utc)
+    now = _now_for_db(session)
 
     select_stmt = (
         sa.select(OrgStorageReservation.reservation_id)
@@ -147,7 +156,7 @@ async def run_storage_quota_reconciliation(session: AsyncSession) -> dict[str, i
     pending_count = await session.scalar(
         sa.select(sa.func.count(OrgStorageReservation.reservation_id)).where(
             OrgStorageReservation.status == StorageReservationStatus.PENDING.value,
-            OrgStorageReservation.expires_at > datetime.now(timezone.utc),
+            OrgStorageReservation.expires_at > _now_for_db(session),
         )
     )
     metrics.set_storage_reservations_pending(int(pending_count or 0))

@@ -8,7 +8,6 @@ os.environ["APP_ENV"] = "dev"
 os.environ["TESTING"] = "true"
 
 import asyncio
-import base64
 import inspect
 import sys
 from pathlib import Path
@@ -202,6 +201,7 @@ def restore_admin_settings():
     original_email_mode = getattr(settings, "email_mode", "off")
     original_legacy_basic_auth_enabled = getattr(settings, "legacy_basic_auth_enabled", True)
     original_auth_secret_key = getattr(settings, "auth_secret_key", "")
+    original_default_org_id = getattr(settings, "default_org_id", None)
     original_admin_mfa_required = getattr(settings, "admin_mfa_required", False)
     original_admin_mfa_roles = getattr(settings, "admin_mfa_required_roles_raw", None)
     original_admin_read_only = getattr(settings, "admin_read_only", False)
@@ -254,6 +254,8 @@ def restore_admin_settings():
     settings.job_heartbeat_ttl_seconds = original_job_heartbeat_ttl
     settings.legacy_basic_auth_enabled = original_legacy_basic_auth_enabled
     settings.auth_secret_key = original_auth_secret_key
+    if original_default_org_id is not None:
+        settings.default_org_id = original_default_org_id
     settings.email_mode = original_email_mode
     settings.admin_mfa_required = original_admin_mfa_required
     settings.admin_mfa_required_roles_raw = original_admin_mfa_roles
@@ -404,6 +406,18 @@ def clean_database(test_engine):
                     for day in range(7)
                 ],
             )
+            await session.execute(
+                sa.insert(feature_flags_db_models.FeatureFlagDefinition),
+                [
+                    {
+                        "key": key,
+                        "owner": "test-suite",
+                        "purpose": "Seeded for tests.",
+                        "lifecycle_state": "active",
+                    }
+                    for key in feature_service.FEATURE_KEYS
+                ],
+            )
             await session.commit()
 
     asyncio.run(truncate_tables())
@@ -438,13 +452,6 @@ def clean_database(test_engine):
 def client(async_session_maker):
     ensure_event_loop()
 
-    auth_value = f"{settings.admin_basic_username}:{settings.admin_basic_password}"
-    encoded = base64.b64encode(auth_value.encode("utf-8")).decode("utf-8")
-    default_headers = {
-        "Authorization": f"Basic {encoded}",
-        "X-Test-Org": str(DEFAULT_ORG_ID),
-    }
-
     async def override_db_session():
         async with async_session_maker() as session:
             yield session
@@ -453,7 +460,7 @@ def client(async_session_maker):
     app.state.bot_store = InMemoryBotStore()
     original_factory = getattr(app.state, "db_session_factory", None)
     app.state.db_session_factory = async_session_maker
-    with TestClient(app, headers=default_headers) as test_client:
+    with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     app.state.db_session_factory = original_factory
@@ -463,13 +470,6 @@ def client(async_session_maker):
 def client_no_raise(async_session_maker):
     """Test client that returns HTTP responses instead of raising server exceptions."""
 
-    auth_value = f"{settings.admin_basic_username}:{settings.admin_basic_password}"
-    encoded = base64.b64encode(auth_value.encode("utf-8")).decode("utf-8")
-    default_headers = {
-        "Authorization": f"Basic {encoded}",
-        "X-Test-Org": str(DEFAULT_ORG_ID),
-    }
-
     async def override_db_session():
         async with async_session_maker() as session:
             yield session
@@ -478,7 +478,7 @@ def client_no_raise(async_session_maker):
     app.state.bot_store = InMemoryBotStore()
     original_factory = getattr(app.state, "db_session_factory", None)
     app.state.db_session_factory = async_session_maker
-    with TestClient(app, raise_server_exceptions=False, headers=default_headers) as test_client:
+    with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     app.state.db_session_factory = original_factory

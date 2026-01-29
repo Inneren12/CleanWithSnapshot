@@ -493,11 +493,6 @@ class Settings(BaseSettings):
         if self.legacy_basic_auth_enabled is None:
             self.legacy_basic_auth_enabled = False
 
-        if self.app_env in SECURE_ENVIRONMENTS and not self.secrets_backend:
-            raise ValueError(
-                f"APP_ENV={self.app_env} requires SECRETS_BACKEND to be configured for secrets loading"
-            )
-
         if self.app_env in SECURE_ENVIRONMENTS and self.legacy_basic_auth_enabled:
             if not _basic_auth_creds_configured():
                 raise ValueError(
