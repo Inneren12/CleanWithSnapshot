@@ -894,6 +894,24 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
             )
             return await http_exception_handler(request, exc)
 
+        if settings.admin_proxy_auth_enabled:
+            _log_admin_auth_failure(
+                request,
+                reason="proxy_auth_required",
+                credentials=None,
+                extra_detail={
+                    "proxy_auth_enabled": settings.admin_proxy_auth_enabled,
+                    "auth_method": "proxy",
+                },
+            )
+            return await http_exception_handler(
+                request,
+                _build_auth_exception(
+                    reason="proxy_auth_required",
+                    detail="Admin access requires proxy authentication",
+                ),
+            )
+
         if settings.admin_proxy_auth_required:
             _log_admin_auth_failure(
                 request,

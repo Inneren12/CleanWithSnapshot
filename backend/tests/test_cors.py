@@ -17,6 +17,7 @@ def test_cors_strict_blocks_when_empty(monkeypatch):
                 auth_secret_key="super-secret",
                 client_portal_secret="client-secret",
                 worker_portal_secret="worker-secret",
+                admin_proxy_auth_secret="proxy-secret-at-least-32-chars",
                 metrics_enabled=False,
             )
         )
@@ -31,6 +32,7 @@ def test_cors_allows_configured_origin(monkeypatch):
             auth_secret_key="super-secret",
             client_portal_secret="client-secret",
             worker_portal_secret="worker-secret",
+            admin_proxy_auth_secret="proxy-secret-at-least-32-chars",
             metrics_enabled=False,
         )
     )

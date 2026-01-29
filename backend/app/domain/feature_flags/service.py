@@ -164,7 +164,7 @@ async def record_feature_flag_evaluation(
     if not key:
         return False
     should_commit = not session.new and not session.dirty and not session.deleted
-    now = now or datetime.now(tz=timezone.utc)
+    now = _ensure_timezone(now or datetime.now(tz=timezone.utc))
     throttle_minutes = (
         settings.feature_flag_evaluation_throttle_minutes
         if throttle_minutes is None
