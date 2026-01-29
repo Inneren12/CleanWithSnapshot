@@ -9,8 +9,8 @@ PROBLEM_TYPE_VALIDATION = "https://example.com/problems/validation-error"
 PROBLEM_TYPE_DOMAIN = "https://example.com/problems/domain-error"
 PROBLEM_TYPE_RATE_LIMIT = "https://example.com/problems/rate-limit"
 PROBLEM_TYPE_SERVER = "https://example.com/problems/server-error"
-HTTP_422_CONTENT = status.__dict__.get("HTTP_422_UNPROCESSABLE_CONTENT", 422)
-HTTP_422_ENTITY = status.__dict__.get("HTTP_422_UNPROCESSABLE_ENTITY", HTTP_422_CONTENT)
+HTTP_422_ENTITY = getattr(status, "HTTP_422_UNPROCESSABLE_ENTITY", 422)
+HTTP_422_CONTENT = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", HTTP_422_ENTITY)
 
 
 def _resolve_request_id(request: Request) -> str:
