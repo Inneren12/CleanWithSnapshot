@@ -135,8 +135,15 @@ def make_admin_headers(
                 mfa_verified=mfa_verified,
             )
     else:
-        auth_user = username or settings.admin_basic_username
-        auth_password = password or settings.admin_basic_password
+        role_defaults = {
+            "viewer": (settings.viewer_basic_username, settings.viewer_basic_password),
+            "dispatcher": (settings.dispatcher_basic_username, settings.dispatcher_basic_password),
+            "accountant": (settings.accountant_basic_username, settings.accountant_basic_password),
+            "owner": (settings.owner_basic_username, settings.owner_basic_password),
+        }
+        default_user, default_password = role_defaults.get(role or "", (None, None))
+        auth_user = username or default_user or settings.admin_basic_username
+        auth_password = password or default_password or settings.admin_basic_password
         token = base64.b64encode(f"{auth_user}:{auth_password}".encode("utf-8")).decode("utf-8")
         headers = {"Authorization": f"Basic {token}"}
 
@@ -362,15 +369,19 @@ def enable_test_mode():
     settings.deposits_enabled = False
     settings.app_env = "dev"
     settings.email_mode = "sendgrid"
-    settings.legacy_basic_auth_enabled = False
+    settings.legacy_basic_auth_enabled = True
     settings.admin_basic_username = "admin"
     settings.admin_basic_password = "admin123"
+    settings.dispatcher_basic_username = "dispatcher"
+    settings.dispatcher_basic_password = "dispatcher123"
+    settings.accountant_basic_username = "accountant"
+    settings.accountant_basic_password = "accountant123"
     settings.viewer_basic_username = "viewer"
     settings.viewer_basic_password = "viewer123"
-    settings.admin_proxy_auth_enabled = True
-    settings.admin_proxy_auth_required = True
+    settings.admin_proxy_auth_enabled = False
+    settings.admin_proxy_auth_required = False
     settings.admin_proxy_auth_secret = "test-proxy-auth-secret-32-characters-long"
-    settings.admin_proxy_auth_e2e_enabled = True
+    settings.admin_proxy_auth_e2e_enabled = False
     settings.admin_proxy_auth_e2e_secret = "test-e2e-proxy-auth-secret-32chars"
     settings.admin_proxy_auth_e2e_ttl_seconds = 3600
     settings.trust_proxy_headers = True
@@ -555,6 +566,12 @@ def dispatcher_client(async_session_maker):
 
 
 @pytest.fixture()
+def accountant_client(async_session_maker):
+    default_headers = make_admin_headers(role="accountant")
+    yield from _build_test_client(async_session_maker, headers=default_headers)
+
+
+@pytest.fixture()
 def anon_client(async_session_maker):
     yield from _build_test_client(async_session_maker)
 
@@ -574,13 +591,13 @@ def anon_client_no_raise(async_session_maker):
 
 
 @pytest.fixture()
-def client(admin_client):
-    yield admin_client
+def client(anon_client):
+    yield anon_client
 
 
 @pytest.fixture()
-def client_no_raise(admin_client_no_raise):
-    yield admin_client_no_raise
+def client_no_raise(anon_client_no_raise):
+    yield anon_client_no_raise
 
 
 @pytest.fixture()

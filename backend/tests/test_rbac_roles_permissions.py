@@ -1,4 +1,3 @@
-import base64
 import uuid
 from datetime import datetime, timezone
 
@@ -10,11 +9,6 @@ from app.infra.auth import hash_password
 from app.settings import settings
 
 
-def _auth_header(username: str, password: str) -> dict[str, str]:
-    token = base64.b64encode(f"{username}:{password}".encode()).decode()
-    return {"Authorization": f"Basic {token}"}
-
-
 @pytest.mark.parametrize(
     "endpoint",
     [
@@ -22,20 +16,14 @@ def _auth_header(username: str, password: str) -> dict[str, str]:
         ("/v1/admin/finance/reconcile/invoices", "get"),
     ],
 )
-def test_dispatcher_cannot_access_finance_or_config(client, endpoint):
-    settings.dispatcher_basic_username = "dispatch"
-    settings.dispatcher_basic_password = "dispatch-secret"
-    headers = _auth_header("dispatch", "dispatch-secret")
+def test_dispatcher_cannot_access_finance_or_config(dispatcher_client, endpoint):
     path, method = endpoint
-    response = getattr(client, method)(path, headers=headers)
+    response = getattr(dispatcher_client, method)(path)
     assert response.status_code == 403
 
 
-def test_accountant_cannot_change_pricing(client):
-    settings.accountant_basic_username = "accountant"
-    settings.accountant_basic_password = "accountant-secret"
-    headers = _auth_header("accountant", "accountant-secret")
-    response = client.post("/v1/admin/pricing/reload", headers=headers)
+def test_accountant_cannot_change_pricing(accountant_client):
+    response = accountant_client.post("/v1/admin/pricing/reload")
     assert response.status_code == 403
 
 
