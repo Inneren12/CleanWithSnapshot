@@ -353,8 +353,14 @@ async def list_stale_feature_flag_definitions(
     if condition is None:
         return [], 0, cutoff
 
-    stmt = select(FeatureFlagDefinition).where(condition)
-    count_stmt = select(sa.func.count()).select_from(FeatureFlagDefinition).where(condition)
+    stmt = select(FeatureFlagDefinition).where(
+        condition, FeatureFlagDefinition.expires_at.is_not(None)
+    )
+    count_stmt = (
+        select(sa.func.count())
+        .select_from(FeatureFlagDefinition)
+        .where(condition, FeatureFlagDefinition.expires_at.is_not(None))
+    )
 
     if lifecycle_state is not None:
         state_value = lifecycle_state.value
