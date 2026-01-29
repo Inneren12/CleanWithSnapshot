@@ -74,6 +74,8 @@ class NurtureStepUpdateRequest(BaseModel):
 
 
 class NurtureEnrollmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     enrollment_id: UUID
     org_id: UUID
     lead_id: str
@@ -85,6 +87,8 @@ class NurtureEnrollmentResponse(BaseModel):
 
 
 class NurtureStepLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     log_id: UUID
     org_id: UUID
     enrollment_id: UUID
@@ -115,6 +119,8 @@ class NurtureLeadStatusResponse(BaseModel):
 
 
 class NurturePlanStepResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     log_id: UUID
     enrollment_id: UUID
     lead_id: str
