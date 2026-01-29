@@ -55,6 +55,30 @@ async def test_feature_flag_enable_disable_audited(async_session_maker, client):
 
 
 @pytest.mark.anyio
+async def test_feature_flag_explicit_enable_audited(async_session_maker, client):
+    settings.owner_basic_username = "owner"
+    settings.owner_basic_password = "secret"
+    settings.legacy_basic_auth_enabled = True
+
+    headers = _basic_auth_header("owner", "secret")
+    response = client.patch(
+        "/v1/admin/settings/features",
+        json={"overrides": {"module.analytics": True}, "reason": "explicit enable"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    async with async_session_maker() as session:
+        log = await session.scalar(
+            sa.select(FeatureFlagAuditLog)
+            .where(FeatureFlagAuditLog.flag_key == "module.analytics")
+            .order_by(FeatureFlagAuditLog.occurred_at.desc(), FeatureFlagAuditLog.audit_id.desc())
+        )
+        assert log is not None
+        assert log.action == FeatureFlagAuditAction.ENABLE.value
+
+
+@pytest.mark.anyio
 async def test_feature_flag_rollout_context_and_redaction(async_session_maker):
     async with async_session_maker() as session:
         await feature_flag_audit_service.audit_feature_flag_change(
