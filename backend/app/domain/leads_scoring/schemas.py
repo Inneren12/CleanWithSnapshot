@@ -46,6 +46,8 @@ class LeadScoringReason(BaseModel):
 
 
 class LeadScoringSnapshotResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     org_id: UUID
     lead_id: str
     score: int
