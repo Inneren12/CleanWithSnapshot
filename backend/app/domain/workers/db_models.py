@@ -24,7 +24,10 @@ class Worker(Base):
         nullable=False,
         default=lambda: settings.default_org_id,
     )
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.team_id"), nullable=False)
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.team_id", use_alter=True, name="fk_workers_team_id"),
+        nullable=False,
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     phone: Mapped[str] = mapped_column(String(50), nullable=False)
     password_hash: Mapped[str | None] = mapped_column(String(255))

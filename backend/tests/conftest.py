@@ -8,10 +8,13 @@ os.environ["APP_ENV"] = "dev"
 os.environ["TESTING"] = "true"
 
 import asyncio
+import atexit
 import base64
 import inspect
 import sys
 from pathlib import Path
+import threading
+import gc
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -34,6 +37,27 @@ def ensure_event_loop() -> asyncio.AbstractEventLoop:
         asyncio.set_event_loop(loop)
 
     return loop
+
+
+def _close_policy_loop() -> None:
+    policy = asyncio.get_event_loop_policy()
+    local = getattr(policy, "_local", None)
+    if not local:
+        return
+    loop = getattr(local, "_loop", None) or getattr(local, "loop", None)
+    if loop and not loop.is_closed():
+        loop.close()
+
+
+atexit.register(_close_policy_loop)
+
+
+def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
+    _close_policy_loop()
+    for obj in gc.get_objects():
+        if isinstance(obj, asyncio.AbstractEventLoop) and not obj.is_closed():
+            obj.close()
+    gc.collect()
 
 
 import anyio
@@ -96,13 +120,25 @@ from app.settings import settings
 DEFAULT_ORG_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
-def run_async(async_func, *args, **kwargs):
+def run_async(fn_or_coro, *args, **kwargs):
+    if asyncio.iscoroutine(fn_or_coro):
+        coro = fn_or_coro
+    else:
+        coro = fn_or_coro(*args, **kwargs)
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        asyncio.run(async_func(*args, **kwargs))
+        asyncio.run(coro)
     else:
-        anyio.from_thread.run(async_func, *args, **kwargs)
+        result: dict[str, object] = {}
+
+        def _runner() -> None:
+            result["value"] = asyncio.run(coro)
+
+        thread = threading.Thread(target=_runner)
+        thread.start()
+        thread.join()
+        return result.get("value")
 
 
 def pytest_collection_modifyitems(items):
@@ -224,7 +260,7 @@ def test_engine():
 
     run_async(init_models)
     yield engine
-    run_async(engine.dispose)
+    run_async(engine.dispose())
 
 
 @pytest.fixture(scope="session")
@@ -401,6 +437,14 @@ def close_event_loop():
         loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
     loop.run_until_complete(loop.shutdown_asyncgens())
     loop.close()
+    policy = asyncio.get_event_loop_policy()
+    local = getattr(policy, "_local", None)
+    if local:
+        for attr in ("_loop", "loop"):
+            policy_loop = getattr(local, attr, None)
+            if policy_loop and policy_loop is not loop and not policy_loop.is_closed():
+                policy_loop.close()
+    asyncio.set_event_loop(None)
 
 
 @pytest.fixture(autouse=True)
@@ -427,6 +471,9 @@ def enable_test_mode():
     settings.trust_proxy_headers = True
     settings.trusted_proxy_ips = ["testclient"]
     settings.trusted_proxy_cidrs = []
+    from app.api import routes_health
+
+    routes_health._load_expected_heads = lambda: ([], "skipped_no_alembic_files")
     from app.infra.email import resolve_email_adapter
 
     app.state.email_adapter = resolve_email_adapter(settings)
