@@ -177,7 +177,7 @@ class FinancePnlDataSources(BaseModel):
 
 
 class FinancePnlResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     from_date: date = Field(..., alias="from")
     to_date: date = Field(..., alias="to")
@@ -212,7 +212,7 @@ class FinanceCashSnapshotUpdate(BaseModel):
 
 
 class FinanceGstSummaryResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     from_date: date = Field(..., alias="from")
     to_date: date = Field(..., alias="to")
@@ -289,7 +289,7 @@ class FinanceCashflowDataSources(BaseModel):
 
 
 class FinanceCashflowResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     from_date: date = Field(..., alias="from")
     to_date: date = Field(..., alias="to")
