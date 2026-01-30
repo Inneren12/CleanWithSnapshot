@@ -70,10 +70,8 @@ def _normalize_payload(payload: Any) -> Any:
     return _sanitize_value(encoded)
 
 
-def _rollout_percentage(enabled: bool | None) -> int:
-    if enabled:
-        return 100
-    return 0
+def _rollout_percentage(enabled: bool) -> int:
+    return 100 if enabled else 0
 
 
 def build_rollout_context(
@@ -83,10 +81,12 @@ def build_rollout_context(
     reason: str | None = None,
 ) -> dict[str, Any]:
     context = {
-        "enabled": bool(enabled),
-        "percentage": _rollout_percentage(enabled),
         "targeting_rules": _sanitize_value(targeting_rules or [], "targeting_rules"),
     }
+    if enabled is not None:
+        enabled_value = bool(enabled)
+        context["enabled"] = enabled_value
+        context["percentage"] = _rollout_percentage(enabled_value)
     if reason:
         context["reason"] = reason
     return context
