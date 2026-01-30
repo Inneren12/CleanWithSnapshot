@@ -20,8 +20,7 @@ from app.settings import settings
 
 ALLOWED_EXPIRING_WINDOWS = {7, 14, 30}
 _EVALUATION_CACHE: dict[str, datetime] = {}
-# Prefer HTTP_422_UNPROCESSABLE_CONTENT to avoid deprecated HTTP_422_UNPROCESSABLE_ENTITY
-HTTP_422_ENTITY = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
+HTTP_422_ENTITY = getattr(status, "HTTP_422_UNPROCESSABLE_ENTITY", 422)
 
 
 @dataclass(frozen=True)

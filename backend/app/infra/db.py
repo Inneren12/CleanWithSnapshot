@@ -52,6 +52,10 @@ def _get_session_factory() -> async_sessionmaker[AsyncSession]:
         instrument_sqlalchemy(_engine.sync_engine)
         _configure_logging(_engine, is_postgres)
         _configure_org_context(_engine, is_postgres)
+        if not is_postgres:
+            @event.listens_for(_engine.sync_engine, "connect")
+            def _set_sqlite_pragma(dbapi_connection, _record) -> None:  # noqa: ANN001
+                dbapi_connection.execute("PRAGMA foreign_keys=ON")
         _session_factory = async_sessionmaker(
             _engine,
             expire_on_commit=False,

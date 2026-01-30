@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi.encoders import jsonable_encoder
@@ -107,6 +107,7 @@ async def audit_feature_flag_change(
     if not flag_key:
         raise ValueError("flag_key is required")
     log = FeatureFlagAuditLog(
+        occurred_at=datetime.now(timezone.utc),
         actor_type=actor.actor_type.value,
         actor_id=actor.actor_id,
         actor_role=actor.actor_role,
