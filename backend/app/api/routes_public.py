@@ -7,6 +7,7 @@ import time
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import attributes
 
 from app.api.photo_tokens import verify_photo_download_token
 from app.api.problem_details import problem_details
@@ -525,10 +526,15 @@ async def download_receipt_pdf(
     if payment.status != invoice_statuses.PAYMENT_STATUS_SUCCEEDED:
         raise HTTPException(status_code=400, detail="Receipt available only for successful payments")
     lead = await invoice_service.fetch_customer(session, invoice)
+    original_received_at = payment.received_at
+    original_created_at = payment.created_at
     try:
         document = await document_service.get_or_create_receipt_document(
             session, invoice=invoice, payment=payment, lead=lead
         )
+        if session.is_modified(payment, include_collections=False):
+            attributes.set_committed_value(payment, "received_at", original_received_at)
+            attributes.set_committed_value(payment, "created_at", original_created_at)
         await session.commit()
     except storage_quota_service.OrgStorageQuotaExceeded as exc:
         await session.rollback()
