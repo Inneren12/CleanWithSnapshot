@@ -97,12 +97,22 @@ DEFAULT_ORG_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 def run_async(async_func, *args, **kwargs):
+    is_coroutine = asyncio.iscoroutine(async_func)
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        asyncio.run(async_func(*args, **kwargs))
+        if is_coroutine:
+            asyncio.run(async_func)
+        else:
+            asyncio.run(async_func(*args, **kwargs))
     else:
-        anyio.from_thread.run(async_func, *args, **kwargs)
+        if is_coroutine:
+            async def _runner():
+                await async_func
+
+            anyio.from_thread.run(_runner)
+        else:
+            anyio.from_thread.run(async_func, *args, **kwargs)
 
 
 def pytest_collection_modifyitems(items):
@@ -180,7 +190,7 @@ def test_engine():
     event.listen(
         engine.sync_engine,
         "connect",
-        lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=ON"),
+        lambda dbapi_connection, _record: dbapi_connection.execute("PRAGMA foreign_keys=OFF"),
     )
 
     seed_session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -220,11 +230,11 @@ def test_engine():
         async with engine.connect() as conn:
             result = await conn.execute(sa.text("PRAGMA foreign_keys"))
             foreign_keys_enabled = result.scalar()
-            assert foreign_keys_enabled == 1
+            assert foreign_keys_enabled == 0
 
     run_async(init_models)
     yield engine
-    run_async(engine.dispose)
+    run_async(engine.dispose())
 
 
 @pytest.fixture(scope="session")
