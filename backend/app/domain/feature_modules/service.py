@@ -285,9 +285,7 @@ async def upsert_org_feature_overrides(
         session.add(record)
     await session.flush()
     for key, before_state, after_state, action, after_override in audits:
-        enabled_value = (
-            bool(after_override) if after_override is not None else bool(after_state["enabled"])
-        )
+        enabled_value = effective_feature_enabled_from_overrides(overrides, key)
         if action == FeatureFlagAuditAction.ENABLE:
             enabled_value = True
         elif action == FeatureFlagAuditAction.DISABLE:
@@ -296,7 +294,7 @@ async def upsert_org_feature_overrides(
         audit_after_state["enabled"] = bool(enabled_value)
         audit_after_state["percentage"] = 100 if enabled_value else 0
         rollout_context = feature_flag_audit_service.build_rollout_context(
-            enabled=enabled_value,
+            enabled=audit_after_state["enabled"],
             targeting_rules=after_state.get("targeting_rules") or [],
             reason=rollout_reason,
         )
