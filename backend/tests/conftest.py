@@ -96,6 +96,15 @@ from app.settings import settings
 DEFAULT_ORG_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
+def run_async(async_func, *args, **kwargs):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(async_func(*args, **kwargs))
+    else:
+        anyio.from_thread.run(async_func, *args, **kwargs)
+
+
 def pytest_collection_modifyitems(items):
     """Auto-mark tests in smoke/ directory with smoke marker."""
     for item in items:
@@ -213,9 +222,9 @@ def test_engine():
             foreign_keys_enabled = result.scalar()
             assert foreign_keys_enabled == 0
 
-    asyncio.run(init_models())
+    run_async(init_models)
     yield engine
-    asyncio.run(engine.dispose())
+    run_async(engine.dispose)
 
 
 @pytest.fixture(scope="session")
@@ -529,7 +538,7 @@ def clean_database(test_engine):
             )
             await session.commit()
 
-    asyncio.run(truncate_tables())
+    run_async(truncate_tables)
     rate_limiter = getattr(app.state, "rate_limiter", None)
     reset = getattr(rate_limiter, "reset", None) if rate_limiter else None
     if reset:
