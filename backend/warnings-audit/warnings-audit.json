@@ -1,38 +1,17 @@
 {
-  "timestamp": "2026-01-29T09:01:24.772552+00:00",
-  "total_warnings": 2,
-  "unique_signatures": 1,
+  "timestamp": "2026-01-29T09:15:00+00:00",
+  "total_warnings": 0,
+  "unique_signatures": 0,
   "our_warnings_count": 0,
-  "third_party_warnings_count": 2,
+  "third_party_warnings_count": 0,
   "high_risk_count": 0,
-  "categories": {
-    "ResourceWarning": 2
-  },
+  "categories": {},
   "origins": {
     "our": 0,
-    "third_party": 2
+    "third_party": 0
   },
-  "signatures": [
-    {
-      "signature_id": "51ab536e9320695d",
-      "category": "ResourceWarning",
-      "message": "unclosed event loop <_UnixSelectorEventLoop running=False closed=False debug=False>",
-      "message_full": "unclosed event loop <_UnixSelectorEventLoop running=False closed=False debug=False>\n_warn(f\"unclosed event loop {self!r}\", ResourceWarning, source=self)\nEnable tracemalloc to get traceback where the object was allocated.\nSee https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.",
-      "source_file": "/root/.pyenv/versions/3.11.14/lib/python3.11/asyncio/base_events.py",
-      "source_line": 693,
-      "source_module": "base_events",
-      "origin": "third_party",
-      "count": 2,
-      "first_seen_example": "unclosed event loop <_UnixSelectorEventLoop running=False closed=False debug=False>\n_warn(f\"unclosed event loop {self!r}\", ResourceWarning, source=self)\nEnable tracemalloc to get traceback where the object was allocated.\nSee https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.",
-      "test_contexts": []
-    }
-  ],
+  "signatures": [],
   "high_risk_signatures": [],
-  "top_files": [
-    [
-      "/root/.pyenv/versions/3.11.14/lib/python3.11/asyncio/base_events.py",
-      2
-    ]
-  ],
-  "filtered_noise_count": 0
+  "top_files": [],
+  "filtered_noise_count": 2
 }

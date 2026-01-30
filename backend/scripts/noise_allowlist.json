@@ -38,6 +38,11 @@
       "pattern": "typing\\.NamedTuple",
       "rationale": "NamedTuple field order warning in older type stubs",
       "review_date": "2026-07-01"
+    },
+    {
+      "pattern": "unclosed event loop",
+      "rationale": "Asyncio ResourceWarning from base_events in third-party event loop handling; not actionable in our code",
+      "review_date": "2026-07-01"
     }
   ],
   "notes": [

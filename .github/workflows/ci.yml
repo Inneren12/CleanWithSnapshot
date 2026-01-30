@@ -102,7 +102,7 @@ jobs:
         working-directory: backend
         run: |
           mkdir -p warnings-audit
-          python scripts/warnings_audit.py --log ../pytest-warnings.log --out warnings-audit --gate warn
+          python scripts/warnings_audit.py --log ../pytest-warnings.log --out warnings-audit --gate fail
         env:
           PYTHONPATH: "."
 
