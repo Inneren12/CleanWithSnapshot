@@ -96,23 +96,20 @@ from app.settings import settings
 DEFAULT_ORG_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
-def run_async(async_func, *args, **kwargs):
-    is_coroutine = asyncio.iscoroutine(async_func)
+def run_async(fn_or_coro, *args, **kwargs):
+    if asyncio.iscoroutine(fn_or_coro):
+        coro = fn_or_coro
+    else:
+        coro = fn_or_coro(*args, **kwargs)
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        if is_coroutine:
-            asyncio.run(async_func)
-        else:
-            asyncio.run(async_func(*args, **kwargs))
+        asyncio.run(coro)
     else:
-        if is_coroutine:
-            async def _runner():
-                await async_func
+        async def _runner():
+            await coro
 
-            anyio.from_thread.run(_runner)
-        else:
-            anyio.from_thread.run(async_func, *args, **kwargs)
+        anyio.from_thread.run(_runner)
 
 
 def pytest_collection_modifyitems(items):
@@ -411,6 +408,11 @@ def close_event_loop():
         loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
     loop.run_until_complete(loop.shutdown_asyncgens())
     loop.close()
+    policy = asyncio.get_event_loop_policy()
+    policy_loop = getattr(getattr(policy, "_local", None), "loop", None)
+    if policy_loop and policy_loop is not loop and not policy_loop.is_closed():
+        policy_loop.close()
+    asyncio.set_event_loop(None)
 
 
 @pytest.fixture(autouse=True)
@@ -437,6 +439,9 @@ def enable_test_mode():
     settings.trust_proxy_headers = True
     settings.trusted_proxy_ips = ["testclient"]
     settings.trusted_proxy_cidrs = []
+    from app.api import routes_health
+
+    routes_health._load_expected_heads = lambda: ([], "skipped_no_alembic_files")
     from app.infra.email import resolve_email_adapter
 
     app.state.email_adapter = resolve_email_adapter(settings)

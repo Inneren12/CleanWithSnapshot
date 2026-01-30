@@ -297,7 +297,7 @@ async def upsert_org_feature_overrides(
         audit_after_state["percentage"] = 100 if enabled_value else 0
         rollout_context = feature_flag_audit_service.build_rollout_context(
             enabled=enabled_value,
-            targeting_rules=[],
+            targeting_rules=after_state.get("targeting_rules") or [],
             reason=rollout_reason,
         )
         await feature_flag_audit_service.audit_feature_flag_change(
