@@ -67,6 +67,10 @@ NORMALIZATION_PATTERNS = [
 ]
 
 
+def is_unclosed_event_loop_message(message: str) -> bool:
+    return "unclosed event loop" in message.lower()
+
+
 @dataclass
 class Warning:
     """Represents a single warning instance."""
@@ -350,6 +354,10 @@ def apply_noise_filter(
     filtered_count = 0
 
     for sig_id, sig in signatures.items():
+        if is_unclosed_event_loop_message(sig.message):
+            filtered[sig_id] = sig
+            continue
+
         # Never filter our warnings
         if sig.origin == "our":
             filtered[sig_id] = sig
@@ -390,6 +398,8 @@ def apply_noise_filter(
 
 def is_high_risk(sig: WarningSignature) -> bool:
     """Check if a warning signature is high-risk."""
+    if is_unclosed_event_loop_message(sig.message):
+        return True
     if sig.category in HIGH_RISK_CATEGORIES:
         # Special case for RuntimeWarning - only high-risk if coroutine-related
         if sig.category == "RuntimeWarning":
