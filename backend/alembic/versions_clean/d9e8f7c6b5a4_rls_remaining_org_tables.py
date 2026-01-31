@@ -118,6 +118,11 @@ def _policy_sql(table: str) -> str:
     return f"""
 DO $$
 BEGIN
+    IF to_regclass('{SCHEMA}.{table}') IS NULL THEN
+        RAISE NOTICE 'Skipping RLS policy setup for %.% (table missing)', '{SCHEMA}', '{table}';
+        RETURN;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_class c
@@ -126,7 +131,7 @@ BEGIN
           AND c.relname = '{table}'
           AND c.relrowsecurity
     ) THEN
-        EXECUTE 'ALTER TABLE {qualified_table} ENABLE ROW LEVEL SECURITY';
+        EXECUTE 'ALTER TABLE IF EXISTS {qualified_table} ENABLE ROW LEVEL SECURITY';
     END IF;
 
     IF NOT EXISTS (
@@ -137,7 +142,7 @@ BEGIN
           AND c.relname = '{table}'
           AND c.relforcerowsecurity
     ) THEN
-        EXECUTE 'ALTER TABLE {qualified_table} FORCE ROW LEVEL SECURITY';
+        EXECUTE 'ALTER TABLE IF EXISTS {qualified_table} FORCE ROW LEVEL SECURITY';
     END IF;
 
     IF NOT EXISTS (
