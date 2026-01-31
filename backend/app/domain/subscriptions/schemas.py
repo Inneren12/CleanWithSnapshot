@@ -23,6 +23,22 @@ class SubscriptionCreateRequest(BaseModel):
         return statuses.normalize_frequency(value)
 
 
+class AdminSubscriptionCreateRequest(BaseModel):
+    client_email: str = Field(min_length=3, max_length=255)
+    client_name: str | None = Field(default=None, max_length=255)
+    frequency: str
+    start_date: date
+    preferred_weekday: int | None = Field(default=None, ge=0, le=6)
+    preferred_day_of_month: int | None = Field(default=None, ge=1, le=28)
+    base_service_type: str = Field(min_length=1, max_length=100)
+    base_price: int = Field(ge=0)
+
+    @field_validator("frequency")
+    @classmethod
+    def normalize_frequency(cls, value: str) -> str:
+        return statuses.normalize_frequency(value)
+
+
 class SubscriptionUpdateRequest(BaseModel):
     status: str
     status_reason: str | None = Field(default=None, max_length=255)

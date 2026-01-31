@@ -242,6 +242,7 @@ from app.domain.ops.schemas import (
 from app.domain.timeline.schemas import TimelineEvent
 from app.domain.errors import DomainError
 from app.domain.retention import cleanup_retention
+from app.domain.clients import service as client_service
 from app.domain.subscriptions import schemas as subscription_schemas
 from app.domain.subscriptions import service as subscription_service
 from app.domain.subscriptions.db_models import Subscription
@@ -6614,6 +6615,39 @@ async def _get_org_subscription(
     if not subscription or subscription.org_id != org_id:
         return None
     return subscription
+
+
+@router.post(
+    "/v1/admin/subscriptions",
+    response_model=subscription_schemas.AdminSubscriptionListItem,
+)
+async def create_subscription_admin(
+    payload: subscription_schemas.AdminSubscriptionCreateRequest,
+    request: Request,
+    _identity: AdminIdentity = Depends(require_admin),
+    session: AsyncSession = Depends(get_db_session),
+) -> subscription_schemas.AdminSubscriptionListItem:
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    client = await client_service.get_or_create_client(
+        session, payload.client_email, name=payload.client_name, commit=False
+    )
+    if client.org_id != org_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Client belongs to another org")
+
+    subscription_payload = subscription_schemas.SubscriptionCreateRequest(
+        frequency=payload.frequency,
+        start_date=payload.start_date,
+        preferred_weekday=payload.preferred_weekday,
+        preferred_day_of_month=payload.preferred_day_of_month,
+        base_service_type=payload.base_service_type,
+        base_price=payload.base_price,
+    )
+    subscription = await subscription_service.create_subscription(
+        session, client.client_id, subscription_payload
+    )
+    await session.commit()
+    await session.refresh(subscription)
+    return _admin_subscription_response(subscription)
 
 
 @router.get(
