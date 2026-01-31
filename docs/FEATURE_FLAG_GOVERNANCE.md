@@ -8,7 +8,7 @@ The following actions are audited:
 
 - **Create**: a new feature flag definition or explicit override is added.
 - **Enable / disable**: toggling a flag on or off.
-- **Rollout change**: percentage adjustments (currently captured as `0%` or `100%` because the org-level flags are boolean).
+- **Rollout change**: percentage adjustments (`0%`, `10%`, `25%`, `50%`, `100%`) for per-org overrides.
 - **Targeting rule changes**: any change to targeting rules summary.
 - **Delete / retire**: removal of an override or retirement in automation flows.
 - **Activate / expire**: lifecycle state transitions for a flag definition.
@@ -56,6 +56,18 @@ New flags **cannot** be created without `owner`, `purpose`, and `expires_at`.
 - Expired or retired flags **auto-disable** during evaluation.
 - Expired or retired flags **cannot** be modified or rolled out without an explicit override.
 - Overrides require `override_reason` and are audited as `override`.
+
+## Percentage rollout & deterministic cohorts
+
+Org-level overrides can be configured with a rollout percentage (allowed values: `0`, `10`, `25`, `50`, `100`).
+Percentage rollouts are deterministic per org and flag key using a stable SHA-256 hash of:
+
+```
+{org_id}:{flag_key}:{feature_flag_rollout_salt}
+```
+
+The configured `feature_flag_rollout_salt` setting (default: `feature-flag-rollout-v1`) ensures cohort
+assignments are stable across deployments and Python versions. Changing the salt will re-bucket all orgs.
 
 ## Retirement automation (scheduled + manual)
 
