@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import type { APIResponse } from '@playwright/test';
+import type { APIRequestContext, APIResponse } from '@playwright/test';
 
 import {
   adminAuthHeaders,
@@ -10,30 +10,88 @@ import {
 
 const formatDate = (value: Date) => value.toISOString().slice(0, 10);
 
-async function buildResponseDebugMessage(
+const trimPayload = (value: string, limit = 400) =>
+  value.length > limit ? `${value.slice(0, limit)}…` : value;
+
+const getHeaderValue = (response: APIResponse, key: string) =>
+  response.headers()[key.toLowerCase()] ?? '';
+
+type DebugDetails = {
+  message: string;
+  requestId?: string;
+};
+
+async function buildResponseDebugDetails(
   response: APIResponse,
   url: string
-): Promise<string> {
+): Promise<DebugDetails> {
   const statusLine = `${response.status()} ${response.statusText()}`.trim();
-  const contentType = response.headers()['content-type'] ?? '';
+  const contentType = getHeaderValue(response, 'content-type');
+  const headerRequestId = getHeaderValue(response, 'x-request-id');
   const isJson = contentType.includes('application/json') || contentType.includes('+json');
   try {
+    const lines: string[] = [];
+    let requestId = headerRequestId || undefined;
     if (isJson) {
       const payload = await response.json();
-      const title = payload?.title ? ` title=${payload.title}` : '';
-      const detail = payload?.detail ? ` detail=${payload.detail}` : '';
-      const requestId = payload?.request_id ? ` request_id=${payload.request_id}` : '';
+      requestId = payload?.request_id ?? requestId;
+      const title = payload?.title ? `title=${payload.title}` : '';
+      const detail = payload?.detail ? `detail=${payload.detail}` : '';
+      const detailsLine =
+        title || detail ? `problem_details: ${[title, detail].filter(Boolean).join(' ')}` : '';
       const payloadString = JSON.stringify(payload);
-      const trimmedPayload =
-        payloadString.length > 400 ? `${payloadString.slice(0, 400)}…` : payloadString;
-      return `Request failed: ${statusLine} url=${url}${title}${detail}${requestId} body=${trimmedPayload}`;
+      const trimmedPayload = trimPayload(payloadString);
+      lines.push(
+        `Request failed: ${statusLine} url=${url}${requestId ? ` request_id=${requestId}` : ''}`
+      );
+      if (detailsLine) {
+        lines.push(detailsLine);
+      }
+      lines.push(
+        `headers: content-type=${contentType || 'unknown'} x-request-id=${
+          headerRequestId || 'unknown'
+        }`
+      );
+      lines.push(`body=${trimmedPayload}`);
+      return { message: lines.join('\n'), requestId };
     }
     const body = await response.text();
-    const trimmed = body.length > 400 ? `${body.slice(0, 400)}…` : body;
-    return `Request failed: ${statusLine} url=${url} body=${trimmed}`;
+    const trimmed = trimPayload(body);
+    lines.push(
+      `Request failed: ${statusLine} url=${url}${requestId ? ` request_id=${requestId}` : ''}`
+    );
+    lines.push(
+      `headers: content-type=${contentType || 'unknown'} x-request-id=${
+        headerRequestId || 'unknown'
+      }`
+    );
+    lines.push(`body=${trimmed}`);
+    return { message: lines.join('\n'), requestId };
   } catch (error) {
-    return `Request failed: ${statusLine} url=${url} body=<unreadable:${String(error)}>`;
+    return {
+      message: `Request failed: ${statusLine} url=${url} body=<unreadable:${String(error)}>`,
+    };
   }
+}
+
+async function fetchHealthSnapshot(
+  request: APIRequestContext,
+  apiBaseUrl: string,
+  headers: Record<string, string>
+): Promise<string> {
+  const endpoints = ['healthz', 'readyz'];
+  const results: string[] = [];
+  for (const endpoint of endpoints) {
+    const url = `${apiBaseUrl}/${endpoint}`;
+    try {
+      const response = await request.get(url, { headers });
+      const body = trimPayload(await response.text(), 200);
+      results.push(`${endpoint}: ${response.status()} ${response.statusText()} body=${body}`);
+    } catch (error) {
+      results.push(`${endpoint}: failed (${String(error)})`);
+    }
+  }
+  return `health snapshot: ${results.join(' | ')}`;
 }
 
 test.describe('Invoice payment flow', () => {
@@ -74,9 +132,19 @@ test.describe('Invoice payment flow', () => {
       },
     });
 
-    const bookingDebugMessage = bookingResponse.ok()
-      ? 'Booking request succeeded'
-      : await buildResponseDebugMessage(bookingResponse, bookingUrl);
+    let bookingDebugMessage = 'Booking request succeeded';
+    if (!bookingResponse.ok()) {
+      const debugDetails = await buildResponseDebugDetails(bookingResponse, bookingUrl);
+      const healthSnapshot = await fetchHealthSnapshot(
+        page.request,
+        admin.apiBaseUrl,
+        authHeaders
+      );
+      const hint = debugDetails.requestId
+        ? `Search in API logs for request_id=${debugDetails.requestId} or key=schedule_quick_create_failed`
+        : 'Search in API logs for key=schedule_quick_create_failed';
+      bookingDebugMessage = [debugDetails.message, hint, healthSnapshot].join('\n');
+    }
     expect(bookingResponse.ok(), bookingDebugMessage).toBeTruthy();
     const booking = await bookingResponse.json();
     expect(booking.booking_id).toBeTruthy();
@@ -116,7 +184,7 @@ test.describe('Invoice payment flow', () => {
 
     const invoiceDebugMessage = invoiceResponse.ok()
       ? 'Invoice creation succeeded'
-      : await buildResponseDebugMessage(invoiceResponse, invoiceUrl);
+      : (await buildResponseDebugDetails(invoiceResponse, invoiceUrl)).message;
     expect(invoiceResponse.ok(), invoiceDebugMessage).toBeTruthy();
     const invoice = await invoiceResponse.json();
     expect(invoice.invoice_id).toBeTruthy();
@@ -136,9 +204,9 @@ test.describe('Invoice payment flow', () => {
 
     await expect(paymentForm).toBeVisible();
 
-    const amountField = paymentForm.getByLabel(/Amount/i);
-    const methodField = paymentForm.getByLabel('Payment Method');
-    const referenceField = paymentForm.getByLabel(/Reference/i);
+    const amountField = paymentForm.getByLabel(`Amount (${invoice.currency})`, { exact: true });
+    const methodField = paymentForm.getByLabel('Payment Method', { exact: true });
+    const referenceField = paymentForm.getByLabel('Reference (optional)', { exact: true });
 
     await expect(amountField).toBeVisible();
     await expect(amountField).toBeEnabled();
