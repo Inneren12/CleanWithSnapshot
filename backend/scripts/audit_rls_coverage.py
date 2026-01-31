@@ -205,17 +205,32 @@ def _load_database_tables(database_url: str) -> TableData:
     return TableData(all_tables=all_tables, org_id_tables=org_id_tables, rls_info=rls_info)
 
 
-def _load_rls_tables_from_migration() -> set[str]:
-    migration_path = ROOT / "alembic" / "versions" / "0044_postgres_rls_org_isolation.py"
-    if not migration_path.exists():
-        return set()
-    spec = importlib.util.spec_from_file_location("rls_migration", migration_path)
-    if spec is None or spec.loader is None:
-        return set()
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    tables = getattr(module, "TABLES", ())
-    return {table for table in tables}
+def _load_rls_tables_from_migrations() -> set[str]:
+    migration_names = (
+        "0044_postgres_rls_org_isolation.py",
+        "ff1a2b3c4d5e_client_users_rls_org_isolation.py",
+    )
+    tables: set[str] = set()
+    for migration_name in migration_names:
+        migration_path = ROOT / "alembic" / "versions" / migration_name
+        if not migration_path.exists():
+            continue
+        spec = importlib.util.spec_from_file_location(
+            f"rls_migration_{migration_name}", migration_path
+        )
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        table_list = getattr(module, "TABLES", ())
+        if isinstance(table_list, str):
+            tables.add(table_list)
+        else:
+            tables.update(table_list)
+        table_single = getattr(module, "TABLE", None)
+        if table_single:
+            tables.add(table_single)
+    return tables
 
 
 def _load_metadata_tables() -> TableData:
@@ -231,7 +246,7 @@ def _load_metadata_tables() -> TableData:
         all_tables.append(key)
         if "org_id" in table.c:
             org_id_tables.append(key)
-    rls_tables = _load_rls_tables_from_migration()
+    rls_tables = _load_rls_tables_from_migrations()
     rls_info = {
         key: RlsInfo(enabled=key[1] in rls_tables, policy_count=1 if key[1] in rls_tables else 0)
         for key in all_tables
@@ -413,7 +428,8 @@ def _build_report(
         lines.append("")
         lines.append(
             "_Metadata mode uses SQLAlchemy models plus the RLS table list from "
-            "`0044_postgres_rls_org_isolation.py`."
+            "`0044_postgres_rls_org_isolation.py` and "
+            "`ff1a2b3c4d5e_client_users_rls_org_isolation.py`."
         )
 
     return "\n".join(lines)

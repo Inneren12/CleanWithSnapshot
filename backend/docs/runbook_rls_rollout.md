@@ -15,7 +15,7 @@ This runbook guides operators through enabling and validating the Postgres row-l
    WHERE polname LIKE '%org_isolation%'
    ORDER BY tablename;
    ```
-   Ensure `FORCE ROW LEVEL SECURITY` is enabled and that every table listed in the migration (leads, bookings, invoices, invoice_payments, workers, teams, order_photos, export_events, email_events) has an `_org_isolation` policy.
+   Ensure `FORCE ROW LEVEL SECURITY` is enabled and that every table listed in the migration (leads, bookings, invoices, invoice_payments, workers, teams, order_photos, export_events, email_events, client_users) has an `_org_isolation` policy.
 2. Verify the session variable is wired by the application middleware using `SET LOCAL app.current_org_id` inside a transaction:
    ```sql
    BEGIN;
