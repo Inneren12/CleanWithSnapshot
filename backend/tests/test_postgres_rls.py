@@ -70,11 +70,16 @@ def _provision_tenant_engine(temp_url: str) -> sa.Engine:
             )
         )
         conn.execute(sa.text("GRANT USAGE ON SCHEMA public TO app_test"))
-        conn.execute(sa.text("GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO app_test"))
+        conn.execute(
+            sa.text(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_test"
+            )
+        )
         conn.execute(sa.text("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_test"))
         conn.execute(
             sa.text(
-                "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO app_test"
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE "
+                "ON TABLES TO app_test"
             )
         )
 
@@ -130,6 +135,223 @@ def test_rls_prevents_cross_org_queries():
             conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_a}'"))
             rows = conn.execute(sa.text("SELECT org_id, name FROM teams ORDER BY name"))
             assert {row.org_id for row in rows} == {org_a}
+
+        engine.dispose()
+
+
+@pytest.mark.postgres
+@pytest.mark.migrations
+def test_rls_isolates_checklists():
+    with _temporary_postgres_database(settings.database_url) as temp_url:
+        _apply_migrations(temp_url)
+        engine = _provision_tenant_engine(temp_url)
+        org_a = uuid.uuid4()
+        org_b = uuid.uuid4()
+
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO organizations (org_id, name) VALUES (:org_id, :name), (:org_b, :name_b)"
+                ),
+                {
+                    "org_id": org_a,
+                    "name": "Checklist Org A",
+                    "org_b": org_b,
+                    "name_b": "Checklist Org B",
+                },
+            )
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_a}'"))
+            conn.execute(
+                sa.text("INSERT INTO teams (org_id, name) VALUES (:org_id, :name)"),
+                {"org_id": org_a, "name": "Team A"},
+            )
+            team_a_id = conn.execute(
+                sa.text("SELECT team_id FROM teams WHERE name = 'Team A'")
+            ).scalar_one()
+            conn.execute(
+                sa.text(
+                    "INSERT INTO bookings (booking_id, org_id, team_id, starts_at, duration_minutes, status) "
+                    "VALUES (:booking_id, :org_id, :team_id, NOW(), :duration, :status)"
+                ),
+                {
+                    "booking_id": "booking-a",
+                    "org_id": org_a,
+                    "team_id": team_a_id,
+                    "duration": 60,
+                    "status": "scheduled",
+                },
+            )
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_b}'"))
+            conn.execute(
+                sa.text("INSERT INTO teams (org_id, name) VALUES (:org_id, :name)"),
+                {"org_id": org_b, "name": "Team B"},
+            )
+            team_b_id = conn.execute(
+                sa.text("SELECT team_id FROM teams WHERE name = 'Team B'")
+            ).scalar_one()
+            conn.execute(
+                sa.text(
+                    "INSERT INTO bookings (booking_id, org_id, team_id, starts_at, duration_minutes, status) "
+                    "VALUES (:booking_id, :org_id, :team_id, NOW(), :duration, :status)"
+                ),
+                {
+                    "booking_id": "booking-b",
+                    "org_id": org_b,
+                    "team_id": team_b_id,
+                    "duration": 60,
+                    "status": "scheduled",
+                },
+            )
+
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO checklist_templates (name, service_type, version, is_active) "
+                    "VALUES (:name, :service_type, :version, :is_active)"
+                ),
+                {
+                    "name": "Base template",
+                    "service_type": "standard",
+                    "version": 1,
+                    "is_active": True,
+                },
+            )
+            template_id = conn.execute(
+                sa.text("SELECT template_id FROM checklist_templates WHERE name = 'Base template'")
+            ).scalar_one()
+            conn.execute(
+                sa.text(
+                    "INSERT INTO checklist_template_items (template_id, position, label, phase, required) "
+                    "VALUES (:template_id, :position, :label, :phase, :required)"
+                ),
+                {
+                    "template_id": template_id,
+                    "position": 1,
+                    "label": "Do the thing",
+                    "phase": "prep",
+                    "required": True,
+                },
+            )
+            template_item_id = conn.execute(
+                sa.text(
+                    "SELECT item_id FROM checklist_template_items WHERE template_id = :template_id"
+                ),
+                {"template_id": template_id},
+            ).scalar_one()
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_a}'"))
+            conn.execute(
+                sa.text(
+                    "INSERT INTO checklist_runs (run_id, order_id, template_id, status) "
+                    "VALUES (:run_id, :order_id, :template_id, :status)"
+                ),
+                {
+                    "run_id": "run-a",
+                    "order_id": "booking-a",
+                    "template_id": template_id,
+                    "status": "in_progress",
+                },
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO checklist_run_items (run_item_id, run_id, template_item_id, checked) "
+                    "VALUES (:run_item_id, :run_id, :template_item_id, :checked)"
+                ),
+                {
+                    "run_item_id": "item-a",
+                    "run_id": "run-a",
+                    "template_item_id": template_item_id,
+                    "checked": False,
+                },
+            )
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_b}'"))
+            conn.execute(
+                sa.text(
+                    "INSERT INTO checklist_runs (run_id, order_id, template_id, status) "
+                    "VALUES (:run_id, :order_id, :template_id, :status)"
+                ),
+                {
+                    "run_id": "run-b",
+                    "order_id": "booking-b",
+                    "template_id": template_id,
+                    "status": "in_progress",
+                },
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO checklist_run_items (run_item_id, run_id, template_item_id, checked) "
+                    "VALUES (:run_item_id, :run_id, :template_item_id, :checked)"
+                ),
+                {
+                    "run_item_id": "item-b",
+                    "run_id": "run-b",
+                    "template_item_id": template_item_id,
+                    "checked": False,
+                },
+            )
+
+        with engine.begin() as conn:
+            rows = conn.execute(sa.text("SELECT run_id FROM checklist_runs ORDER BY run_id"))
+            assert rows.fetchall() == []
+            rows = conn.execute(
+                sa.text("SELECT run_item_id FROM checklist_run_items ORDER BY run_item_id")
+            )
+            assert rows.fetchall() == []
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_a}'"))
+            rows = conn.execute(
+                sa.text("SELECT run_id, order_id FROM checklist_runs ORDER BY run_id")
+            )
+            assert {(row.run_id, row.order_id) for row in rows} == {("run-a", "booking-a")}
+            rows = conn.execute(
+                sa.text(
+                    "SELECT run_item_id, run_id FROM checklist_run_items ORDER BY run_item_id"
+                )
+            )
+            assert {(row.run_item_id, row.run_id) for row in rows} == {("item-a", "run-a")}
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_b}'"))
+            rows = conn.execute(
+                sa.text("SELECT run_id, order_id FROM checklist_runs ORDER BY run_id")
+            )
+            assert {(row.run_id, row.order_id) for row in rows} == {("run-b", "booking-b")}
+
+            updated = conn.execute(
+                sa.text(
+                    "UPDATE checklist_runs SET status = :status WHERE run_id = :run_id RETURNING run_id"
+                ),
+                {"status": "complete", "run_id": "run-a"},
+            ).fetchall()
+            assert updated == []
+
+            deleted = conn.execute(
+                sa.text(
+                    "DELETE FROM checklist_run_items WHERE run_item_id = :run_item_id RETURNING run_item_id"
+                ),
+                {"run_item_id": "item-a"},
+            ).fetchall()
+            assert deleted == []
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_a}'"))
+            rows = conn.execute(
+                sa.text(
+                    "SELECT runs.run_id, items.run_item_id "
+                    "FROM checklist_runs AS runs "
+                    "JOIN checklist_run_items AS items ON items.run_id = runs.run_id "
+                    "ORDER BY runs.run_id"
+                )
+            )
+            assert {(row.run_id, row.run_item_id) for row in rows} == {("run-a", "item-a")}
 
         engine.dispose()
 
