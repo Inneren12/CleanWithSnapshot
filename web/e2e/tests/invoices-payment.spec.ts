@@ -36,8 +36,12 @@ test.describe('Invoice payment flow', () => {
     const authHeaders = adminAuthHeaders(admin);
     const runSuffix = `${testInfo.workerIndex}-${testInfo.retry}`;
 
+    const bookingStart = new Date();
+    bookingStart.setUTCDate(bookingStart.getUTCDate() + 1);
+    bookingStart.setUTCHours(18, 0, 0, 0);
+
     const bookingPayload = {
-      starts_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      starts_at: bookingStart.toISOString(),
       duration_minutes: 120,
       client: {
         name: 'E2E Invoice Client',

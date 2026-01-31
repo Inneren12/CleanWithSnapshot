@@ -5652,211 +5652,268 @@ async def quick_create_booking(
     identity: AdminIdentity = Depends(require_permission_keys("bookings.edit")),
 ) -> ScheduleBooking:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
-    normalized_start = booking_service._normalize_datetime(payload.starts_at)
-    duration_minutes = payload.duration_minutes
-    ends_at = normalized_start + timedelta(minutes=duration_minutes)
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
+    try:
+        normalized_start = booking_service._normalize_datetime(payload.starts_at)
+        duration_minutes = payload.duration_minutes
+        ends_at = normalized_start + timedelta(minutes=duration_minutes)
 
-    if payload.client_id:
-        client = (
-            await session.execute(
-                select(ClientUser).where(
-                    ClientUser.client_id == payload.client_id,
-                    ClientUser.org_id == org_id,
-                    ClientUser.is_active.is_(True),
+        if payload.client_id:
+            client = (
+                await session.execute(
+                    select(ClientUser).where(
+                        ClientUser.client_id == payload.client_id,
+                        ClientUser.org_id == org_id,
+                        ClientUser.is_active.is_(True),
+                    )
                 )
-            )
-        ).scalar_one_or_none()
-        if client is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
-    else:
-        normalized_email = payload.client.email.lower().strip() if payload.client else None
-        if not normalized_email:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client email is required")
-        client = (
-            await session.execute(
-                select(ClientUser).where(func.lower(ClientUser.email) == normalized_email)
-            )
-        ).scalar_one_or_none()
-        if client and client.org_id != org_id:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Client email belongs to another org")
-        if client is None:
-            client = ClientUser(
+            ).scalar_one_or_none()
+            if client is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Client not found"
+                )
+        else:
+            normalized_email = payload.client.email.lower().strip() if payload.client else None
+            if not normalized_email:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="Client email is required"
+                )
+            client = (
+                await session.execute(
+                    select(ClientUser).where(func.lower(ClientUser.email) == normalized_email)
+                )
+            ).scalar_one_or_none()
+            if client and client.org_id != org_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Client email belongs to another org",
+                )
+            if client is None:
+                client = ClientUser(
+                    org_id=org_id,
+                    email=normalized_email,
+                    name=payload.client.name if payload.client else None,
+                    phone=payload.client.phone if payload.client else None,
+                )
+                session.add(client)
+                await session.flush()
+            elif payload.client:
+                if not client.name:
+                    client.name = payload.client.name
+                if not client.phone:
+                    client.phone = payload.client.phone
+
+        address_id = payload.address_id
+        if address_id:
+            address = (
+                await session.execute(
+                    select(ClientAddress).where(
+                        ClientAddress.address_id == address_id,
+                        ClientAddress.client_id == client.client_id,
+                        ClientAddress.org_id == org_id,
+                        ClientAddress.is_active.is_(True),
+                    )
+                )
+            ).scalar_one_or_none()
+            if address is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Address not found"
+                )
+        else:
+            if not payload.address_text:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="Address text is required"
+                )
+            address = ClientAddress(
                 org_id=org_id,
-                email=normalized_email,
-                name=payload.client.name if payload.client else None,
-                phone=payload.client.phone if payload.client else None,
+                client_id=client.client_id,
+                label=(payload.address_label or "Primary").strip() or "Primary",
+                address_text=payload.address_text.strip(),
             )
-            session.add(client)
+            session.add(address)
             await session.flush()
-        elif payload.client:
-            if not client.name:
-                client.name = payload.client.name
-            if not client.phone:
-                client.phone = payload.client.phone
+            address_id = address.address_id
+            if not client.address:
+                client.address = address.address_text
 
-    address_id = payload.address_id
-    if address_id:
-        address = (
-            await session.execute(
-                select(ClientAddress).where(
-                    ClientAddress.address_id == address_id,
-                    ClientAddress.client_id == client.client_id,
-                    ClientAddress.org_id == org_id,
-                    ClientAddress.is_active.is_(True),
+        service_type_name = None
+        if payload.service_type_id is not None:
+            service_type = (
+                await session.execute(
+                    select(ServiceType).where(
+                        ServiceType.service_type_id == payload.service_type_id,
+                        ServiceType.org_id == org_id,
+                        ServiceType.active.is_(True),
+                    )
                 )
+            ).scalar_one_or_none()
+            if service_type is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Service type not found"
+                )
+            service_type_name = service_type.name
+
+        assigned_worker_id = payload.assigned_worker_id
+        team_id = None
+        if assigned_worker_id is not None:
+            worker = await session.get(Worker, assigned_worker_id)
+            if worker is None or worker.org_id != org_id or not worker.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found"
+                )
+            team_id = worker.team_id
+        else:
+            team = await booking_service.ensure_default_team(session, org_id=org_id)
+            team_id = team.team_id
+
+        if not await booking_service.is_slot_available(
+            normalized_start, duration_minutes, session, team_id=team_id
+        ):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot is not available")
+
+        if assigned_worker_id is not None:
+            worker_conflicts = await ops_service.check_schedule_conflicts(
+                session,
+                org_id,
+                starts_at=normalized_start,
+                ends_at=ends_at,
+                team_id=team_id,
+                worker_id=assigned_worker_id,
             )
-        ).scalar_one_or_none()
-        if address is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Address not found")
-    else:
-        if not payload.address_text:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Address text is required")
-        address = ClientAddress(
+            if worker_conflicts:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="Worker is not available"
+                )
+
+        decision = await booking_service.evaluate_deposit_policy(
+            session=session,
+            lead=None,
+            starts_at=normalized_start,
+            deposit_percent=settings.deposit_percent,
+            deposits_enabled=settings.deposits_enabled,
+            service_type=service_type_name,
+            estimated_total=payload.price_cents / 100 if payload.price_cents else None,
+        )
+        policy_snapshot = decision.policy_snapshot
+        if service_type_name or payload.price_cents:
+            policy_snapshot = policy_snapshot.model_copy(
+                update={
+                    "service_type": service_type_name,
+                    "total_amount_cents": payload.price_cents,
+                }
+            )
+
+        deposit_required = decision.required
+        deposit_cents = decision.deposit_cents
+        deposit_policy = decision.reasons
+        if payload.deposit_cents is not None:
+            updated_deposit = policy_snapshot.deposit.model_copy(
+                update={
+                    "required": payload.deposit_cents > 0,
+                    "amount_cents": payload.deposit_cents,
+                }
+            )
+            policy_snapshot = policy_snapshot.model_copy(update={"deposit": updated_deposit})
+            deposit_required = payload.deposit_cents > 0
+            deposit_cents = payload.deposit_cents
+            deposit_policy = [*deposit_policy, "manual_override"]
+
+        booking = Booking(
+            booking_id=str(uuid.uuid4()),
             org_id=org_id,
             client_id=client.client_id,
-            label=(payload.address_label or "Primary").strip() or "Primary",
-            address_text=payload.address_text.strip(),
-        )
-        session.add(address)
-        await session.flush()
-        address_id = address.address_id
-        if not client.address:
-            client.address = address.address_text
-
-    service_type_name = None
-    if payload.service_type_id is not None:
-        service_type = (
-            await session.execute(
-                select(ServiceType).where(
-                    ServiceType.service_type_id == payload.service_type_id,
-                    ServiceType.org_id == org_id,
-                    ServiceType.active.is_(True),
-                )
-            )
-        ).scalar_one_or_none()
-        if service_type is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service type not found")
-        service_type_name = service_type.name
-
-    assigned_worker_id = payload.assigned_worker_id
-    team_id = None
-    if assigned_worker_id is not None:
-        worker = await session.get(Worker, assigned_worker_id)
-        if worker is None or worker.org_id != org_id or not worker.is_active:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
-        team_id = worker.team_id
-    else:
-        team = await booking_service.ensure_default_team(session, org_id=org_id)
-        team_id = team.team_id
-
-    if not await booking_service.is_slot_available(
-        normalized_start, duration_minutes, session, team_id=team_id
-    ):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot is not available")
-
-    if assigned_worker_id is not None:
-        worker_conflicts = await ops_service.check_schedule_conflicts(
-            session,
-            org_id,
-            starts_at=normalized_start,
-            ends_at=ends_at,
+            address_id=address_id,
             team_id=team_id,
-            worker_id=assigned_worker_id,
+            assigned_worker_id=assigned_worker_id,
+            starts_at=normalized_start,
+            duration_minutes=duration_minutes,
+            planned_minutes=duration_minutes,
+            status="PENDING",
+            deposit_required=deposit_required,
+            deposit_cents=deposit_cents,
+            deposit_policy=deposit_policy,
+            deposit_status="pending" if deposit_required else None,
+            base_charge_cents=payload.price_cents,
+            policy_snapshot=policy_snapshot.model_dump(mode="json"),
+            refund_total_cents=0,
+            credit_note_total_cents=0,
         )
-        if worker_conflicts:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Worker is not available")
+        session.add(booking)
+        await session.flush()
 
-    decision = await booking_service.evaluate_deposit_policy(
-        session=session,
-        lead=None,
-        starts_at=normalized_start,
-        deposit_percent=settings.deposit_percent,
-        deposits_enabled=settings.deposits_enabled,
-        service_type=service_type_name,
-        estimated_total=payload.price_cents / 100 if payload.price_cents else None,
-    )
-    policy_snapshot = decision.policy_snapshot
-    if service_type_name or payload.price_cents:
-        policy_snapshot = policy_snapshot.model_copy(
-            update={
-                "service_type": service_type_name,
-                "total_amount_cents": payload.price_cents,
-            }
+        if payload.addon_ids:
+            addon_stmt = select(AddonDefinition).where(
+                AddonDefinition.addon_id.in_(payload.addon_ids),
+                AddonDefinition.is_active.is_(True),
+            )
+            addon_rows = (await session.execute(addon_stmt)).scalars().all()
+            if len(addon_rows) != len(set(payload.addon_ids)):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid addon selection"
+                )
+            selections = [
+                addon_schemas.OrderAddonSelection(addon_id=addon_id, qty=1)
+                for addon_id in payload.addon_ids
+            ]
+            await addon_service.set_order_addons(session, booking.booking_id, selections)
+
+        await audit_service.record_action(
+            session,
+            identity=identity,
+            action="CREATE_BOOKING",
+            resource_type="booking",
+            resource_id=booking.booking_id,
+            before=None,
+            after={
+                "team_id": team_id,
+                "client_id": client.client_id,
+                "assigned_worker_id": assigned_worker_id,
+                "starts_at": normalized_start.isoformat(),
+                "duration_minutes": duration_minutes,
+                "price_cents": payload.price_cents,
+                "deposit_cents": deposit_cents,
+            },
         )
+        await session.commit()
 
-    deposit_required = decision.required
-    deposit_cents = decision.deposit_cents
-    deposit_policy = decision.reasons
-    if payload.deposit_cents is not None:
-        updated_deposit = policy_snapshot.deposit.model_copy(
-            update={
-                "required": payload.deposit_cents > 0,
-                "amount_cents": payload.deposit_cents,
-            }
+        booking_payload = await ops_service.fetch_schedule_booking(
+            session, org_id, booking.booking_id
         )
-        policy_snapshot = policy_snapshot.model_copy(update={"deposit": updated_deposit})
-        deposit_required = payload.deposit_cents > 0
-        deposit_cents = payload.deposit_cents
-        deposit_policy = [*deposit_policy, "manual_override"]
-
-    booking = Booking(
-        booking_id=str(uuid.uuid4()),
-        org_id=org_id,
-        client_id=client.client_id,
-        address_id=address_id,
-        team_id=team_id,
-        assigned_worker_id=assigned_worker_id,
-        starts_at=normalized_start,
-        duration_minutes=duration_minutes,
-        planned_minutes=duration_minutes,
-        status="PENDING",
-        deposit_required=deposit_required,
-        deposit_cents=deposit_cents,
-        deposit_policy=deposit_policy,
-        deposit_status="pending" if deposit_required else None,
-        base_charge_cents=payload.price_cents,
-        policy_snapshot=policy_snapshot.model_dump(mode="json"),
-        refund_total_cents=0,
-        credit_note_total_cents=0,
-    )
-    session.add(booking)
-    await session.flush()
-
-    if payload.addon_ids:
-        addon_stmt = select(AddonDefinition).where(
-            AddonDefinition.addon_id.in_(payload.addon_ids),
-            AddonDefinition.is_active.is_(True),
+        return ScheduleBooking(**booking_payload)
+    except HTTPException:
+        raise
+    except LookupError as exc:
+        await session.rollback()
+        logger.warning(
+            "schedule_quick_create_lookup_error",
+            extra={"request_id": request_id, "org_id": str(org_id)},
         )
-        addon_rows = (await session.execute(addon_stmt)).scalars().all()
-        if len(addon_rows) != len(set(payload.addon_ids)):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid addon selection")
-        selections = [
-            addon_schemas.OrderAddonSelection(addon_id=addon_id, qty=1)
-            for addon_id in payload.addon_ids
-        ]
-        await addon_service.set_order_addons(session, booking.booking_id, selections)
-
-    await audit_service.record_action(
-        session,
-        identity=identity,
-        action="CREATE_BOOKING",
-        resource_type="booking",
-        resource_id=booking.booking_id,
-        before=None,
-        after={
-            "team_id": team_id,
-            "client_id": client.client_id,
-            "assigned_worker_id": assigned_worker_id,
-            "starts_at": normalized_start.isoformat(),
-            "duration_minutes": duration_minutes,
-            "price_cents": payload.price_cents,
-            "deposit_cents": deposit_cents,
-        },
-    )
-    await session.commit()
-
-    booking_payload = await ops_service.fetch_schedule_booking(session, org_id, booking.booking_id)
-    return ScheduleBooking(**booking_payload)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        await session.rollback()
+        logger.warning(
+            "schedule_quick_create_value_error",
+            extra={"request_id": request_id, "org_id": str(org_id)},
+        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except sa.exc.IntegrityError as exc:
+        await session.rollback()
+        logger.exception(
+            "schedule_quick_create_integrity_error",
+            extra={"request_id": request_id, "org_id": str(org_id)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Booking could not be created"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        await session.rollback()
+        logger.exception(
+            "schedule_quick_create_failed",
+            extra={"request_id": request_id, "org_id": str(org_id)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Quick create failed"
+        ) from exc
 
 
 @router.get("/v1/admin/schedule/conflicts", response_model=ConflictCheckResponse)
