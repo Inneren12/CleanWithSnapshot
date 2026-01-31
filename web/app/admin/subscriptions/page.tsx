@@ -288,7 +288,11 @@ export default function SubscriptionsPage() {
         </div>
         <div className="card-body">
           {createError ? <p className="alert alert-warning">{createError}</p> : null}
-          {createMessage ? <p className="alert alert-success">{createMessage}</p> : null}
+          {createMessage ? (
+            <p className="alert alert-success" data-testid="subscription-create-success">
+              {createMessage}
+            </p>
+          ) : null}
           <div className="admin-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
             <label className="field">
               <span className="label">Client email</span>
@@ -357,7 +361,7 @@ export default function SubscriptionsPage() {
             <button
               className="btn"
               type="button"
-              data-testid="subscription-create-btn"
+              data-testid="subscription-create-submit"
               onClick={createSubscription}
               disabled={createLoading || !clientEmail || !serviceType}
             >
@@ -402,7 +406,10 @@ export default function SubscriptionsPage() {
                         <td>{subscription.client_id}</td>
                         <td>{subscription.base_service_type}</td>
                         <td>
-                          <span data-testid={`subscription-status-${subscription.subscription_id}`}>
+                          <span
+                            data-testid="subscription-status"
+                            data-subscription-id={subscription.subscription_id}
+                          >
                             {subscription.status}
                           </span>
                           {subscription.status_reason ? (
@@ -417,7 +424,12 @@ export default function SubscriptionsPage() {
                               <button
                                 className="btn btn-warning"
                                 type="button"
-                                data-testid={`subscription-confirm-${pendingAction?.action}-btn-${subscription.subscription_id}`}
+                                data-testid={
+                                  pendingAction?.action === "pause"
+                                    ? "subscription-confirm-pause"
+                                    : "subscription-confirm-resume"
+                                }
+                                data-subscription-id={subscription.subscription_id}
                                 onClick={() =>
                                   updateSubscriptionStatus(
                                     subscription.subscription_id,
@@ -431,7 +443,8 @@ export default function SubscriptionsPage() {
                               <button
                                 className="btn btn-ghost"
                                 type="button"
-                                data-testid={`subscription-cancel-action-btn-${subscription.subscription_id}`}
+                                data-testid="subscription-cancel-action"
+                                data-subscription-id={subscription.subscription_id}
                                 onClick={() => setPendingAction(null)}
                               >
                                 Cancel
@@ -443,7 +456,8 @@ export default function SubscriptionsPage() {
                                 <button
                                   className="btn btn-warning"
                                   type="button"
-                                  data-testid={`subscription-pause-btn-${subscription.subscription_id}`}
+                                  data-testid="subscription-pause"
+                                  data-subscription-id={subscription.subscription_id}
                                   onClick={() =>
                                     setPendingAction({
                                       subscriptionId: subscription.subscription_id,
@@ -459,7 +473,8 @@ export default function SubscriptionsPage() {
                                 <button
                                   className="btn btn-ghost"
                                   type="button"
-                                  data-testid={`subscription-resume-btn-${subscription.subscription_id}`}
+                                  data-testid="subscription-resume"
+                                  data-subscription-id={subscription.subscription_id}
                                   onClick={() =>
                                     setPendingAction({
                                       subscriptionId: subscription.subscription_id,
