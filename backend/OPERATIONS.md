@@ -91,6 +91,12 @@ The script performs:
 - **Metrics/observability:** `METRICS_ENABLED`, `METRICS_TOKEN`, `JOBS_ENABLED`, `JOB_HEARTBEAT_REQUIRED`, `JOB_HEARTBEAT_TTL_SECONDS` (default 180s), `JOB_RUNNER_ID` (defaults to hostname), optional `BETTER_STACK_HEARTBEAT_URL` for external uptime monitors.
 - **Retention/export:** `RETENTION_*` settings, `EXPORT_MODE`, webhook URL/allowlist/backoff toggles.
 
+## Structured request logs (guaranteed fields)
+- Every request log line includes: `request_id`, `path`, `method`, `status_code`, `latency_ms`.
+- When available, logs also include: `org_id`, `role`, `roles` (proxy roles), `auth_method`, `proxy_trusted`, `mfa`, `break_glass`.
+- Error logs (e.g., `unhandled_exception` and 5xx handler logs) include the same `request_id` and inherit `trace_id`/`span_id` when tracing is enabled.
+- Redaction policy: structured logs automatically redact emails, phone numbers, street addresses, Authorization/Bearer values, and query parameters that contain tokens/signatures. Avoid logging raw request bodies or secrets.
+
 ## Admin Basic Auth verification
 - Configure `ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD` (and other role pairs as needed). In production, `LEGACY_BASIC_AUTH_ENABLED` defaults to `false` even when credentials exist; set it to `true` explicitly only for break-glass. Passwords must be strong (at least 12 characters and not placeholder defaults such as `change-me`, `secret`, `password`, `admin`, `123456`, `qwerty`).
 - To confirm access locally, run the API and call:

@@ -167,6 +167,17 @@ def determine_origin(source_file: str) -> str:
     return "third_party"
 
 
+def resolve_warning_origin(source_file: str, message: str, test_context: str) -> str:
+    origin = determine_origin(source_file)
+    if (
+        origin == "third_party"
+        and is_unclosed_event_loop_message(message)
+        and test_context.startswith("tests/")
+    ):
+        return "our"
+    return origin
+
+
 def extract_module(source_file: str) -> str:
     """Extract module name from source file path."""
     if not source_file:
@@ -250,7 +261,11 @@ def parse_warnings_from_log(log_content: str) -> list[Warning]:
                         source_file=current_file,
                         source_line=current_line,
                         source_module=extract_module(current_file),
-                        origin=determine_origin(current_file),
+                        origin=resolve_warning_origin(
+                            current_file,
+                            current_message_lines[0] if current_message_lines else "",
+                            current_test,
+                        ),
                         raw_text=full_message,
                         test_context=current_test,
                     ))
@@ -273,7 +288,11 @@ def parse_warnings_from_log(log_content: str) -> list[Warning]:
                 source_file=current_file,
                 source_line=current_line,
                 source_module=extract_module(current_file),
-                origin=determine_origin(current_file),
+                origin=resolve_warning_origin(
+                    current_file,
+                    current_message_lines[0] if current_message_lines else "",
+                    current_test,
+                ),
                 raw_text=full_message,
                 test_context=current_test,
             ))
@@ -295,7 +314,7 @@ def parse_warnings_from_log(log_content: str) -> list[Warning]:
             source_file=file_path,
             source_line=line_num,
             source_module=extract_module(file_path),
-            origin=determine_origin(file_path),
+            origin=resolve_warning_origin(file_path, message, ""),
             raw_text=message,
             test_context="",
         ))
