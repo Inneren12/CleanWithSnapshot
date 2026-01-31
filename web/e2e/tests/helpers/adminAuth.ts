@@ -61,16 +61,24 @@ const buildProxyHeaders = (credentials: AdminCredentials): Record<string, string
   return headers;
 };
 
+export function adminAuthHeaders(credentials: AdminCredentials): Record<string, string> {
+  if (ADMIN_PROXY_AUTH_ENABLED) {
+    return buildProxyHeaders(credentials);
+  }
+
+  return {
+    Authorization: `Basic ${Buffer.from(
+      `${credentials.username}:${credentials.password}`
+    ).toString('base64')}`,
+  };
+}
+
 export async function verifyAdminCredentials(
   request: APIRequestContext,
   { username, password, apiBaseUrl }: AdminCredentials
 ): Promise<void> {
   const response = await request.get(`${apiBaseUrl}/v1/admin/profile`, {
-    headers: ADMIN_PROXY_AUTH_ENABLED
-      ? buildProxyHeaders({ username, password, apiBaseUrl })
-      : {
-          Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
-        },
+    headers: adminAuthHeaders({ username, password, apiBaseUrl }),
   });
 
   if (!response.ok()) {
