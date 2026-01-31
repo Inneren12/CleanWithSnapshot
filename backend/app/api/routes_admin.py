@@ -5653,6 +5653,16 @@ async def quick_create_booking(
 ) -> ScheduleBooking:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
+    payload_meta = {
+        "has_client_id": bool(payload.client_id),
+        "has_client": payload.client is not None,
+        "has_address_id": bool(payload.address_id),
+        "has_address_text": bool(payload.address_text),
+        "has_service_type_id": payload.service_type_id is not None,
+        "addon_count": len(payload.addon_ids),
+        "duration_minutes": payload.duration_minutes,
+        "starts_at": payload.starts_at.isoformat() if payload.starts_at else None,
+    }
     try:
         org = await session.get(Organization, org_id)
         if org is None:
@@ -5891,21 +5901,33 @@ async def quick_create_booking(
         await session.rollback()
         logger.warning(
             "schedule_quick_create_lookup_error",
-            extra={"request_id": request_id, "org_id": str(org_id)},
+            extra={
+                "request_id": request_id,
+                "org_id": str(org_id),
+                "payload_meta": payload_meta,
+            },
         )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
         await session.rollback()
         logger.warning(
             "schedule_quick_create_value_error",
-            extra={"request_id": request_id, "org_id": str(org_id)},
+            extra={
+                "request_id": request_id,
+                "org_id": str(org_id),
+                "payload_meta": payload_meta,
+            },
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except sa.exc.IntegrityError as exc:
         await session.rollback()
         logger.exception(
             "schedule_quick_create_integrity_error",
-            extra={"request_id": request_id, "org_id": str(org_id)},
+            extra={
+                "request_id": request_id,
+                "org_id": str(org_id),
+                "payload_meta": payload_meta,
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Booking could not be created"
@@ -5914,7 +5936,11 @@ async def quick_create_booking(
         await session.rollback()
         logger.exception(
             "schedule_quick_create_failed",
-            extra={"request_id": request_id, "org_id": str(org_id)},
+            extra={
+                "request_id": request_id,
+                "org_id": str(org_id),
+                "payload_meta": payload_meta,
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Quick create failed"

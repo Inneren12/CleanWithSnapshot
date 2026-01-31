@@ -22,7 +22,10 @@ async function buildResponseDebugMessage(
       const title = payload?.title ? ` title=${payload.title}` : '';
       const detail = payload?.detail ? ` detail=${payload.detail}` : '';
       const requestId = payload?.request_id ? ` request_id=${payload.request_id}` : '';
-      return `Request failed: ${statusLine} url=${url}${title}${detail}${requestId}`;
+      const payloadString = JSON.stringify(payload);
+      const trimmedPayload =
+        payloadString.length > 400 ? `${payloadString.slice(0, 400)}…` : payloadString;
+      return `Request failed: ${statusLine} url=${url}${title}${detail}${requestId} body=${trimmedPayload}`;
     }
     const body = await response.text();
     const trimmed = body.length > 400 ? `${body.slice(0, 400)}…` : body;
