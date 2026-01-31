@@ -52,6 +52,33 @@ async def test_tenant_isolation_on_member_listing(async_session_maker, client):
 
 
 @pytest.mark.anyio
+async def test_login_sets_org_context_for_membership_lookup(async_session_maker, client):
+    async with async_session_maker() as session:
+        default_org = await session.get(Organization, DEFAULT_ORG_ID)
+        if not default_org:
+            default_org = Organization(org_id=DEFAULT_ORG_ID, name="Default Org")
+            session.add(default_org)
+            await session.flush()
+        org_b = await saas_service.create_organization(session, "Org B")
+        user = await saas_service.create_user(session, "multi-org@example.com", "pw")
+        await saas_service.create_membership(session, org_b, user, MembershipRole.ADMIN)
+        await session.commit()
+
+    login_response = client.post(
+        "/v1/auth/login",
+        json={"email": "multi-org@example.com", "password": "pw", "org_id": str(org_b.org_id)},
+    )
+    assert login_response.status_code == 200
+    assert login_response.json()["org_id"] == str(org_b.org_id)
+
+    wrong_org_response = client.post(
+        "/v1/auth/login",
+        json={"email": "multi-org@example.com", "password": "pw", "org_id": str(DEFAULT_ORG_ID)},
+    )
+    assert wrong_org_response.status_code == 401
+
+
+@pytest.mark.anyio
 async def test_rbac_finance_denied_for_viewer(async_session_maker, client):
     async with async_session_maker() as session:
         org = await saas_service.create_organization(session, "Finance Org")
