@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import type { APIResponse } from '@playwright/test';
 
 import {
   adminAuthHeaders,
@@ -9,6 +10,20 @@ import {
 
 const formatDate = (value: Date) => value.toISOString().slice(0, 10);
 
+async function buildResponseDebugMessage(
+  response: APIResponse,
+  url: string
+): Promise<string> {
+  try {
+    const body = await response.text();
+    return `Request failed: ${response.status()} ${response.statusText()} url=${url} body=${body}`;
+  } catch (error) {
+    return `Request failed: ${response.status()} ${response.statusText()} url=${url} body=<unreadable:${String(
+      error
+    )}>`;
+  }
+}
+
 test.describe('Invoice payment flow', () => {
   test.beforeEach(async ({ page, request }) => {
     const admin = defaultAdminCredentials();
@@ -16,16 +31,17 @@ test.describe('Invoice payment flow', () => {
     await seedAdminStorage(page, admin);
   });
 
-  test('invoice payment flow records a manual payment', async ({ page }) => {
+  test('invoice payment flow records a manual payment', async ({ page }, testInfo) => {
     const admin = defaultAdminCredentials();
     const authHeaders = adminAuthHeaders(admin);
+    const runSuffix = `${testInfo.workerIndex}-${testInfo.retry}`;
 
     const bookingPayload = {
       starts_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       duration_minutes: 120,
       client: {
         name: 'E2E Invoice Client',
-        email: `e2e-invoice-${Date.now()}@example.com`,
+        email: `e2e-invoice-${runSuffix}-${Date.now()}@example.com`,
         phone: '555-0101',
       },
       address_text: '123 Test Street',
@@ -33,18 +49,19 @@ test.describe('Invoice payment flow', () => {
       addon_ids: [],
     };
 
-    const bookingResponse = await page.request.post(
-      `${admin.apiBaseUrl}/v1/admin/schedule/quick-create`,
-      {
-        data: bookingPayload,
-        headers: {
-          ...authHeaders,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    const bookingUrl = `${admin.apiBaseUrl}/v1/admin/schedule/quick-create`;
+    const bookingResponse = await page.request.post(bookingUrl, {
+      data: bookingPayload,
+      headers: {
+        ...authHeaders,
+        'Content-Type': 'application/json',
+      },
+    });
 
-    expect(bookingResponse.ok()).toBeTruthy();
+    const bookingDebugMessage = bookingResponse.ok()
+      ? 'Booking request succeeded'
+      : await buildResponseDebugMessage(bookingResponse, bookingUrl);
+    expect(bookingResponse.ok(), bookingDebugMessage).toBeTruthy();
     const booking = await bookingResponse.json();
     expect(booking.booking_id).toBeTruthy();
 
@@ -71,19 +88,20 @@ test.describe('Invoice payment flow', () => {
       ],
     };
 
-    const invoiceResponse = await page.request.post(
-      `${admin.apiBaseUrl}/v1/admin/orders/${booking.booking_id}/invoice`,
-      {
-        data: invoicePayload,
-        headers: {
-          ...authHeaders,
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': csrfToken,
-        },
-      }
-    );
+    const invoiceUrl = `${admin.apiBaseUrl}/v1/admin/orders/${booking.booking_id}/invoice`;
+    const invoiceResponse = await page.request.post(invoiceUrl, {
+      data: invoicePayload,
+      headers: {
+        ...authHeaders,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken,
+      },
+    });
 
-    expect(invoiceResponse.ok()).toBeTruthy();
+    const invoiceDebugMessage = invoiceResponse.ok()
+      ? 'Invoice creation succeeded'
+      : await buildResponseDebugMessage(invoiceResponse, invoiceUrl);
+    expect(invoiceResponse.ok(), invoiceDebugMessage).toBeTruthy();
     const invoice = await invoiceResponse.json();
     expect(invoice.invoice_id).toBeTruthy();
 
@@ -98,12 +116,24 @@ test.describe('Invoice payment flow', () => {
       page.getByRole('heading', { name: 'Record Manual Payment' })
     ).toBeVisible();
 
-    const paymentAmount = (invoice.total_cents / 100).toFixed(2);
     const paymentForm = page.locator('form', { hasText: 'Record Manual Payment' });
 
-    await paymentForm.getByLabel(/Amount/).fill(paymentAmount);
-    await paymentForm.getByLabel('Payment Method').selectOption('card');
-    await paymentForm.getByLabel(/Reference/).fill('e2e-payment');
+    await expect(paymentForm).toBeVisible();
+
+    const amountField = paymentForm.getByLabel(/Amount/i);
+    const methodField = paymentForm.getByLabel('Payment Method');
+    const referenceField = paymentForm.getByLabel(/Reference/i);
+
+    await expect(amountField).toBeVisible();
+    await expect(amountField).toBeEnabled();
+    await expect(methodField).toBeVisible();
+    await expect(methodField).toBeEnabled();
+    await expect(referenceField).toBeVisible();
+
+    const paymentAmount = (invoice.total_cents / 100).toFixed(2);
+    await amountField.fill(paymentAmount);
+    await methodField.selectOption('card');
+    await referenceField.fill('e2e-payment');
     await paymentForm.getByRole('button', { name: 'Record Payment' }).click();
 
     await expect(page.getByText('Payment recorded successfully!')).toBeVisible();
