@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, require_permissions, require_viewer
 from app.api.break_glass import BREAK_GLASS_HEADER
 from app.api.org_context import require_org_context
-from app.api.problem_details import HTTP_422_ENTITY
 from app.domain.config_audit import ConfigAuditAction, ConfigActorType, ConfigScope
 from app.domain.config_audit import schemas as config_audit_schemas
 from app.domain.config_audit import service as config_audit_service
@@ -64,7 +63,7 @@ def _parse_iso_timestamp(value: str | None) -> datetime | None:
     try:
         return datetime.fromisoformat(value)
     except ValueError as exc:
-        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Invalid timestamp") from exc
+        raise HTTPException(status_code=422, detail="Invalid timestamp") from exc
 
 
 def _mask_secret(value: str | None, *, prefix: int = 2, suffix: int = 2) -> str | None:

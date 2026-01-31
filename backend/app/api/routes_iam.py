@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole
 from app.api.idempotency import enforce_org_action_rate_limit, require_idempotency
-from app.api.problem_details import HTTP_422_ENTITY, problem_details
+from app.api.problem_details import problem_details
 from app.api.saas_auth import ROLE_TO_ADMIN_ROLE, SaaSIdentity, require_permissions
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import Membership, MembershipRole, Organization, PasswordResetEvent, User
@@ -318,7 +318,7 @@ async def update_role(
     if not membership or not user:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     if not payload.role and not payload.custom_role_id:
-        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Role required")
+        raise HTTPException(status_code=422, detail="Role required")
 
     if payload.custom_role_id:
         role_record = await session.get(IamRole, payload.custom_role_id)

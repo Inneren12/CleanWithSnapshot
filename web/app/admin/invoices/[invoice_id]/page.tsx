@@ -833,14 +833,8 @@ export default function InvoiceDetailPage() {
                   <h3 className="font-semibold mb-4">Record Manual Payment</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label
-                        className="block text-sm font-medium mb-1"
-                        htmlFor="invoice-payment-amount"
-                      >
-                        Amount ({invoice.currency})
-                      </label>
+                      <label className="block text-sm font-medium mb-1">Amount ({invoice.currency})</label>
                       <input
-                        id="invoice-payment-amount"
                         type="number"
                         step="0.01"
                         value={paymentAmount}
@@ -851,14 +845,8 @@ export default function InvoiceDetailPage() {
                       />
                     </div>
                     <div>
-                      <label
-                        className="block text-sm font-medium mb-1"
-                        htmlFor="invoice-payment-method"
-                      >
-                        Payment Method
-                      </label>
+                      <label className="block text-sm font-medium mb-1">Payment Method</label>
                       <select
-                        id="invoice-payment-method"
                         value={paymentMethod}
                         onChange={(e) => setPaymentMethod(e.target.value)}
                         className="w-full border rounded px-3 py-2"
@@ -872,14 +860,8 @@ export default function InvoiceDetailPage() {
                     </div>
                   </div>
                   <div className="mt-4">
-                    <label
-                      className="block text-sm font-medium mb-1"
-                      htmlFor="invoice-payment-reference"
-                    >
-                      Reference (optional)
-                    </label>
+                    <label className="block text-sm font-medium mb-1">Reference (optional)</label>
                     <input
-                      id="invoice-payment-reference"
                       type="text"
                       value={paymentReference}
                       onChange={(e) => setPaymentReference(e.target.value)}

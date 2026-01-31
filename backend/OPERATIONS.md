@@ -91,12 +91,6 @@ The script performs:
 - **Metrics/observability:** `METRICS_ENABLED`, `METRICS_TOKEN`, `JOBS_ENABLED`, `JOB_HEARTBEAT_REQUIRED`, `JOB_HEARTBEAT_TTL_SECONDS` (default 180s), `JOB_RUNNER_ID` (defaults to hostname), optional `BETTER_STACK_HEARTBEAT_URL` for external uptime monitors.
 - **Retention/export:** `RETENTION_*` settings, `EXPORT_MODE`, webhook URL/allowlist/backoff toggles.
 
-## Structured request logs (guaranteed fields)
-- Every request log line includes: `request_id`, `path`, `method`, `status_code`, `latency_ms`.
-- When available, logs also include: `org_id`, `role`, `roles` (proxy roles), `auth_method`, `proxy_trusted`, `mfa`, `break_glass`.
-- Error logs (e.g., `unhandled_exception` and 5xx handler logs) include the same `request_id` and inherit `trace_id`/`span_id` when tracing is enabled.
-- Redaction policy: structured logs automatically redact emails, phone numbers, street addresses, Authorization/Bearer values, and query parameters that contain tokens/signatures. Avoid logging raw request bodies or secrets.
-
 ## Admin Basic Auth verification
 - Configure `ADMIN_BASIC_USERNAME`/`ADMIN_BASIC_PASSWORD` (and other role pairs as needed). In production, `LEGACY_BASIC_AUTH_ENABLED` defaults to `false` even when credentials exist; set it to `true` explicitly only for break-glass. Passwords must be strong (at least 12 characters and not placeholder defaults such as `change-me`, `secret`, `password`, `admin`, `123456`, `qwerty`).
 - To confirm access locally, run the API and call:
@@ -112,28 +106,27 @@ The script performs:
   - **Job heartbeat** – when `JOBS_ENABLED` or `JOB_HEARTBEAT_REQUIRED` is true, ensures scheduler heartbeat is fresh (default 180s TTL; configurable via `JOB_HEARTBEAT_TTL_SECONDS` / `JOB_HEARTBEAT_STALE_SECONDS` depending on implementation)
   - Implementation in `app/api/routes_health.py`; returns **HTTP 503** on any check failure
   - Response shape:
-    - `/readyz` includes `status`, `request_id`, and a `checks` object keyed by dependency name.
-  - Example response:
+    - For backward compatibility, `/readyz` may include legacy top-level keys (`status`, `database`, `jobs`) expected by tests/clients.
+    - It may also include a richer `checks[]` array for operators/monitoring.
+  - Example response (rich form):
     ```json
     {
       "ok": true,
-      "status": "ok",
-      "request_id": "f03c1d2b-acde-4b6a-9b9e-123456789abc",
-      "checks": {
-        "db": {"ok": true, "ms": 12.34, "detail": {"message": "database reachable"}},
-        "migrations": {"ok": true, "ms": 23.45, "detail": {
+      "checks": [
+        {"name": "db", "ok": true, "ms": 12.34, "detail": {"message": "database reachable"}},
+        {"name": "migrations", "ok": true, "ms": 23.45, "detail": {
           "message": "migrations in sync",
           "migrations_current": true,
           "current_version": "0052_stripe_events_processed",
           "expected_head": "0052_stripe_events_processed"
         }},
-        "jobs": {"ok": true, "ms": 8.90, "detail": {
+        {"name": "jobs", "ok": true, "ms": 8.90, "detail": {
           "enabled": true,
           "runner_id": "scheduler-1",
           "last_heartbeat": "2026-01-06T12:34:56Z",
           "age_seconds": 45.2
         }}
-      }
+      ]
     }
     ```
 
@@ -141,7 +134,8 @@ The script performs:
 
 - **Heartbeat verification:**
   - Quick operator check:
-    - `curl -s "$API_BASE/readyz" | jq '.checks.jobs'`
+    - `curl -s "$API_BASE/readyz" | jq '.checks[] | select(.name=="jobs")'`
+    - If you rely on legacy fields instead of `checks[]`: `curl -s "$API_BASE/readyz" | jq '.jobs'`
   - Postgres direct check (if heartbeat is stored in DB):
     - `SELECT name, runner_id, last_heartbeat FROM job_heartbeats ORDER BY last_heartbeat DESC LIMIT 5;`
   - Expect heartbeat age below TTL (e.g., `< 180s`) when the runner is healthy.

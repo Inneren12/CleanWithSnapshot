@@ -28,17 +28,10 @@ def _resolve_title(status_code: int, fallback: str | None) -> str:
         return "Error"
 
 
-def _validation_status_codes() -> set[int]:
-    return {
-        getattr(status, "HTTP_422_UNPROCESSABLE_ENTITY", 422),
-        getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
-    }
-
-
 def _resolve_type(status_code: int, type_override: str | None) -> str:
     if type_override:
         return type_override
-    if status_code in _validation_status_codes():
+    if status_code == 422:
         return PROBLEM_TYPE_VALIDATION
     if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
         return PROBLEM_TYPE_RATE_LIMIT

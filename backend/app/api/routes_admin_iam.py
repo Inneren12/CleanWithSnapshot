@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, AdminRole, require_permission_keys
 from app.api.org_context import require_org_context
-from app.api.problem_details import HTTP_422_ENTITY
 from app.domain.iam import permissions as iam_permissions
 from app.domain.iam.db_models import IamRole
 from app.domain.saas import service as saas_service
@@ -88,7 +87,7 @@ def _validate_permissions(keys: list[str]) -> list[str]:
     unknown = [key for key in normalized if key not in iam_permissions.PERMISSION_KEYS]
     if unknown:
         raise HTTPException(
-            status_code=HTTP_422_ENTITY,
+            status_code=422,
             detail=f"Unknown permissions: {', '.join(unknown)}",
         )
     return normalized
@@ -163,7 +162,7 @@ async def create_role(
     permissions = _validate_permissions(payload.permissions)
     role_key = _slugify(payload.key or payload.name)
     if not role_key:
-        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Role key required")
+        raise HTTPException(status_code=422, detail="Role key required")
     builtin_keys = {role.key for role in iam_permissions.builtin_roles()}
     if role_key in builtin_keys:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Role key reserved")
@@ -293,7 +292,7 @@ async def update_admin_user_role(
     if not membership or not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if not payload.role and not payload.custom_role_id:
-        raise HTTPException(status_code=HTTP_422_ENTITY, detail="Role required")
+        raise HTTPException(status_code=422, detail="Role required")
 
     if payload.custom_role_id:
         role_record = await session.get(IamRole, payload.custom_role_id)

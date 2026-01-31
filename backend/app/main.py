@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from opentelemetry import trace
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api.admin_auth import AdminAccessMiddleware, AdminAuditMiddleware, _is_trusted_proxy_request
+from app.api.admin_auth import AdminAccessMiddleware, AdminAuditMiddleware
 from app.api.routes_admin import router as admin_router
 from app.api.routes_admin_analytics_competitors import router as admin_analytics_competitors_router
 from app.api.routes_admin_finance import router as admin_finance_router
@@ -80,7 +80,6 @@ def _resolve_log_identity(request: Request) -> dict[str, str]:
     saas_identity = getattr(request.state, "saas_identity", None)
     worker_identity = getattr(request.state, "worker_identity", None)
     admin_identity = getattr(request.state, "admin_identity", None)
-    break_glass = bool(getattr(request.state, "break_glass", False))
 
     if saas_identity:
         role = getattr(saas_identity, "role", None)
@@ -93,21 +92,14 @@ def _resolve_log_identity(request: Request) -> dict[str, str]:
             context["org_id"] = str(resolved_org)
         if resolved_user:
             context["user_id"] = str(resolved_user)
-        context["auth_method"] = "saas"
-        context["mfa"] = bool(getattr(saas_identity, "mfa_verified", False))
     elif admin_identity:
         admin_role = getattr(admin_identity, "role", None)
         admin_role_value = getattr(admin_role, "value", admin_role)
         if admin_role_value:
             context["role"] = str(admin_role_value)
-        if admin_identity.roles:
-            context["roles"] = [str(role) for role in admin_identity.roles]
         admin_org = org_id or getattr(admin_identity, "org_id", None)
         if admin_org:
             context["org_id"] = str(admin_org)
-        if admin_identity.auth_method:
-            context["auth_method"] = str(admin_identity.auth_method)
-        context["mfa"] = bool(getattr(admin_identity, "mfa_verified", False))
     elif worker_identity:
         context["role"] = "worker"
         worker_org = org_id or getattr(worker_identity, "org_id", None)
@@ -116,14 +108,11 @@ def _resolve_log_identity(request: Request) -> dict[str, str]:
         worker_user = user_id or getattr(worker_identity, "username", None)
         if worker_user:
             context["user_id"] = str(worker_user)
-        context["auth_method"] = "worker"
     else:
         if org_id:
             context["org_id"] = str(org_id)
         if user_id:
             context["user_id"] = str(user_id)
-    context["break_glass"] = break_glass
-    context["proxy_trusted"] = _is_trusted_proxy_request(request)
     return context
 
 
@@ -182,7 +171,6 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             identity_context = _resolve_log_identity(request)
             update_log_context(status_code=status_code, **identity_context)
             latency_ms = int((time.time() - start) * 1000)
-            update_log_context(latency_ms=latency_ms)
             logger.info("request", extra={"latency_ms": latency_ms})
             if response is not None:
                 response.headers.setdefault("X-Request-ID", request_id)
@@ -494,23 +482,9 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
     async def unhandled_exception_handler(request: Request, exc: Exception):
         identity_context = _resolve_log_identity(request)
         request_id = getattr(request.state, "request_id", None)
-        error_type = type(exc).__name__
-        update_log_context(
-            request_id=request_id,
-            method=request.method,
-            path=request.url.path,
-            status_code=500,
-            error_type=error_type,
-            **identity_context,
-        )
         logger.exception(
             "unhandled_exception",
-            extra={
-                "request_id": request_id,
-                "path": request.url.path,
-                "error_type": error_type,
-                **identity_context,
-            },
+            extra={"request_id": request_id, "path": request.url.path, **identity_context},
         )
         return problem_details(
             request=request,
