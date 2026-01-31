@@ -494,16 +494,23 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
     async def unhandled_exception_handler(request: Request, exc: Exception):
         identity_context = _resolve_log_identity(request)
         request_id = getattr(request.state, "request_id", None)
+        error_type = type(exc).__name__
         update_log_context(
             request_id=request_id,
             method=request.method,
             path=request.url.path,
             status_code=500,
+            error_type=error_type,
             **identity_context,
         )
         logger.exception(
             "unhandled_exception",
-            extra={"request_id": request_id, "path": request.url.path, **identity_context},
+            extra={
+                "request_id": request_id,
+                "path": request.url.path,
+                "error_type": error_type,
+                **identity_context,
+            },
         )
         return problem_details(
             request=request,

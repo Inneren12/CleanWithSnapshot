@@ -73,6 +73,15 @@ def _httpx_request_hook(span, request) -> None:  # noqa: ANN001
     )
 
 
+def _should_enable_otlp_exporter(app_env: str, testing: bool) -> bool:
+    if testing:
+        return False
+    enabled_flag = os.getenv("OTEL_EXPORTER_OTLP_ENABLED")
+    if enabled_flag is not None:
+        return enabled_flag.strip().lower() in {"1", "true", "yes", "on"}
+    return app_env not in {"dev", "ci", "e2e", "test"}
+
+
 def configure_tracing(*, service_name: str | None = None) -> None:
     global _TRACING_CONFIGURED, _HTTPX_CONFIGURED, _TRACING_SHUTDOWN_REGISTERED
     if _TRACING_CONFIGURED:
@@ -93,17 +102,20 @@ def configure_tracing(*, service_name: str | None = None) -> None:
     tracer_provider = TracerProvider(resource=resource)
     trace.set_tracer_provider(tracer_provider)
 
-    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
     app_env = os.getenv("APP_ENV", "").lower()
     is_testing = os.getenv("TESTING", "").lower() == "true" or app_env == "test"
-    if otlp_endpoint and not is_testing:
+    otlp_enabled = _should_enable_otlp_exporter(app_env, is_testing)
+    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") if otlp_enabled else None
+    if otlp_endpoint:
         exporter_kwargs: dict[str, object] = {
             "endpoint": otlp_endpoint,
             "insecure": otlp_endpoint.startswith("http://"),
         }
         exporter = OTLPSpanExporter(**exporter_kwargs)
         tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
-    elif not otlp_endpoint and not is_testing:
+    elif not otlp_enabled:
+        logger.debug("tracing_exporter_disabled")
+    else:
         logger.debug("tracing_exporter_skipped_no_endpoint")
 
     if not _HTTPX_CONFIGURED:

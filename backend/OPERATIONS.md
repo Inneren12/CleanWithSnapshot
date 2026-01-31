@@ -112,27 +112,28 @@ The script performs:
   - **Job heartbeat** – when `JOBS_ENABLED` or `JOB_HEARTBEAT_REQUIRED` is true, ensures scheduler heartbeat is fresh (default 180s TTL; configurable via `JOB_HEARTBEAT_TTL_SECONDS` / `JOB_HEARTBEAT_STALE_SECONDS` depending on implementation)
   - Implementation in `app/api/routes_health.py`; returns **HTTP 503** on any check failure
   - Response shape:
-    - For backward compatibility, `/readyz` may include legacy top-level keys (`status`, `database`, `jobs`) expected by tests/clients.
-    - It may also include a richer `checks[]` array for operators/monitoring.
-  - Example response (rich form):
+    - `/readyz` includes `status`, `request_id`, and a `checks` object keyed by dependency name.
+  - Example response:
     ```json
     {
       "ok": true,
-      "checks": [
-        {"name": "db", "ok": true, "ms": 12.34, "detail": {"message": "database reachable"}},
-        {"name": "migrations", "ok": true, "ms": 23.45, "detail": {
+      "status": "ok",
+      "request_id": "f03c1d2b-acde-4b6a-9b9e-123456789abc",
+      "checks": {
+        "db": {"ok": true, "ms": 12.34, "detail": {"message": "database reachable"}},
+        "migrations": {"ok": true, "ms": 23.45, "detail": {
           "message": "migrations in sync",
           "migrations_current": true,
           "current_version": "0052_stripe_events_processed",
           "expected_head": "0052_stripe_events_processed"
         }},
-        {"name": "jobs", "ok": true, "ms": 8.90, "detail": {
+        "jobs": {"ok": true, "ms": 8.90, "detail": {
           "enabled": true,
           "runner_id": "scheduler-1",
           "last_heartbeat": "2026-01-06T12:34:56Z",
           "age_seconds": 45.2
         }}
-      ]
+      }
     }
     ```
 
@@ -140,8 +141,7 @@ The script performs:
 
 - **Heartbeat verification:**
   - Quick operator check:
-    - `curl -s "$API_BASE/readyz" | jq '.checks[] | select(.name=="jobs")'`
-    - If you rely on legacy fields instead of `checks[]`: `curl -s "$API_BASE/readyz" | jq '.jobs'`
+    - `curl -s "$API_BASE/readyz" | jq '.checks.jobs'`
   - Postgres direct check (if heartbeat is stored in DB):
     - `SELECT name, runner_id, last_heartbeat FROM job_heartbeats ORDER BY last_heartbeat DESC LIMIT 5;`
   - Expect heartbeat age below TTL (e.g., `< 180s`) when the runner is healthy.

@@ -21,3 +21,4 @@ def test_unhandled_exception_logs_request_id(caplog):
     error_records = [record for record in caplog.records if record.message == "unhandled_exception"]
     assert error_records
     assert getattr(error_records[0], "request_id", None)
+    assert getattr(error_records[0], "error_type", None) == "RuntimeError"

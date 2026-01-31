@@ -39,8 +39,9 @@ def test_readyz_endpoint_database_healthy(client):
 
     # Overall status
     assert data["ok"] in [True, False]
+    assert data["request_id"]
 
-    checks = {check["name"]: check for check in data["checks"]}
+    checks = data["checks"]
 
     # Database checks
     db = checks["db"]
@@ -52,10 +53,9 @@ def test_readyz_endpoint_database_healthy(client):
     assert migrations["detail"]["migrations_check"] in ["ok", "skipped_no_alembic_files", "not_run", "timeout", "error"]
 
     # Jobs checks (optional, depends on configuration)
-    if "jobs" in checks:
-        jobs = checks["jobs"]
-        assert "ok" in jobs
-        assert "detail" in jobs
+    jobs = checks["jobs"]
+    assert "ok" in jobs
+    assert "detail" in jobs
 
 
 def test_readyz_endpoint_database_unhealthy(client, monkeypatch):
@@ -79,7 +79,8 @@ def test_readyz_endpoint_database_unhealthy(client, monkeypatch):
     assert response.status_code == 503
     data = response.json()
     assert data["ok"] is False
-    checks = {check["name"]: check for check in data["checks"]}
+    assert data["request_id"]
+    checks = data["checks"]
     assert checks["db"]["ok"] is False or checks["migrations"]["ok"] is False
 
 

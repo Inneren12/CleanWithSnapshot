@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.domain.ops.db_models import JobHeartbeat
+from app.api.problem_details import _resolve_request_id
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -247,8 +248,20 @@ async def _run_check(name: str, check_fn) -> dict[str, Any]:  # noqa: ANN001
     return {"name": name, "ok": bool(ok), "ms": round(elapsed_ms, 2), "detail": detail}
 
 
+def _format_checks(checks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    formatted: dict[str, dict[str, Any]] = {}
+    for check in checks:
+        formatted[check["name"]] = {
+            "ok": bool(check["ok"]),
+            "detail": check.get("detail", {}),
+            "ms": check.get("ms"),
+        }
+    return formatted
+
+
 @router.get("/readyz")
 async def readyz(request: Request) -> JSONResponse:
+    request_id = _resolve_request_id(request)
     checks = [
         await _run_check("db", lambda: _db_check(request)),
         await _run_check("migrations", lambda: _migrations_check(request)),
@@ -258,5 +271,36 @@ async def readyz(request: Request) -> JSONResponse:
     overall_ok = all(check["ok"] for check in checks)
     status_code = 200 if overall_ok else 503
 
-    payload = {"ok": overall_ok, "checks": checks}
+    checks_payload = _format_checks(checks)
+    payload = {
+        "ok": overall_ok,
+        "status": "ok" if overall_ok else "not_ready",
+        "checks": checks_payload,
+        "request_id": request_id,
+    }
+    if not overall_ok:
+        logger.warning(
+            "readyz_failed",
+            extra={"request_id": request_id, "checks": checks_payload},
+        )
     return JSONResponse(status_code=status_code, content=payload)
+
+
+@router.get("/readyz/debug")
+async def readyz_debug(request: Request) -> JSONResponse:
+    app_settings = getattr(request.app.state, "app_settings", None)
+    app_env = getattr(app_settings, "app_env", None)
+    app_env = str(app_env or "").lower()
+    if app_env not in {"dev", "ci", "e2e"}:
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+    request_id = _resolve_request_id(request)
+    checks = [
+        await _run_check("db", lambda: _db_check(request)),
+        await _run_check("migrations", lambda: _migrations_check(request)),
+        await _run_check("jobs", lambda: _jobs_status(request)),
+    ]
+    checks_payload = _format_checks(checks)
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", "checks": checks_payload, "request_id": request_id},
+    )
