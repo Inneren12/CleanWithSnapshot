@@ -209,6 +209,7 @@ def _load_rls_tables_from_migrations() -> set[str]:
     migration_names = (
         "0044_postgres_rls_org_isolation.py",
         "1b9c3d4e5f6a_checklist_rls_policies.py",
+        "2f3a4b5c6d7e_training_rls_policies.py",
         "ff1a2b3c4d5e_client_users_rls_org_isolation.py",
     )
     tables: set[str] = set()
