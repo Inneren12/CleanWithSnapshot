@@ -43,12 +43,15 @@ MODEL_IMPORTS = (
     "app.domain.notifications_center.db_models",
     "app.domain.notifications_digests.db_models",
     "app.domain.marketing.db_models",
+    "app.domain.pricing_settings.db_models",
     "app.domain.analytics.db_models",
     "app.domain.training.db_models",
     "app.domain.inventory.db_models",
     "app.domain.finance.db_models",
     "app.domain.integrations.db_models",
     "app.domain.rules.db_models",
+    "app.domain.saas.db_models",
+    "app.domain.iam.db_models",
     "app.domain.leads_nurture.db_models",
     "app.domain.leads_scoring.db_models",
 )
@@ -211,6 +214,7 @@ def _load_rls_tables_from_migrations() -> set[str]:
         "1b9c3d4e5f6a_checklist_rls_policies.py",
         "2f3a4b5c6d7e_training_rls_policies.py",
         "c3e9a1b2d4f5_finance_marketing_rls_policies.py",
+        "d9e8f7c6b5a4_rls_remaining_org_tables.py",
         "ff1a2b3c4d5e_client_users_rls_org_isolation.py",
     )
     tables: set[str] = set()
@@ -436,7 +440,11 @@ def _build_report(
         lines.append("")
         lines.append(
             "_Metadata mode uses SQLAlchemy models plus the RLS table list from "
-            "`0044_postgres_rls_org_isolation.py` and "
+            "`0044_postgres_rls_org_isolation.py`, "
+            "`1b9c3d4e5f6a_checklist_rls_policies.py`, "
+            "`2f3a4b5c6d7e_training_rls_policies.py`, "
+            "`c3e9a1b2d4f5_finance_marketing_rls_policies.py`, "
+            "`d9e8f7c6b5a4_rls_remaining_org_tables.py`, and "
             "`ff1a2b3c4d5e_client_users_rls_org_isolation.py`."
         )
 
