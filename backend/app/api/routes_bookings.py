@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import require_admin
-from app.api.problem_details import HTTP_422_ENTITY, problem_details
+from app.api.problem_details import problem_details
 from app.api import entitlements
 from app.domain.saas import billing_service
 from app.domain.analytics.service import (
@@ -54,7 +54,7 @@ def _validate_lead_contact(lead: Lead | None) -> None:
         missing.append("address")
     if missing:
         raise HTTPException(
-            status_code=HTTP_422_ENTITY,
+            status_code=422,
             detail=f"Missing required fields: {', '.join(missing)}",
         )
 
@@ -275,7 +275,7 @@ async def create_booking(
                 mode=settings.captcha_mode,
                 provider=settings.captcha_mode,
             )
-            raise HTTPException(status_code=HTTP_422_ENTITY, detail="captcha_required")
+            raise HTTPException(status_code=422, detail="captcha_required")
         turnstile_transport = getattr(http_request.app.state, "turnstile_transport", None)
         remote_ip = http_request.client.host if http_request.client else None
         captcha_ok = await verify_turnstile(
@@ -290,7 +290,7 @@ async def create_booking(
                 mode=settings.captcha_mode,
                 provider=settings.captcha_mode,
             )
-            raise HTTPException(status_code=HTTP_422_ENTITY, detail="captcha_failed")
+            raise HTTPException(status_code=422, detail="captcha_failed")
         log_captcha_event(
             "success",
             request_id=request_id,
@@ -302,7 +302,7 @@ async def create_booking(
     org_id = entitlements.resolve_org_id(http_request)
     await entitlements.require_booking_entitlement(http_request, session=session)
     if not request.lead_id:
-        raise HTTPException(status_code=HTTP_422_ENTITY, detail="lead_id is required")
+        raise HTTPException(status_code=422, detail="lead_id is required")
     lead = await session.get(Lead, request.lead_id)
     _validate_lead_contact(lead)
 

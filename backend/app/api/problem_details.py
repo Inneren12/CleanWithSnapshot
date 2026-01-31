@@ -9,8 +9,6 @@ PROBLEM_TYPE_VALIDATION = "https://example.com/problems/validation-error"
 PROBLEM_TYPE_DOMAIN = "https://example.com/problems/domain-error"
 PROBLEM_TYPE_RATE_LIMIT = "https://example.com/problems/rate-limit"
 PROBLEM_TYPE_SERVER = "https://example.com/problems/server-error"
-HTTP_422_ENTITY = getattr(status, "HTTP_422_UNPROCESSABLE_ENTITY", 422)
-HTTP_422_CONTENT = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", HTTP_422_ENTITY)
 
 
 def _resolve_request_id(request: Request) -> str:
@@ -33,7 +31,7 @@ def _resolve_title(status_code: int, fallback: str | None) -> str:
 def _resolve_type(status_code: int, type_override: str | None) -> str:
     if type_override:
         return type_override
-    if status_code in (HTTP_422_ENTITY, HTTP_422_CONTENT):
+    if status_code == 422:
         return PROBLEM_TYPE_VALIDATION
     if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
         return PROBLEM_TYPE_RATE_LIMIT
