@@ -136,6 +136,73 @@ def test_rls_prevents_cross_org_queries():
 
 @pytest.mark.postgres
 @pytest.mark.migrations
+def test_rls_isolates_client_users():
+    with _temporary_postgres_database(settings.database_url) as temp_url:
+        _apply_migrations(temp_url)
+        engine = _provision_tenant_engine(temp_url)
+        org_a = uuid.uuid4()
+        org_b = uuid.uuid4()
+
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO organizations (org_id, name) VALUES (:org_id, :name), (:org_b, :name_b)"
+                ),
+                {
+                    "org_id": org_a,
+                    "name": "Client Org A",
+                    "org_b": org_b,
+                    "name_b": "Client Org B",
+                },
+            )
+
+        client_a = str(uuid.uuid4())
+        client_b = str(uuid.uuid4())
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_a}'"))
+            conn.execute(
+                sa.text(
+                    "INSERT INTO client_users (client_id, org_id, email, name) "
+                    "VALUES (:client_id, :org_id, :email, :name)"
+                ),
+                {
+                    "client_id": client_a,
+                    "org_id": org_a,
+                    "email": "rls-client-a@example.com",
+                    "name": "Client A",
+                },
+            )
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_b}'"))
+            conn.execute(
+                sa.text(
+                    "INSERT INTO client_users (client_id, org_id, email, name) "
+                    "VALUES (:client_id, :org_id, :email, :name)"
+                ),
+                {
+                    "client_id": client_b,
+                    "org_id": org_b,
+                    "email": "rls-client-b@example.com",
+                    "name": "Client B",
+                },
+            )
+
+        with engine.begin() as conn:
+            rows = conn.execute(sa.text("SELECT client_id FROM client_users ORDER BY client_id"))
+            assert rows.fetchall() == []
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_a}'"))
+            rows = conn.execute(sa.text("SELECT client_id, org_id FROM client_users ORDER BY client_id"))
+            assert {(row.client_id, row.org_id) for row in rows} == {(client_a, org_a)}
+
+        engine.dispose()
+
+
+@pytest.mark.postgres
+@pytest.mark.migrations
 def test_rls_rejects_writes_without_org_context():
     with _temporary_postgres_database(settings.database_url) as temp_url:
         _apply_migrations(temp_url)
