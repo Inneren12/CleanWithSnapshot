@@ -79,6 +79,66 @@ async def test_feature_flag_explicit_enable_audited(async_session_maker, client)
 
 
 @pytest.mark.anyio
+async def test_feature_flag_audit_percentage_matches_effective_state(
+    async_session_maker, client
+):
+    settings.owner_basic_username = "owner"
+    settings.owner_basic_password = "secret"
+    settings.legacy_basic_auth_enabled = True
+
+    headers = _basic_auth_header("owner", "secret")
+
+    response = client.patch(
+        "/v1/admin/settings/features",
+        json={"overrides": {"finance.reports": False}},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    response = client.patch(
+        "/v1/admin/settings/features",
+        json={"overrides": {"module.finance": False}},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    response = client.patch(
+        "/v1/admin/settings/features",
+        json={"overrides": {"module.finance": False, "finance.reports": True}},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    async with async_session_maker() as session:
+        per_flag_logs = (
+            await session.execute(
+                sa.select(FeatureFlagAuditLog)
+                .where(FeatureFlagAuditLog.flag_key == "finance.reports")
+                .order_by(FeatureFlagAuditLog.occurred_at.asc(), FeatureFlagAuditLog.audit_id.asc())
+            )
+        ).scalars().all()
+        module_log = await session.scalar(
+            sa.select(FeatureFlagAuditLog)
+            .where(FeatureFlagAuditLog.flag_key == "module.finance")
+            .order_by(FeatureFlagAuditLog.occurred_at.desc(), FeatureFlagAuditLog.audit_id.desc())
+        )
+
+    assert per_flag_logs
+    assert module_log is not None
+    per_flag_only_log = per_flag_logs[0]
+    per_flag_with_module_log = per_flag_logs[-1]
+    assert per_flag_only_log.after_state["enabled"] is False
+    assert per_flag_only_log.after_state["percentage"] == 0
+    assert per_flag_only_log.rollout_context["percentage"] == 0
+    assert per_flag_with_module_log.after_state["enabled"] is False
+    assert per_flag_with_module_log.after_state["percentage"] == 0
+    assert per_flag_with_module_log.rollout_context["percentage"] == 0
+    assert module_log.after_state["enabled"] is False
+    assert module_log.after_state["percentage"] == 0
+    assert module_log.rollout_context["percentage"] == 0
+
+
+@pytest.mark.anyio
 async def test_feature_flag_rollout_context_and_redaction(async_session_maker):
     async with async_session_maker() as session:
         await feature_flag_audit_service.audit_feature_flag_change(
@@ -166,5 +226,15 @@ async def test_feature_flag_audit_endpoint_filters(async_session_maker, client):
 
 def test_feature_flag_evaluation_unchanged():
     overrides = {"module.analytics": False}
-    assert feature_service.effective_feature_enabled_from_overrides(overrides, "module.analytics") is False
-    assert feature_service.effective_feature_enabled_from_overrides(overrides, "module.schedule") is True
+    assert (
+        feature_service.effective_feature_enabled_from_overrides(
+            overrides, "module.analytics", org_id=settings.default_org_id
+        )
+        is False
+    )
+    assert (
+        feature_service.effective_feature_enabled_from_overrides(
+            overrides, "module.schedule", org_id=settings.default_org_id
+        )
+        is True
+    )

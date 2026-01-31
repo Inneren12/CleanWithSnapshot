@@ -231,53 +231,61 @@ def default_feature_map(keys: Iterable[str] | None = None) -> dict[str, bool]:
     return {key: default_feature_value(key) for key in (keys or FEATURE_KEYS)}
 
 
-def _override_enabled(
+def _override_state(
     *,
     org_id: uuid.UUID,
     key: str,
     override: FeatureOverrideValue | None,
-) -> bool | None:
+) -> tuple[bool | None, int | None]:
     enabled, percentage = _resolve_override_components(override)
     if enabled is not None:
-        return enabled
+        return enabled, 100 if enabled else 0
     if percentage is not None:
-        return _deterministic_rollout_enabled(org_id=org_id, key=key, percentage=percentage)
-    return None
+        enabled_value = _deterministic_rollout_enabled(
+            org_id=org_id, key=key, percentage=percentage
+        )
+        return enabled_value, percentage if enabled_value else 0
+    return None, None
 
 
-def _override_percentage(
-    *,
-    default_value: bool,
-    override: FeatureOverrideValue | None,
-) -> int:
-    enabled, percentage = _resolve_override_components(override)
-    if enabled is not None:
-        return 100 if enabled else 0
-    if percentage is not None:
-        return percentage
-    return 100 if default_value else 0
-
-
-def effective_feature_enabled_from_overrides(
+def effective_feature_state_from_overrides(
     overrides: dict[str, FeatureOverrideValue], key: str, *, org_id: uuid.UUID
-) -> bool:
+) -> tuple[bool, int]:
     normalized_key = key.strip()
     base = module_base_for_key(normalized_key)
     module_key = module_key_for_base(base)
     module_override = overrides.get(module_key)
     default_value = default_feature_value(normalized_key)
+
     module_enabled: bool | None = None
+    module_percentage: int | None = None
     if module_override is not None:
-        module_enabled = _override_enabled(org_id=org_id, key=module_key, override=module_override)
+        module_enabled, module_percentage = _override_state(
+            org_id=org_id, key=module_key, override=module_override
+        )
         if module_enabled is False:
-            return False
+            return False, 0
+
     if normalized_key in overrides:
-        override_enabled = _override_enabled(org_id=org_id, key=normalized_key, override=overrides[normalized_key])
+        override_enabled, override_percentage = _override_state(
+            org_id=org_id, key=normalized_key, override=overrides[normalized_key]
+        )
         if override_enabled is not None:
-            return override_enabled
+            return override_enabled, override_percentage or 0
+
     if module_enabled is True:
-        return default_value
-    return default_value
+        return default_value, module_percentage or (100 if default_value else 0)
+
+    return default_value, 100 if default_value else 0
+
+
+def effective_feature_enabled_from_overrides(
+    overrides: dict[str, FeatureOverrideValue], key: str, *, org_id: uuid.UUID
+) -> bool:
+    enabled, _percentage = effective_feature_state_from_overrides(
+        overrides, key, org_id=org_id
+    )
+    return enabled
 
 
 def resolve_effective_features(
@@ -410,14 +418,18 @@ async def upsert_org_feature_overrides(
         session.add(record)
     await session.flush()
     for key, before_state, after_state, action, after_override in audits:
-        enabled_value = effective_feature_enabled_from_overrides(overrides, key, org_id=org_id)
+        enabled_value, percentage_value = effective_feature_state_from_overrides(
+            overrides, key, org_id=org_id
+        )
         if action == FeatureFlagAuditAction.ENABLE:
             enabled_value = True
+            percentage_value = 100
         elif action == FeatureFlagAuditAction.DISABLE:
             enabled_value = False
+            percentage_value = 0
         audit_after_state = dict(after_state)
         audit_after_state["enabled"] = bool(enabled_value)
-        audit_after_state["percentage"] = after_state.get("percentage")
+        audit_after_state["percentage"] = percentage_value
         rollout_context = feature_flag_audit_service.build_rollout_context(
             enabled=audit_after_state["enabled"],
             percentage=audit_after_state.get("percentage"),
@@ -443,8 +455,7 @@ def snapshot_feature_flag_state(
 ) -> dict[str, object]:
     default_value = default_feature_value(key)
     override = overrides.get(key)
-    enabled = effective_feature_enabled_from_overrides(overrides, key, org_id=org_id)
-    percentage = _override_percentage(default_value=default_value, override=override)
+    enabled, percentage = effective_feature_state_from_overrides(overrides, key, org_id=org_id)
     return {
         "key": key,
         "enabled": enabled,
