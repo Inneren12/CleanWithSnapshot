@@ -145,6 +145,19 @@ make psql
 make test
 ```
 
+## Dependency pinning (Python 3.13)
+
+- Direct runtime requirements live in `backend/requirements.txt`; transitive pins used to stabilize
+  the resolver are in `backend/constraints.txt`.
+- Reproduce the CI install locally with:
+
+  ```bash
+  PIP_ONLY_BINARY=greenlet pip install -r backend/requirements.txt -c backend/constraints.txt
+  ```
+
+- `PIP_ONLY_BINARY=greenlet` enforces wheel-only installs on Python 3.13 to avoid compiling the
+  C extension in CI.
+
 ## Sprint 2 Notes / Boundaries
 
 - Chat sessions and leads are persisted in Postgres via SQLAlchemy async.

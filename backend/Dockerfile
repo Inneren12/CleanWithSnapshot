@@ -2,7 +2,7 @@ FROM python:3.13.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt ./
+COPY requirements.txt constraints.txt ./
 RUN apt-get update \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/* \
@@ -11,7 +11,7 @@ RUN apt-get update \
         setuptools==78.1.1 \
         wheel==0.46.2 \
         jaraco.context==6.1.0 \
-    && python -m pip install --no-cache-dir --upgrade -r requirements.txt \
+    && PIP_ONLY_BINARY=greenlet python -m pip install --no-cache-dir --upgrade -r requirements.txt -c constraints.txt \
     && set -e; \
         echo "Cleaning stale dist-info..."; \
         find /usr /usr/local -type d -name 'wheel-*.dist-info' 2>/dev/null | grep -v 'wheel-0.46.2.dist-info' | xargs -r rm -rf; \
