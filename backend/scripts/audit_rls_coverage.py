@@ -210,12 +210,18 @@ def _load_rls_tables_from_migrations() -> set[str]:
         "0044_postgres_rls_org_isolation.py",
         "1b9c3d4e5f6a_checklist_rls_policies.py",
         "2f3a4b5c6d7e_training_rls_policies.py",
+        "c3e9a1b2d4f5_finance_marketing_rls_policies.py",
         "ff1a2b3c4d5e_client_users_rls_org_isolation.py",
     )
     tables: set[str] = set()
     for migration_name in migration_names:
-        migration_path = ROOT / "alembic" / "versions" / migration_name
-        if not migration_path.exists():
+        migration_path = None
+        for version_dir in ("versions_clean", "versions"):
+            candidate = ROOT / "alembic" / version_dir / migration_name
+            if candidate.exists():
+                migration_path = candidate
+                break
+        if migration_path is None:
             continue
         spec = importlib.util.spec_from_file_location(
             f"rls_migration_{migration_name}", migration_path
