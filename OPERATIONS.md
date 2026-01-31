@@ -403,12 +403,9 @@ cd backend
 python scripts/audit_rls_coverage.py --source metadata --output rls-audit.md
 ```
 
-**CI behavior:** The `Security - RLS Coverage Audit` job in `.github/workflows/ci.yml` provisions a
-temporary Postgres service, applies migrations with:
-`python -m alembic -c alembic_rls_audit.ini upgrade head`, then runs:
-`python scripts/audit_rls_coverage.py --output rls-audit.md --fail-on-core-missing`.
-The markdown report is uploaded as the `rls-audit-report` artifact; inspect job logs in CI for the
-table-by-table status output.
+**CI behavior:** The `Security - RLS Coverage Audit` job provisions a temporary Postgres service,
+applies migrations using `alembic_rls_audit.ini` (so both `versions_clean` and `versions` are applied),
+and runs the audit. The markdown report is uploaded as a CI artifact.
 
 ---
 

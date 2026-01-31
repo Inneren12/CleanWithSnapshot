@@ -30,6 +30,7 @@ from app.domain.admin_audit import service as admin_audit_service
 from app.api.admin_auth import AdminIdentity
 from app.infra.metrics import metrics
 from app.infra.auth import create_access_token, hash_api_token, hash_password, verify_password
+from app.infra.org_context import org_id_context
 from app.infra.totp import build_otpauth_uri, generate_totp_code, generate_totp_secret, verify_totp_code
 from app.settings import settings
 
@@ -380,7 +381,10 @@ async def authenticate_user(
     membership_stmt = sa.select(Membership).where(Membership.user_id == user.user_id, Membership.is_active.is_(True))
     if org_id:
         membership_stmt = membership_stmt.where(Membership.org_id == org_id)
-    membership = await session.scalar(membership_stmt)
+        with org_id_context(org_id):
+            membership = await session.scalar(membership_stmt)
+    else:
+        membership = await session.scalar(membership_stmt)
     if not membership:
         raise ValueError("membership_not_found")
     return user, membership
