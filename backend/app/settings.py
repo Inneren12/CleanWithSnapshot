@@ -220,6 +220,7 @@ class Settings(BaseSettings):
     feature_flag_stale_inactive_days: int = Field(30)
     feature_flag_stale_max_evaluate_count: int = Field(1)
     feature_flag_expired_recent_days: int = Field(7)
+    feature_flag_rollout_salt: str = Field("feature-flag-rollout-v1")
     flag_retire_expired: bool = Field(True, validation_alias="FLAG_RETIRE_EXPIRED")
     flag_retire_stale_days: int | None = Field(90, validation_alias="FLAG_RETIRE_STALE_DAYS")
     flag_retire_dry_run: bool = Field(False, validation_alias="FLAG_RETIRE_DRY_RUN")

@@ -108,7 +108,7 @@ async def get_feature_config(
 ) -> feature_schemas.FeatureConfigResponse:
     overrides = await feature_service.get_org_feature_overrides(session, org_id)
     defaults = feature_service.default_feature_map()
-    effective = feature_service.resolve_effective_features(overrides)
+    effective = feature_service.resolve_effective_features(overrides, org_id=org_id)
     return feature_schemas.FeatureConfigResponse(
         org_id=org_id,
         overrides=overrides,
@@ -130,7 +130,10 @@ async def update_feature_config(
     identity: AdminIdentity = Depends(require_owner),
     session: AsyncSession = Depends(get_db_session),
 ) -> feature_schemas.FeatureConfigResponse:
-    overrides = feature_service.normalize_feature_overrides(payload.overrides)
+    try:
+        overrides = feature_service.normalize_feature_overrides(payload.overrides)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     try:
         await feature_service.upsert_org_feature_overrides(
             session,
@@ -146,7 +149,7 @@ async def update_feature_config(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     await session.commit()
     defaults = feature_service.default_feature_map()
-    effective = feature_service.resolve_effective_features(overrides)
+    effective = feature_service.resolve_effective_features(overrides, org_id=org_id)
     return feature_schemas.FeatureConfigResponse(
         org_id=org_id,
         overrides=overrides,
