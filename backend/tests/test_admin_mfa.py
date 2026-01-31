@@ -200,3 +200,26 @@ async def test_admin_routes_reject_sessions_without_mfa(async_session_maker, cli
         "/v1/iam/users", headers={"Authorization": f"Bearer {access_token_with_mfa}"}
     )
     assert success_resp.status_code == 200
+
+
+def test_basic_auth_mfa_header_required_outside_testing(unauthenticated_client, monkeypatch):
+    monkeypatch.setattr(settings, "testing", False)
+    monkeypatch.setattr(settings, "app_env", "dev")
+    monkeypatch.setattr(settings, "legacy_basic_auth_enabled", True)
+    monkeypatch.setattr(settings, "admin_basic_username", "admin")
+    monkeypatch.setattr(settings, "admin_basic_password", "admin123")
+
+    missing_header = unauthenticated_client.get("/v1/admin/profile", auth=("admin", "admin123"))
+    assert missing_header.status_code == 401
+    assert missing_header.headers.get("X-Admin-Auth-Fail-Reason") == "mfa_required"
+
+    with_header = unauthenticated_client.get(
+        "/v1/admin/profile",
+        auth=("admin", "admin123"),
+        headers={"X-Auth-MFA": "true"},
+    )
+    assert with_header.status_code == 200
+
+    monkeypatch.setattr(settings, "testing", True)
+    bypass = unauthenticated_client.get("/v1/admin/profile", auth=("admin", "admin123"))
+    assert bypass.status_code == 200

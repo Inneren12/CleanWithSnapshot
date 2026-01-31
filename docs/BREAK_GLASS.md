@@ -6,8 +6,13 @@ Break-glass grants are **time-bound**, **audited**, and **reviewed** emergency a
 
 **Requirements**
 
-* Allowed roles: owner or security.
-* MFA must be verified for roles configured in `admin_mfa_required_roles`.
+* Allowed roles:
+  * SaaS admins: `owner` or `security` membership role.
+  * Legacy Basic Auth: `owner` account only.
+* MFA must be verified for roles configured in `admin_mfa_required_roles` when `admin_mfa_required=true`.
+  * SaaS admins must have `mfa_verified=true` on their JWT (set during `/v1/auth/login` or `/v1/auth/refresh` with a valid TOTP code).
+  * Legacy Basic Auth/Proxy auth callers must send `X-Auth-MFA: true` (header name configurable via `admin_proxy_auth_header_mfa`).
+  * Test-only bypass exists for legacy Basic Auth when `settings.testing=true` or `APP_ENV` is `test/ci/e2e`; proxy auth never bypasses MFA.
 * Provide an incident/ticket reference and a reason.
 
 **Request**
@@ -74,6 +79,7 @@ Review completion is required for governance reporting and is recorded in access
 * `break_glass_default_ttl_minutes` (default 30)
 * `break_glass_max_ttl_minutes` (default 60)
 * `admin_mfa_required` + `admin_mfa_required_roles`
+* `admin_proxy_auth_header_mfa` (default `X-Auth-MFA`)
 
 ## Audit & alerting
 
