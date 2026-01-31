@@ -238,3 +238,142 @@ def test_rls_rejects_writes_without_org_context():
             assert {row.lead_id for row in rows} == {lead_id}
 
         engine.dispose()
+
+
+@pytest.mark.postgres
+@pytest.mark.migrations
+def test_rls_isolates_notifications_center():
+    with _temporary_postgres_database(settings.database_url) as temp_url:
+        _apply_migrations(temp_url)
+        engine = _provision_tenant_engine(temp_url)
+        org_a = uuid.uuid4()
+        org_b = uuid.uuid4()
+
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO organizations (org_id, name) VALUES (:org_id, :name), (:org_b, :name_b)"
+                ),
+                {
+                    "org_id": org_a,
+                    "name": "Notifications Org A",
+                    "org_b": org_b,
+                    "name_b": "Notifications Org B",
+                },
+            )
+
+        event_a = uuid.uuid4()
+        event_b = uuid.uuid4()
+        read_a = uuid.uuid4()
+        read_b = uuid.uuid4()
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_a}'"))
+            conn.execute(
+                sa.text(
+                    "INSERT INTO notifications_events (id, org_id, priority, type, title, body) "
+                    "VALUES (:id, :org_id, :priority, :type, :title, :body)"
+                ),
+                {
+                    "id": event_a,
+                    "org_id": org_a,
+                    "priority": "normal",
+                    "type": "audit",
+                    "title": "Org A Event",
+                    "body": "A body",
+                },
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO notifications_reads (id, org_id, user_id, event_id) "
+                    "VALUES (:id, :org_id, :user_id, :event_id)"
+                ),
+                {
+                    "id": read_a,
+                    "org_id": org_a,
+                    "user_id": "user-a",
+                    "event_id": event_a,
+                },
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO notifications_rules_presets "
+                    "(org_id, preset_key, enabled, notify_roles, notify_user_ids) "
+                    "VALUES (:org_id, :preset_key, :enabled, :notify_roles, :notify_user_ids)"
+                ),
+                {
+                    "org_id": org_a,
+                    "preset_key": "preset-a",
+                    "enabled": True,
+                    "notify_roles": "[]",
+                    "notify_user_ids": "[]",
+                },
+            )
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_b}'"))
+            conn.execute(
+                sa.text(
+                    "INSERT INTO notifications_events (id, org_id, priority, type, title, body) "
+                    "VALUES (:id, :org_id, :priority, :type, :title, :body)"
+                ),
+                {
+                    "id": event_b,
+                    "org_id": org_b,
+                    "priority": "normal",
+                    "type": "audit",
+                    "title": "Org B Event",
+                    "body": "B body",
+                },
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO notifications_reads (id, org_id, user_id, event_id) "
+                    "VALUES (:id, :org_id, :user_id, :event_id)"
+                ),
+                {
+                    "id": read_b,
+                    "org_id": org_b,
+                    "user_id": "user-b",
+                    "event_id": event_b,
+                },
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO notifications_rules_presets "
+                    "(org_id, preset_key, enabled, notify_roles, notify_user_ids) "
+                    "VALUES (:org_id, :preset_key, :enabled, :notify_roles, :notify_user_ids)"
+                ),
+                {
+                    "org_id": org_b,
+                    "preset_key": "preset-b",
+                    "enabled": False,
+                    "notify_roles": "[]",
+                    "notify_user_ids": "[]",
+                },
+            )
+
+        with engine.begin() as conn:
+            rows = conn.execute(sa.text("SELECT id FROM notifications_events"))
+            assert rows.fetchall() == []
+            rows = conn.execute(sa.text("SELECT id FROM notifications_reads"))
+            assert rows.fetchall() == []
+            rows = conn.execute(sa.text("SELECT preset_key FROM notifications_rules_presets"))
+            assert rows.fetchall() == []
+
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"SET LOCAL app.current_org_id = '{org_a}'"))
+            rows = conn.execute(
+                sa.text("SELECT id, org_id FROM notifications_events ORDER BY id")
+            )
+            assert {(row.id, row.org_id) for row in rows} == {(event_a, org_a)}
+            rows = conn.execute(
+                sa.text("SELECT id, org_id FROM notifications_reads ORDER BY id")
+            )
+            assert {(row.id, row.org_id) for row in rows} == {(read_a, org_a)}
+            rows = conn.execute(
+                sa.text("SELECT preset_key, org_id FROM notifications_rules_presets ORDER BY preset_key")
+            )
+            assert {(row.preset_key, row.org_id) for row in rows} == {("preset-a", org_a)}
+
+        engine.dispose()
