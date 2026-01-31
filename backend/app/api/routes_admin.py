@@ -5654,6 +5654,11 @@ async def quick_create_booking(
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
     try:
+        org = await session.get(Organization, org_id)
+        if org is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found"
+            )
         normalized_start = booking_service._normalize_datetime(payload.starts_at)
         duration_minutes = payload.duration_minutes
         ends_at = normalized_start + timedelta(minutes=duration_minutes)

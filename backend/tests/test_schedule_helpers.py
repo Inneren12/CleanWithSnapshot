@@ -552,3 +552,31 @@ async def test_quick_create_booking_slot_unavailable_returns_409(client):
 
     resp = client.post("/v1/admin/schedule/quick-create", headers=headers, json=payload)
     assert resp.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_quick_create_booking_missing_org_returns_404(client):
+    headers = {
+        **_basic_auth(
+            settings.admin_basic_username or "admin",
+            settings.admin_basic_password or "admin123",
+        ),
+        "X-Test-Org": str(uuid.uuid4()),
+    }
+    start = dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(days=2)
+    start = start.replace(hour=18, minute=0, second=0, microsecond=0)
+    payload = {
+        "starts_at": start.isoformat(),
+        "duration_minutes": 120,
+        "client": {
+            "name": "E2E Schedule Client",
+            "email": f"schedule-client-{uuid.uuid4()}@example.com",
+            "phone": "555-0101",
+        },
+        "address_text": "123 Main St",
+        "price_cents": 15000,
+        "addon_ids": [],
+    }
+
+    resp = client.post("/v1/admin/schedule/quick-create", headers=headers, json=payload)
+    assert resp.status_code == 404

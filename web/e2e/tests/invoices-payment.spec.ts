@@ -14,13 +14,21 @@ async function buildResponseDebugMessage(
   response: APIResponse,
   url: string
 ): Promise<string> {
+  const statusLine = `${response.status()} ${response.statusText()}`.trim();
+  const contentType = response.headers()['content-type'] ?? '';
   try {
+    if (contentType.includes('application/json')) {
+      const payload = await response.json();
+      const title = payload?.title ? ` title=${payload.title}` : '';
+      const detail = payload?.detail ? ` detail=${payload.detail}` : '';
+      const requestId = payload?.request_id ? ` request_id=${payload.request_id}` : '';
+      return `Request failed: ${statusLine} url=${url}${title}${detail}${requestId}`;
+    }
     const body = await response.text();
-    return `Request failed: ${response.status()} ${response.statusText()} url=${url} body=${body}`;
+    const trimmed = body.length > 400 ? `${body.slice(0, 400)}…` : body;
+    return `Request failed: ${statusLine} url=${url} body=${trimmed}`;
   } catch (error) {
-    return `Request failed: ${response.status()} ${response.statusText()} url=${url} body=<unreadable:${String(
-      error
-    )}>`;
+    return `Request failed: ${statusLine} url=${url} body=<unreadable:${String(error)}>`;
   }
 }
 
