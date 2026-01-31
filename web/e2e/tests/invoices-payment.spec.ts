@@ -16,8 +16,9 @@ async function buildResponseDebugMessage(
 ): Promise<string> {
   const statusLine = `${response.status()} ${response.statusText()}`.trim();
   const contentType = response.headers()['content-type'] ?? '';
+  const isJson = contentType.includes('application/json') || contentType.includes('+json');
   try {
-    if (contentType.includes('application/json')) {
+    if (isJson) {
       const payload = await response.json();
       const title = payload?.title ? ` title=${payload.title}` : '';
       const detail = payload?.detail ? ` detail=${payload.detail}` : '';
