@@ -112,6 +112,80 @@ def _is_postgres() -> bool:
     return bind.dialect.name == "postgresql"
 
 
+def _ensure_nps_responses_org_id() -> None:
+    op.execute(
+        sa.text(
+            """
+DO $$
+BEGIN
+    IF to_regclass('public.nps_responses') IS NULL THEN
+        RAISE NOTICE 'Skipping org_id backfill for public.nps_responses (table missing)';
+        RETURN;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'nps_responses'
+          AND column_name = 'org_id'
+    ) THEN
+        EXECUTE 'ALTER TABLE public.nps_responses ADD COLUMN org_id uuid';
+    END IF;
+
+    EXECUTE '
+        UPDATE public.nps_responses nr
+        SET org_id = b.org_id
+        FROM public.bookings b
+        WHERE b.booking_id = nr.order_id
+          AND nr.org_id IS NULL
+    ';
+
+    IF EXISTS (
+        SELECT 1
+        FROM public.nps_responses
+        WHERE org_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Cannot enforce org_id on public.nps_responses: null org_id rows remain';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'nps_responses'
+          AND column_name = 'org_id'
+          AND is_nullable = 'YES'
+    ) THEN
+        EXECUTE 'ALTER TABLE public.nps_responses ALTER COLUMN org_id SET NOT NULL';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname = 'ix_nps_responses_org_id'
+    ) THEN
+        EXECUTE 'CREATE INDEX ix_nps_responses_org_id ON public.nps_responses (org_id)';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_nps_responses_org'
+          AND conrelid = 'public.nps_responses'::regclass
+    ) THEN
+        EXECUTE 'ALTER TABLE public.nps_responses '
+                'ADD CONSTRAINT fk_nps_responses_org '
+                'FOREIGN KEY (org_id) REFERENCES public.organizations (org_id) ON DELETE CASCADE';
+    END IF;
+END
+$$;
+"""
+        )
+    )
+
+
 def _policy_sql(table: str) -> str:
     qualified_table = f"{SCHEMA}.{table}"
     policy_name = f"{table}_org_isolation"
@@ -121,6 +195,16 @@ BEGIN
     IF to_regclass('{SCHEMA}.{table}') IS NULL THEN
         RAISE NOTICE 'Skipping RLS policy setup for %.% (table missing)', '{SCHEMA}', '{table}';
         RETURN;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = '{SCHEMA}'
+          AND table_name = '{table}'
+          AND column_name = 'org_id'
+    ) THEN
+        RAISE EXCEPTION 'Cannot apply org isolation: %.% missing org_id column', '{SCHEMA}', '{table}';
     END IF;
 
     IF NOT EXISTS (
@@ -198,6 +282,8 @@ $$;
 def upgrade() -> None:
     if not _is_postgres():
         return
+
+    _ensure_nps_responses_org_id()
 
     for table in TABLES:
         op.execute(sa.text(_policy_sql(table)))
