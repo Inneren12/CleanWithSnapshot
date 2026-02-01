@@ -1,6 +1,6 @@
 fastapi==0.124.4
 python-multipart==0.0.18
-uvicorn==0.30.6
+uvicorn==0.40.0
 pydantic>=2
 pydantic-settings>=2
 pytest==9.0.2
