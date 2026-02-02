@@ -67,7 +67,7 @@ test.describe('Admin login flow', () => {
 
     // Click clear credentials
     const clearButton = page.getByTestId('admin-clear-credentials-btn');
-    await expect(clearButton).toBeVisible();
+    await clearButton.waitFor({ state: 'visible' });
     await expect(clearButton).toBeEnabled();
     await clearButton.click();
 

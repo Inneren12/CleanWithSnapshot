@@ -992,7 +992,7 @@ return (
           </tbody>
         </table>
 
-        <h3 data-testid="bookings-week-view">Week view</h3>
+        <h2 data-testid="bookings-week-view">Week view</h2>
         <div className="slot-grid">
           {weekView.map((day) => (
             <div key={day.date} className="slot-column admin-card" style={{ boxShadow: "none" }}>

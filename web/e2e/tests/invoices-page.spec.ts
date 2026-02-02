@@ -53,7 +53,7 @@ test.describe('Invoices page', () => {
     await expect(page.getByTestId('invoices-page')).toBeVisible();
 
     // Table shell should always be visible
-    await expect(page.getByTestId('invoices-table')).toBeVisible();
+    await page.getByTestId('invoices-table').waitFor({ state: 'visible' });
   });
 
   test('invoices page uses isolated auth in a new context', async ({ page }, testInfo) => {

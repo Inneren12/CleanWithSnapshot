@@ -880,7 +880,7 @@ export default function InvoicesPage() {
                 ) : invoices.length === 0 ? (
                   <tr>
                     <td colSpan={8} style={{ textAlign: "center" }}>
-                      No invoices found
+                      No invoices
                     </td>
                   </tr>
                 ) : (
