@@ -33,9 +33,11 @@ test.describe('Leads management', () => {
     await page.goto('/admin');
 
     await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    await expect(page.getByTestId('leads-table')).toBeVisible();
 
     const statusFilter = page.getByTestId('leads-status-filter');
     await expect(statusFilter).toBeVisible();
+    await expect(statusFilter).toBeEditable();
 
     // Type a filter value
     await statusFilter.fill('CONTACTED');

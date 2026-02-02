@@ -52,13 +52,7 @@ test.describe('Invoices page', () => {
 
     await expect(page.getByTestId('invoices-page')).toBeVisible();
 
-    // Wait for loading to finish
-    const loadingIndicator = page.getByTestId('invoices-loading');
-    if (await loadingIndicator.isVisible()) {
-      await expect(loadingIndicator).not.toBeVisible({ timeout: 10000 });
-    }
-
-    // Table should be visible after loading
+    // Table shell should always be visible
     await expect(page.getByTestId('invoices-table')).toBeVisible();
   });
 

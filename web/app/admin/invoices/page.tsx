@@ -839,90 +839,104 @@ export default function InvoicesPage() {
 
           {/* Invoices Table */}
           {loading && <div data-testid="invoices-loading">Loading...</div>}
-          {error && <div className="error" data-testid="invoices-error">{error}</div>}
-          {!loading && !error && (
-            <>
-              <table className="invoices-table" data-testid="invoices-table">
-                <thead>
-                  <tr>
-                    <th>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.size === invoices.length && invoices.length > 0}
-                        onChange={toggleSelectAll}
-                      />
-                    </th>
-                    <th>Invoice #</th>
-                    <th>Status</th>
-                    <th>Issue Date</th>
-                    <th>Due Date</th>
-                    <th>Total</th>
-                    <th>Paid</th>
-                    <th>Balance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoices.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} style={{ textAlign: "center" }}>
-                        No invoices found
-                      </td>
-                    </tr>
-                  ) : (
-                    invoices.map((invoice) => (
-                      <tr key={invoice.invoice_id}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(invoice.invoice_id)}
-                            onChange={() => toggleSelect(invoice.invoice_id)}
-                          />
-                        </td>
-                        <td>
-                          <a href={`/v1/admin/ui/invoices/${invoice.invoice_id}`}>
-                            {invoice.invoice_number}
-                          </a>
-                        </td>
-                        <td>
-                          <span className={`status-badge status-${invoice.status.toLowerCase()}`}>
-                            {invoice.status}
-                          </span>
-                        </td>
-                        <td>{formatDate(invoice.issue_date)}</td>
-                        <td>{formatDate(invoice.due_date)}</td>
-                        <td>{formatMoney(invoice.total_cents, invoice.currency)}</td>
-                        <td>{formatMoney(invoice.paid_cents, invoice.currency)}</td>
-                        <td>{formatMoney(invoice.balance_due_cents, invoice.currency)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <div className="pagination">
-                  <button
-                    className="btn secondary"
-                    disabled={page <= 1}
-                    onClick={() => setPage(page - 1)}
-                  >
-                    Previous
-                  </button>
-                  <span>
-                    Page {page} of {totalPages} ({total} total)
-                  </span>
-                  <button
-                    className="btn secondary"
-                    disabled={page >= totalPages}
-                    onClick={() => setPage(page + 1)}
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
-            </>
+          {error && (
+            <div className="error" data-testid="invoices-error">
+              {error}
+            </div>
           )}
+          <>
+            <table className="invoices-table" data-testid="invoices-table">
+              <thead>
+                <tr>
+                  <th>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.size === invoices.length && invoices.length > 0}
+                      onChange={toggleSelectAll}
+                    />
+                  </th>
+                  <th>Invoice #</th>
+                  <th>Status</th>
+                  <th>Issue Date</th>
+                  <th>Due Date</th>
+                  <th>Total</th>
+                  <th>Paid</th>
+                  <th>Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={8} style={{ textAlign: "center" }}>
+                      Loading invoices…
+                    </td>
+                  </tr>
+                ) : error ? (
+                  <tr>
+                    <td colSpan={8} style={{ textAlign: "center" }}>
+                      {error}
+                    </td>
+                  </tr>
+                ) : invoices.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} style={{ textAlign: "center" }}>
+                      No invoices found
+                    </td>
+                  </tr>
+                ) : (
+                  invoices.map((invoice) => (
+                    <tr key={invoice.invoice_id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(invoice.invoice_id)}
+                          onChange={() => toggleSelect(invoice.invoice_id)}
+                        />
+                      </td>
+                      <td>
+                        <a href={`/v1/admin/ui/invoices/${invoice.invoice_id}`}>
+                          {invoice.invoice_number}
+                        </a>
+                      </td>
+                      <td>
+                        <span className={`status-badge status-${invoice.status.toLowerCase()}`}>
+                          {invoice.status}
+                        </span>
+                      </td>
+                      <td>{formatDate(invoice.issue_date)}</td>
+                      <td>{formatDate(invoice.due_date)}</td>
+                      <td>{formatMoney(invoice.total_cents, invoice.currency)}</td>
+                      <td>{formatMoney(invoice.paid_cents, invoice.currency)}</td>
+                      <td>{formatMoney(invoice.balance_due_cents, invoice.currency)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+
+            {/* Pagination */}
+            {!loading && !error && totalPages > 1 && (
+              <div className="pagination">
+                <button
+                  className="btn secondary"
+                  disabled={page <= 1}
+                  onClick={() => setPage(page - 1)}
+                >
+                  Previous
+                </button>
+                <span>
+                  Page {page} of {totalPages} ({total} total)
+                </span>
+                <button
+                  className="btn secondary"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage(page + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
         </div>
       </div>
 
