@@ -383,6 +383,7 @@ jobs:
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 caddy || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 web || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic current || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic heads || true
@@ -472,6 +473,12 @@ jobs:
             echo ""
             echo "== docker compose logs api (tail) =="
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=400 || true
+            echo ""
+            echo "== docker compose logs caddy (tail) =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color caddy --tail=200 || true
+            echo ""
+            echo "== docker compose logs web (tail) =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color web --tail=200 || true
             echo ""
             echo "== docker compose logs db (tail) =="
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true

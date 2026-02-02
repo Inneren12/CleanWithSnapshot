@@ -58,7 +58,7 @@ services:
       ADMIN_PROXY_AUTH_ROLES: ${ADMIN_PROXY_AUTH_ROLES:-admin}
       ADMIN_PROXY_AUTH_MFA: ${ADMIN_PROXY_AUTH_MFA:-true}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile.e2e:/etc/caddy/Caddyfile:ro
     depends_on:
       - api
       - web
