@@ -51,7 +51,12 @@
   }
 }
 
-:80 {
+http://127.0.0.1, http://localhost {
+  @health path /healthz /readyz
+  handle @health {
+    reverse_proxy api:8000
+  }
+
   @admin path /v1/admin /v1/admin/*
   handle @admin {
     reverse_proxy api:8000 {
