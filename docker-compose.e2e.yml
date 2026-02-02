@@ -33,8 +33,8 @@ services:
         "-lc",
         "set -euo pipefail; echo 'Running alembic upgrade head'; alembic upgrade head || { echo 'Alembic upgrade failed'; alembic current || true; alembic heads || true; exit 1; }; exec uvicorn app.main:app --host 0.0.0.0 --port 8000",
       ]
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
 
   web:
     environment:
@@ -48,6 +48,7 @@ services:
       - "3000"
 
   caddy:
+    image: caddy:2
     ports:
       - "3000:80"
     environment:
@@ -56,6 +57,11 @@ services:
       ADMIN_PROXY_AUTH_EMAIL: ${ADMIN_PROXY_AUTH_EMAIL:-e2e-admin@e2e.invalid}
       ADMIN_PROXY_AUTH_ROLES: ${ADMIN_PROXY_AUTH_ROLES:-admin}
       ADMIN_PROXY_AUTH_MFA: ${ADMIN_PROXY_AUTH_MFA:-true}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+      - web
 
   jobs:
     environment:
