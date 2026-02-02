@@ -281,7 +281,7 @@ def _resolve_cors_origins(app_settings) -> Iterable[str]:
     if app_settings.strict_cors:
         return []
     if app_settings.app_env == "dev":
-        return ["http://localhost:3000"]
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
     return []
 
 

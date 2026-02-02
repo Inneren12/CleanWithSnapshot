@@ -44,3 +44,26 @@ def test_cors_allows_configured_origin(monkeypatch):
     with TestClient(app) as client:
         response = client.get("/healthz", headers={"Origin": "https://example.com"})
         assert response.headers["access-control-allow-origin"] == "https://example.com"
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+)
+def test_dev_preflight_allows_local_origins(origin):
+    app = create_app(Settings(app_env="dev"))
+    with TestClient(app) as client:
+        response = client.options(
+            "/v1/admin/profile",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
