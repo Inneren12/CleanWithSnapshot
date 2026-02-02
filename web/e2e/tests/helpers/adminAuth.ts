@@ -27,7 +27,7 @@ export const defaultAdminCredentials = (): AdminCredentials => ({
   apiBaseUrl:
     process.env.PLAYWRIGHT_API_BASE_URL ??
     process.env.E2E_API_BASE_URL ??
-    'http://127.0.0.1:8000',
+    'http://127.0.0.1:3000',
 });
 
 const buildProxyHeaders = (credentials: AdminCredentials): Record<string, string> => {

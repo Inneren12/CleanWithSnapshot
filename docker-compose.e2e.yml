@@ -21,7 +21,12 @@ services:
   api:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      APP_ENV: e2e
+      ADMIN_PROXY_AUTH_ENABLED: "true"
+      ADMIN_PROXY_AUTH_REQUIRED: "true"
+      ADMIN_PROXY_AUTH_SECRET: ${ADMIN_PROXY_AUTH_SECRET:-e2e-proxy-auth-secret-change-me-1234567890}
+      TRUST_PROXY_HEADERS: "true"
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
     command:
       [
         "sh",
@@ -33,14 +38,24 @@ services:
 
   web:
     environment:
-      NEXT_PUBLIC_API_BASE_URL: "http://127.0.0.1:8000"
+      NEXT_PUBLIC_API_BASE_URL: "http://127.0.0.1:3000"
       NEXT_PUBLIC_E2E_MODE: "true"
     build:
       args:
-        NEXT_PUBLIC_API_BASE_URL: "http://127.0.0.1:8000"
+        NEXT_PUBLIC_API_BASE_URL: "http://127.0.0.1:3000"
         NEXT_PUBLIC_E2E_MODE: "true"
+    expose:
+      - "3000"
+
+  caddy:
     ports:
-      - "3000:3000"
+      - "3000:80"
+    environment:
+      ADMIN_PROXY_AUTH_SECRET: ${ADMIN_PROXY_AUTH_SECRET:-e2e-proxy-auth-secret-change-me-1234567890}
+      ADMIN_PROXY_AUTH_USER: ${ADMIN_PROXY_AUTH_USER:-e2e-admin}
+      ADMIN_PROXY_AUTH_EMAIL: ${ADMIN_PROXY_AUTH_EMAIL:-e2e-admin@e2e.invalid}
+      ADMIN_PROXY_AUTH_ROLES: ${ADMIN_PROXY_AUTH_ROLES:-admin}
+      ADMIN_PROXY_AUTH_MFA: ${ADMIN_PROXY_AUTH_MFA:-true}
 
   jobs:
     environment:
