@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import entitlements
@@ -19,6 +19,7 @@ from app.api.admin_auth import AdminIdentity, require_admin
 from app.domain.data_rights import service as data_rights_service
 from app.domain.leads.db_models import Lead
 from app.infra.db import get_db_session
+from app.infra.email_validation import E2EEmailStr
 from app.infra.storage import new_storage_backend
 from app.settings import settings
 
@@ -39,7 +40,7 @@ def _require_test_env() -> None:
 
 class SeedLeadRequest(BaseModel):
     name: str = "E2E Test Lead"
-    email: EmailStr | None = None
+    email: E2EEmailStr | None = None
     phone: str = "+15555550199"
 
 

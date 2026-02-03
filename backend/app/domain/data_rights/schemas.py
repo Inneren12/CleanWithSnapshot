@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
+
+from app.infra.email_validation import E2EEmailStr
 
 
 class DataExportRequest(BaseModel):
     lead_id: str | None = None
-    email: EmailStr | None = None
+    email: E2EEmailStr | None = None
 
     @field_validator("email")
     @classmethod
@@ -27,7 +29,7 @@ class DataExportResponse(BaseModel):
 
 class DataRightsExportRequestPayload(BaseModel):
     lead_id: str | None = None
-    email: EmailStr | None = None
+    email: E2EEmailStr | None = None
 
 
 class DataRightsExportRequestResponse(BaseModel):
@@ -50,7 +52,7 @@ class DataRightsExportListResponse(BaseModel):
 
 class DataDeletionRequestPayload(BaseModel):
     lead_id: str | None = None
-    email: EmailStr | None = None
+    email: E2EEmailStr | None = None
     reason: str | None = None
 
     @field_validator("email")
