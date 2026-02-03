@@ -469,7 +469,7 @@ jobs:
               timestamp=int(time.time()),
           )
           for key, value in headers.items():
-              print(f\"{key}: {value}\")
+              print(f"{key}: {value}")
           PY
 
           declare -a curl_headers
