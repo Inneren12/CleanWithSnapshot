@@ -455,51 +455,59 @@ jobs:
         run: |
           PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:3000/v1/admin/profile
 
-      - name: Admin API sanity check (fail-fast)
+      - name: API sanity (fail fast on 5xx)
+        shell: bash
         run: |
           set -euo pipefail
-          header_file=$(mktemp)
-          PYTHONPATH=backend python - <<'PY' > "$header_file"
-          import os
-          import time
-          from app.infra.admin_proxy_auth import build_e2e_proxy_headers
 
-          def _env(name: str) -> str:
-              return (os.environ.get(name, "") or "").strip()
+          DIAG_DIR="${DIAG_DIR:-${RUNNER_TEMP:-/tmp}/e2e-diagnostics-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}}"
+          mkdir -p "$DIAG_DIR"
 
-          headers = build_e2e_proxy_headers(
-              proxy_secret=_env("ADMIN_PROXY_AUTH_SECRET"),
-              e2e_secret=_env("ADMIN_PROXY_AUTH_E2E_SECRET"),
-              user=_env("ADMIN_PROXY_AUTH_E2E_USER"),
-              email=_env("ADMIN_PROXY_AUTH_E2E_EMAIL"),
-              roles=_env("ADMIN_PROXY_AUTH_E2E_ROLES") or "admin",
-              mfa_verified=True,
-              timestamp=int(time.time()),
-          )
-          for key, value in headers.items():
-              print(f"{key}: {value}")
-          PY
+          # Fetch credentials from api container env to avoid guessing
+          ADMIN_USER="$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api printenv ADMIN_BASIC_USERNAME | tr -d '\r' || true)"
+          ADMIN_PASS="$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api printenv ADMIN_BASIC_PASSWORD | tr -d '\r' || true)"
 
-          declare -a curl_headers
-          while IFS= read -r line; do
-            curl_headers+=(-H "$line")
-          done < "$header_file"
+          if [ -z "$ADMIN_USER" ] || [ -z "$ADMIN_PASS" ]; then
+            echo "ERROR: Missing ADMIN_BASIC_USERNAME/ADMIN_BASIC_PASSWORD in api container env."
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api env | sort > "$DIAG_DIR/api.env.txt" || true
+            exit 1
+          fi
 
-          endpoints=(
-            "http://127.0.0.1:3000/v1/admin/bookings"
-            "http://127.0.0.1:3000/v1/admin/leads"
-            "http://127.0.0.1:3000/v1/admin/users/me/ui_prefs"
-          )
+          check() {
+            local name="$1"
+            local url="$2"
+            local hdr="$DIAG_DIR/${name}.headers.txt"
+            local body="$DIAG_DIR/${name}.body.txt"
 
-          for url in "${endpoints[@]}"; do
-            echo "Checking ${url}"
-            if ! curl -fsS "${curl_headers[@]}" "$url" >/dev/null; then
-              echo "Admin API sanity check failed: ${url}"
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=300 || true
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+            local code
+            code="$(curl -sS -u "$ADMIN_USER:$ADMIN_PASS" -D "$hdr" -o "$body" -w '%{http_code}' "$url" || echo 000)"
+            echo "$name -> $code ($url)"
+
+            # fail fast on connect error or 5xx
+            if [ "$code" = "000" ] || [ "$code" -ge 500 ]; then
+              echo "=== FAIL: $name ($code) ==="
+              echo "--- response headers ---"
+              tail -n 80 "$hdr" || true
+              echo "--- response body (tail) ---"
+              tail -n 200 "$body" || true
+              echo "--- api logs (tail) ---"
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api | tail -n 300 || true
+              echo "--- db logs (tail) ---"
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db | tail -n 200 || true
               exit 1
             fi
-          done
+          }
+
+          # Health through the front door
+          check "healthz" "http://127.0.0.1:3000/healthz"
+          check "readyz"  "http://127.0.0.1:3000/readyz"
+
+          # Critical admin endpoints used by the admin UI
+          check "admin_profile"      "http://127.0.0.1:3000/v1/admin/profile"
+          check "admin_ui_prefs"     "http://127.0.0.1:3000/v1/admin/users/me/ui_prefs"
+          check "admin_bookings"     "http://127.0.0.1:3000/v1/admin/bookings"
+          check "admin_leads"        "http://127.0.0.1:3000/v1/admin/leads"
+          check "admin_features"     "http://127.0.0.1:3000/v1/admin/settings/features"
 
       - name: Install web dependencies
         working-directory: web
