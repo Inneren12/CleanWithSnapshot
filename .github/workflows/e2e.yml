@@ -175,6 +175,25 @@ jobs:
           docker compose version || true
           docker version || true
 
+      - name: Create diagnostic files directory
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Guaranteed writable location on GitHub runner
+          DIAG_DIR="${RUNNER_TEMP:-/tmp}/e2e-diagnostics-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+
+          # If something exists there as a file, remove it so mkdir works
+          if [ -f "$DIAG_DIR" ]; then
+            rm -f "$DIAG_DIR"
+          fi
+
+          mkdir -p "$DIAG_DIR"
+          echo "DIAG_DIR=$DIAG_DIR" >> "$GITHUB_ENV"
+
+          echo "Diagnostics dir: $DIAG_DIR"
+          ls -la "$DIAG_DIR"
+
       - name: Verify E2E db command preload (source)
         run: |
           set -euo pipefail
@@ -490,21 +509,26 @@ jobs:
 
       - name: Collect compose diagnostics
         if: always()
+        shell: bash
         run: |
-          # Create diagnostic files directory
-          mkdir -p e2e-diagnostics
+          set +e  # Never fail this step
+
+          # Use DIAG_DIR from env, fallback to local directory
+          DIAG_DIR="${DIAG_DIR:-e2e-diagnostics}"
+          mkdir -p "$DIAG_DIR" 2>/dev/null || true
+
+          echo "Collecting diagnostics to: $DIAG_DIR"
 
           # Save numbered docker-compose.e2e.yml for debugging
-          nl -ba docker-compose.e2e.yml > e2e-diagnostics/docker-compose.e2e.nl.txt || true
+          nl -ba docker-compose.e2e.yml > "$DIAG_DIR/docker-compose.e2e.nl.txt" 2>&1 || true
 
           # Save compose config (may fail if YAML is invalid)
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config > e2e-diagnostics/e2e-compose.config.txt 2>&1 || {
-            echo "=== Compose config failed (YAML likely invalid) ===" >> e2e-diagnostics/e2e-compose.config.txt
-            echo "Error output captured above" >> e2e-diagnostics/e2e-compose.config.txt
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config > "$DIAG_DIR/e2e-compose.config.txt" 2>&1 || {
+            echo "=== Compose config failed (YAML likely invalid) ===" >> "$DIAG_DIR/e2e-compose.config.txt"
           }
 
           # Save full compose logs
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --timestamps > e2e-diagnostics/e2e-compose.log 2>&1 || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --timestamps > "$DIAG_DIR/e2e-compose.log" 2>&1 || true
 
           # Build detailed diagnostics log
           {
@@ -542,10 +566,12 @@ jobs:
             echo "== alembic status (api) =="
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic current 2>&1 || echo "(alembic current failed)"
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic heads 2>&1 || echo "(alembic heads failed)"
-          } > e2e-diagnostics/e2e-compose-diagnostics.log
+          } > "$DIAG_DIR/e2e-compose-diagnostics.log" 2>&1 || true
 
           # Copy to root for backward compatibility
-          cp e2e-diagnostics/e2e-compose-diagnostics.log e2e-compose-diagnostics.log || true
+          cp "$DIAG_DIR/e2e-compose-diagnostics.log" e2e-compose-diagnostics.log 2>/dev/null || true
+
+          echo "Diagnostics collection complete"
 
       - name: Upload Playwright report
         if: always()
@@ -553,6 +579,7 @@ jobs:
         with:
           name: playwright-report
           path: web/playwright-report/**
+          if-no-files-found: ignore
 
       - name: Upload Playwright test results
         if: always()
@@ -560,6 +587,7 @@ jobs:
         with:
           name: playwright-test-results
           path: web/test-results/**
+          if-no-files-found: ignore
 
       - name: Upload compose diagnostics
         if: always()
@@ -567,6 +595,7 @@ jobs:
         with:
           name: e2e-compose-diagnostics
           path: e2e-compose-diagnostics.log
+          if-no-files-found: ignore
 
       - name: Upload enhanced diagnostics
         if: always()
@@ -574,9 +603,11 @@ jobs:
         with:
           name: e2e-diagnostics-bundle
           path: |
+            ${{ env.DIAG_DIR }}
             e2e-diagnostics/
             compose_config_stdout.yml
             compose_config_stderr.log
+          if-no-files-found: ignore
 
       - name: Compose down (non-fatal)
         if: always()
