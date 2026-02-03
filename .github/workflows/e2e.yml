@@ -447,6 +447,52 @@ jobs:
         run: |
           PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:3000/v1/admin/profile
 
+      - name: Admin API sanity check (fail-fast)
+        run: |
+          set -euo pipefail
+          header_file=$(mktemp)
+          PYTHONPATH=backend python - <<'PY' > "$header_file"
+          import os
+          import time
+          from app.infra.admin_proxy_auth import build_e2e_proxy_headers
+
+          def _env(name: str) -> str:
+              return (os.environ.get(name, "") or "").strip()
+
+          headers = build_e2e_proxy_headers(
+              proxy_secret=_env("ADMIN_PROXY_AUTH_SECRET"),
+              e2e_secret=_env("ADMIN_PROXY_AUTH_E2E_SECRET"),
+              user=_env("ADMIN_PROXY_AUTH_E2E_USER"),
+              email=_env("ADMIN_PROXY_AUTH_E2E_EMAIL"),
+              roles=_env("ADMIN_PROXY_AUTH_E2E_ROLES") or "admin",
+              mfa_verified=True,
+              timestamp=int(time.time()),
+          )
+          for key, value in headers.items():
+              print(f\"{key}: {value}\")
+          PY
+
+          declare -a curl_headers
+          while IFS= read -r line; do
+            curl_headers+=(-H "$line")
+          done < "$header_file"
+
+          endpoints=(
+            "http://127.0.0.1:3000/v1/admin/bookings"
+            "http://127.0.0.1:3000/v1/admin/leads"
+            "http://127.0.0.1:3000/v1/admin/users/me/ui_prefs"
+          )
+
+          for url in "${endpoints[@]}"; do
+            echo "Checking ${url}"
+            if ! curl -fsS "${curl_headers[@]}" "$url" >/dev/null; then
+              echo "Admin API sanity check failed: ${url}"
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=300 || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+              exit 1
+            fi
+          done
+
       - name: Install web dependencies
         working-directory: web
         run: npm ci

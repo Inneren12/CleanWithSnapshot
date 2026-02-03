@@ -104,6 +104,7 @@ export async function verifyAdminCredentials(
 
   await assertAdminEndpointHealthy(request, `${apiBaseUrl}/v1/admin/bookings`, headers);
   await assertAdminEndpointHealthy(request, `${apiBaseUrl}/v1/admin/leads`, headers);
+  await assertAdminEndpointHealthy(request, `${apiBaseUrl}/v1/admin/users/me/ui_prefs`, headers);
 }
 
 export async function seedAdminStorage(
