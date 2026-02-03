@@ -770,7 +770,7 @@ def estimated_duration_from_lead(lead: Lead | None) -> int | None:
 
 def _labor_cost_cents_expression(bind, lead_table: Lead) -> sa.ColumnElement:
     if bind and bind.dialect.name == "postgresql":
-        labor_text = lead_table.estimate_snapshot["labor_cost"].astext
+        labor_text = lead_table.estimate_snapshot["labor_cost"].as_string()
         is_numeric = labor_text.op("~")(r"^-?\d+(?:\.\d+)?$")
         labor_value = sa.case(
             (is_numeric, sa.cast(labor_text, sa.Numeric())),
