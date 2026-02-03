@@ -189,7 +189,9 @@ export default function AdminPage() {
   const [metricsPreset, setMetricsPreset] = useState<number | null>(7);
   const [leadStatusFilter, setLeadStatusFilter] = useState<string>("");
   const [leadsLoading, setLeadsLoading] = useState(false);
+  const [leadsError, setLeadsError] = useState<string | null>(null);
   const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingsError, setBookingsError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     const today = new Date();
     return formatYMDInTz(today, DEFAULT_ORG_TIMEZONE);
@@ -433,17 +435,27 @@ export default function AdminPage() {
   const loadLeads = async () => {
     if (!username || !password) return;
     setLeadsLoading(true);
+    setLeadsError(null);
     try {
       const filter = leadStatusFilter ? `?status=${encodeURIComponent(leadStatusFilter)}` : "";
       const response = await fetch(`${API_BASE}/v1/admin/leads${filter}`, {
         headers: authHeaders,
         cache: "no-store",
       });
-      if (!response.ok) return;
-      const data = (await response.json()) as LeadListResponse;
-      setLeads(data.items);
+      if (response.ok) {
+        const data = (await response.json()) as LeadListResponse;
+        setLeads(data.items);
+      } else if (response.status === 403) {
+        setLeads([]);
+        setLeadsError("You do not have permission to view leads.");
+      } else {
+        setLeads([]);
+        setLeadsError("Failed to load leads.");
+      }
     } catch (error) {
       console.error("Failed to load leads:", error);
+      setLeads([]);
+      setLeadsError("Failed to load leads.");
     } finally {
       setLeadsLoading(false);
     }
@@ -452,17 +464,27 @@ export default function AdminPage() {
   const loadBookings = async () => {
     if (!username || !password) return;
     setBookingsLoading(true);
+    setBookingsError(null);
     try {
       const endDate = addDaysYMD(selectedDate, 6, orgTimezone);
       const response = await fetch(
         `${API_BASE}/v1/admin/bookings?from=${selectedDate}&to=${endDate}`,
         { headers: authHeaders, cache: "no-store" }
       );
-      if (!response.ok) return;
-      const data = (await response.json()) as Booking[];
-      setBookings(data);
+      if (response.ok) {
+        const data = (await response.json()) as Booking[];
+        setBookings(data);
+      } else if (response.status === 403) {
+        setBookings([]);
+        setBookingsError("You do not have permission to view bookings.");
+      } else {
+        setBookings([]);
+        setBookingsError("Failed to load bookings.");
+      }
     } catch (error) {
       console.error("Failed to load bookings:", error);
+      setBookings([]);
+      setBookingsError("Failed to load bookings.");
     } finally {
       setBookingsLoading(false);
     }
@@ -903,6 +925,7 @@ return (
               {leadsLoading ? "Loading…" : "Refresh"}
             </button>
           </div>
+          {leadsError ? <p className="alert alert-error">{leadsError}</p> : null}
           <table className="table-like" data-testid="leads-table">
             <thead>
               <tr>
@@ -1028,6 +1051,7 @@ return (
             {bookingsLoading ? "Loading…" : "Refresh"}
           </button>
         </div>
+        {bookingsError ? <p className="alert alert-error">{bookingsError}</p> : null}
         <table className="table-like" data-testid="bookings-table">
           <thead>
             <tr>
