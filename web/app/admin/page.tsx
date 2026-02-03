@@ -279,14 +279,19 @@ export default function AdminPage() {
 
   const loadProfile = useCallback(async () => {
     if (!username || !password) return;
-    const response = await fetch(`${API_BASE}/v1/admin/profile`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as AdminProfile;
-      setProfile(data);
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/profile`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as AdminProfile;
+        setProfile(data);
+      } else {
+        setProfile(null);
+      }
+    } catch (error) {
+      console.error("Failed to load profile:", error);
       setProfile(null);
     }
   }, [authHeaders, password, username]);
@@ -294,14 +299,20 @@ export default function AdminPage() {
   const loadFeatureConfig = useCallback(async () => {
     if (!username || !password) return;
     setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as FeatureConfigResponse;
-      setFeatureConfig(data);
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as FeatureConfigResponse;
+        setFeatureConfig(data);
+      } else {
+        setFeatureConfig(null);
+        setSettingsError("Failed to load module settings");
+      }
+    } catch (error) {
+      console.error("Failed to load feature config:", error);
       setFeatureConfig(null);
       setSettingsError("Failed to load module settings");
     }
@@ -310,14 +321,20 @@ export default function AdminPage() {
   const loadUiPrefs = useCallback(async () => {
     if (!username || !password) return;
     setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as UiPrefsResponse;
-      setUiPrefs(data);
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as UiPrefsResponse;
+        setUiPrefs(data);
+      } else {
+        setUiPrefs(null);
+        setSettingsError("Failed to load UI preferences");
+      }
+    } catch (error) {
+      console.error("Failed to load UI preferences:", error);
       setUiPrefs(null);
       setSettingsError("Failed to load UI preferences");
     }
@@ -369,6 +386,10 @@ export default function AdminPage() {
           setMetricsError("Failed to load metrics");
         }
       }
+    } catch (error) {
+      console.error("Failed to load metrics:", error);
+      setMetrics(null);
+      setMetricsError("Failed to load metrics");
     } finally {
       setMetricsLoading(false);
     }
@@ -380,28 +401,33 @@ export default function AdminPage() {
       setMetricsError("Metrics require admin access");
       return;
     }
-    const params = new URLSearchParams({
-      from: metricsRange.from,
-      to: metricsRange.to,
-      format: "csv",
-    });
-    const response = await fetch(`${API_BASE}/v1/admin/metrics?${params.toString()}`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (!response.ok) {
+    try {
+      const params = new URLSearchParams({
+        from: metricsRange.from,
+        to: metricsRange.to,
+        format: "csv",
+      });
+      const response = await fetch(`${API_BASE}/v1/admin/metrics?${params.toString()}`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        setMessage("CSV download failed");
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const safeFrom = metricsRange.from.split("T")[0];
+      const safeTo = metricsRange.to.split("T")[0];
+      link.download = `kpis-${safeFrom}-${safeTo}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Failed to download CSV:", error);
       setMessage("CSV download failed");
-      return;
     }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    const safeFrom = metricsRange.from.split("T")[0];
-    const safeTo = metricsRange.to.split("T")[0];
-    link.download = `kpis-${safeFrom}-${safeTo}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   const loadLeads = async () => {
@@ -444,36 +470,51 @@ export default function AdminPage() {
 
   const loadExportDeadLetter = async () => {
     if (!username || !password) return;
-    const response = await fetch(`${API_BASE}/v1/admin/export-dead-letter?limit=50`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (!response.ok) return;
-    const data = (await response.json()) as ExportEvent[];
-    setExportEvents(data);
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/export-dead-letter?limit=50`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const data = (await response.json()) as ExportEvent[];
+      setExportEvents(data);
+    } catch (error) {
+      console.error("Failed to load export dead letter:", error);
+    }
   };
 
   const loadOutboxDeadLetter = async () => {
     if (!username || !password) return;
-    const response = await fetch(`${API_BASE}/v1/admin/outbox/dead-letter?limit=50`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (!response.ok) return;
-    const data = (await response.json()) as OutboxEvent[];
-    setOutboxEvents(data);
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/outbox/dead-letter?limit=50`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const data = (await response.json()) as OutboxEvent[];
+      setOutboxEvents(data);
+    } catch (error) {
+      console.error("Failed to load outbox dead letter:", error);
+    }
   };
 
   const replayOutboxEvent = async (eventId: string) => {
     if (!username || !password) return;
-    const response = await fetch(`${API_BASE}/v1/admin/outbox/${eventId}/replay`, {
-      method: "POST",
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      setMessage("Replay scheduled");
-      void loadOutboxDeadLetter();
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/outbox/${eventId}/replay`, {
+        method: "POST",
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        setMessage("Replay scheduled");
+        void loadOutboxDeadLetter();
+      } else {
+        setMessage("Replay failed");
+      }
+    } catch (error) {
+      console.error("Failed to replay outbox event:", error);
+      setMessage("Replay failed");
     }
   };
 
@@ -526,15 +567,20 @@ export default function AdminPage() {
       return;
     }
     setMessage(null);
-    const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}`, {
-      method: "PATCH",
-      headers: { ...authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    if (response.ok) {
-      setMessage("Lead updated");
-      void loadLeads();
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/leads/${leadId}`, {
+        method: "PATCH",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (response.ok) {
+        setMessage("Lead updated");
+        void loadLeads();
+      } else {
+        setMessage("Failed to update lead");
+      }
+    } catch (error) {
+      console.error("Failed to update lead status:", error);
       setMessage("Failed to update lead");
     }
   };
@@ -545,14 +591,19 @@ export default function AdminPage() {
       return;
     }
     setMessage(null);
-    const response = await fetch(`${API_BASE}/v1/admin/bookings/${bookingId}/${action}`, {
-      method: "POST",
-      headers: authHeaders,
-    });
-    if (response.ok) {
-      setMessage(`Booking ${action}ed`);
-      void loadBookings();
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/bookings/${bookingId}/${action}`, {
+        method: "POST",
+        headers: authHeaders,
+      });
+      if (response.ok) {
+        setMessage(`Booking ${action}ed`);
+        void loadBookings();
+      } else {
+        setMessage("Booking action failed");
+      }
+    } catch (error) {
+      console.error("Failed to perform booking action:", error);
       setMessage("Booking action failed");
     }
   };
@@ -566,15 +617,20 @@ export default function AdminPage() {
     if (!newStart) return;
     const duration = prompt("Time on site hours", "1.5");
     if (!duration) return;
-    const response = await fetch(`${API_BASE}/v1/admin/bookings/${bookingId}/reschedule`, {
-      method: "POST",
-      headers: { ...authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ starts_at: newStart, time_on_site_hours: parseFloat(duration) }),
-    });
-    if (response.ok) {
-      setMessage("Booking rescheduled");
-      void loadBookings();
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/bookings/${bookingId}/reschedule`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ starts_at: newStart, time_on_site_hours: parseFloat(duration) }),
+      });
+      if (response.ok) {
+        setMessage("Booking rescheduled");
+        void loadBookings();
+      } else {
+        setMessage("Reschedule failed");
+      }
+    } catch (error) {
+      console.error("Failed to reschedule booking:", error);
       setMessage("Reschedule failed");
     }
   };
