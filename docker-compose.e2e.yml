@@ -53,9 +53,9 @@ services:
       - "3000:80"
     environment:
       ADMIN_PROXY_AUTH_SECRET: ${ADMIN_PROXY_AUTH_SECRET:-e2e-proxy-auth-secret-change-me-1234567890}
-      ADMIN_PROXY_AUTH_USER: ${ADMIN_PROXY_AUTH_USER:-e2e-admin}
-      ADMIN_PROXY_AUTH_EMAIL: ${ADMIN_PROXY_AUTH_EMAIL:-e2e-admin@e2e.invalid}
-      ADMIN_PROXY_AUTH_ROLES: ${ADMIN_PROXY_AUTH_ROLES:-admin}
+      ADMIN_PROXY_AUTH_USER: ${ADMIN_PROXY_AUTH_E2E_USER:-e2e-admin}
+      ADMIN_PROXY_AUTH_EMAIL: ${ADMIN_PROXY_AUTH_E2E_EMAIL:-e2e-admin@e2e.invalid}
+      ADMIN_PROXY_AUTH_ROLES: ${ADMIN_PROXY_AUTH_E2E_ROLES:-admin}
       ADMIN_PROXY_AUTH_MFA: ${ADMIN_PROXY_AUTH_MFA:-true}
     volumes:
       - ./Caddyfile.e2e:/etc/caddy/Caddyfile:ro

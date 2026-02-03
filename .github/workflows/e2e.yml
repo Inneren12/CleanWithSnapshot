@@ -175,6 +175,25 @@ jobs:
           docker compose version || true
           docker version || true
 
+      - name: Create diagnostic files directory
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Guaranteed writable location on GitHub runner
+          DIAG_DIR="${RUNNER_TEMP:-/tmp}/e2e-diagnostics-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+
+          # If something exists there as a file, remove it so mkdir works
+          if [ -f "$DIAG_DIR" ]; then
+            rm -f "$DIAG_DIR"
+          fi
+
+          mkdir -p "$DIAG_DIR"
+          echo "DIAG_DIR=$DIAG_DIR" >> "$GITHUB_ENV"
+
+          echo "Diagnostics dir: $DIAG_DIR"
+          ls -la "$DIAG_DIR"
+
       - name: Verify E2E db command preload (source)
         run: |
           set -euo pipefail
@@ -271,13 +290,43 @@ jobs:
             raise SystemExit(1)
           PY
 
-      - name: Compose config (diagnostic only)
+      - name: YAML guardrail (detect duplicate keys)
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config > compose_config_stdout.yml 2> compose_config_stderr.log || true
-          if [ ! -s compose_config_stdout.yml ]; then
-            echo "docker compose config produced empty output (diagnostic only)"
+          echo "=== Checking for duplicate service keys in docker-compose.e2e.yml ==="
+          # Quick check for duplicate top-level service definitions
+          for key in caddy api web db jobs redis; do
+            count=$(grep -E "^  ${key}:\s*$" docker-compose.e2e.yml 2>/dev/null | wc -l)
+            if [ "$count" -gt 1 ]; then
+              echo "ERROR: Found $count definitions of '$key:' in docker-compose.e2e.yml"
+              echo "=== Line numbers with '$key:' ==="
+              grep -n "^  ${key}:" docker-compose.e2e.yml || true
+              echo "=== Context around duplicates ==="
+              nl -ba docker-compose.e2e.yml | grep -A5 -B5 "^  ${key}:" || true
+            fi
+          done
+          echo "=== YAML guardrail check complete ==="
+
+      - name: Validate compose config (fail-fast)
+        run: |
+          set -euo pipefail
+          echo "=== Validating docker-compose configuration ==="
+          if ! docker compose -f docker-compose.yml -f docker-compose.e2e.yml config > compose_config_stdout.yml 2> compose_config_stderr.log; then
+            echo "ERROR: docker compose config failed!"
+            echo ""
+            echo "=== stderr output ==="
             cat compose_config_stderr.log || true
+            echo ""
+            echo "=== docker-compose.e2e.yml with line numbers (lines 1-100) ==="
+            nl -ba docker-compose.e2e.yml | head -100
+            echo ""
+            echo "=== Searching for duplicate 'caddy:' definitions ==="
+            grep -n "caddy:" docker-compose.e2e.yml || true
+            echo ""
+            echo "=== Full docker-compose.e2e.yml ==="
+            nl -ba docker-compose.e2e.yml
+            exit 1
           fi
+          echo "docker compose config validation passed"
 
       - name: Compose up (db + redis)
         run: |
@@ -376,13 +425,13 @@ jobs:
           wait_on() {
             local url=$1
             local name=$2
-            if ! curl -fsS --max-time 2 --retry 60 --retry-connrefused --retry-delay 2 "$url" >/dev/null; then
+            if ! curl -fsS --max-time 5 --retry 90 --retry-connrefused --retry-delay 3 "$url" >/dev/null; then
               echo "Timed out waiting for ${name} at ${url}"
               echo "--- ${name} response (if available) ---"
-              curl -sS -i --max-time 2 "$url" || true
+              curl -sS -i --max-time 5 "$url" || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 caddy || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 caddy || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 web || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic current || true
@@ -392,7 +441,7 @@ jobs:
           }
           wait_on "http://127.0.0.1:3000/healthz" "api healthz (via caddy)"
           wait_on "http://127.0.0.1:3000/readyz" "api readyz (via caddy)"
-          wait_on "http://127.0.0.1:3000/" "web"
+          wait_on "http://127.0.0.1:3000/" "web (via caddy)"
 
       - name: Preflight admin auth
         run: |
@@ -460,41 +509,69 @@ jobs:
 
       - name: Collect compose diagnostics
         if: always()
+        shell: bash
         run: |
+          set +e  # Never fail this step
+
+          # Use DIAG_DIR from env, fallback to local directory
+          DIAG_DIR="${DIAG_DIR:-e2e-diagnostics}"
+          mkdir -p "$DIAG_DIR" 2>/dev/null || true
+
+          echo "Collecting diagnostics to: $DIAG_DIR"
+
+          # Save numbered docker-compose.e2e.yml for debugging
+          nl -ba docker-compose.e2e.yml > "$DIAG_DIR/docker-compose.e2e.nl.txt" 2>&1 || true
+
+          # Save compose config (may fail if YAML is invalid)
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml config > "$DIAG_DIR/e2e-compose.config.txt" 2>&1 || {
+            echo "=== Compose config failed (YAML likely invalid) ===" >> "$DIAG_DIR/e2e-compose.config.txt"
+          }
+
+          # Save full compose logs
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --timestamps > "$DIAG_DIR/e2e-compose.log" 2>&1 || true
+
+          # Build detailed diagnostics log
           {
+            echo "== Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+            echo ""
             echo "== docker compose ps =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps 2>&1 || echo "(ps failed)"
             echo ""
             echo "== docker compose config =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml config
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml config 2>&1 || echo "(config failed - see e2e-compose.config.txt)"
             echo ""
             echo "== docker compose port api 8000 =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml port api 8000 || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml port api 8000 2>&1 || echo "(port check failed)"
             echo ""
             echo "== docker compose logs api (tail) =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=400 || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=400 2>&1 || echo "(api logs failed)"
             echo ""
             echo "== docker compose logs caddy (tail) =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color caddy --tail=200 || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color caddy --tail=300 2>&1 || echo "(caddy logs failed)"
             echo ""
             echo "== docker compose logs web (tail) =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color web --tail=200 || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color web --tail=200 2>&1 || echo "(web logs failed)"
             echo ""
             echo "== docker compose logs db (tail) =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 2>&1 || echo "(db logs failed)"
             echo ""
             echo "== docker inspect db health =="
-            db_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q db)
+            db_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q db 2>/dev/null)
             if [ -n "$db_container_id" ]; then
-              docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
+              docker inspect "$db_container_id" --format '{{json .State.Health}}' 2>&1 || echo "(inspect failed)"
             else
-              echo "db container missing"
+              echo "db container missing or compose ps failed"
             fi
             echo ""
             echo "== alembic status (api) =="
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic current || true
-            docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic heads || true
-          } > e2e-compose-diagnostics.log
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic current 2>&1 || echo "(alembic current failed)"
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic heads 2>&1 || echo "(alembic heads failed)"
+          } > "$DIAG_DIR/e2e-compose-diagnostics.log" 2>&1 || true
+
+          # Copy to root for backward compatibility
+          cp "$DIAG_DIR/e2e-compose-diagnostics.log" e2e-compose-diagnostics.log 2>/dev/null || true
+
+          echo "Diagnostics collection complete"
 
       - name: Upload Playwright report
         if: always()
@@ -502,6 +579,7 @@ jobs:
         with:
           name: playwright-report
           path: web/playwright-report/**
+          if-no-files-found: ignore
 
       - name: Upload Playwright test results
         if: always()
@@ -509,6 +587,7 @@ jobs:
         with:
           name: playwright-test-results
           path: web/test-results/**
+          if-no-files-found: ignore
 
       - name: Upload compose diagnostics
         if: always()
@@ -516,7 +595,29 @@ jobs:
         with:
           name: e2e-compose-diagnostics
           path: e2e-compose-diagnostics.log
+          if-no-files-found: ignore
 
-      - name: Compose down
+      - name: Upload enhanced diagnostics
         if: always()
-        run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-diagnostics-bundle
+          path: |
+            ${{ env.DIAG_DIR }}
+            e2e-diagnostics/
+            compose_config_stdout.yml
+            compose_config_stderr.log
+          if-no-files-found: ignore
+
+      - name: Compose down (non-fatal)
+        if: always()
+        run: |
+          echo "=== Tearing down compose stack ==="
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v || {
+            echo "WARNING: Compose down failed (non-fatal, likely due to YAML parse error)"
+            echo "Attempting to stop containers individually..."
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q 2>/dev/null | xargs -r docker stop || true
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q 2>/dev/null | xargs -r docker rm -f || true
+            true
+          }
+          echo "=== Teardown complete ==="

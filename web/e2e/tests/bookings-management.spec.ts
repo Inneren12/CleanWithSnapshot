@@ -32,9 +32,15 @@ test.describe('Bookings management', () => {
     await page.goto('/admin');
 
     await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    // Ensure no error page takeover
+    await expect(page.locator('html#__next_error__')).toHaveCount(0);
+
+    // Wait for stable controls wrapper
+    await expect(page.getByTestId('bookings-controls')).toBeVisible();
 
     const dateInput = page.getByTestId('bookings-date-input');
     await expect(dateInput).toBeVisible();
+    await expect(dateInput).toBeEnabled();
 
     // Set a specific date
     const today = new Date().toISOString().split('T')[0];
@@ -46,6 +52,11 @@ test.describe('Bookings management', () => {
     await page.goto('/admin');
 
     await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    // Ensure no error page takeover
+    await expect(page.locator('html#__next_error__')).toHaveCount(0);
+
+    // Wait for stable controls wrapper
+    await expect(page.getByTestId('bookings-controls')).toBeVisible();
 
     const refreshButton = page.getByTestId('bookings-refresh-btn');
     await expect(refreshButton).toBeVisible();
@@ -53,6 +64,9 @@ test.describe('Bookings management', () => {
 
     // Click refresh button
     await refreshButton.click();
+
+    // Ensure no error page takeover after click
+    await expect(page.locator('html#__next_error__')).toHaveCount(0);
 
     // Table should still be visible after refresh
     await expect(page.getByTestId('bookings-table')).toBeVisible();
@@ -62,6 +76,11 @@ test.describe('Bookings management', () => {
     await page.goto('/admin');
 
     await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    // Ensure no error page takeover
+    await expect(page.locator('html#__next_error__')).toHaveCount(0);
+
+    // Wait for stable controls wrapper first
+    await expect(page.getByTestId('bookings-controls')).toBeVisible();
     await expect(page.getByTestId('bookings-table')).toBeVisible();
 
     // Check for expected column headers

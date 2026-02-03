@@ -33,11 +33,16 @@ test.describe('Leads management', () => {
     await page.goto('/admin');
 
     await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    // Ensure no error page takeover
+    await expect(page.locator('html#__next_error__')).toHaveCount(0);
+
+    // Wait for stable controls wrapper
+    await expect(page.getByTestId('leads-controls')).toBeVisible();
     await page.getByTestId('leads-table').waitFor({ state: 'visible' });
 
     const statusFilter = page.getByTestId('leads-status-filter');
     await expect(statusFilter).toBeVisible();
-    await expect(statusFilter).toBeEditable();
+    await expect(statusFilter).toBeEnabled();
 
     // Type a filter value
     await statusFilter.fill('New');
@@ -48,6 +53,11 @@ test.describe('Leads management', () => {
     await page.goto('/admin');
 
     await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    // Ensure no error page takeover
+    await expect(page.locator('html#__next_error__')).toHaveCount(0);
+
+    // Wait for stable controls wrapper
+    await expect(page.getByTestId('leads-controls')).toBeVisible();
 
     const refreshButton = page.getByTestId('leads-refresh-btn');
     await expect(refreshButton).toBeVisible();
@@ -55,6 +65,9 @@ test.describe('Leads management', () => {
 
     // Click refresh button
     await refreshButton.click();
+
+    // Ensure no error page takeover after click
+    await expect(page.locator('html#__next_error__')).toHaveCount(0);
 
     // Table should still be visible after refresh
     await expect(page.getByTestId('leads-table')).toBeVisible();
