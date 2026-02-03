@@ -188,6 +188,8 @@ export default function AdminPage() {
   const [metricsRange, setMetricsRange] = useState(() => presetRange(7));
   const [metricsPreset, setMetricsPreset] = useState<number | null>(7);
   const [leadStatusFilter, setLeadStatusFilter] = useState<string>("");
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     const today = new Date();
     return formatYMDInTz(today, DEFAULT_ORG_TIMEZONE);
@@ -404,26 +406,40 @@ export default function AdminPage() {
 
   const loadLeads = async () => {
     if (!username || !password) return;
-    const filter = leadStatusFilter ? `?status=${encodeURIComponent(leadStatusFilter)}` : "";
-    const response = await fetch(`${API_BASE}/v1/admin/leads${filter}`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (!response.ok) return;
-    const data = (await response.json()) as LeadListResponse;
-    setLeads(data.items);
+    setLeadsLoading(true);
+    try {
+      const filter = leadStatusFilter ? `?status=${encodeURIComponent(leadStatusFilter)}` : "";
+      const response = await fetch(`${API_BASE}/v1/admin/leads${filter}`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const data = (await response.json()) as LeadListResponse;
+      setLeads(data.items);
+    } catch (error) {
+      console.error("Failed to load leads:", error);
+    } finally {
+      setLeadsLoading(false);
+    }
   };
 
   const loadBookings = async () => {
     if (!username || !password) return;
-    const endDate = addDaysYMD(selectedDate, 6, orgTimezone);
-    const response = await fetch(
-      `${API_BASE}/v1/admin/bookings?from=${selectedDate}&to=${endDate}`,
-      { headers: authHeaders, cache: "no-store" }
-    );
-    if (!response.ok) return;
-    const data = (await response.json()) as Booking[];
-    setBookings(data);
+    setBookingsLoading(true);
+    try {
+      const endDate = addDaysYMD(selectedDate, 6, orgTimezone);
+      const response = await fetch(
+        `${API_BASE}/v1/admin/bookings?from=${selectedDate}&to=${endDate}`,
+        { headers: authHeaders, cache: "no-store" }
+      );
+      if (!response.ok) return;
+      const data = (await response.json()) as Booking[];
+      setBookings(data);
+    } catch (error) {
+      console.error("Failed to load bookings:", error);
+    } finally {
+      setBookingsLoading(false);
+    }
   };
 
   const loadExportDeadLetter = async () => {
@@ -810,7 +826,7 @@ return (
             <h2>Leads</h2>
             <p className="muted">Filter and set statuses directly.</p>
           </div>
-          <div className="admin-actions">
+          <div className="admin-actions" data-testid="leads-controls">
             <label style={{ width: "100%" }}>
               <span className="label">Status filter</span>
               <input
@@ -818,10 +834,17 @@ return (
                 value={leadStatusFilter}
                 onChange={(e) => setLeadStatusFilter(e.target.value.toUpperCase())}
                 placeholder="e.g. CONTACTED"
+                disabled={leadsLoading}
               />
             </label>
-            <button data-testid="leads-refresh-btn" className="btn btn-ghost" type="button" onClick={() => void loadLeads()}>
-              Refresh
+            <button
+              data-testid="leads-refresh-btn"
+              className="btn btn-ghost"
+              type="button"
+              onClick={() => void loadLeads()}
+              disabled={leadsLoading}
+            >
+              {leadsLoading ? "Loading…" : "Refresh"}
             </button>
           </div>
           <table className="table-like" data-testid="leads-table">
@@ -928,13 +951,25 @@ return (
           <h2>Bookings</h2>
           <p className="muted">Day view with actions, plus a quick week glance.</p>
         </div>
-        <div className="admin-actions">
+        <div className="admin-actions" data-testid="bookings-controls">
           <label>
             <span className="label">Date</span>
-            <input data-testid="bookings-date-input" type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+            <input
+              data-testid="bookings-date-input"
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              disabled={bookingsLoading}
+            />
           </label>
-          <button data-testid="bookings-refresh-btn" className="btn btn-ghost" type="button" onClick={() => void loadBookings()}>
-            Refresh
+          <button
+            data-testid="bookings-refresh-btn"
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => void loadBookings()}
+            disabled={bookingsLoading}
+          >
+            {bookingsLoading ? "Loading…" : "Refresh"}
           </button>
         </div>
         <table className="table-like" data-testid="bookings-table">
