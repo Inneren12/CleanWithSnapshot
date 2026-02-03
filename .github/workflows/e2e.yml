@@ -338,13 +338,14 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T db \
             psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select 1;"
 
-      - name: Compose up (api + web + jobs)
+      - name: Compose up (api + web + jobs + caddy)
         run: |
           set +e
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 api web jobs
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 api web jobs caddy
           status=$?
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 caddy || true
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
           api_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q api)
           if [ -n "$api_container_id" ]; then
@@ -381,19 +382,21 @@ jobs:
               curl -sS -i --max-time 2 "$url" || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 caddy || true
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 web || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic current || true
               docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api alembic heads || true
               return 1
             fi
           }
-          wait_on "http://127.0.0.1:8000/healthz" "api healthz"
-          wait_on "http://127.0.0.1:8000/readyz" "api readyz"
+          wait_on "http://127.0.0.1:3000/healthz" "api healthz (via caddy)"
+          wait_on "http://127.0.0.1:3000/readyz" "api readyz (via caddy)"
           wait_on "http://127.0.0.1:3000/" "web"
 
       - name: Preflight admin auth
         run: |
-          PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:8000/v1/admin/profile
+          PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:3000/v1/admin/profile
 
       - name: Install web dependencies
         working-directory: web
@@ -416,7 +419,7 @@ jobs:
         env:
           PW_CHANNEL: chrome
           PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
-          PLAYWRIGHT_API_BASE_URL: http://127.0.0.1:8000
+          PLAYWRIGHT_API_BASE_URL: http://127.0.0.1:3000
           ADMIN_BASIC_USERNAME: ${{ env.ADMIN_BASIC_USERNAME }}
           ADMIN_BASIC_PASSWORD: ${{ env.ADMIN_BASIC_PASSWORD }}
           ADMIN_PROXY_AUTH_ENABLED: ${{ env.ADMIN_PROXY_AUTH_ENABLED }}
@@ -431,7 +434,7 @@ jobs:
         run: |
           PW_CHANNEL=chrome \
           PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
-          PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:8000 \
+          PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:3000 \
           ADMIN_BASIC_USERNAME="$ADMIN_BASIC_USERNAME" \
           ADMIN_BASIC_PASSWORD="$ADMIN_BASIC_PASSWORD" \
           ADMIN_PROXY_AUTH_ENABLED="$ADMIN_PROXY_AUTH_ENABLED" \
@@ -470,6 +473,12 @@ jobs:
             echo ""
             echo "== docker compose logs api (tail) =="
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color api --tail=400 || true
+            echo ""
+            echo "== docker compose logs caddy (tail) =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color caddy --tail=200 || true
+            echo ""
+            echo "== docker compose logs web (tail) =="
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color web --tail=200 || true
             echo ""
             echo "== docker compose logs db (tail) =="
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
