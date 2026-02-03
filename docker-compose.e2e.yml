@@ -77,7 +77,7 @@ services:
   caddy:
     image: caddy:2
     ports:
-      - "3000:8080"
+      - "3000:80"
     environment:
       ADMIN_PROXY_AUTH_SECRET: ${ADMIN_PROXY_AUTH_SECRET:-e2e-proxy-auth-secret-change-me-1234567890}
       ADMIN_PROXY_AUTH_USER: ${ADMIN_PROXY_AUTH_E2E_USER:-e2e-admin}

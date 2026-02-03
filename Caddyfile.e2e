@@ -1,9 +1,8 @@
 {
   auto_https off
-  http_port 8080
 }
 
-:8080 {
+:80 {
   @health path /healthz /readyz
   handle @health {
     reverse_proxy api:8000
