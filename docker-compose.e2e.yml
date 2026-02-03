@@ -38,8 +38,6 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: "http://127.0.0.1:8000"
         NEXT_PUBLIC_E2E_MODE: "true"
-    ports:
-      - "3000:3000"
 
   jobs:
     environment:
@@ -51,3 +49,19 @@ services:
         "-lc",
         "set -euo pipefail; echo 'Waiting for api /readyz'; python - <<'PY'\nimport json\nimport time\nimport urllib.request\n\nurl = 'http://api:8000/readyz'\ndeadline = time.time() + 300\nwhile True:\n    try:\n        with urllib.request.urlopen(url, timeout=2) as resp:\n            body = resp.read().decode('utf-8')\n        payload = json.loads(body)\n        if resp.status == 200 and payload.get('ok') is True:\n            print('api readyz ok')\n            break\n        print('api readyz not ready:', payload)\n    except Exception as exc:\n        print('api readyz check failed:', type(exc).__name__)\n    if time.time() > deadline:\n        raise SystemExit('Timed out waiting for api readyz')\n    time.sleep(3)\nPY\nexec python -m app.jobs.run --interval 60",
       ]
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "3000:8080"
+    environment:
+      ADMIN_PROXY_AUTH_SECRET: ${ADMIN_PROXY_AUTH_SECRET:-e2e-proxy-auth-secret-change-me-1234567890}
+      ADMIN_PROXY_AUTH_USER: ${ADMIN_PROXY_AUTH_E2E_USER:-e2e-admin}
+      ADMIN_PROXY_AUTH_EMAIL: ${ADMIN_PROXY_AUTH_E2E_EMAIL:-e2e-admin@e2e.invalid}
+      ADMIN_PROXY_AUTH_ROLES: ${ADMIN_PROXY_AUTH_E2E_ROLES:-admin}
+      ADMIN_PROXY_AUTH_MFA: ${ADMIN_PROXY_AUTH_MFA:-true}
+    volumes:
+      - ./Caddyfile.e2e:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+      - web
