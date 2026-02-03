@@ -50,6 +50,7 @@ from app.api.routes_public import router as public_router
 from app.api.routes_public_settings import router as public_settings_router
 from app.api.routes_leads import router as leads_router
 from app.api.routes_billing import router as billing_router
+from app.api.routes_e2e_test import router as e2e_test_router
 from app.api.problem_details import (
     PROBLEM_TYPE_DOMAIN,
     PROBLEM_TYPE_RATE_LIMIT,
@@ -530,6 +531,7 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
     app.include_router(queues_router)
     app.include_router(health_backup_router)
     app.include_router(timeline_router)
+    app.include_router(e2e_test_router)
     if app_settings.metrics_enabled:
         from app.api.routes_metrics import router as metrics_router
 
