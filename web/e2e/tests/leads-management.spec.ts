@@ -33,13 +33,15 @@ test.describe('Leads management', () => {
     await page.goto('/admin');
 
     await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    await page.getByTestId('leads-table').waitFor({ state: 'visible' });
 
     const statusFilter = page.getByTestId('leads-status-filter');
     await expect(statusFilter).toBeVisible();
+    await expect(statusFilter).toBeEditable();
 
     // Type a filter value
-    await statusFilter.fill('CONTACTED');
-    await expect(statusFilter).toHaveValue('CONTACTED');
+    await statusFilter.fill('New');
+    await expect(statusFilter).toHaveValue('NEW');
   });
 
   test('leads refresh button is functional', async ({ page }) => {

@@ -80,6 +80,6 @@ test.describe('Bookings management', () => {
     await expect(page.getByTestId('admin-bookings-section')).toBeVisible();
 
     // Week view heading should be visible
-    await expect(page.getByRole('heading', { name: 'Week view' })).toBeVisible();
+    await expect(page.getByTestId('bookings-week-view')).toBeVisible();
   });
 });
