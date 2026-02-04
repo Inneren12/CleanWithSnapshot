@@ -85,60 +85,103 @@ async def create_lead(
     http_request: Request,
     session: AsyncSession = Depends(get_db_session),
 ) -> LeadResponse:
-    org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
-    turnstile_transport = getattr(http_request.app.state, "turnstile_transport", None)
-    remote_ip = http_request.client.host if http_request.client else None
-    request_id = getattr(http_request.state, "request_id", None)
-    captcha_required = settings.captcha_mode != "off" and settings.captcha_enabled
-    if captcha_required:
-        if settings.captcha_mode == "turnstile" and not settings.turnstile_secret_key:
-            log_captcha_unavailable(
-                "turnstile_secret_missing",
-                request_id=request_id,
-                mode=settings.captcha_mode,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="captcha_unavailable"
-            )
-        if not request.captcha_token:
-            log_captcha_event(
-                "missing_token",
-                request_id=request_id,
-                mode=settings.captcha_mode,
-                provider=settings.captcha_mode,
-            )
-            raise HTTPException(status_code=422, detail="captcha_required")
-        captcha_ok = await verify_turnstile(request.captcha_token, remote_ip, transport=turnstile_transport)
-        if not captcha_ok:
-            log_captcha_event(
-                "failed",
-                request_id=request_id,
-                mode=settings.captcha_mode,
-                provider=settings.captcha_mode,
-            )
-            raise HTTPException(status_code=422, detail="captcha_failed")
-        log_captcha_event(
-            "success",
-            request_id=request_id,
-            mode=settings.captcha_mode,
-            provider=settings.captcha_mode,
+    # Log function entry with request details
+    logger.info(
+        "create_lead_started",
+        extra={
+            "extra": {
+                "email": request.email,
+                "name": request.name,
+                "phone": request.phone,
+            }
+        },
+    )
+
+    try:
+        org_id = getattr(http_request.state, "org_id", None) or entitlements.resolve_org_id(http_request)
+        logger.info(
+            "create_lead_org_resolved",
+            extra={
+                "extra": {
+                    "org_id": str(org_id),
+                    "email": request.email,
+                }
+            },
         )
 
-    estimate_payload = request.estimate_snapshot.model_dump(mode="json")
-    structured_inputs = request.structured_inputs.model_dump(mode="json")
-    utm = request.utm
-    utm_source = request.utm_source or (utm.utm_source if utm else None)
-    utm_medium = request.utm_medium or (utm.utm_medium if utm else None)
-    utm_campaign = request.utm_campaign or (utm.utm_campaign if utm else None)
-    utm_term = request.utm_term or (utm.utm_term if utm else None)
-    utm_content = request.utm_content or (utm.utm_content if utm else None)
-    source = request.source or utm_source
-    campaign = request.campaign or utm_campaign
-    keyword = request.keyword or utm_term
-    landing_page = request.landing_page or utm_content
-    lead: Lead
-    try:
+        turnstile_transport = getattr(http_request.app.state, "turnstile_transport", None)
+        remote_ip = http_request.client.host if http_request.client else None
+        request_id = getattr(http_request.state, "request_id", None)
+        captcha_required = settings.captcha_mode != "off" and settings.captcha_enabled
+        if captcha_required:
+            if settings.captcha_mode == "turnstile" and not settings.turnstile_secret_key:
+                log_captcha_unavailable(
+                    "turnstile_secret_missing",
+                    request_id=request_id,
+                    mode=settings.captcha_mode,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="captcha_unavailable"
+                )
+            if not request.captcha_token:
+                log_captcha_event(
+                    "missing_token",
+                    request_id=request_id,
+                    mode=settings.captcha_mode,
+                    provider=settings.captcha_mode,
+                )
+                raise HTTPException(status_code=422, detail="captcha_required")
+            captcha_ok = await verify_turnstile(request.captcha_token, remote_ip, transport=turnstile_transport)
+            if not captcha_ok:
+                log_captcha_event(
+                    "failed",
+                    request_id=request_id,
+                    mode=settings.captcha_mode,
+                    provider=settings.captcha_mode,
+                )
+                raise HTTPException(status_code=422, detail="captcha_failed")
+            log_captcha_event(
+                "success",
+                request_id=request_id,
+                mode=settings.captcha_mode,
+                provider=settings.captcha_mode,
+            )
+
+        estimate_payload = request.estimate_snapshot.model_dump(mode="json")
+        structured_inputs = request.structured_inputs.model_dump(mode="json")
+        utm = request.utm
+        utm_source = request.utm_source or (utm.utm_source if utm else None)
+        utm_medium = request.utm_medium or (utm.utm_medium if utm else None)
+        utm_campaign = request.utm_campaign or (utm.utm_campaign if utm else None)
+        utm_term = request.utm_term or (utm.utm_term if utm else None)
+        utm_content = request.utm_content or (utm.utm_content if utm else None)
+        source = request.source or utm_source
+        campaign = request.campaign or utm_campaign
+        keyword = request.keyword or utm_term
+        landing_page = request.landing_page or utm_content
+
+        lead: Lead
+        logger.info(
+            "create_lead_session_begin",
+            extra={
+                "extra": {
+                    "org_id": str(org_id),
+                    "email": request.email,
+                }
+            },
+        )
+
         async with session.begin():
+            logger.info(
+                "create_lead_transaction_started",
+                extra={
+                    "extra": {
+                        "org_id": str(org_id),
+                        "email": request.email,
+                    }
+                },
+            )
+
             referrer: Lead | None = None
             if request.referral_code:
                 result = await session.execute(
@@ -149,6 +192,17 @@ async def create_lead(
                 referrer = result.scalar_one_or_none()
                 if referrer is None:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid referral code")
+
+            logger.info(
+                "create_lead_building_model",
+                extra={
+                    "extra": {
+                        "org_id": str(org_id),
+                        "email": request.email,
+                        "has_referrer": referrer is not None,
+                    }
+                },
+            )
 
             lead = Lead(
                 name=request.name,
@@ -180,8 +234,53 @@ async def create_lead(
                 referred_by_code=request.referral_code if referrer else None,
                 org_id=uuid.UUID(str(org_id)),
             )
+
+            logger.info(
+                "create_lead_before_session_add",
+                extra={
+                    "extra": {
+                        "lead_id": lead.lead_id,
+                        "org_id": str(org_id),
+                        "email": request.email,
+                    }
+                },
+            )
+
             session.add(lead)
+
+            logger.info(
+                "create_lead_after_session_add",
+                extra={
+                    "extra": {
+                        "lead_id": lead.lead_id,
+                        "org_id": str(org_id),
+                    }
+                },
+            )
+
+            logger.info(
+                "create_lead_before_ensure_unique_referral_code",
+                extra={
+                    "extra": {
+                        "lead_id": lead.lead_id,
+                        "org_id": str(org_id),
+                        "referral_code": lead.referral_code,
+                    }
+                },
+            )
+
             await ensure_unique_referral_code(session, lead)
+
+            logger.info(
+                "create_lead_after_ensure_unique_referral_code",
+                extra={
+                    "extra": {
+                        "lead_id": lead.lead_id,
+                        "org_id": str(org_id),
+                        "referral_code": lead.referral_code,
+                    }
+                },
+            )
 
             try:
                 await log_event(
@@ -191,36 +290,86 @@ async def create_lead(
                     estimated_revenue_cents=estimated_revenue_from_lead(lead),
                     estimated_duration_minutes=estimated_duration_from_lead(lead),
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
+            except Exception:  # noqa: BLE001
+                logger.exception(
                     "analytics_log_failed",
                     extra={
                         "extra": {
                             "event_type": "lead_created",
                             "lead_id": lead.lead_id,
-                            "reason": type(exc).__name__,
+                            "org_id": str(org_id),
                         }
                     },
                 )
+
+            logger.info(
+                "create_lead_transaction_committing",
+                extra={
+                    "extra": {
+                        "lead_id": lead.lead_id,
+                        "org_id": str(org_id),
+                    }
+                },
+            )
+
+        logger.info(
+            "create_lead_transaction_committed",
+            extra={
+                "extra": {
+                    "lead_id": lead.lead_id,
+                    "org_id": str(org_id),
+                }
+            },
+        )
+
+        logger.info(
+            "create_lead_before_refresh",
+            extra={
+                "extra": {
+                    "lead_id": lead.lead_id,
+                    "org_id": str(org_id),
+                }
+            },
+        )
+
         await session.refresh(lead)
+
+        logger.info(
+            "create_lead_after_refresh",
+            extra={
+                "extra": {
+                    "lead_id": lead.lead_id,
+                    "org_id": str(org_id),
+                }
+            },
+        )
+
     except HTTPException:
         raise
-    except Exception as exc:
-        logger.error(
+    except Exception:
+        logger.exception(
             "lead_creation_failed",
             extra={
                 "extra": {
-                    "org_id": str(org_id),
+                    "org_id": str(org_id) if "org_id" in dir() else "unknown",
                     "email": request.email,
-                    "error_type": type(exc).__name__,
-                    "error_detail": str(exc),
+                    "name": request.name,
                 }
             },
-            exc_info=True,
         )
         raise
 
-    logger.info("lead_created", extra={"extra": {"lead_id": lead.lead_id}})
+    logger.info(
+        "lead_created",
+        extra={
+            "extra": {
+                "lead_id": lead.lead_id,
+                "org_id": str(org_id),
+                "email": request.email,
+            }
+        },
+    )
+
     export_transport = getattr(http_request.app.state, "export_transport", None)
     export_resolver = getattr(http_request.app.state, "export_resolver", None)
     export_session_factory = getattr(http_request.app.state, "db_session_factory", None)
