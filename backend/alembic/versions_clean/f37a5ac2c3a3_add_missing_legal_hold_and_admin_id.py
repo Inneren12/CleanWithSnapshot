@@ -1,7 +1,7 @@
 """add missing legal_hold and admin_id columns
 
-Revision ID: 79f222e77f57
-Revises: 437e5518ba99
+Revision ID: f37a5ac2c3a3
+Revises: c3e9a1b2d4f5
 Create Date: 2026-02-04 00:00:00.000000
 """
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "79f222e77f57"
-down_revision = "437e5518ba99"
+revision = "f37a5ac2c3a3"
+down_revision = "c3e9a1b2d4f5"
 branch_labels = None
 depends_on = None
 
