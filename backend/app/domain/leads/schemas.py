@@ -13,6 +13,7 @@ from app.domain.leads.statuses import (
     LEAD_STATUS_WON,
 )
 from app.domain.timeline.schemas import TimelineEvent
+from app.infra.email_validation import E2EEmailStr
 
 LeadStatus = Literal[
     LEAD_STATUS_NEW,
@@ -61,7 +62,7 @@ class LeadCreateRequest(BaseModel):
 
     name: str = Field(..., min_length=1)
     phone: str = Field(..., min_length=1)
-    email: Optional[EmailStr] = None
+    email: Optional[E2EEmailStr] = None
     postal_code: Optional[str] = None
     address: str = Field(..., min_length=1)
     preferred_dates: List[str] = Field(default_factory=list, min_length=1)

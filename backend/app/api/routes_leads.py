@@ -137,71 +137,88 @@ async def create_lead(
     keyword = request.keyword or utm_term
     landing_page = request.landing_page or utm_content
     lead: Lead
-    async with session.begin():
-        referrer: Lead | None = None
-        if request.referral_code:
-            result = await session.execute(
-                select(Lead).where(
-                    Lead.referral_code == request.referral_code, Lead.org_id == org_id
+    try:
+        async with session.begin():
+            referrer: Lead | None = None
+            if request.referral_code:
+                result = await session.execute(
+                    select(Lead).where(
+                        Lead.referral_code == request.referral_code, Lead.org_id == org_id
+                    )
                 )
-            )
-            referrer = result.scalar_one_or_none()
-            if referrer is None:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid referral code")
+                referrer = result.scalar_one_or_none()
+                if referrer is None:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid referral code")
 
-        lead = Lead(
-            name=request.name,
-            phone=request.phone,
-            email=request.email,
-            postal_code=request.postal_code,
-            address=request.address,
-            preferred_dates=request.preferred_dates,
-            access_notes=request.access_notes,
-            parking=request.parking,
-            pets=request.pets,
-            allergies=request.allergies,
-            notes=request.notes,
-            structured_inputs=structured_inputs,
-            estimate_snapshot=estimate_payload,
-            pricing_config_version=request.estimate_snapshot.pricing_config_version,
-            config_hash=request.estimate_snapshot.config_hash,
-            status=LEAD_STATUS_NEW,
-            utm_source=utm_source,
-            utm_medium=utm_medium,
-            utm_campaign=utm_campaign,
-            utm_term=utm_term,
-            utm_content=utm_content,
-            source=source,
-            campaign=campaign,
-            keyword=keyword,
-            landing_page=landing_page,
-            referrer=request.referrer,
-            referred_by_code=request.referral_code if referrer else None,
-            org_id=uuid.UUID(str(org_id)),
+            lead = Lead(
+                name=request.name,
+                phone=request.phone,
+                email=request.email,
+                postal_code=request.postal_code,
+                address=request.address,
+                preferred_dates=request.preferred_dates,
+                access_notes=request.access_notes,
+                parking=request.parking,
+                pets=request.pets,
+                allergies=request.allergies,
+                notes=request.notes,
+                structured_inputs=structured_inputs,
+                estimate_snapshot=estimate_payload,
+                pricing_config_version=request.estimate_snapshot.pricing_config_version,
+                config_hash=request.estimate_snapshot.config_hash,
+                status=LEAD_STATUS_NEW,
+                utm_source=utm_source,
+                utm_medium=utm_medium,
+                utm_campaign=utm_campaign,
+                utm_term=utm_term,
+                utm_content=utm_content,
+                source=source,
+                campaign=campaign,
+                keyword=keyword,
+                landing_page=landing_page,
+                referrer=request.referrer,
+                referred_by_code=request.referral_code if referrer else None,
+                org_id=uuid.UUID(str(org_id)),
+            )
+            session.add(lead)
+            await ensure_unique_referral_code(session, lead)
+
+            try:
+                await log_event(
+                    session,
+                    event_type=EventType.lead_created,
+                    lead=lead,
+                    estimated_revenue_cents=estimated_revenue_from_lead(lead),
+                    estimated_duration_minutes=estimated_duration_from_lead(lead),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "analytics_log_failed",
+                    extra={
+                        "extra": {
+                            "event_type": "lead_created",
+                            "lead_id": lead.lead_id,
+                            "reason": type(exc).__name__,
+                        }
+                    },
+                )
+        await session.refresh(lead)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "lead_creation_failed",
+            extra={
+                "extra": {
+                    "org_id": str(org_id),
+                    "email": request.email,
+                    "error_type": type(exc).__name__,
+                    "error_detail": str(exc),
+                }
+            },
+            exc_info=True,
         )
-        session.add(lead)
-        await ensure_unique_referral_code(session, lead)
-
-        try:
-            await log_event(
-                session,
-                event_type=EventType.lead_created,
-                lead=lead,
-                estimated_revenue_cents=estimated_revenue_from_lead(lead),
-                estimated_duration_minutes=estimated_duration_from_lead(lead),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "analytics_log_failed",
-                extra={
-                    "extra": {
-                        "event_type": "lead_created",
-                        "lead_id": lead.lead_id,
-                        "reason": type(exc).__name__,
-                    }
-                },
-            )
-    await session.refresh(lead)
+        raise
 
     logger.info("lead_created", extra={"extra": {"lead_id": lead.lead_id}})
     export_transport = getattr(http_request.app.state, "export_transport", None)
