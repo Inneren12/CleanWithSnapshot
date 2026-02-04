@@ -1,1 +1,0 @@
-../versions/0050_data_rights_tables.py
