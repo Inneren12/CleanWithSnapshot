@@ -1,7 +1,7 @@
 """add feature flag evaluation telemetry
 
 Revision ID: fedcba987654
-Revises: fe12a3b4c5d6
+Revises: ab12cd34ef56
 Create Date: 2026-03-15 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision = "fedcba987654"
-down_revision = "fe12a3b4c5d6"
+down_revision = "ab12cd34ef56"
 branch_labels = None
 depends_on = None
 

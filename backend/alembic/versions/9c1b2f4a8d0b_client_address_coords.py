@@ -1,7 +1,7 @@
 """Add optional lat/lng to client addresses.
 
 Revision ID: 9c1b2f4a8d0b
-Revises: bc6a9a9f5c2b
+Revises: 0077_client_addresses
 Create Date: 2026-01-10 00:00:00.000000
 """
 
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "9c1b2f4a8d0b"
-down_revision = "bc6a9a9f5c2b"
+down_revision = "0077_client_addresses"
 branch_labels = None
 depends_on = None
 
