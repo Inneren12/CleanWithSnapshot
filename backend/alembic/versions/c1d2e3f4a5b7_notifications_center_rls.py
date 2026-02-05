@@ -1,6 +1,6 @@
 """add notifications center RLS policies
 
-Revision ID: c1d2e3f4a5b6
+Revision ID: c1d2e3f4a5b7
 Revises: ff1a2b3c4d5e
 Create Date: 2026-04-01 00:00:00.000000
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "c1d2e3f4a5b6"
+revision = "c1d2e3f4a5b7"
 down_revision = "ff1a2b3c4d5e"
 branch_labels = None
 depends_on = None

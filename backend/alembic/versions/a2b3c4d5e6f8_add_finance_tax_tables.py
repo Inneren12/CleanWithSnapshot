@@ -1,6 +1,6 @@
 """add finance tax tables
 
-Revision ID: a2b3c4d5e6f7
+Revision ID: a2b3c4d5e6f8
 Revises: f9c1d2e3a4b5
 Create Date: 2026-02-01 00:00:00.000000
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "a2b3c4d5e6f7"
+revision = "a2b3c4d5e6f8"
 down_revision = "f9c1d2e3a4b5"
 branch_labels = None
 depends_on = None
