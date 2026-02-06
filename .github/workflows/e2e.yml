@@ -167,6 +167,9 @@ jobs:
             raise SystemExit(f"Missing required E2E env keys: {', '.join(missing)}")
           PY
 
+      - name: Check Alembic merge parents
+        run: python backend/scripts/check_alembic_merge_parents.py
+
       - name: Compose down (pre-cleanup)
         run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v || true
 
