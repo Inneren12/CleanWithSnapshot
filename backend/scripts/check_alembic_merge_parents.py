@@ -3,23 +3,62 @@
 
 from __future__ import annotations
 
-import sys
+import ast
+from dataclasses import dataclass
 from pathlib import Path
 
-from alembic.config import Config
-from alembic.script import ScriptDirectory
+
+@dataclass(frozen=True)
+class RevisionInfo:
+    revision: str
+    parents: list[str]
+    path: Path
 
 
-def _normalize_parents(revision) -> list[str]:
-    down_revision = revision.down_revision
-    if down_revision is None:
-        return []
-    if isinstance(down_revision, (list, tuple)):
-        return list(down_revision)
-    return [down_revision]
+def _parse_literal(node: ast.AST) -> object:
+    try:
+        return ast.literal_eval(node)
+    except Exception:
+        return None
 
 
-def _is_ancestor(ancestor: str, descendant: str, revision_map: dict[str, object]) -> bool:
+def _extract_revision_info(path: Path) -> RevisionInfo | None:
+    try:
+        module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError:
+        return None
+
+    revision_value: str | None = None
+    down_revision_value: object | None = None
+
+    for statement in module.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        for target in statement.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id == "revision":
+                value = _parse_literal(statement.value)
+                if isinstance(value, str):
+                    revision_value = value
+            elif target.id == "down_revision":
+                down_revision_value = _parse_literal(statement.value)
+
+    if revision_value is None:
+        return None
+
+    parents: list[str] = []
+    if down_revision_value is None:
+        parents = []
+    elif isinstance(down_revision_value, str):
+        parents = [down_revision_value]
+    elif isinstance(down_revision_value, (list, tuple)):
+        parents = [item for item in down_revision_value if isinstance(item, str)]
+
+    return RevisionInfo(revision=revision_value, parents=parents, path=path)
+
+
+def _is_ancestor(ancestor: str, descendant: str, parents_map: dict[str, list[str]]) -> bool:
     if ancestor == descendant:
         return False
     stack = [descendant]
@@ -31,10 +70,7 @@ def _is_ancestor(ancestor: str, descendant: str, revision_map: dict[str, object]
         seen.add(current)
         if current == ancestor:
             return True
-        revision = revision_map.get(current)
-        if revision is None:
-            continue
-        for parent in _normalize_parents(revision):
+        for parent in parents_map.get(current, []):
             if parent not in seen:
                 stack.append(parent)
     return False
@@ -42,32 +78,35 @@ def _is_ancestor(ancestor: str, descendant: str, revision_map: dict[str, object]
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[2]
-    config_path = repo_root / "backend" / "alembic.ini"
-    config = Config(str(config_path))
-    script = ScriptDirectory.from_config(config)
+    versions_dir = repo_root / "backend" / "alembic" / "versions"
 
-    revision_map = {rev.revision: rev for rev in script.walk_revisions()}
+    revision_infos = []
+    for path in sorted(versions_dir.glob("*.py")):
+        info = _extract_revision_info(path)
+        if info is not None:
+            revision_infos.append(info)
+
+    parents_map = {info.revision: info.parents for info in revision_infos}
     problems = []
 
-    for revision in revision_map.values():
-        parents = _normalize_parents(revision)
-        if len(parents) < 2:
+    for info in revision_infos:
+        if len(info.parents) < 2:
             continue
         redundant = []
-        for parent in parents:
-            for other in parents:
+        for parent in info.parents:
+            for other in info.parents:
                 if parent == other:
                     continue
-                if _is_ancestor(parent, other, revision_map):
+                if _is_ancestor(parent, other, parents_map):
                     redundant.append(parent)
                     break
         if redundant:
-            remaining = [parent for parent in parents if parent not in set(redundant)]
+            remaining = [parent for parent in info.parents if parent not in set(redundant)]
             problems.append(
                 {
-                    "revision": revision.revision,
-                    "path": revision.path,
-                    "parents": parents,
+                    "revision": info.revision,
+                    "path": info.path,
+                    "parents": info.parents,
                     "redundant": redundant,
                     "suggested": remaining,
                 }
