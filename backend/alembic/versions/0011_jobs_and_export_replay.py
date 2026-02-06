@@ -2,7 +2,7 @@
 Add job status tracking and export replay metadata
 
 Revision ID: 0011_jobs_and_export_replay
-Revises: 0010_invoices
+Revises: 0033_jobs_runner_heartbeat
 Create Date: 2025-05-01 00:00:00
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision = "0011_jobs_and_export_replay"
-down_revision = "0010_invoices"
+down_revision = "0033_jobs_runner_heartbeat"
 branch_labels = None
 depends_on = None
 

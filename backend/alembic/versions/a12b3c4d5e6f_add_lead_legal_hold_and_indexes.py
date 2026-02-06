@@ -20,7 +20,7 @@ depends_on = None
 def upgrade() -> None:
     op.add_column(
         "leads",
-        sa.Column("legal_hold", sa.Boolean(), server_default="0", nullable=False),
+        sa.Column("legal_hold", sa.Boolean(), server_default="false", nullable=False),
     )
     op.create_index(
         "ix_leads_deleted_at_legal_hold",

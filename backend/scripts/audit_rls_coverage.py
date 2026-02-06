@@ -216,11 +216,9 @@ def _load_rls_tables_from_migrations() -> set[str]:
     tables: set[str] = set()
     for migration_name in migration_names:
         migration_path = None
-        for version_dir in ("versions_clean", "versions"):
-            candidate = ROOT / "alembic" / version_dir / migration_name
-            if candidate.exists():
-                migration_path = candidate
-                break
+        candidate = ROOT / "alembic" / "versions" / migration_name
+        if candidate.exists():
+            migration_path = candidate
         if migration_path is None:
             continue
         spec = importlib.util.spec_from_file_location(

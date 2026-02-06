@@ -1,6 +1,6 @@
 """add data export requests
 
-Revision ID: 1a2b3c4d5e6f
+Revision ID: 1a2b3c4d5e70
 Revises: fedcba987654
 Create Date: 2026-03-01 00:00:00.000000
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "1a2b3c4d5e6f"
+revision = "1a2b3c4d5e70"
 down_revision = "fedcba987654"
 branch_labels = None
 depends_on = None
