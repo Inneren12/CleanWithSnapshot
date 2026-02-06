@@ -43,5 +43,5 @@ def downgrade() -> None:
         batch_op.alter_column(
             "is_active",
             existing_type=sa.Boolean(),
-            server_default=sa.text("1"),
+            server_default=sa.text("true"),
         )

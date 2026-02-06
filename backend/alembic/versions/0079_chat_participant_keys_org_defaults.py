@@ -98,4 +98,4 @@ def downgrade() -> None:
         batch_op.alter_column("org_id", server_default=sa.text(f"'{DEFAULT_ORG_ID}'"))
 
     with op.batch_alter_table("client_users") as batch_op:
-        batch_op.alter_column("is_blocked", server_default=sa.text("0"))
+        batch_op.alter_column("is_blocked", server_default=sa.text("false"))
