@@ -704,10 +704,10 @@ return (
       </div>
     ) : null}
 
-    <div className="admin-card" data-testid="admin-credentials-card">
+        <div className="admin-card" data-testid="admin-credentials-card">
         <div className="admin-section">
           <h2>Credentials</h2>
-          <div className="admin-actions">
+          <div className="admin-actions" data-testid="admin-login-form">
             <input data-testid="admin-username-input" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
             <input
               data-testid="admin-password-input"
@@ -882,7 +882,7 @@ return (
             <h2>Leads</h2>
             <p className="muted">Filter and set statuses directly.</p>
           </div>
-          <div className="admin-actions" data-testid="leads-controls">
+        <div className="admin-actions" data-testid="leads-controls">
             <label style={{ width: "100%" }}>
               <span className="label">Status filter</span>
               <input
@@ -894,7 +894,16 @@ return (
               />
             </label>
             <button
-              data-testid="leads-refresh-btn"
+              data-testid="leads-status-apply"
+              className="btn btn-secondary"
+              type="button"
+              onClick={() => void loadLeads()}
+              disabled={leadsLoading}
+            >
+              Apply
+            </button>
+            <button
+              data-testid="leads-refresh"
               className="btn btn-ghost"
               type="button"
               onClick={() => void loadLeads()}
@@ -906,10 +915,10 @@ return (
           <table className="table-like" data-testid="leads-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th data-testid="leads-column-name">Name</th>
+                <th data-testid="leads-column-email">Email</th>
+                <th data-testid="leads-column-status">Status</th>
+                <th data-testid="leads-column-actions">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1019,6 +1028,15 @@ return (
             />
           </label>
           <button
+            data-testid="bookings-date-apply"
+            className="btn btn-secondary"
+            type="button"
+            onClick={() => void loadBookings()}
+            disabled={bookingsLoading}
+          >
+            Apply
+          </button>
+          <button
             data-testid="bookings-refresh-btn"
             className="btn btn-ghost"
             type="button"
@@ -1029,13 +1047,13 @@ return (
           </button>
         </div>
         <table className="table-like" data-testid="bookings-table">
-          <thead>
+          <thead data-testid="bookings-columns">
             <tr>
-              <th>When</th>
-              <th>Status</th>
-              <th>Lead</th>
-              <th>Duration</th>
-              <th>Actions</th>
+              <th data-testid="bookings-column-when">When</th>
+              <th data-testid="bookings-column-status">Status</th>
+              <th data-testid="bookings-column-lead">Lead</th>
+              <th data-testid="bookings-column-duration">Duration</th>
+              <th data-testid="bookings-column-actions">Actions</th>
             </tr>
           </thead>
           <tbody>

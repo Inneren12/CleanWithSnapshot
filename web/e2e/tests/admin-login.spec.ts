@@ -17,6 +17,7 @@ test.describe('Admin login flow', () => {
     await page.goto('/admin');
 
     // Should see credential inputs
+    await expect(page.getByTestId('admin-login-form')).toBeVisible();
     const usernameInput = page.getByTestId('admin-username-input');
     const passwordInput = page.getByTestId('admin-password-input');
     const saveButton = page.getByTestId('admin-save-credentials-btn');
@@ -76,6 +77,7 @@ test.describe('Admin login flow', () => {
 
     // After reload, should need to log in again
     await page.reload();
+    await expect(page.getByTestId('admin-login-form')).toBeVisible();
     await expect(page.getByTestId('admin-username-input')).toBeVisible();
   });
 });

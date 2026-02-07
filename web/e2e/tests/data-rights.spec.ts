@@ -226,7 +226,7 @@ test.describe('GDPR Data Rights', () => {
       // Seed a test lead
       const { leadId, email } = await seedTestLead(request, {
         name: 'Deletion Test Lead',
-        email: `delete-test-${Date.now()}@test.invalid`,
+        email: `delete-test-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`,
       });
 
       // Verify lead exists before deletion

@@ -40,7 +40,7 @@ const buildProxyHeaders = (credentials: AdminCredentials): Record<string, string
   if (ADMIN_PROXY_AUTH_E2E_ENABLED && ADMIN_PROXY_AUTH_E2E_SECRET) {
     const user = ADMIN_PROXY_AUTH_E2E_USER || credentials.username;
     const email =
-      ADMIN_PROXY_AUTH_E2E_EMAIL || `${credentials.username}@e2e.invalid`;
+      ADMIN_PROXY_AUTH_E2E_EMAIL || `${credentials.username}@example.com`;
     const roles = ADMIN_PROXY_AUTH_E2E_ROLES || ADMIN_PROXY_AUTH_ROLE;
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const payload = [user, email, roles, timestamp, mfaValue].join('\n');

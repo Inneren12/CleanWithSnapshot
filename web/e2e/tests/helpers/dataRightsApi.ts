@@ -13,6 +13,10 @@ const ADMIN_PROXY_AUTH_E2E_SECRET = process.env.ADMIN_PROXY_AUTH_E2E_SECRET ?? '
 const ADMIN_PROXY_AUTH_E2E_USER = process.env.ADMIN_PROXY_AUTH_E2E_USER ?? '';
 const ADMIN_PROXY_AUTH_E2E_EMAIL = process.env.ADMIN_PROXY_AUTH_E2E_EMAIL ?? '';
 const ADMIN_PROXY_AUTH_E2E_ROLES = process.env.ADMIN_PROXY_AUTH_E2E_ROLES ?? '';
+const SAAS_E2E_EMAIL = process.env.SAAS_E2E_EMAIL;
+
+const buildE2eEmail = (prefix: string): string =>
+  `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
 
 export type DataExportResponse = {
   leads: Array<Record<string, unknown>>;
@@ -48,6 +52,24 @@ export type DataDeletionResponse = {
   requested_at: string;
 };
 
+type AdminUserCreateResponse = {
+  user_id: string;
+  email: string;
+  target_type: string;
+  must_change_password: boolean;
+  temp_password: string;
+};
+
+type LoginResponse = {
+  access_token: string;
+  refresh_token?: string | null;
+  org_id: string;
+  role: string;
+  expires_at?: string | null;
+  must_change_password: boolean;
+  mfa_verified: boolean;
+};
+
 const buildProxyHeaders = (credentials: AdminCredentials): Record<string, string> => {
   const mfaValue = 'true';
   const headers: Record<string, string> = {
@@ -58,7 +80,7 @@ const buildProxyHeaders = (credentials: AdminCredentials): Record<string, string
   if (ADMIN_PROXY_AUTH_E2E_ENABLED && ADMIN_PROXY_AUTH_E2E_SECRET) {
     const user = ADMIN_PROXY_AUTH_E2E_USER || credentials.username;
     const email =
-      ADMIN_PROXY_AUTH_E2E_EMAIL || `${credentials.username}@e2e.invalid`;
+      ADMIN_PROXY_AUTH_E2E_EMAIL || `${credentials.username}@example.com`;
     const roles = ADMIN_PROXY_AUTH_E2E_ROLES || ADMIN_PROXY_AUTH_ROLE;
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const payload = [user, email, roles, timestamp, mfaValue].join('\n');
@@ -86,6 +108,112 @@ function getAdminAuthHeaders(credentials: AdminCredentials): Record<string, stri
   return {
     Authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}`,
   };
+}
+
+let cachedSaasAuthHeaders: Record<string, string> | null = null;
+let cachedSaasAuthHeadersPromise: Promise<Record<string, string>> | null = null;
+
+async function getSaasAuthHeaders(
+  request: APIRequestContext
+): Promise<Record<string, string>> {
+  if (cachedSaasAuthHeaders) {
+    return cachedSaasAuthHeaders;
+  }
+  if (cachedSaasAuthHeadersPromise) {
+    return cachedSaasAuthHeadersPromise;
+  }
+
+  cachedSaasAuthHeadersPromise = (async () => {
+    const credentials = defaultAdminCredentials();
+    const createUser = async (email: string): Promise<AdminUserCreateResponse> => {
+      const response = await request.post(`${credentials.apiBaseUrl}/v1/admin/users`, {
+        headers: {
+          ...getAdminAuthHeaders(credentials),
+          'Content-Type': 'application/json',
+        },
+        data: {
+          email,
+          target_type: 'client',
+          name: 'E2E Data Rights',
+          role: 'admin',
+        },
+      });
+
+      if (response.status() === 409) {
+        throw new Error('USER_EXISTS');
+      }
+      if (!response.ok()) {
+        const text = await response.text();
+        throw new Error(`Failed to create SaaS user (${response.status()}): ${text}`);
+      }
+
+      return (await response.json()) as AdminUserCreateResponse;
+    };
+
+    let createdUser: AdminUserCreateResponse;
+    try {
+      const preferredEmail =
+        SAAS_E2E_EMAIL ?? buildE2eEmail('e2e-data-rights');
+      createdUser = await createUser(preferredEmail);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'USER_EXISTS') {
+        createdUser = await createUser(buildE2eEmail('e2e-data-rights'));
+      } else {
+        throw error;
+      }
+    }
+    const loginResponse = await request.post(`${credentials.apiBaseUrl}/v1/auth/login`, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      data: {
+        email: createdUser.email,
+        password: createdUser.temp_password,
+      },
+    });
+
+    if (!loginResponse.ok()) {
+      const text = await loginResponse.text();
+      throw new Error(`SaaS login failed (${loginResponse.status()}): ${text}`);
+    }
+
+    const loginPayload = (await loginResponse.json()) as LoginResponse;
+    let accessToken = loginPayload.access_token;
+
+    if (loginPayload.must_change_password) {
+      const newPassword = `E2eDataRights${crypto.randomUUID()}1A`;
+      const changeResponse = await request.post(
+        `${credentials.apiBaseUrl}/v1/auth/change-password`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          data: {
+            current_password: createdUser.temp_password,
+            new_password: newPassword,
+          },
+        }
+      );
+
+      if (!changeResponse.ok()) {
+        const text = await changeResponse.text();
+        throw new Error(`Change password failed (${changeResponse.status()}): ${text}`);
+      }
+
+      const changePayload = (await changeResponse.json()) as LoginResponse;
+      accessToken = changePayload.access_token;
+    }
+
+    return { Authorization: `Bearer ${accessToken}` };
+  })();
+
+  try {
+    cachedSaasAuthHeaders = await cachedSaasAuthHeadersPromise;
+    return cachedSaasAuthHeaders;
+  } finally {
+    cachedSaasAuthHeadersPromise = null;
+  }
 }
 
 /**
@@ -127,11 +255,12 @@ export async function requestDataExportAsync(
   options?: { leadId?: string; email?: string }
 ): Promise<{ response: DataRightsExportRequestResponse; status: number }> {
   const credentials = defaultAdminCredentials();
+  const saasHeaders = await getSaasAuthHeaders(request);
   const response = await request.post(
     `${credentials.apiBaseUrl}/v1/data-rights/export-request`,
     {
       headers: {
-        ...getAdminAuthHeaders(credentials),
+        ...saasHeaders,
         'Content-Type': 'application/json',
       },
       data: options ? { lead_id: options.leadId, email: options.email } : {},
@@ -156,13 +285,14 @@ export async function listDataExports(
   options?: { leadId?: string; email?: string }
 ): Promise<{ response: DataRightsExportListResponse; status: number }> {
   const credentials = defaultAdminCredentials();
+  const saasHeaders = await getSaasAuthHeaders(request);
   const params = new URLSearchParams();
   if (options?.leadId) params.set('lead_id', options.leadId);
   if (options?.email) params.set('email', options.email);
 
   const url = `${credentials.apiBaseUrl}/v1/data-rights/exports${params.toString() ? `?${params}` : ''}`;
   const response = await request.get(url, {
-    headers: getAdminAuthHeaders(credentials),
+    headers: saasHeaders,
   });
 
   const status = response.status();
@@ -184,10 +314,11 @@ export async function downloadDataExport(
   exportId: string
 ): Promise<{ body: Buffer | null; status: number; contentType: string | null }> {
   const credentials = defaultAdminCredentials();
+  const saasHeaders = await getSaasAuthHeaders(request);
   const response = await request.get(
     `${credentials.apiBaseUrl}/v1/data-rights/exports/${exportId}/download`,
     {
-      headers: getAdminAuthHeaders(credentials),
+      headers: saasHeaders,
       maxRedirects: 0,
     }
   );
@@ -353,7 +484,7 @@ export async function seedTestLead(
   options?: { email?: string; name?: string }
 ): Promise<{ leadId: string; email: string }> {
   const credentials = defaultAdminCredentials();
-  const testEmail = options?.email ?? `e2e-data-rights-${Date.now()}@test.invalid`;
+  const testEmail = options?.email ?? buildE2eEmail('e2e-data-rights');
   const testName = options?.name ?? 'E2E Data Rights Test Lead';
 
   const response = await request.post(

@@ -26,7 +26,15 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version-file: .nvmrc
+          node-version: 20
+
+      - name: Disable corepack
+        run: corepack disable || true
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.3
 
       - name: Generate CI env file with required prod secrets
         run: |
@@ -102,7 +110,7 @@ jobs:
             + f"ADMIN_PROXY_AUTH_E2E_SECRET={overrides['ADMIN_PROXY_AUTH_E2E_SECRET']}\n"
             + f"ADMIN_PROXY_AUTH_ROLE=admin\n"
             + f"ADMIN_PROXY_AUTH_E2E_USER={admin_username}\n"
-            + f"ADMIN_PROXY_AUTH_E2E_EMAIL={admin_username}@e2e.invalid\n"
+            + f"ADMIN_PROXY_AUTH_E2E_EMAIL={admin_username}@example.com\n"
             + f"ADMIN_PROXY_AUTH_E2E_ROLES=admin\n"
             + f"TRUST_PROXY_HEADERS={overrides['TRUST_PROXY_HEADERS']}\n"
             + f"TRUSTED_PROXY_CIDRS={overrides['TRUSTED_PROXY_CIDRS']}\n"
@@ -166,6 +174,9 @@ jobs:
           if missing:
             raise SystemExit(f"Missing required E2E env keys: {', '.join(missing)}")
           PY
+
+      - name: Check Alembic merge parents
+        run: python backend/scripts/check_alembic_merge_parents.py
 
       - name: Compose down (pre-cleanup)
         run: docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v || true
@@ -495,7 +506,7 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_USER="$ADMIN_PROXY_AUTH_E2E_USER" \
           ADMIN_PROXY_AUTH_E2E_EMAIL="$ADMIN_PROXY_AUTH_E2E_EMAIL" \
           ADMIN_PROXY_AUTH_E2E_ROLES="$ADMIN_PROXY_AUTH_E2E_ROLES" \
-          npx playwright test --config e2e/playwright.config.ts
+          pnpm exec playwright test --config e2e/playwright.config.ts
 
       - name: Assert no unauthenticated admin probes
         if: always()

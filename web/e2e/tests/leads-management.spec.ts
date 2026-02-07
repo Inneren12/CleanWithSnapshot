@@ -43,10 +43,24 @@ test.describe('Leads management', () => {
     const statusFilter = page.getByTestId('leads-status-filter');
     await expect(statusFilter).toBeVisible();
     await expect(statusFilter).toBeEnabled();
+    const applyButton = page.getByTestId('leads-status-apply');
+    await expect(applyButton).toBeVisible();
+    await expect(applyButton).toBeEnabled();
 
     // Type a filter value
+    const waitForLeads = page.waitForResponse((response) => {
+      return (
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/leads') &&
+        response.url().includes('status=NEW') &&
+        response.ok()
+      );
+    });
     await statusFilter.fill('New');
+    await applyButton.click();
+    await waitForLeads;
     await expect(statusFilter).toHaveValue('NEW');
+    await expect(page.getByTestId('leads-table')).toBeVisible();
   });
 
   test('leads refresh button is functional', async ({ page }) => {
@@ -59,12 +73,22 @@ test.describe('Leads management', () => {
     // Wait for stable controls wrapper
     await expect(page.getByTestId('leads-controls')).toBeVisible();
 
-    const refreshButton = page.getByTestId('leads-refresh-btn');
+    const refreshButton = page.getByTestId('leads-refresh');
     await expect(refreshButton).toBeVisible();
     await expect(refreshButton).toBeEnabled();
+    await expect(refreshButton).not.toHaveText(/Loading/i);
+    await expect(page.getByTestId('leads-table')).toBeVisible();
 
     // Click refresh button
+    const waitForLeads = page.waitForResponse((response) => {
+      return (
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/leads') &&
+        response.ok()
+      );
+    });
     await refreshButton.click();
+    await waitForLeads;
 
     // Ensure no error page takeover after click
     await expect(page.locator('html#__next_error__')).toHaveCount(0);

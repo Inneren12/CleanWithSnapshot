@@ -1,7 +1,7 @@
 """add RLS policies for training tables
 
 Revision ID: 2f3a4b5c6d7e
-Revises: 1b9c3d4e5f6a
+Revises: d0e1f2a3b4c6
 Create Date: 2026-04-15 00:00:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "2f3a4b5c6d7e"
-down_revision = "1b9c3d4e5f6a"
+down_revision = "d0e1f2a3b4c6"
 branch_labels = None
 depends_on = None
 

@@ -102,7 +102,7 @@ def upgrade() -> None:
     op.execute(
         """
         INSERT INTO feature_flags (key, owner, purpose, lifecycle_state)
-        SELECT DISTINCT jsonb_object_keys(feature_overrides) AS key,
+        SELECT DISTINCT jsonb_object_keys(feature_overrides::jsonb) AS key,
             'legacy',
             'Legacy feature flag pending metadata backfill.',
             'active'

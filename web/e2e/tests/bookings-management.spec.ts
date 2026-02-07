@@ -41,11 +41,25 @@ test.describe('Bookings management', () => {
     const dateInput = page.getByTestId('bookings-date-input');
     await expect(dateInput).toBeVisible();
     await expect(dateInput).toBeEnabled();
+    const applyButton = page.getByTestId('bookings-date-apply');
+    await expect(applyButton).toBeVisible();
+    await expect(applyButton).toBeEnabled();
 
     // Set a specific date
     const today = new Date().toISOString().split('T')[0];
+    const waitForBookings = page.waitForResponse((response) => {
+      return (
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/bookings?from=') &&
+        response.url().includes(`from=${today}`) &&
+        response.ok()
+      );
+    });
     await dateInput.fill(today);
+    await applyButton.click();
+    await waitForBookings;
     await expect(dateInput).toHaveValue(today);
+    await expect(page.getByTestId('bookings-table')).toBeVisible();
   });
 
   test('bookings refresh button is functional', async ({ page }) => {
@@ -61,9 +75,19 @@ test.describe('Bookings management', () => {
     const refreshButton = page.getByTestId('bookings-refresh-btn');
     await expect(refreshButton).toBeVisible();
     await expect(refreshButton).toBeEnabled();
+    await expect(refreshButton).not.toHaveText(/Loading/i);
+    await expect(page.getByTestId('bookings-table')).toBeVisible();
 
     // Click refresh button
+    const waitForBookings = page.waitForResponse((response) => {
+      return (
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/bookings?from=') &&
+        response.ok()
+      );
+    });
     await refreshButton.click();
+    await waitForBookings;
 
     // Ensure no error page takeover after click
     await expect(page.locator('html#__next_error__')).toHaveCount(0);
@@ -83,13 +107,27 @@ test.describe('Bookings management', () => {
     await expect(page.getByTestId('bookings-controls')).toBeVisible();
     await expect(page.getByTestId('bookings-table')).toBeVisible();
 
+    const refreshButton = page.getByTestId('bookings-refresh-btn');
+    await expect(refreshButton).toBeVisible();
+    await expect(refreshButton).toBeEnabled();
+    await expect(refreshButton).not.toHaveText(/Loading/i);
+    const waitForBookings = page.waitForResponse((response) => {
+      return (
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/bookings?from=') &&
+        response.ok()
+      );
+    });
+    await refreshButton.click();
+    await waitForBookings;
+
     // Check for expected column headers
-    const table = page.getByTestId('bookings-table');
-    await expect(table.getByRole('columnheader', { name: 'When' })).toBeVisible();
-    await expect(table.getByRole('columnheader', { name: 'Status' })).toBeVisible();
-    await expect(table.getByRole('columnheader', { name: 'Lead' })).toBeVisible();
-    await expect(table.getByRole('columnheader', { name: 'Duration' })).toBeVisible();
-    await expect(table.getByRole('columnheader', { name: 'Actions' })).toBeVisible();
+    const columns = page.getByTestId('bookings-columns');
+    await expect(columns.getByRole('columnheader', { name: 'When' })).toBeVisible();
+    await expect(columns.getByRole('columnheader', { name: 'Status' })).toBeVisible();
+    await expect(columns.getByRole('columnheader', { name: 'Lead' })).toBeVisible();
+    await expect(columns.getByRole('columnheader', { name: 'Duration' })).toBeVisible();
+    await expect(columns.getByRole('columnheader', { name: 'Actions' })).toBeVisible();
   });
 
   test('week view is displayed', async ({ page }) => {
