@@ -28,6 +28,11 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - name: Enable pnpm via corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.18.3 --activate
+
       - name: Generate CI env file with required prod secrets
         run: |
           cp backend/.env.example backend/.env.e2e.ci
@@ -498,7 +503,7 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_USER="$ADMIN_PROXY_AUTH_E2E_USER" \
           ADMIN_PROXY_AUTH_E2E_EMAIL="$ADMIN_PROXY_AUTH_E2E_EMAIL" \
           ADMIN_PROXY_AUTH_E2E_ROLES="$ADMIN_PROXY_AUTH_E2E_ROLES" \
-          npx playwright test --config e2e/playwright.config.ts
+          pnpm exec playwright test --config e2e/playwright.config.ts
 
       - name: Assert no unauthenticated admin probes
         if: always()
