@@ -882,7 +882,7 @@ return (
             <h2>Leads</h2>
             <p className="muted">Filter and set statuses directly.</p>
           </div>
-          <div className="admin-actions" data-testid="leads-controls">
+        <div className="admin-actions" data-testid="leads-controls">
             <label style={{ width: "100%" }}>
               <span className="label">Status filter</span>
               <input
@@ -894,7 +894,16 @@ return (
               />
             </label>
             <button
-              data-testid="leads-refresh-btn"
+              data-testid="leads-status-apply"
+              className="btn btn-secondary"
+              type="button"
+              onClick={() => void loadLeads()}
+              disabled={leadsLoading}
+            >
+              Apply
+            </button>
+            <button
+              data-testid="leads-refresh"
               className="btn btn-ghost"
               type="button"
               onClick={() => void loadLeads()}
@@ -1011,7 +1020,7 @@ return (
           <label>
             <span className="label">Date</span>
             <input
-              data-testid="bookings-date-input"
+              data-testid="bookings-date-filter"
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
@@ -1019,7 +1028,16 @@ return (
             />
           </label>
           <button
-            data-testid="bookings-refresh-btn"
+            data-testid="bookings-date-apply"
+            className="btn btn-secondary"
+            type="button"
+            onClick={() => void loadBookings()}
+            disabled={bookingsLoading}
+          >
+            Apply
+          </button>
+          <button
+            data-testid="bookings-refresh"
             className="btn btn-ghost"
             type="button"
             onClick={() => void loadBookings()}
@@ -1029,7 +1047,7 @@ return (
           </button>
         </div>
         <table className="table-like" data-testid="bookings-table">
-          <thead>
+          <thead data-testid="bookings-columns">
             <tr>
               <th data-testid="bookings-column-when">When</th>
               <th data-testid="bookings-column-status">Status</th>
