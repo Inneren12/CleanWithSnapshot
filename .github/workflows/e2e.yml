@@ -102,7 +102,7 @@ jobs:
             + f"ADMIN_PROXY_AUTH_E2E_SECRET={overrides['ADMIN_PROXY_AUTH_E2E_SECRET']}\n"
             + f"ADMIN_PROXY_AUTH_ROLE=admin\n"
             + f"ADMIN_PROXY_AUTH_E2E_USER={admin_username}\n"
-            + f"ADMIN_PROXY_AUTH_E2E_EMAIL={admin_username}@e2e.invalid\n"
+            + f"ADMIN_PROXY_AUTH_E2E_EMAIL={admin_username}@example.com\n"
             + f"ADMIN_PROXY_AUTH_E2E_ROLES=admin\n"
             + f"TRUST_PROXY_HEADERS={overrides['TRUST_PROXY_HEADERS']}\n"
             + f"TRUSTED_PROXY_CIDRS={overrides['TRUSTED_PROXY_CIDRS']}\n"
