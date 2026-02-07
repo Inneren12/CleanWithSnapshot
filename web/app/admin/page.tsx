@@ -1020,7 +1020,7 @@ return (
           <label>
             <span className="label">Date</span>
             <input
-              data-testid="bookings-date-filter"
+              data-testid="bookings-date-input"
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
@@ -1037,7 +1037,7 @@ return (
             Apply
           </button>
           <button
-            data-testid="bookings-refresh"
+            data-testid="bookings-refresh-btn"
             className="btn btn-ghost"
             type="button"
             onClick={() => void loadBookings()}

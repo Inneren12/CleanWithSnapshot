@@ -15,6 +15,9 @@ const ADMIN_PROXY_AUTH_E2E_EMAIL = process.env.ADMIN_PROXY_AUTH_E2E_EMAIL ?? '';
 const ADMIN_PROXY_AUTH_E2E_ROLES = process.env.ADMIN_PROXY_AUTH_E2E_ROLES ?? '';
 const SAAS_E2E_EMAIL = process.env.SAAS_E2E_EMAIL;
 
+const buildE2eEmail = (prefix: string): string =>
+  `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
+
 export type DataExportResponse = {
   leads: Array<Record<string, unknown>>;
   bookings: Array<Record<string, unknown>>;
@@ -77,7 +80,7 @@ const buildProxyHeaders = (credentials: AdminCredentials): Record<string, string
   if (ADMIN_PROXY_AUTH_E2E_ENABLED && ADMIN_PROXY_AUTH_E2E_SECRET) {
     const user = ADMIN_PROXY_AUTH_E2E_USER || credentials.username;
     const email =
-      ADMIN_PROXY_AUTH_E2E_EMAIL || `${credentials.username}@e2e.invalid`;
+      ADMIN_PROXY_AUTH_E2E_EMAIL || `${credentials.username}@example.com`;
     const roles = ADMIN_PROXY_AUTH_E2E_ROLES || ADMIN_PROXY_AUTH_ROLE;
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const payload = [user, email, roles, timestamp, mfaValue].join('\n');
@@ -150,13 +153,11 @@ async function getSaasAuthHeaders(
     let createdUser: AdminUserCreateResponse;
     try {
       const preferredEmail =
-        SAAS_E2E_EMAIL ?? `e2e-data-rights-${crypto.randomUUID()}@test.invalid`;
+        SAAS_E2E_EMAIL ?? buildE2eEmail('e2e-data-rights');
       createdUser = await createUser(preferredEmail);
     } catch (error) {
       if (error instanceof Error && error.message === 'USER_EXISTS') {
-        createdUser = await createUser(
-          `e2e-data-rights-${crypto.randomUUID()}@test.invalid`
-        );
+        createdUser = await createUser(buildE2eEmail('e2e-data-rights'));
       } else {
         throw error;
       }
@@ -483,7 +484,7 @@ export async function seedTestLead(
   options?: { email?: string; name?: string }
 ): Promise<{ leadId: string; email: string }> {
   const credentials = defaultAdminCredentials();
-  const testEmail = options?.email ?? `e2e-data-rights-${Date.now()}@test.invalid`;
+  const testEmail = options?.email ?? buildE2eEmail('e2e-data-rights');
   const testName = options?.name ?? 'E2E Data Rights Test Lead';
 
   const response = await request.post(

@@ -38,7 +38,7 @@ test.describe('Bookings management', () => {
     // Wait for stable controls wrapper
     await expect(page.getByTestId('bookings-controls')).toBeVisible();
 
-    const dateInput = page.getByTestId('bookings-date-filter');
+    const dateInput = page.getByTestId('bookings-date-input');
     await expect(dateInput).toBeVisible();
     await expect(dateInput).toBeEnabled();
     const applyButton = page.getByTestId('bookings-date-apply');
@@ -72,9 +72,11 @@ test.describe('Bookings management', () => {
     // Wait for stable controls wrapper
     await expect(page.getByTestId('bookings-controls')).toBeVisible();
 
-    const refreshButton = page.getByTestId('bookings-refresh');
+    const refreshButton = page.getByTestId('bookings-refresh-btn');
     await expect(refreshButton).toBeVisible();
     await expect(refreshButton).toBeEnabled();
+    await expect(refreshButton).not.toHaveText(/Loading/i);
+    await expect(page.getByTestId('bookings-table')).toBeVisible();
 
     // Click refresh button
     const waitForBookings = page.waitForResponse((response) => {
@@ -105,7 +107,10 @@ test.describe('Bookings management', () => {
     await expect(page.getByTestId('bookings-controls')).toBeVisible();
     await expect(page.getByTestId('bookings-table')).toBeVisible();
 
-    const refreshButton = page.getByTestId('bookings-refresh');
+    const refreshButton = page.getByTestId('bookings-refresh-btn');
+    await expect(refreshButton).toBeVisible();
+    await expect(refreshButton).toBeEnabled();
+    await expect(refreshButton).not.toHaveText(/Loading/i);
     const waitForBookings = page.waitForResponse((response) => {
       return (
         response.request().method() === 'GET' &&

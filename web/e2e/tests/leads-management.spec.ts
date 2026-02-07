@@ -76,6 +76,8 @@ test.describe('Leads management', () => {
     const refreshButton = page.getByTestId('leads-refresh');
     await expect(refreshButton).toBeVisible();
     await expect(refreshButton).toBeEnabled();
+    await expect(refreshButton).not.toHaveText(/Loading/i);
+    await expect(page.getByTestId('leads-table')).toBeVisible();
 
     // Click refresh button
     const waitForLeads = page.waitForResponse((response) => {
