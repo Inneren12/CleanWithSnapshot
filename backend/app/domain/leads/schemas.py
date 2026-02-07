@@ -280,11 +280,11 @@ def admin_lead_from_model(model, referral_credit_count: int | None = None) -> Ad
         credit_count = len(credits_attr) if credits_attr is not None else 0
     return AdminLeadResponse(
         lead_id=model.lead_id,
-        name=model.name,
+        name=model.name or "Deleted contact",
         email=model.email,
-        phone=model.phone,
+        phone=model.phone or "deleted",
         postal_code=model.postal_code,
-        preferred_dates=model.preferred_dates,
+        preferred_dates=model.preferred_dates or [],
         notes=model.notes,
         loss_reason=getattr(model, "loss_reason", None),
         source=getattr(model, "source", None),
@@ -295,7 +295,7 @@ def admin_lead_from_model(model, referral_credit_count: int | None = None) -> Ad
         updated_at=model.updated_at.isoformat(),
         referrer=model.referrer,
         status=model.status or LEAD_STATUS_NEW,
-        referral_code=model.referral_code,
+        referral_code=model.referral_code or "",
         referred_by_code=model.referred_by_code,
         referral_credits=credit_count,
     )
@@ -314,6 +314,6 @@ def admin_lead_detail_from_model(
         allergies=model.allergies,
         structured_inputs=model.structured_inputs or {},
         estimate_snapshot=model.estimate_snapshot or {},
-        pricing_config_version=model.pricing_config_version,
+        pricing_config_version=model.pricing_config_version or "unknown",
         timeline=timeline,
     )
