@@ -26,12 +26,15 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version-file: .nvmrc
+          node-version: 20
 
-      - name: Enable pnpm via corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.18.3 --activate
+      - name: Disable corepack
+        run: corepack disable || true
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@d0a74bddd2e5a6cf65a8d4b680e2f86a6b62f3a7 # v4
+        with:
+          version: 10.18.3
 
       - name: Generate CI env file with required prod secrets
         run: |
