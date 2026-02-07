@@ -31,18 +31,23 @@ def _extract_revision_info(path: Path) -> RevisionInfo | None:
     revision_value: str | None = None
     down_revision_value: object | None = None
 
+    def handle_assignment(name: str, value_node: ast.AST) -> None:
+        nonlocal revision_value, down_revision_value
+        if name == "revision":
+            value = _parse_literal(value_node)
+            if isinstance(value, str):
+                revision_value = value
+        elif name == "down_revision":
+            down_revision_value = _parse_literal(value_node)
+
     for statement in module.body:
-        if not isinstance(statement, ast.Assign):
-            continue
-        for target in statement.targets:
-            if not isinstance(target, ast.Name):
-                continue
-            if target.id == "revision":
-                value = _parse_literal(statement.value)
-                if isinstance(value, str):
-                    revision_value = value
-            elif target.id == "down_revision":
-                down_revision_value = _parse_literal(statement.value)
+        if isinstance(statement, ast.Assign):
+            for target in statement.targets:
+                if isinstance(target, ast.Name):
+                    handle_assignment(target.id, statement.value)
+        elif isinstance(statement, ast.AnnAssign):
+            if isinstance(statement.target, ast.Name) and statement.value is not None:
+                handle_assignment(statement.target.id, statement.value)
 
     if revision_value is None:
         return None
