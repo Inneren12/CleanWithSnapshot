@@ -61,16 +61,39 @@ const buildProxyHeaders = (credentials: AdminCredentials): Record<string, string
   return headers;
 };
 
+const buildAuthHeaders = (
+  credentials: AdminCredentials
+): Record<string, string> =>
+  ADMIN_PROXY_AUTH_ENABLED
+    ? buildProxyHeaders(credentials)
+    : {
+        Authorization: `Basic ${Buffer.from(
+          `${credentials.username}:${credentials.password}`
+        ).toString('base64')}`,
+      };
+
+const assertAdminEndpointHealthy = async (
+  request: APIRequestContext,
+  url: string,
+  headers: Record<string, string>
+): Promise<void> => {
+  const response = await request.get(url, { headers });
+  if (response.ok()) return;
+
+  const body = await response.text();
+  if (response.status() >= 500) {
+    throw new Error(`Admin API ${url} failed (${response.status()}): ${body}`);
+  }
+  throw new Error(`Admin API ${url} unexpected status (${response.status()}): ${body}`);
+};
+
 export async function verifyAdminCredentials(
   request: APIRequestContext,
   { username, password, apiBaseUrl }: AdminCredentials
 ): Promise<void> {
+  const headers = buildAuthHeaders({ username, password, apiBaseUrl });
   const response = await request.get(`${apiBaseUrl}/v1/admin/profile`, {
-    headers: ADMIN_PROXY_AUTH_ENABLED
-      ? buildProxyHeaders({ username, password, apiBaseUrl })
-      : {
-          Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
-        },
+    headers,
   });
 
   if (!response.ok()) {
@@ -78,6 +101,10 @@ export async function verifyAdminCredentials(
       `Admin auth failed (${response.status()}): ${await response.text()}`
     );
   }
+
+  await assertAdminEndpointHealthy(request, `${apiBaseUrl}/v1/admin/bookings`, headers);
+  await assertAdminEndpointHealthy(request, `${apiBaseUrl}/v1/admin/leads`, headers);
+  await assertAdminEndpointHealthy(request, `${apiBaseUrl}/v1/admin/users/me/ui_prefs`, headers);
 }
 
 export async function seedAdminStorage(

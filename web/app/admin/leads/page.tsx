@@ -138,14 +138,19 @@ export default function LeadsPage() {
 
   const loadProfile = useCallback(async () => {
     if (!username || !password) return;
-    const response = await fetch(`${API_BASE}/v1/admin/profile`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as AdminProfile;
-      setProfile(data);
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/profile`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as AdminProfile;
+        setProfile(data);
+      } else {
+        setProfile(null);
+      }
+    } catch (error) {
+      console.error("Failed to load profile:", error);
       setProfile(null);
     }
   }, [authHeaders, password, username]);
@@ -153,14 +158,20 @@ export default function LeadsPage() {
   const loadFeatureConfig = useCallback(async () => {
     if (!username || !password) return;
     setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as FeatureConfigResponse;
-      setFeatureConfig(data);
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as FeatureConfigResponse;
+        setFeatureConfig(data);
+      } else {
+        setFeatureConfig(null);
+        setSettingsError("Failed to load module settings");
+      }
+    } catch (error) {
+      console.error("Failed to load module settings:", error);
       setFeatureConfig(null);
       setSettingsError("Failed to load module settings");
     }
@@ -169,14 +180,20 @@ export default function LeadsPage() {
   const loadUiPrefs = useCallback(async () => {
     if (!username || !password) return;
     setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as UiPrefsResponse;
-      setUiPrefs(data);
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as UiPrefsResponse;
+        setUiPrefs(data);
+      } else {
+        setUiPrefs(null);
+        setSettingsError("Failed to load UI preferences");
+      }
+    } catch (error) {
+      console.error("Failed to load UI preferences:", error);
       setUiPrefs(null);
       setSettingsError("Failed to load UI preferences");
     }
@@ -193,21 +210,28 @@ export default function LeadsPage() {
     if (toDate) params.set("to", toDate);
     params.set("page", String(page));
 
-    const response = await fetch(`${API_BASE}/v1/admin/leads?${params.toString()}`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as LeadListResponse;
-      setLeads(data);
-    } else if (response.status === 403) {
-      setError("You do not have permission to view leads.");
-      setLeads(null);
-    } else {
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/leads?${params.toString()}`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as LeadListResponse;
+        setLeads(data);
+      } else if (response.status === 403) {
+        setError("You do not have permission to view leads.");
+        setLeads(null);
+      } else {
+        setError("Failed to load leads.");
+        setLeads(null);
+      }
+    } catch (error) {
+      console.error("Failed to load leads:", error);
       setError("Failed to load leads.");
       setLeads(null);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [authHeaders, fromDate, page, password, query, statusFilter, toDate, username]);
 
   useEffect(() => {
@@ -284,20 +308,25 @@ export default function LeadsPage() {
       notes: draft.notes ?? (lead.notes ?? ""),
       loss_reason: draft.loss_reason ?? (lead.loss_reason ?? ""),
     };
-    const response = await fetch(`${API_BASE}/v1/admin/leads/${lead.lead_id}`, {
-      method: "PATCH",
-      headers: { ...authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (response.ok) {
-      setMessage("Lead updated");
-      setDrafts((prev) => {
-        const next = { ...prev };
-        delete next[lead.lead_id];
-        return next;
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/leads/${lead.lead_id}`, {
+        method: "PATCH",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
-      void loadLeads();
-    } else {
+      if (response.ok) {
+        setMessage("Lead updated");
+        setDrafts((prev) => {
+          const next = { ...prev };
+          delete next[lead.lead_id];
+          return next;
+        });
+        void loadLeads();
+      } else {
+        setMessage("Failed to update lead");
+      }
+    } catch (error) {
+      console.error("Failed to update lead:", error);
       setMessage("Failed to update lead");
     }
   };
