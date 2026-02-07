@@ -1,7 +1,7 @@
 """add purchase orders
 
 Revision ID: b2f3c4d5e6f7
-Revises: a9a9247301a9, b9c8d7e6f5a4
+Revises: b9c8d7e6f5a4
 Create Date: 2026-01-20 12:10:00.000000
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "b2f3c4d5e6f7"
-down_revision = ("a9a9247301a9", "b9c8d7e6f5a4")
+down_revision = "b9c8d7e6f5a4"
 branch_labels = None
 depends_on = None
 
