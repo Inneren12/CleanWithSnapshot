@@ -178,6 +178,14 @@ async function getSaasAuthHeaders(
     }
 
     const loginPayload = (await loginResponse.json()) as LoginResponse;
+
+    if (!loginPayload?.access_token) {
+      throw new Error(
+        `Login succeeded but no access_token in response. ` +
+        `Status: ${loginResponse.status()}, Body: ${JSON.stringify(loginPayload)}`
+      );
+    }
+
     let accessToken = loginPayload.access_token;
 
     if (loginPayload.must_change_password) {
@@ -202,10 +210,33 @@ async function getSaasAuthHeaders(
       }
 
       const changePayload = (await changeResponse.json()) as LoginResponse;
+
+      if (!changePayload?.access_token) {
+        throw new Error(
+          `Password change succeeded but no access_token in response. ` +
+          `Status: ${changeResponse.status()}, Body: ${JSON.stringify(changePayload)}`
+        );
+      }
+
       accessToken = changePayload.access_token;
+
+      if (typeof accessToken !== 'string' || accessToken.split('.').length !== 3) {
+        throw new Error(
+          `Invalid JWT format after password change. ` +
+          `Token: ${accessToken}, Expected 3 parts (header.payload.signature)`
+        );
+      }
     }
 
-    return { Authorization: `Bearer ${accessToken}` };
+    console.log('[getSaasAuthHeaders] Successfully obtained SaaS JWT:', {
+      tokenPreview: accessToken.substring(0, 50) + '...',
+      tokenParts: accessToken.split('.').length,
+    });
+
+    cachedSaasAuthHeaders = {
+      Authorization: `Bearer ${accessToken}`,
+    };
+    return cachedSaasAuthHeaders;
   })();
 
   try {
