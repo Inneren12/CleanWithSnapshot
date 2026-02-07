@@ -62,13 +62,29 @@ def upgrade() -> None:
     if not _is_postgres():
         return
 
+    # Check if tables exist before adding RLS
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_tables = inspector.get_table_names(schema=SCHEMA)
+
     for table in TABLES:
-        op.execute(sa.text(_policy_sql(table)))
+        if table in existing_tables:
+            op.execute(sa.text(_policy_sql(table)))
+        else:
+            print(f"Skipping RLS for {table} - table does not exist")
 
 
 def downgrade() -> None:
     if not _is_postgres():
         return
 
+    # Check if tables exist before removing RLS
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_tables = inspector.get_table_names(schema=SCHEMA)
+
     for table in TABLES:
-        op.execute(sa.text(_downgrade_sql(table)))
+        if table in existing_tables:
+            op.execute(sa.text(_downgrade_sql(table)))
+        else:
+            print(f"Skipping RLS removal for {table} - table does not exist")
