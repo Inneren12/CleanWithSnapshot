@@ -12,6 +12,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.execute("CREATE TYPE breakglassscope AS ENUM ('org', 'global')")
+    op.execute("CREATE TYPE breakglassstatus AS ENUM ('active', 'expired', 'revoked')")
     op.add_column("break_glass_sessions", sa.Column("actor_id", sa.String(length=128), nullable=True))
     op.add_column(
         "break_glass_sessions", sa.Column("incident_ref", sa.String(length=200), nullable=True)
