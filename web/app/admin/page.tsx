@@ -704,10 +704,10 @@ return (
       </div>
     ) : null}
 
-    <div className="admin-card" data-testid="admin-credentials-card">
+        <div className="admin-card" data-testid="admin-credentials-card">
         <div className="admin-section">
           <h2>Credentials</h2>
-          <div className="admin-actions">
+          <div className="admin-actions" data-testid="admin-login-form">
             <input data-testid="admin-username-input" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
             <input
               data-testid="admin-password-input"
@@ -906,10 +906,10 @@ return (
           <table className="table-like" data-testid="leads-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th data-testid="leads-column-name">Name</th>
+                <th data-testid="leads-column-email">Email</th>
+                <th data-testid="leads-column-status">Status</th>
+                <th data-testid="leads-column-actions">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1031,11 +1031,11 @@ return (
         <table className="table-like" data-testid="bookings-table">
           <thead>
             <tr>
-              <th>When</th>
-              <th>Status</th>
-              <th>Lead</th>
-              <th>Duration</th>
-              <th>Actions</th>
+              <th data-testid="bookings-column-when">When</th>
+              <th data-testid="bookings-column-status">Status</th>
+              <th data-testid="bookings-column-lead">Lead</th>
+              <th data-testid="bookings-column-duration">Duration</th>
+              <th data-testid="bookings-column-actions">Actions</th>
             </tr>
           </thead>
           <tbody>

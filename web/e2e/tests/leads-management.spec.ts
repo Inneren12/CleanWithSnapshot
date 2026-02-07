@@ -45,7 +45,15 @@ test.describe('Leads management', () => {
     await expect(statusFilter).toBeEnabled();
 
     // Type a filter value
+    const waitForLeads = page.waitForResponse((response) => {
+      return (
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/leads') &&
+        response.url().includes('status=NEW')
+      );
+    });
     await statusFilter.fill('New');
+    await waitForLeads;
     await expect(statusFilter).toHaveValue('NEW');
   });
 
@@ -64,7 +72,14 @@ test.describe('Leads management', () => {
     await expect(refreshButton).toBeEnabled();
 
     // Click refresh button
+    const waitForLeads = page.waitForResponse((response) => {
+      return (
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/leads')
+      );
+    });
     await refreshButton.click();
+    await waitForLeads;
 
     // Ensure no error page takeover after click
     await expect(page.locator('html#__next_error__')).toHaveCount(0);

@@ -44,7 +44,15 @@ test.describe('Bookings management', () => {
 
     // Set a specific date
     const today = new Date().toISOString().split('T')[0];
+    const waitForBookings = page.waitForResponse((response) => {
+      return (
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/bookings?from=') &&
+        response.url().includes(`from=${today}`)
+      );
+    });
     await dateInput.fill(today);
+    await waitForBookings;
     await expect(dateInput).toHaveValue(today);
   });
 
@@ -63,7 +71,14 @@ test.describe('Bookings management', () => {
     await expect(refreshButton).toBeEnabled();
 
     // Click refresh button
+    const waitForBookings = page.waitForResponse((response) => {
+      return (
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/bookings?from=')
+      );
+    });
     await refreshButton.click();
+    await waitForBookings;
 
     // Ensure no error page takeover after click
     await expect(page.locator('html#__next_error__')).toHaveCount(0);
@@ -85,11 +100,11 @@ test.describe('Bookings management', () => {
 
     // Check for expected column headers
     const table = page.getByTestId('bookings-table');
-    await expect(table.getByRole('columnheader', { name: 'When' })).toBeVisible();
-    await expect(table.getByRole('columnheader', { name: 'Status' })).toBeVisible();
-    await expect(table.getByRole('columnheader', { name: 'Lead' })).toBeVisible();
-    await expect(table.getByRole('columnheader', { name: 'Duration' })).toBeVisible();
-    await expect(table.getByRole('columnheader', { name: 'Actions' })).toBeVisible();
+    await expect(table.getByTestId('bookings-column-when')).toBeVisible();
+    await expect(table.getByTestId('bookings-column-status')).toBeVisible();
+    await expect(table.getByTestId('bookings-column-lead')).toBeVisible();
+    await expect(table.getByTestId('bookings-column-duration')).toBeVisible();
+    await expect(table.getByTestId('bookings-column-actions')).toBeVisible();
   });
 
   test('week view is displayed', async ({ page }) => {
