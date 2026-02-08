@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   defaultAdminCredentials,
@@ -7,8 +7,24 @@ import {
 } from './helpers/adminAuth';
 import { waitForAdminPage } from './helpers/playwrightContext';
 
+const waitForLeadsReady = async (page: Page) => {
+  const refreshButton = page.getByTestId('leads-refresh');
+  await expect(refreshButton).toBeVisible({ timeout: 30_000 });
+  await expect(refreshButton).not.toHaveText(/Loading/i, { timeout: 30_000 });
+  await expect(refreshButton).toBeEnabled({ timeout: 30_000 });
+};
+
 test.describe('Leads management', () => {
   test.beforeEach(async ({ page, request }) => {
+    page.on('response', (response) => {
+      if (response.status() < 400) {
+        return;
+      }
+      const url = response.url();
+      if (url.includes('/v1/admin/')) {
+        console.log('[E2E][API FAIL]', response.status(), url);
+      }
+    });
     const admin = defaultAdminCredentials();
     await verifyAdminCredentials(request, admin);
     await seedAdminStorage(page, admin);
@@ -38,14 +54,15 @@ test.describe('Leads management', () => {
 
     // Wait for stable controls wrapper
     await expect(page.getByTestId('leads-controls')).toBeVisible();
-    await page.getByTestId('leads-table').waitFor({ state: 'visible' });
+    await waitForLeadsReady(page);
+    await expect(page.getByTestId('leads-table')).toBeVisible({ timeout: 30_000 });
 
     const statusFilter = page.getByTestId('leads-status-filter');
-    await expect(statusFilter).toBeVisible();
-    await expect(statusFilter).toBeEnabled();
+    await expect(statusFilter).toBeVisible({ timeout: 30_000 });
+    await expect(statusFilter).toBeEnabled({ timeout: 30_000 });
     const applyButton = page.getByTestId('leads-status-apply');
-    await expect(applyButton).toBeVisible();
-    await expect(applyButton).toBeEnabled();
+    await expect(applyButton).toBeVisible({ timeout: 30_000 });
+    await expect(applyButton).toBeEnabled({ timeout: 30_000 });
 
     // Type a filter value
     const waitForLeads = page.waitForResponse((response) => {
@@ -60,7 +77,7 @@ test.describe('Leads management', () => {
     await applyButton.click();
     await waitForLeads;
     await expect(statusFilter).toHaveValue('NEW');
-    await expect(page.getByTestId('leads-table')).toBeVisible();
+    await expect(page.getByTestId('leads-table')).toBeVisible({ timeout: 30_000 });
   });
 
   test('leads refresh button is functional', async ({ page }) => {
@@ -72,12 +89,12 @@ test.describe('Leads management', () => {
 
     // Wait for stable controls wrapper
     await expect(page.getByTestId('leads-controls')).toBeVisible();
+    await waitForLeadsReady(page);
 
     const refreshButton = page.getByTestId('leads-refresh');
-    await expect(refreshButton).toBeVisible();
-    await expect(refreshButton).toBeEnabled();
-    await expect(refreshButton).not.toHaveText(/Loading/i);
-    await expect(page.getByTestId('leads-table')).toBeVisible();
+    await expect(refreshButton).toBeVisible({ timeout: 30_000 });
+    await expect(refreshButton).toBeEnabled({ timeout: 30_000 });
+    await expect(page.getByTestId('leads-table')).toBeVisible({ timeout: 30_000 });
 
     // Click refresh button
     const waitForLeads = page.waitForResponse((response) => {

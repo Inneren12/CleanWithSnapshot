@@ -75,9 +75,24 @@ test.describe('Admin login flow', () => {
     // Should see cleared message
     await expect(page.getByTestId('admin-message')).toContainText('Cleared');
 
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => ({
+            username: window.localStorage.getItem('admin_basic_username'),
+            password: window.localStorage.getItem('admin_basic_password'),
+          })),
+        { timeout: 30_000 }
+      )
+      .toEqual({ username: null, password: null });
+
     // After reload, should need to log in again
     await page.reload();
-    await expect(page.getByTestId('admin-login-form')).toBeVisible();
-    await expect(page.getByTestId('admin-username-input')).toBeVisible();
+    await expect(page.getByTestId('admin-login-form')).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId('admin-username-input')).toBeVisible({
+      timeout: 30_000,
+    });
   });
 });

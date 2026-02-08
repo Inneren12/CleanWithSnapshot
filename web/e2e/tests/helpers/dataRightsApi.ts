@@ -14,6 +14,8 @@ const ADMIN_PROXY_AUTH_E2E_USER = process.env.ADMIN_PROXY_AUTH_E2E_USER ?? '';
 const ADMIN_PROXY_AUTH_E2E_EMAIL = process.env.ADMIN_PROXY_AUTH_E2E_EMAIL ?? '';
 const ADMIN_PROXY_AUTH_E2E_ROLES = process.env.ADMIN_PROXY_AUTH_E2E_ROLES ?? '';
 const SAAS_E2E_EMAIL = process.env.SAAS_E2E_EMAIL;
+const SAAS_E2E_ACCESS_TOKEN = process.env.SAAS_E2E_ACCESS_TOKEN;
+const E2E_TEST_ORG = process.env.E2E_TEST_ORG;
 
 const buildE2eEmail = (prefix: string): string =>
   `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
@@ -116,6 +118,17 @@ let cachedSaasAuthHeadersPromise: Promise<Record<string, string>> | null = null;
 async function getSaasAuthHeaders(
   request: APIRequestContext
 ): Promise<Record<string, string>> {
+  console.log(
+    '[E2E] SAAS_E2E_ACCESS_TOKEN present:',
+    Boolean(process.env.SAAS_E2E_ACCESS_TOKEN)
+  );
+  if (SAAS_E2E_ACCESS_TOKEN) {
+    console.log('[E2E] Using SAAS token bypass');
+    cachedSaasAuthHeaders = {
+      Authorization: `Bearer ${SAAS_E2E_ACCESS_TOKEN}`,
+    };
+    return cachedSaasAuthHeaders;
+  }
   if (cachedSaasAuthHeaders) {
     return cachedSaasAuthHeaders;
   }
@@ -129,6 +142,7 @@ async function getSaasAuthHeaders(
       const response = await request.post(`${credentials.apiBaseUrl}/v1/admin/users`, {
         headers: {
           ...getAdminAuthHeaders(credentials),
+          ...(E2E_TEST_ORG ? { 'X-Test-Org': E2E_TEST_ORG } : {}),
           'Content-Type': 'application/json',
         },
         data: {
@@ -447,11 +461,6 @@ export async function processDataExports(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    // Don't throw if endpoint doesn't exist (404) - test hook may not be enabled
-    if (status === 404) {
-      console.warn('Test endpoint /v1/admin/test/process-data-exports not available');
-      return { response: { processed: 0, completed: 0, failed: 0 }, status };
-    }
     console.error(`Process exports failed (${status}): ${text}`);
     throw new Error(`Process exports failed: ${status} - ${text}`);
   }
@@ -560,11 +569,6 @@ export async function processDeletions(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    // Don't throw if endpoint doesn't exist (404) - test hook may not be enabled
-    if (status === 404) {
-      console.warn('Test endpoint /v1/admin/test/process-deletions not available');
-      return { response: { processed: 0 }, status };
-    }
     console.error(`Process deletions failed (${status}): ${text}`);
     throw new Error(`Process deletions failed: ${status} - ${text}`);
   }
