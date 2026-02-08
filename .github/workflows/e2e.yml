@@ -491,6 +491,7 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_USER: ${{ env.ADMIN_PROXY_AUTH_E2E_USER }}
           ADMIN_PROXY_AUTH_E2E_EMAIL: ${{ env.ADMIN_PROXY_AUTH_E2E_EMAIL }}
           ADMIN_PROXY_AUTH_E2E_ROLES: ${{ env.ADMIN_PROXY_AUTH_E2E_ROLES }}
+          SAAS_E2E_ACCESS_TOKEN: ${{ secrets.SAAS_E2E_ACCESS_TOKEN }}
         run: |
           PW_CHANNEL=chrome \
           PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
@@ -506,6 +507,7 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_USER="$ADMIN_PROXY_AUTH_E2E_USER" \
           ADMIN_PROXY_AUTH_E2E_EMAIL="$ADMIN_PROXY_AUTH_E2E_EMAIL" \
           ADMIN_PROXY_AUTH_E2E_ROLES="$ADMIN_PROXY_AUTH_E2E_ROLES" \
+          SAAS_E2E_ACCESS_TOKEN="$SAAS_E2E_ACCESS_TOKEN" \
           pnpm exec playwright test --config e2e/playwright.config.ts
 
       - name: Assert no unauthenticated admin probes
