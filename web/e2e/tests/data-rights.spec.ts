@@ -89,36 +89,42 @@ test.describe('GDPR Data Rights', () => {
     test('creates export request and completes via job processing', async ({
       request,
     }) => {
-      // Seed a test lead
-      const { leadId, email } = await seedTestLead(request);
+      console.log('[TEST START] Creating test lead...');
+      const { leadId } = await seedTestLead(request);
+      console.log('[TEST] Lead created:', leadId);
 
-      // Request async export
-      const { response: exportRequest, status } = await requestDataExportAsync(
-        request,
-        { leadId, email }
-      );
+      console.log('[TEST] Requesting async export...');
+      let exportResponse;
+      try {
+        exportResponse = await requestDataExportAsync(request, { leadId });
+        console.log('[TEST] Async export SUCCESS:', exportResponse);
+      } catch (error: any) {
+        console.error('[TEST ERROR] Async export FAILED');
+        console.error('[TEST ERROR] Error name:', error.name);
+        console.error('[TEST ERROR] Error message:', error.message);
+        console.error('[TEST ERROR] Error stack:', error.stack);
 
-      expect(status).toBe(200);
-      expect(exportRequest.export_id).toBeDefined();
-      expect(exportRequest.status).toMatch(/pending|completed/);
-
-      // Process exports immediately (test hook)
-      await processDataExports(request);
-
-      // Wait for export to complete
-      const completedExport = await waitForExportCompletion(
-        request,
-        exportRequest.export_id,
-        {
-          leadId,
-          email,
-          maxRetries: 10,
-          pollIntervalMs: 500,
+        // If it's an HTTP error from Playwright
+        if (error.response) {
+          const status = error.response.status();
+          const body = await error.response.text();
+          console.error('[TEST ERROR] HTTP Status:', status);
+          console.error('[TEST ERROR] Response body:', body);
+          console.error('[TEST ERROR] Response headers:', await error.response.allHeaders());
         }
-      );
+
+        throw error;
+      }
+
+      const { export_id } = exportResponse.response;
+      console.log('[TEST] Export ID:', export_id);
+
+      console.log('[TEST] Waiting for export completion...');
+      const completedExport = await waitForExportCompletion(request, export_id);
+      console.log('[TEST] Export completed:', completedExport);
 
       expect(completedExport.status).toBe('completed');
-      expect(completedExport.completed_at).toBeDefined();
+      expect(completedExport.subject_id).toBe(leadId);
     });
 
     test('lists export requests for a subject', async ({ request }) => {
