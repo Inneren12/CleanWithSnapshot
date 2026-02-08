@@ -4,14 +4,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AdminNav from "../components/AdminNav";
 import {
+  ADMIN_STORAGE_PASSWORD_KEY,
+  ADMIN_STORAGE_USERNAME_KEY,
+  resolveAdminAuthHeaders,
+} from "../lib/adminAuth";
+import { DEFAULT_FEATURE_CONFIG, DEFAULT_UI_PREFS } from "../lib/adminDefaults";
+import {
   type AdminProfile,
   type FeatureConfigResponse,
   type UiPrefsResponse,
   isVisible,
 } from "../lib/featureVisibility";
 
-const STORAGE_USERNAME_KEY = "admin_basic_username";
-const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 const STATUS_OPTIONS = ["NEW", "CONTACTED", "QUOTED", "WON", "LOST"];
@@ -58,11 +62,10 @@ export default function LeadsPage() {
     Record<string, { status?: string; notes?: string; loss_reason?: string }>
   >({});
 
-  const authHeaders = useMemo<Record<string, string>>(() => {
-    if (!username || !password) return {} as Record<string, string>;
-    const encoded = btoa(`${username}:${password}`);
-    return { Authorization: `Basic ${encoded}` };
-  }, [password, username]);
+  const { headers: authHeaders, hasCredentials } = useMemo(
+    () => resolveAdminAuthHeaders(username, password),
+    [username, password]
+  );
 
   const permissionKeys = profile?.permissions ?? [];
   const canEditLeads =
@@ -137,7 +140,7 @@ export default function LeadsPage() {
   }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
 
   const loadProfile = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     const response = await fetch(`${API_BASE}/v1/admin/profile`, {
       headers: authHeaders,
       cache: "no-store",
@@ -148,42 +151,54 @@ export default function LeadsPage() {
     } else {
       setProfile(null);
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadFeatureConfig = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as FeatureConfigResponse;
-      setFeatureConfig(data);
-    } else {
-      setFeatureConfig(null);
-      setSettingsError("Failed to load module settings");
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as FeatureConfigResponse;
+        setFeatureConfig(data);
+      } else {
+        setFeatureConfig(DEFAULT_FEATURE_CONFIG);
+        setSettingsError("Failed to load module settings. Using defaults.");
+      }
+    } catch (error) {
+      console.error("Failed to load feature config:", error);
+      setFeatureConfig(DEFAULT_FEATURE_CONFIG);
+      setSettingsError("Failed to load module settings. Using defaults.");
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadUiPrefs = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as UiPrefsResponse;
-      setUiPrefs(data);
-    } else {
-      setUiPrefs(null);
-      setSettingsError("Failed to load UI preferences");
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as UiPrefsResponse;
+        setUiPrefs(data);
+      } else {
+        setUiPrefs(DEFAULT_UI_PREFS);
+        setSettingsError("Failed to load UI preferences. Using defaults.");
+      }
+    } catch (error) {
+      console.error("Failed to load UI preferences:", error);
+      setUiPrefs(DEFAULT_UI_PREFS);
+      setSettingsError("Failed to load UI preferences. Using defaults.");
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadLeads = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setLoading(true);
     setError(null);
     const params = new URLSearchParams();
@@ -208,12 +223,12 @@ export default function LeadsPage() {
       setLeads(null);
     }
     setLoading(false);
-  }, [authHeaders, fromDate, page, password, query, statusFilter, toDate, username]);
+  }, [authHeaders, fromDate, hasCredentials, page, query, statusFilter, toDate]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
-    const storedPassword = window.localStorage.getItem(STORAGE_PASSWORD_KEY);
+    const storedUsername = window.localStorage.getItem(ADMIN_STORAGE_USERNAME_KEY);
+    const storedPassword = window.localStorage.getItem(ADMIN_STORAGE_PASSWORD_KEY);
     if (storedUsername) setUsername(storedUsername);
     if (storedPassword) setPassword(storedPassword);
   }, []);
@@ -237,8 +252,8 @@ export default function LeadsPage() {
 
   const saveCredentials = () => {
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
-      window.localStorage.setItem(STORAGE_PASSWORD_KEY, password);
+      window.localStorage.setItem(ADMIN_STORAGE_USERNAME_KEY, username);
+      window.localStorage.setItem(ADMIN_STORAGE_PASSWORD_KEY, password);
     }
     setMessage("Saved credentials");
     void loadProfile();
@@ -256,8 +271,8 @@ export default function LeadsPage() {
     setSettingsError(null);
     setMessage("Cleared credentials");
     if (typeof window !== "undefined") {
-      window.localStorage.removeItem(STORAGE_USERNAME_KEY);
-      window.localStorage.removeItem(STORAGE_PASSWORD_KEY);
+      window.localStorage.removeItem(ADMIN_STORAGE_USERNAME_KEY);
+      window.localStorage.removeItem(ADMIN_STORAGE_PASSWORD_KEY);
     }
   };
 
