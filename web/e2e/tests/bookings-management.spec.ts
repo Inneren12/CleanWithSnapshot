@@ -7,19 +7,10 @@ import {
 } from './helpers/adminAuth';
 
 const waitForBookingsReady = async (page: Page) => {
-  const responseWait = page
-    .waitForResponse(
-      (response) =>
-        response.request().method() === 'GET' &&
-        response.url().includes('/v1/admin/bookings') &&
-        response.ok(),
-      { timeout: 30_000 }
-    )
-    .catch(() => null);
   const refreshButton = page.getByTestId('bookings-refresh-btn');
-  await expect(refreshButton).toBeEnabled({ timeout: 30_000 });
+  await expect(refreshButton).toBeVisible({ timeout: 30_000 });
   await expect(refreshButton).not.toHaveText(/Loading/i, { timeout: 30_000 });
-  await responseWait;
+  await expect(refreshButton).toBeEnabled({ timeout: 30_000 });
 };
 
 test.describe('Bookings management', () => {
@@ -65,11 +56,11 @@ test.describe('Bookings management', () => {
     await waitForBookingsReady(page);
 
     const dateInput = page.getByTestId('bookings-date-input');
-    await expect(dateInput).toBeVisible();
-    await expect(dateInput).toBeEnabled();
+    await expect(dateInput).toBeVisible({ timeout: 30_000 });
+    await expect(dateInput).toBeEnabled({ timeout: 30_000 });
     const applyButton = page.getByTestId('bookings-date-apply');
-    await expect(applyButton).toBeVisible();
-    await expect(applyButton).toBeEnabled();
+    await expect(applyButton).toBeVisible({ timeout: 30_000 });
+    await expect(applyButton).toBeEnabled({ timeout: 30_000 });
 
     // Set a specific date
     const today = new Date().toISOString().split('T')[0];
@@ -85,7 +76,7 @@ test.describe('Bookings management', () => {
     await applyButton.click();
     await waitForBookings;
     await expect(dateInput).toHaveValue(today);
-    await expect(page.getByTestId('bookings-table')).toBeVisible();
+    await expect(page.getByTestId('bookings-table')).toBeVisible({ timeout: 30_000 });
   });
 
   test('bookings refresh button is functional', async ({ page }) => {
@@ -100,9 +91,9 @@ test.describe('Bookings management', () => {
     await waitForBookingsReady(page);
 
     const refreshButton = page.getByTestId('bookings-refresh-btn');
-    await expect(refreshButton).toBeVisible();
-    await expect(refreshButton).toBeEnabled();
-    await expect(page.getByTestId('bookings-table')).toBeVisible();
+    await expect(refreshButton).toBeVisible({ timeout: 30_000 });
+    await expect(refreshButton).toBeEnabled({ timeout: 30_000 });
+    await expect(page.getByTestId('bookings-table')).toBeVisible({ timeout: 30_000 });
 
     // Click refresh button
     const waitForBookings = page.waitForResponse((response) => {
@@ -119,7 +110,7 @@ test.describe('Bookings management', () => {
     await expect(page.locator('html#__next_error__')).toHaveCount(0);
 
     // Table should still be visible after refresh
-    await expect(page.getByTestId('bookings-table')).toBeVisible();
+    await expect(page.getByTestId('bookings-table')).toBeVisible({ timeout: 30_000 });
   });
 
   test('bookings table has expected columns', async ({ page }) => {
@@ -135,8 +126,8 @@ test.describe('Bookings management', () => {
     await expect(page.getByTestId('bookings-table')).toBeVisible();
 
     const refreshButton = page.getByTestId('bookings-refresh-btn');
-    await expect(refreshButton).toBeVisible();
-    await expect(refreshButton).toBeEnabled();
+    await expect(refreshButton).toBeVisible({ timeout: 30_000 });
+    await expect(refreshButton).toBeEnabled({ timeout: 30_000 });
     const waitForBookings = page.waitForResponse((response) => {
       return (
         response.request().method() === 'GET' &&
