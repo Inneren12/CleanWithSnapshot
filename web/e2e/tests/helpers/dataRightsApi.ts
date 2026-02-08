@@ -118,7 +118,12 @@ let cachedSaasAuthHeadersPromise: Promise<Record<string, string>> | null = null;
 async function getSaasAuthHeaders(
   request: APIRequestContext
 ): Promise<Record<string, string>> {
+  console.log(
+    '[E2E] SAAS_E2E_ACCESS_TOKEN present:',
+    Boolean(process.env.SAAS_E2E_ACCESS_TOKEN)
+  );
   if (SAAS_E2E_ACCESS_TOKEN) {
+    console.log('[E2E] Using SAAS token bypass');
     cachedSaasAuthHeaders = {
       Authorization: `Bearer ${SAAS_E2E_ACCESS_TOKEN}`,
     };

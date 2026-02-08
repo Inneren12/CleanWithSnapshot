@@ -24,6 +24,15 @@ const waitForBookingsReady = async (page: Page) => {
 
 test.describe('Bookings management', () => {
   test.beforeEach(async ({ page, request }) => {
+    page.on('response', (response) => {
+      if (response.status() < 400) {
+        return;
+      }
+      const url = response.url();
+      if (url.includes('/v1/admin/')) {
+        console.log('[E2E][API FAIL]', response.status(), url);
+      }
+    });
     const admin = defaultAdminCredentials();
     await verifyAdminCredentials(request, admin);
     await seedAdminStorage(page, admin);
