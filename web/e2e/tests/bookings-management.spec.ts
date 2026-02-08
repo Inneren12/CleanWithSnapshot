@@ -1,10 +1,26 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   defaultAdminCredentials,
   seedAdminStorage,
   verifyAdminCredentials,
 } from './helpers/adminAuth';
+
+const waitForBookingsReady = async (page: Page) => {
+  const responseWait = page
+    .waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/bookings') &&
+        response.ok(),
+      { timeout: 30_000 }
+    )
+    .catch(() => null);
+  const refreshButton = page.getByTestId('bookings-refresh-btn');
+  await expect(refreshButton).toBeEnabled({ timeout: 30_000 });
+  await expect(refreshButton).not.toHaveText(/Loading/i, { timeout: 30_000 });
+  await responseWait;
+};
 
 test.describe('Bookings management', () => {
   test.beforeEach(async ({ page, request }) => {
@@ -37,6 +53,7 @@ test.describe('Bookings management', () => {
 
     // Wait for stable controls wrapper
     await expect(page.getByTestId('bookings-controls')).toBeVisible();
+    await waitForBookingsReady(page);
 
     const dateInput = page.getByTestId('bookings-date-input');
     await expect(dateInput).toBeVisible();
@@ -71,11 +88,11 @@ test.describe('Bookings management', () => {
 
     // Wait for stable controls wrapper
     await expect(page.getByTestId('bookings-controls')).toBeVisible();
+    await waitForBookingsReady(page);
 
     const refreshButton = page.getByTestId('bookings-refresh-btn');
     await expect(refreshButton).toBeVisible();
     await expect(refreshButton).toBeEnabled();
-    await expect(refreshButton).not.toHaveText(/Loading/i);
     await expect(page.getByTestId('bookings-table')).toBeVisible();
 
     // Click refresh button
@@ -105,12 +122,12 @@ test.describe('Bookings management', () => {
 
     // Wait for stable controls wrapper first
     await expect(page.getByTestId('bookings-controls')).toBeVisible();
+    await waitForBookingsReady(page);
     await expect(page.getByTestId('bookings-table')).toBeVisible();
 
     const refreshButton = page.getByTestId('bookings-refresh-btn');
     await expect(refreshButton).toBeVisible();
     await expect(refreshButton).toBeEnabled();
-    await expect(refreshButton).not.toHaveText(/Loading/i);
     const waitForBookings = page.waitForResponse((response) => {
       return (
         response.request().method() === 'GET' &&

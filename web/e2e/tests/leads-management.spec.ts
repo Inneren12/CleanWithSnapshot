@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   defaultAdminCredentials,
@@ -6,6 +6,22 @@ import {
   verifyAdminCredentials,
 } from './helpers/adminAuth';
 import { waitForAdminPage } from './helpers/playwrightContext';
+
+const waitForLeadsReady = async (page: Page) => {
+  const responseWait = page
+    .waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        response.url().includes('/v1/admin/leads') &&
+        response.ok(),
+      { timeout: 30_000 }
+    )
+    .catch(() => null);
+  const refreshButton = page.getByTestId('leads-refresh');
+  await expect(refreshButton).toBeEnabled({ timeout: 30_000 });
+  await expect(refreshButton).not.toHaveText(/Loading/i, { timeout: 30_000 });
+  await responseWait;
+};
 
 test.describe('Leads management', () => {
   test.beforeEach(async ({ page, request }) => {
@@ -38,6 +54,7 @@ test.describe('Leads management', () => {
 
     // Wait for stable controls wrapper
     await expect(page.getByTestId('leads-controls')).toBeVisible();
+    await waitForLeadsReady(page);
     await page.getByTestId('leads-table').waitFor({ state: 'visible' });
 
     const statusFilter = page.getByTestId('leads-status-filter');
@@ -72,11 +89,11 @@ test.describe('Leads management', () => {
 
     // Wait for stable controls wrapper
     await expect(page.getByTestId('leads-controls')).toBeVisible();
+    await waitForLeadsReady(page);
 
     const refreshButton = page.getByTestId('leads-refresh');
     await expect(refreshButton).toBeVisible();
     await expect(refreshButton).toBeEnabled();
-    await expect(refreshButton).not.toHaveText(/Loading/i);
     await expect(page.getByTestId('leads-table')).toBeVisible();
 
     // Click refresh button
