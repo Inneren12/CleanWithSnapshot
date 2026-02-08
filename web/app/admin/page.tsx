@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AdminNav from "./components/AdminNav";
 import {
+  ADMIN_STORAGE_PASSWORD_KEY,
+  ADMIN_STORAGE_USERNAME_KEY,
+  resolveAdminAuthHeaders,
+} from "./lib/adminAuth";
+import { DEFAULT_FEATURE_CONFIG, DEFAULT_UI_PREFS } from "./lib/adminDefaults";
+import {
   type AdminProfile,
   type FeatureConfigResponse,
   type UiPrefsResponse,
@@ -11,8 +17,6 @@ import {
 } from "./lib/featureVisibility";
 import { DEFAULT_ORG_TIMEZONE, type OrgSettingsResponse } from "./lib/orgSettings";
 
-const STORAGE_USERNAME_KEY = "admin_basic_username";
-const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const KPI_PRESETS = [7, 28, 90];
 
@@ -91,6 +95,39 @@ type OutboxEvent = {
   next_attempt_at?: string | null;
   created_at: string;
 };
+
+function buildEmptyMetrics(range: { from: string; to: string }): AdminMetricsResponse {
+  return {
+    range_start: range.from,
+    range_end: range.to,
+    conversions: {
+      lead_created: 0,
+      booking_created: 0,
+      booking_confirmed: 0,
+      job_completed: 0,
+    },
+    revenue: { average_estimated_revenue_cents: null },
+    accuracy: {
+      sample_size: 0,
+      average_estimated_duration_minutes: null,
+      average_actual_duration_minutes: null,
+      average_delta_minutes: null,
+    },
+    financial: {
+      total_revenue_cents: 0,
+      revenue_per_day_cents: 0,
+      margin_cents: 0,
+      average_order_value_cents: null,
+    },
+    operational: {
+      crew_utilization: null,
+      cancellation_rate: 0,
+      retention_30_day: 0,
+      retention_60_day: 0,
+      retention_90_day: 0,
+    },
+  };
+}
 
 function formatDateTime(value: string, timeZone: string) {
   const dt = new Date(value);
@@ -197,11 +234,10 @@ export default function AdminPage() {
   const [message, setMessage] = useState<string | null>(null);
   const timezoneRef = useRef(DEFAULT_ORG_TIMEZONE);
 
-  const authHeaders = useMemo<Record<string, string>>(() => {
-    if (!username || !password) return {} as Record<string, string>;
-    const encoded = btoa(`${username}:${password}`);
-    return { Authorization: `Basic ${encoded}` };
-  }, [username, password]);
+  const { headers: authHeaders, hasCredentials } = useMemo(
+    () => resolveAdminAuthHeaders(username, password),
+    [username, password]
+  );
 
   const permissionKeys = profile?.permissions ?? [];
   const canManageBookings =
@@ -278,7 +314,7 @@ export default function AdminPage() {
   }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
 
   const loadProfile = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     try {
       const response = await fetch(`${API_BASE}/v1/admin/profile`, {
         headers: authHeaders,
@@ -294,10 +330,10 @@ export default function AdminPage() {
       console.error("Failed to load profile:", error);
       setProfile(null);
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadFeatureConfig = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setSettingsError(null);
     try {
       const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
@@ -308,18 +344,18 @@ export default function AdminPage() {
         const data = (await response.json()) as FeatureConfigResponse;
         setFeatureConfig(data);
       } else {
-        setFeatureConfig(null);
-        setSettingsError("Failed to load module settings");
+        setFeatureConfig(DEFAULT_FEATURE_CONFIG);
+        setSettingsError("Failed to load module settings. Using defaults.");
       }
     } catch (error) {
       console.error("Failed to load feature config:", error);
-      setFeatureConfig(null);
-      setSettingsError("Failed to load module settings");
+      setFeatureConfig(DEFAULT_FEATURE_CONFIG);
+      setSettingsError("Failed to load module settings. Using defaults.");
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadUiPrefs = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setSettingsError(null);
     try {
       const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
@@ -330,20 +366,20 @@ export default function AdminPage() {
         const data = (await response.json()) as UiPrefsResponse;
         setUiPrefs(data);
       } else {
-        setUiPrefs(null);
-        setSettingsError("Failed to load UI preferences");
+        setUiPrefs(DEFAULT_UI_PREFS);
+        setSettingsError("Failed to load UI preferences. Using defaults.");
       }
     } catch (error) {
       console.error("Failed to load UI preferences:", error);
-      setUiPrefs(null);
-      setSettingsError("Failed to load UI preferences");
+      setUiPrefs(DEFAULT_UI_PREFS);
+      setSettingsError("Failed to load UI preferences. Using defaults.");
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
-    const storedPassword = window.localStorage.getItem(STORAGE_PASSWORD_KEY);
+    const storedUsername = window.localStorage.getItem(ADMIN_STORAGE_USERNAME_KEY);
+    const storedPassword = window.localStorage.getItem(ADMIN_STORAGE_PASSWORD_KEY);
     if (storedUsername) setUsername(storedUsername);
     if (storedPassword) setPassword(storedPassword);
   }, []);
@@ -358,7 +394,7 @@ export default function AdminPage() {
   }, [loadFeatureConfig, loadUiPrefs]);
 
   const loadMetrics = async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     if (profile && !canAdminMetrics) {
       setMetrics(null);
       setMetricsError("Metrics require admin access");
@@ -379,24 +415,20 @@ export default function AdminPage() {
         const data = (await response.json()) as AdminMetricsResponse;
         setMetrics(data);
       } else {
-        setMetrics(null);
-        if (response.status === 403) {
-          setMetricsError("Metrics require admin access");
-        } else {
-          setMetricsError("Failed to load metrics");
-        }
+        setMetrics(buildEmptyMetrics(metricsRange));
+        setMetricsError(response.status === 403 ? "Metrics require admin access" : null);
       }
     } catch (error) {
       console.error("Failed to load metrics:", error);
-      setMetrics(null);
-      setMetricsError("Failed to load metrics");
+      setMetrics(buildEmptyMetrics(metricsRange));
+      setMetricsError(null);
     } finally {
       setMetricsLoading(false);
     }
   };
 
   const downloadMetricsCsv = async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     if (profile && !canAdminMetrics) {
       setMetricsError("Metrics require admin access");
       return;
@@ -431,7 +463,7 @@ export default function AdminPage() {
   };
 
   const loadLeads = async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setLeadsLoading(true);
     try {
       const filter = leadStatusFilter ? `?status=${encodeURIComponent(leadStatusFilter)}` : "";
@@ -450,7 +482,7 @@ export default function AdminPage() {
   };
 
   const loadBookings = async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setBookingsLoading(true);
     try {
       const endDate = addDaysYMD(selectedDate, 6, orgTimezone);
@@ -469,37 +501,45 @@ export default function AdminPage() {
   };
 
   const loadExportDeadLetter = async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     try {
       const response = await fetch(`${API_BASE}/v1/admin/export-dead-letter?limit=50`, {
         headers: authHeaders,
         cache: "no-store",
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        setExportEvents([]);
+        return;
+      }
       const data = (await response.json()) as ExportEvent[];
       setExportEvents(data);
     } catch (error) {
       console.error("Failed to load export dead letter:", error);
+      setExportEvents([]);
     }
   };
 
   const loadOutboxDeadLetter = async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     try {
       const response = await fetch(`${API_BASE}/v1/admin/outbox/dead-letter?limit=50`, {
         headers: authHeaders,
         cache: "no-store",
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        setOutboxEvents([]);
+        return;
+      }
       const data = (await response.json()) as OutboxEvent[];
       setOutboxEvents(data);
     } catch (error) {
       console.error("Failed to load outbox dead letter:", error);
+      setOutboxEvents([]);
     }
   };
 
   const replayOutboxEvent = async (eventId: string) => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     try {
       const response = await fetch(`${API_BASE}/v1/admin/outbox/${eventId}/replay`, {
         method: "POST",
@@ -522,20 +562,20 @@ export default function AdminPage() {
     void loadLeads();
     void loadExportDeadLetter();
     void loadOutboxDeadLetter();
-  }, [authHeaders, leadStatusFilter]);
+  }, [authHeaders, hasCredentials, leadStatusFilter]);
 
   useEffect(() => {
     void loadBookings();
-  }, [authHeaders, selectedDate]);
+  }, [authHeaders, hasCredentials, selectedDate]);
 
   useEffect(() => {
     void loadMetrics();
-  }, [authHeaders, metricsRange]);
+  }, [authHeaders, hasCredentials, metricsRange]);
 
   const saveCredentials = () => {
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
-      window.localStorage.setItem(STORAGE_PASSWORD_KEY, password);
+      window.localStorage.setItem(ADMIN_STORAGE_USERNAME_KEY, username);
+      window.localStorage.setItem(ADMIN_STORAGE_PASSWORD_KEY, password);
     }
     setMessage("Saved credentials");
     void loadProfile();
@@ -555,8 +595,8 @@ export default function AdminPage() {
     setMetricsError(null);
     setSettingsError(null);
     if (typeof window !== "undefined") {
-      window.localStorage.removeItem(STORAGE_USERNAME_KEY);
-      window.localStorage.removeItem(STORAGE_PASSWORD_KEY);
+      window.localStorage.removeItem(ADMIN_STORAGE_USERNAME_KEY);
+      window.localStorage.removeItem(ADMIN_STORAGE_PASSWORD_KEY);
     }
     setMessage("Cleared credentials");
   };
