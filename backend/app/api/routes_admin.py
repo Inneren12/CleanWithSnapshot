@@ -2351,14 +2351,48 @@ async def admin_create_user(
     session: AsyncSession = Depends(get_db_session),
     identity: AdminIdentity = Depends(require_admin),
 ) -> AdminUserResponse:
-    org_id = _resolve_admin_org(request, identity)
+    _user_create_logger = logging.getLogger("admin_create_user")
+    request_id = getattr(request.state, "request_id", None)
+    _user_create_logger.info(
+        "admin_create_user_start",
+        extra={"extra": {
+            "request_id": request_id,
+            "email": payload.email,
+            "target_type": payload.target_type,
+            "role": payload.role.value if payload.role else None,
+        }},
+    )
+    try:
+        org_id = _resolve_admin_org(request, identity)
+        _user_create_logger.info(
+            "admin_create_user_org_resolved",
+            extra={"extra": {"request_id": request_id, "org_id": str(org_id)}},
+        )
+    except Exception:
+        _user_create_logger.exception(
+            "admin_create_user_org_resolve_failed",
+            extra={"extra": {"request_id": request_id}},
+        )
+        raise
     org = await session.get(Organization, org_id)
     if not org:
+        _user_create_logger.warning(
+            "admin_create_user_org_not_found",
+            extra={"extra": {"request_id": request_id, "org_id": str(org_id)}},
+        )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
 
     normalized_email = saas_service.normalize_email(payload.email)
     existing_user = await session.scalar(sa.select(User).where(User.email == normalized_email))
     if existing_user:
+        _user_create_logger.info(
+            "admin_create_user_existing_user",
+            extra={"extra": {
+                "request_id": request_id,
+                "user_id": str(existing_user.user_id),
+                "email": normalized_email,
+            }},
+        )
         membership = await session.scalar(
             sa.select(Membership).where(Membership.user_id == existing_user.user_id, Membership.org_id == org_id)
         )
@@ -2408,10 +2442,50 @@ async def admin_create_user(
                     }
                 ],
             )
-        user = await saas_service.create_user(session, normalized_email)
+        try:
+            user = await saas_service.create_user(session, normalized_email)
+            _user_create_logger.info(
+                "admin_create_user_user_created",
+                extra={"extra": {
+                    "request_id": request_id,
+                    "user_id": str(user.user_id),
+                    "email": normalized_email,
+                }},
+            )
+        except Exception:
+            _user_create_logger.exception(
+                "admin_create_user_create_user_failed",
+                extra={"extra": {
+                    "request_id": request_id,
+                    "email": normalized_email,
+                    "org_id": str(org_id),
+                }},
+            )
+            raise
 
     role = _resolve_membership_role(payload.target_type, payload.role)
-    await saas_service.create_membership(session, org, user, role)
+    try:
+        await saas_service.create_membership(session, org, user, role)
+        _user_create_logger.info(
+            "admin_create_user_membership_created",
+            extra={"extra": {
+                "request_id": request_id,
+                "user_id": str(user.user_id),
+                "org_id": str(org_id),
+                "role": role.value,
+            }},
+        )
+    except Exception:
+        _user_create_logger.exception(
+            "admin_create_user_membership_failed",
+            extra={"extra": {
+                "request_id": request_id,
+                "user_id": str(user.user_id),
+                "org_id": str(org_id),
+                "role": role.value,
+            }},
+        )
+        raise
 
     if payload.target_type == "worker":
         team: Team | None = None
@@ -2436,9 +2510,40 @@ async def admin_create_user(
         )
         session.add(worker)
 
-    temp_password = await saas_service.issue_temp_password(session, user)
+    try:
+        temp_password = await saas_service.issue_temp_password(session, user)
+    except Exception:
+        _user_create_logger.exception(
+            "admin_create_user_temp_password_failed",
+            extra={"extra": {
+                "request_id": request_id,
+                "user_id": str(user.user_id),
+            }},
+        )
+        raise
     response.headers["Cache-Control"] = "no-store"
-    await session.commit()
+    try:
+        await session.commit()
+    except Exception:
+        _user_create_logger.exception(
+            "admin_create_user_commit_failed",
+            extra={"extra": {
+                "request_id": request_id,
+                "user_id": str(user.user_id),
+                "org_id": str(org_id),
+                "email": normalized_email,
+            }},
+        )
+        raise
+    _user_create_logger.info(
+        "admin_create_user_success",
+        extra={"extra": {
+            "request_id": request_id,
+            "user_id": str(user.user_id),
+            "email": user.email,
+            "target_type": payload.target_type,
+        }},
+    )
     return AdminUserResponse(
         user_id=user.user_id,
         email=user.email,
