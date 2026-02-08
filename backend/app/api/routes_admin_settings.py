@@ -7,7 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin_auth import AdminIdentity, AdminPermission, AdminRole, require_permissions, require_viewer
+from app.api.admin_auth import (
+    AdminIdentity,
+    AdminPermission,
+    AdminRole,
+    build_admin_forbidden_exception,
+    require_permissions,
+    require_viewer,
+)
 from app.api.break_glass import BREAK_GLASS_HEADER
 from app.api.org_context import require_org_context
 from app.domain.config_audit import ConfigAuditAction, ConfigActorType, ConfigScope
@@ -37,7 +44,7 @@ async def require_owner(
     identity: AdminIdentity = Depends(require_permissions(AdminPermission.ADMIN)),
 ) -> AdminIdentity:
     if identity.role != AdminRole.OWNER:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        raise build_admin_forbidden_exception(reason="forbidden_permission", detail="Forbidden")
     return identity
 
 

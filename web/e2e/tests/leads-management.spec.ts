@@ -22,7 +22,13 @@ test.describe('Leads management', () => {
       }
       const url = response.url();
       if (url.includes('/v1/admin/')) {
-        console.log('[E2E][API FAIL]', response.status(), url);
+        const reason = response.headers()['x-admin-auth-fail-reason'];
+        console.log(
+          '[E2E][API FAIL]',
+          response.status(),
+          url,
+          reason ? `reason=${reason}` : ''
+        );
       }
     });
     const admin = defaultAdminCredentials();

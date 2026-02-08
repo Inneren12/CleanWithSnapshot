@@ -474,7 +474,8 @@ jobs:
                 /^x-request-id:/ || \
                 /^x-correlation-id:/ || \
                 /^server:/ || \
-                /^date:/ \
+                /^date:/ || \
+                /^www-authenticate:/ \
                 {print}' \
               || true
             echo
