@@ -2495,7 +2495,20 @@ async def admin_create_user(
             )
             raise
 
-    role = _resolve_membership_role(payload.target_type, payload.role)
+    try:
+        role = _resolve_membership_role(payload.target_type, payload.role)
+    except (ValueError, KeyError, TypeError):
+        _user_create_logger.warning(
+            "admin_create_user_invalid_role",
+            extra={"extra": {
+                "request_id": request_id,
+                "org_id": str(org_id),
+                "email": normalized_email,
+                "target_type": payload.target_type,
+                "role": payload.role.value if payload.role else None,
+            }},
+        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_role")
     try:
         await saas_service.create_membership(session, org, user, role)
         _user_create_logger.info(
