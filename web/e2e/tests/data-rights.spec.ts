@@ -123,8 +123,6 @@ test.describe('GDPR Data Rights', () => {
       const completedExport = await waitForExportCompletion(request, export_id, {
         leadId,
         email,
-        maxRetries: 10,
-        pollIntervalMs: 500,
       });
       console.log('[TEST] Export completed:', completedExport);
 
