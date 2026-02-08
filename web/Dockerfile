@@ -1,4 +1,4 @@
-FROM node:22.22.0-alpine AS build
+FROM node:22.11.0-alpine AS build
 WORKDIR /app
 RUN apk update && apk upgrade --no-cache
 ARG NEXT_PUBLIC_SHOW_ADMIN_LINK
@@ -12,7 +12,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:22.22.0-alpine AS run
+FROM node:22.11.0-alpine AS run
 WORKDIR /app
 RUN apk update && apk upgrade --no-cache
 ARG NEXT_PUBLIC_SHOW_ADMIN_LINK
