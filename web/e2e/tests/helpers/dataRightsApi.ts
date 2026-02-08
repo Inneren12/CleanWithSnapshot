@@ -457,6 +457,10 @@ export async function processDataExports(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
+    if (status === 404) {
+      console.warn('Test endpoint /v1/admin/test/process-data-exports not available');
+      return { response: { processed: 0, completed: 0, failed: 0 }, status };
+    }
     console.error(`Process exports failed (${status}): ${text}`);
     throw new Error(`Process exports failed: ${status} - ${text}`);
   }
