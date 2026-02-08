@@ -14,6 +14,8 @@ const ADMIN_PROXY_AUTH_E2E_USER = process.env.ADMIN_PROXY_AUTH_E2E_USER ?? '';
 const ADMIN_PROXY_AUTH_E2E_EMAIL = process.env.ADMIN_PROXY_AUTH_E2E_EMAIL ?? '';
 const ADMIN_PROXY_AUTH_E2E_ROLES = process.env.ADMIN_PROXY_AUTH_E2E_ROLES ?? '';
 const SAAS_E2E_EMAIL = process.env.SAAS_E2E_EMAIL;
+const SAAS_E2E_ACCESS_TOKEN = process.env.SAAS_E2E_ACCESS_TOKEN ?? '';
+const E2E_TEST_ORG = process.env.E2E_TEST_ORG ?? '';
 
 const buildE2eEmail = (prefix: string): string =>
   `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
@@ -119,6 +121,13 @@ async function getSaasAuthHeaders(
   if (cachedSaasAuthHeaders) {
     return cachedSaasAuthHeaders;
   }
+
+  // Fast-path: pre-provisioned token skips user creation entirely
+  if (SAAS_E2E_ACCESS_TOKEN) {
+    cachedSaasAuthHeaders = { Authorization: `Bearer ${SAAS_E2E_ACCESS_TOKEN}` };
+    return cachedSaasAuthHeaders;
+  }
+
   if (cachedSaasAuthHeadersPromise) {
     return cachedSaasAuthHeadersPromise;
   }
@@ -126,11 +135,15 @@ async function getSaasAuthHeaders(
   cachedSaasAuthHeadersPromise = (async () => {
     const credentials = defaultAdminCredentials();
     const createUser = async (email: string): Promise<AdminUserCreateResponse> => {
+      const adminHeaders: Record<string, string> = {
+        ...getAdminAuthHeaders(credentials),
+        'Content-Type': 'application/json',
+      };
+      if (E2E_TEST_ORG) {
+        adminHeaders['X-Test-Org'] = E2E_TEST_ORG;
+      }
       const response = await request.post(`${credentials.apiBaseUrl}/v1/admin/users`, {
-        headers: {
-          ...getAdminAuthHeaders(credentials),
-          'Content-Type': 'application/json',
-        },
+        headers: adminHeaders,
         data: {
           email,
           target_type: 'client',
@@ -447,12 +460,9 @@ export async function processDataExports(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    // Don't throw if endpoint doesn't exist (404) - test hook may not be enabled
     if (status === 404) {
-      console.warn('Test endpoint /v1/admin/test/process-data-exports not available');
-      return { response: { processed: 0, completed: 0, failed: 0 }, status };
+      throw new Error(`Test endpoint /v1/admin/test/process-data-exports not available (404): ${text}`);
     }
-    console.error(`Process exports failed (${status}): ${text}`);
     throw new Error(`Process exports failed: ${status} - ${text}`);
   }
 
@@ -560,12 +570,9 @@ export async function processDeletions(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    // Don't throw if endpoint doesn't exist (404) - test hook may not be enabled
     if (status === 404) {
-      console.warn('Test endpoint /v1/admin/test/process-deletions not available');
-      return { response: { processed: 0 }, status };
+      throw new Error(`Test endpoint /v1/admin/test/process-deletions not available (404): ${text}`);
     }
-    console.error(`Process deletions failed (${status}): ${text}`);
     throw new Error(`Process deletions failed: ${status} - ${text}`);
   }
 

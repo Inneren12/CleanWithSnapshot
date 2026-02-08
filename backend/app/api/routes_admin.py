@@ -21,6 +21,7 @@ from pydantic import BaseModel, EmailStr
 import sqlalchemy as sa
 from sqlalchemy import and_, case, func, select, or_
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api import entitlements
@@ -2343,6 +2344,9 @@ async def get_org_storage_quota(
     )
 
 
+_admin_create_user_log = logging.getLogger("admin_create_user")
+
+
 @router.post("/v1/admin/users", response_model=AdminUserResponse)
 async def admin_create_user(
     payload: AdminUserCreateRequest,
@@ -2351,25 +2355,25 @@ async def admin_create_user(
     session: AsyncSession = Depends(get_db_session),
     identity: AdminIdentity = Depends(require_admin),
 ) -> AdminUserResponse:
+    request_id = getattr(request.state, "request_id", None)
+    log_ctx = {"request_id": request_id, "email": payload.email, "target_type": payload.target_type}
+    _admin_create_user_log.info("start", extra={"extra": log_ctx})
+
     org_id = _resolve_admin_org(request, identity)
+    log_ctx["org_id"] = str(org_id)
     org = await session.get(Organization, org_id)
     if not org:
+        _admin_create_user_log.warning("org_not_found", extra={"extra": log_ctx})
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
 
     normalized_email = saas_service.normalize_email(payload.email)
-    existing_user = await session.scalar(sa.select(User).where(User.email == normalized_email))
-    if existing_user:
-        membership = await session.scalar(
-            sa.select(Membership).where(Membership.user_id == existing_user.user_id, Membership.org_id == org_id)
-        )
-        if membership:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists in organization")
+
+    # --- resolve or create user (idempotent under race) ---
+    user = await session.scalar(sa.select(User).where(User.email == normalized_email))
+    if user is None:
         try:
             await saas_service.enforce_org_user_quota(
-                session,
-                org_id,
-                attempted_action="admin_create_user",
-                audit_identity=identity,
+                session, org_id, attempted_action="admin_create_user", audit_identity=identity,
             )
         except saas_service.OrgUserQuotaExceeded as exc:
             return problem_details(
@@ -2377,22 +2381,28 @@ async def admin_create_user(
                 status=status.HTTP_409_CONFLICT,
                 title="User quota exceeded",
                 detail="Organization user quota exceeded",
-                errors=[
-                    {
-                        "code": "ORG_USER_QUOTA_EXCEEDED",
-                        "current_users_count": exc.snapshot.current_users_count,
-                        "max_users": exc.snapshot.max_users,
-                    }
-                ],
+                errors=[{"code": "ORG_USER_QUOTA_EXCEEDED", "current_users_count": exc.snapshot.current_users_count, "max_users": exc.snapshot.max_users}],
             )
-        user = existing_user
+        try:
+            user = await saas_service.create_user(session, normalized_email)
+            _admin_create_user_log.info("user_created", extra={"extra": {**log_ctx, "user_id": str(user.user_id)}})
+        except IntegrityError:
+            # Race: another request created this user between our SELECT and INSERT.
+            await session.rollback()
+            _admin_create_user_log.info("user_create_race_retry", extra={"extra": log_ctx})
+            user = await session.scalar(sa.select(User).where(User.email == normalized_email))
+            if user is None:
+                _admin_create_user_log.error("user_create_race_refetch_failed", extra={"extra": log_ctx})
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="User creation conflict - please retry",
+                )
     else:
+        _admin_create_user_log.info("user_exists", extra={"extra": {**log_ctx, "user_id": str(user.user_id)}})
+        # Existing user: check quota before adding membership
         try:
             await saas_service.enforce_org_user_quota(
-                session,
-                org_id,
-                attempted_action="admin_create_user",
-                audit_identity=identity,
+                session, org_id, attempted_action="admin_create_user", audit_identity=identity,
             )
         except saas_service.OrgUserQuotaExceeded as exc:
             return problem_details(
@@ -2400,18 +2410,27 @@ async def admin_create_user(
                 status=status.HTTP_409_CONFLICT,
                 title="User quota exceeded",
                 detail="Organization user quota exceeded",
-                errors=[
-                    {
-                        "code": "ORG_USER_QUOTA_EXCEEDED",
-                        "current_users_count": exc.snapshot.current_users_count,
-                        "max_users": exc.snapshot.max_users,
-                    }
-                ],
+                errors=[{"code": "ORG_USER_QUOTA_EXCEEDED", "current_users_count": exc.snapshot.current_users_count, "max_users": exc.snapshot.max_users}],
             )
-        user = await saas_service.create_user(session, normalized_email)
+
+    log_ctx["user_id"] = str(user.user_id)
+
+    # --- resolve or create membership (idempotent under race) ---
+    existing_membership = await session.scalar(
+        sa.select(Membership).where(Membership.user_id == user.user_id, Membership.org_id == org_id)
+    )
+    if existing_membership:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists in organization")
 
     role = _resolve_membership_role(payload.target_type, payload.role)
-    await saas_service.create_membership(session, org, user, role)
+    try:
+        await saas_service.create_membership(session, org, user, role)
+        _admin_create_user_log.info("membership_created", extra={"extra": {**log_ctx, "role": role.value}})
+    except IntegrityError:
+        # Race: membership was created between check and insert.
+        await session.rollback()
+        _admin_create_user_log.warning("membership_race_conflict", extra={"extra": log_ctx})
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists in organization")
 
     if payload.target_type == "worker":
         team: Team | None = None
@@ -2438,7 +2457,20 @@ async def admin_create_user(
 
     temp_password = await saas_service.issue_temp_password(session, user)
     response.headers["Cache-Control"] = "no-store"
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        _admin_create_user_log.exception("commit_integrity_error", extra={"extra": log_ctx})
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conflict during user creation - please retry",
+        )
+    except Exception:
+        await session.rollback()
+        _admin_create_user_log.exception("commit_failed", extra={"extra": log_ctx})
+        raise
+    _admin_create_user_log.info("success", extra={"extra": log_ctx})
     return AdminUserResponse(
         user_id=user.user_id,
         email=user.email,
