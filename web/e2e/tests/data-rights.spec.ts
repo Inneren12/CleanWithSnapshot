@@ -90,7 +90,7 @@ test.describe('GDPR Data Rights', () => {
       request,
     }) => {
       console.log('[TEST START] Creating test lead...');
-      const { leadId } = await seedTestLead(request);
+      const { leadId, email } = await seedTestLead(request);
       console.log('[TEST] Lead created:', leadId);
 
       console.log('[TEST] Requesting async export...');
@@ -120,7 +120,12 @@ test.describe('GDPR Data Rights', () => {
       console.log('[TEST] Export ID:', export_id);
 
       console.log('[TEST] Waiting for export completion...');
-      const completedExport = await waitForExportCompletion(request, export_id);
+      const completedExport = await waitForExportCompletion(request, export_id, {
+        leadId,
+        email,
+        maxRetries: 10,
+        pollIntervalMs: 500,
+      });
       console.log('[TEST] Export completed:', completedExport);
 
       expect(completedExport.status).toBe('completed');
