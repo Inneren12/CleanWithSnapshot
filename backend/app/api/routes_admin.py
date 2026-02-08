@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from pydantic import BaseModel, EmailStr
 import sqlalchemy as sa
 from sqlalchemy import and_, case, func, select, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -2443,6 +2444,14 @@ async def admin_create_user(
                 ],
             )
         try:
+            _user_create_logger.info(
+                "admin_create_user_create_user_start",
+                extra={"extra": {
+                    "request_id": request_id,
+                    "org_id": str(org_id),
+                    "email": normalized_email,
+                }},
+            )
             user = await saas_service.create_user(session, normalized_email)
             _user_create_logger.info(
                 "admin_create_user_user_created",
@@ -2452,7 +2461,30 @@ async def admin_create_user(
                     "email": normalized_email,
                 }},
             )
+        except IntegrityError:
+            await session.rollback()
+            existing_user = await session.scalar(sa.select(User).where(User.email == normalized_email))
+            if not existing_user:
+                _user_create_logger.exception(
+                    "admin_create_user_user_conflict_unresolved",
+                    extra={"extra": {
+                        "request_id": request_id,
+                        "email": normalized_email,
+                        "org_id": str(org_id),
+                    }},
+                )
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists")
+            user = existing_user
+            _user_create_logger.info(
+                "admin_create_user_user_exists",
+                extra={"extra": {
+                    "request_id": request_id,
+                    "user_id": str(user.user_id),
+                    "email": normalized_email,
+                }},
+            )
         except Exception:
+            await session.rollback()
             _user_create_logger.exception(
                 "admin_create_user_create_user_failed",
                 extra={"extra": {
@@ -2475,7 +2507,20 @@ async def admin_create_user(
                 "role": role.value,
             }},
         )
+    except IntegrityError:
+        await session.rollback()
+        _user_create_logger.info(
+            "admin_create_user_membership_exists",
+            extra={"extra": {
+                "request_id": request_id,
+                "user_id": str(user.user_id),
+                "org_id": str(org_id),
+                "role": role.value,
+            }},
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists in organization")
     except Exception:
+        await session.rollback()
         _user_create_logger.exception(
             "admin_create_user_membership_failed",
             extra={"extra": {
@@ -2510,9 +2555,19 @@ async def admin_create_user(
         )
         session.add(worker)
 
+    _user_create_logger.info(
+        "admin_create_user_issue_temp_password",
+        extra={"extra": {
+            "request_id": request_id,
+            "user_id": str(user.user_id),
+            "org_id": str(org_id),
+            "email": normalized_email,
+        }},
+    )
     try:
         temp_password = await saas_service.issue_temp_password(session, user)
     except Exception:
+        await session.rollback()
         _user_create_logger.exception(
             "admin_create_user_temp_password_failed",
             extra={"extra": {
@@ -2523,8 +2578,18 @@ async def admin_create_user(
         raise
     response.headers["Cache-Control"] = "no-store"
     try:
+        _user_create_logger.info(
+            "admin_create_user_commit_start",
+            extra={"extra": {
+                "request_id": request_id,
+                "user_id": str(user.user_id),
+                "org_id": str(org_id),
+                "email": normalized_email,
+            }},
+        )
         await session.commit()
     except Exception:
+        await session.rollback()
         _user_create_logger.exception(
             "admin_create_user_commit_failed",
             extra={"extra": {
