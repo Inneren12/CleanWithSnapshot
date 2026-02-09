@@ -18,11 +18,6 @@ async def require_org_context(
         set_current_org_id(identity.org_id)
         return identity.org_id
 
-    state_org_id = getattr(request.state, "current_org_id", None)
-    if state_org_id is not None:
-        set_current_org_id(state_org_id)
-        return state_org_id
-
     if token_present:
         error_from_state: HTTPException | None = getattr(request.state, "saas_identity_error", None)
         if error_from_state:

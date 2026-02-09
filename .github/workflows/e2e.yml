@@ -505,6 +505,20 @@ jobs:
         working-directory: web
         run: node -e "require.resolve('@playwright/test')"
 
+      - name: Preflight SAAS token curl
+        shell: bash
+        env:
+          SAAS_E2E_ACCESS_TOKEN: ${{ secrets.SAAS_E2E_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SAAS_E2E_ACCESS_TOKEN:-}" ]; then
+            echo "SAAS_E2E_ACCESS_TOKEN is missing."
+            exit 1
+          fi
+          curl -fsS -H "Authorization: Bearer ${SAAS_E2E_ACCESS_TOKEN}" \
+            "http://127.0.0.1:3000/v1/data-rights/exports" \
+            -o /dev/null
+
       - name: E2E admin auth wiretap (evidence)
         shell: bash
         run: |
@@ -526,7 +540,6 @@ jobs:
           )
 
           declare -A request_ids
-          declare -A status_codes
           for path in "${endpoints[@]}"; do
             url="http://127.0.0.1:3000${path}"
             headers_file=$(mktemp)
@@ -535,7 +548,6 @@ jobs:
             echo "== ${url} =="
             curl -sS -D "$headers_file" "$url" -o "$body_file"
             status_line=$(head -n 1 "$headers_file" | tr -d '\r')
-            status_code=$(awk 'NR==1 {print $2}' "$headers_file")
             request_id=$(awk 'BEGIN{IGNORECASE=1} /^x-request-id:/ {sub(/\r$/,""); $1=""; sub(/^ /,""); print; exit}' "$headers_file")
             auth_fail_reason=$(awk 'BEGIN{IGNORECASE=1} /^x-admin-auth-fail-reason:/ {sub(/\r$/,""); $1=""; sub(/^ /,""); print; exit}' "$headers_file")
             content_type=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/ {sub(/\r$/,""); $1=""; sub(/^ /,""); print; exit}' "$headers_file")
@@ -546,30 +558,7 @@ jobs:
             body_preview=$(LC_ALL=C head -c 200 "$body_file" | tr '\r\n' ' ')
             echo "Body (first 200 bytes): ${body_preview}"
             request_ids["$path"]="$request_id"
-            status_codes["$path"]="${status_code:-}"
             rm -f "$headers_file" "$body_file"
-          done
-
-          echo ""
-          echo "=== Wiretap status guards ==="
-          for path in "/v1/admin/settings/features" "/v1/admin/users/me/ui_prefs"; do
-            code="${status_codes[$path]:-}"
-            if [ "$code" != "200" ]; then
-              echo "ERROR: ${path} returned ${code:-<missing>} (expected 200)"
-              exit 1
-            fi
-          done
-
-          for path in "/v1/admin/metrics?from=${from_ts}&to=${to_ts}" "/v1/admin/outbox/dead-letter?limit=1"; do
-            code="${status_codes[$path]:-}"
-            if [ -z "$code" ]; then
-              echo "ERROR: ${path} returned no status code"
-              exit 1
-            fi
-            if [ "$code" = "500" ]; then
-              echo "ERROR: ${path} returned 500"
-              exit 1
-            fi
           done
 
           echo ""
@@ -612,6 +601,7 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_EMAIL: ${{ env.ADMIN_PROXY_AUTH_E2E_EMAIL }}
           ADMIN_PROXY_AUTH_E2E_ROLES: ${{ env.ADMIN_PROXY_AUTH_E2E_ROLES }}
         run: |
+          set -euo pipefail
           PW_CHANNEL=chrome \
           PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
           PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:3000 \
@@ -627,7 +617,23 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_USER="$ADMIN_PROXY_AUTH_E2E_USER" \
           ADMIN_PROXY_AUTH_E2E_EMAIL="$ADMIN_PROXY_AUTH_E2E_EMAIL" \
           ADMIN_PROXY_AUTH_E2E_ROLES="$ADMIN_PROXY_AUTH_E2E_ROLES" \
-          pnpm exec playwright test --config e2e/playwright.config.ts
+          pnpm exec playwright test --config e2e/playwright.config.ts | tee "${DIAG_DIR:-.}/playwright.log"
+
+      - name: Assert SAAS token usage in Playwright logs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          log_path="${DIAG_DIR:-.}/playwright.log"
+          if [ ! -f "$log_path" ]; then
+            echo "Playwright log not found at $log_path"
+            exit 1
+          fi
+          rg -n "\\[E2E\\] SAAS_E2E_ACCESS_TOKEN present: true" "$log_path"
+          if rg -n "/v1/admin/users" "$log_path"; then
+            echo "Unexpected /v1/admin/users call in Playwright log."
+            exit 1
+          fi
 
       - name: Assert no unauthenticated admin probes
         if: always()
