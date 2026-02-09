@@ -5,6 +5,12 @@ import { type DragEvent, type UIEvent, useCallback, useEffect, useMemo, useRef, 
 
 import AdminNav from "../components/AdminNav";
 import {
+  ADMIN_STORAGE_PASSWORD_KEY,
+  ADMIN_STORAGE_USERNAME_KEY,
+  resolveAdminAuthHeaders,
+} from "../lib/adminAuth";
+import { DEFAULT_FEATURE_CONFIG, DEFAULT_UI_PREFS } from "../lib/adminDefaults";
+import {
   type AdminProfile,
   type FeatureConfigResponse,
   type UiPrefsResponse,
@@ -12,8 +18,6 @@ import {
 } from "../lib/featureVisibility";
 import { DEFAULT_ORG_TIMEZONE, type OrgSettingsResponse } from "../lib/orgSettings";
 
-const STORAGE_USERNAME_KEY = "admin_basic_username";
-const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const EDMONTON_CENTER = { lat: 53.5461, lng: -113.4938 };
 const START_HOUR = 8;
@@ -435,7 +439,11 @@ export default function DispatcherPage() {
   const mapApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
   const hasMapKey = Boolean(mapApiKey);
 
-  const isAuthenticated = Boolean(username && password);
+  const { headers: authHeaders, hasCredentials } = useMemo(
+    () => resolveAdminAuthHeaders(username, password),
+    [username, password]
+  );
+  const isAuthenticated = hasCredentials;
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
   const featureOverrides = featureConfig?.overrides ?? {};
   const hiddenKeys = uiPrefs?.hidden_keys ?? [];
@@ -505,14 +513,8 @@ export default function DispatcherPage() {
       .map(({ featureKey, requiresPermission, ...link }) => link);
   }, [featureOverrides, hiddenKeys, profile, visibilityReady]);
 
-  const authHeaders = useMemo<Record<string, string>>(() => {
-    if (!username || !password) return {} as Record<string, string>;
-    const encoded = btoa(`${username}:${password}`);
-    return { Authorization: `Basic ${encoded}` };
-  }, [username, password]);
-
   const loadProfile = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     const response = await fetch(`${API_BASE}/v1/admin/profile`, {
       headers: authHeaders,
       cache: "no-store",
@@ -523,42 +525,54 @@ export default function DispatcherPage() {
     } else {
       setProfile(null);
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadFeatureConfig = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as FeatureConfigResponse;
-      setFeatureConfig(data);
-    } else {
-      setFeatureConfig(null);
-      setSettingsError("Failed to load module settings");
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as FeatureConfigResponse;
+        setFeatureConfig(data);
+      } else {
+        setFeatureConfig(DEFAULT_FEATURE_CONFIG);
+        setSettingsError("Failed to load module settings. Using defaults.");
+      }
+    } catch (error) {
+      console.error("Failed to load module settings:", error);
+      setFeatureConfig(DEFAULT_FEATURE_CONFIG);
+      setSettingsError("Failed to load module settings. Using defaults.");
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadUiPrefs = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setSettingsError(null);
-    const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as UiPrefsResponse;
-      setUiPrefs(data);
-    } else {
-      setUiPrefs(null);
-      setSettingsError("Failed to load UI preferences");
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as UiPrefsResponse;
+        setUiPrefs(data);
+      } else {
+        setUiPrefs(DEFAULT_UI_PREFS);
+        setSettingsError("Failed to load UI preferences. Using defaults.");
+      }
+    } catch (error) {
+      console.error("Failed to load UI preferences:", error);
+      setUiPrefs(DEFAULT_UI_PREFS);
+      setSettingsError("Failed to load UI preferences. Using defaults.");
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadOrgSettings = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setOrgSettingsError(null);
     const response = await fetch(`${API_BASE}/v1/admin/settings/org`, {
       headers: authHeaders,
@@ -571,7 +585,7 @@ export default function DispatcherPage() {
       setOrgSettings(null);
       setOrgSettingsError("Failed to load org settings");
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const showToast = useCallback((message: string, kind: "error" | "success" = "error") => {
     setToast({ message, kind });
@@ -615,7 +629,7 @@ export default function DispatcherPage() {
   }, [selectedBooking]);
 
   const fetchBoard = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     setLoading(true);
     setError(null);
     try {
@@ -642,10 +656,10 @@ export default function DispatcherPage() {
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, orgTimezone, password, selectedZone, username]);
+  }, [authHeaders, hasCredentials, orgTimezone, selectedZone]);
 
   const fetchStats = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     try {
       const isoDate = isoDateInTz(new Date(), orgTimezone);
       const zoneParam = selectedZone === "All" ? null : selectedZone;
@@ -667,10 +681,10 @@ export default function DispatcherPage() {
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Unable to load dispatcher stats");
     }
-  }, [authHeaders, orgTimezone, password, selectedZone, username]);
+  }, [authHeaders, hasCredentials, orgTimezone, selectedZone]);
 
   const fetchAlerts = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     try {
       const isoDate = isoDateInTz(new Date(), orgTimezone);
       const response = await fetch(
@@ -690,10 +704,10 @@ export default function DispatcherPage() {
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Unable to load dispatcher alerts");
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const fetchContext = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     try {
       const response = await fetch(
         `${API_BASE}/v1/admin/dispatcher/context?tz=${encodeURIComponent(orgTimezone)}`,
@@ -713,11 +727,11 @@ export default function DispatcherPage() {
         fetchError instanceof Error ? fetchError.message : fetchError
       );
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials, orgTimezone]);
 
   const acknowledgeAlert = useCallback(
     async (alertId: string) => {
-      if (!username || !password) return;
+      if (!hasCredentials) return;
       try {
         const response = await fetch(`${API_BASE}/v1/admin/dispatcher/alerts/ack`, {
           method: "POST",
@@ -739,7 +753,7 @@ export default function DispatcherPage() {
         showToast(fetchError instanceof Error ? fetchError.message : "Unable to acknowledge alert");
       }
     },
-    [authHeaders, fetchAlerts, password, showToast, username]
+    [authHeaders, fetchAlerts, hasCredentials, showToast]
   );
 
   const fetchNotifyAudits = useCallback(async () => {
@@ -766,8 +780,8 @@ export default function DispatcherPage() {
   }, [authHeaders, isAuthenticated, selectedBooking]);
 
   useEffect(() => {
-    const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
-    const storedPassword = window.localStorage.getItem(STORAGE_PASSWORD_KEY);
+    const storedUsername = window.localStorage.getItem(ADMIN_STORAGE_USERNAME_KEY);
+    const storedPassword = window.localStorage.getItem(ADMIN_STORAGE_PASSWORD_KEY);
     if (storedUsername) setUsername(storedUsername);
     if (storedPassword) setPassword(storedPassword);
   }, []);
@@ -800,7 +814,7 @@ export default function DispatcherPage() {
   }, []);
 
   useEffect(() => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     void fetchBoard();
     void fetchAlerts();
     void fetchStats();
@@ -817,7 +831,7 @@ export default function DispatcherPage() {
       window.clearInterval(interval);
       window.clearInterval(contextInterval);
     };
-  }, [fetchAlerts, fetchBoard, fetchContext, fetchStats, password, username]);
+  }, [fetchAlerts, fetchBoard, fetchContext, fetchStats, hasCredentials]);
 
   useEffect(() => {
     if (!selectedBooking) return;
@@ -840,8 +854,8 @@ export default function DispatcherPage() {
   }, []);
 
   const handleSaveCredentials = useCallback(() => {
-    window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
-    window.localStorage.setItem(STORAGE_PASSWORD_KEY, password);
+    window.localStorage.setItem(ADMIN_STORAGE_USERNAME_KEY, username);
+    window.localStorage.setItem(ADMIN_STORAGE_PASSWORD_KEY, password);
     void fetchBoard();
     void fetchStats();
     void fetchContext();
@@ -851,8 +865,8 @@ export default function DispatcherPage() {
   }, [fetchBoard, fetchContext, fetchStats, loadFeatureConfig, loadProfile, loadUiPrefs, password, username]);
 
   const handleClearCredentials = useCallback(() => {
-    window.localStorage.removeItem(STORAGE_USERNAME_KEY);
-    window.localStorage.removeItem(STORAGE_PASSWORD_KEY);
+    window.localStorage.removeItem(ADMIN_STORAGE_USERNAME_KEY);
+    window.localStorage.removeItem(ADMIN_STORAGE_PASSWORD_KEY);
     setUsername("");
     setPassword("");
     setProfile(null);

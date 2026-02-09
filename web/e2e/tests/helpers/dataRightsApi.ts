@@ -16,6 +16,8 @@ const ADMIN_PROXY_AUTH_E2E_ROLES = process.env.ADMIN_PROXY_AUTH_E2E_ROLES ?? '';
 const SAAS_E2E_EMAIL = process.env.SAAS_E2E_EMAIL;
 const SAAS_E2E_ACCESS_TOKEN = process.env.SAAS_E2E_ACCESS_TOKEN;
 const E2E_TEST_ORG = process.env.E2E_TEST_ORG;
+const SAAS_E2E_PASSWORD =
+  process.env.SAAS_E2E_PASSWORD ?? 'E2eDataRightsPassword1A';
 
 const buildE2eEmail = (prefix: string): string =>
   `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
@@ -114,6 +116,39 @@ function getAdminAuthHeaders(credentials: AdminCredentials): Record<string, stri
 
 let cachedSaasAuthHeaders: Record<string, string> | null = null;
 let cachedSaasAuthHeadersPromise: Promise<Record<string, string>> | null = null;
+let saasAuthWorkerIndexOverride: number | null = null;
+
+export function setSaasAuthWorkerIndex(index: number | null): void {
+  saasAuthWorkerIndexOverride = index;
+}
+
+const resolveWorkerIndex = (): number => {
+  if (saasAuthWorkerIndexOverride !== null) {
+    return saasAuthWorkerIndexOverride;
+  }
+  const envCandidates = [
+    process.env.PW_TEST_WORKER_INDEX,
+    process.env.PLAYWRIGHT_WORKER_INDEX,
+    process.env.TEST_WORKER_INDEX,
+  ];
+  for (const value of envCandidates) {
+    if (value === undefined) continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return 0;
+};
+
+const buildSaasE2eEmail = (suffix?: string): string => {
+  if (SAAS_E2E_EMAIL) return SAAS_E2E_EMAIL;
+  const workerIndex = resolveWorkerIndex();
+  const label = suffix ? `-${suffix}` : '';
+  return `e2e-data-rights-${workerIndex}${label}@example.com`;
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function getSaasAuthHeaders(
   request: APIRequestContext
@@ -138,7 +173,7 @@ async function getSaasAuthHeaders(
 
   cachedSaasAuthHeadersPromise = (async () => {
     const credentials = defaultAdminCredentials();
-    const createUser = async (email: string): Promise<AdminUserCreateResponse> => {
+    const createUser = async (email: string): Promise<AdminUserCreateResponse | null> => {
       const response = await request.post(`${credentials.apiBaseUrl}/v1/admin/users`, {
         headers: {
           ...getAdminAuthHeaders(credentials),
@@ -154,7 +189,7 @@ async function getSaasAuthHeaders(
       });
 
       if (response.status() === 409) {
-        throw new Error('USER_EXISTS');
+        return null;
       }
       if (!response.ok()) {
         const text = await response.text();
@@ -164,46 +199,49 @@ async function getSaasAuthHeaders(
       return (await response.json()) as AdminUserCreateResponse;
     };
 
-    let createdUser: AdminUserCreateResponse;
-    try {
-      const preferredEmail =
-        SAAS_E2E_EMAIL ?? buildE2eEmail('e2e-data-rights');
-      createdUser = await createUser(preferredEmail);
-    } catch (error) {
-      if (error instanceof Error && error.message === 'USER_EXISTS') {
-        createdUser = await createUser(buildE2eEmail('e2e-data-rights'));
-      } else {
-        throw error;
+    const loginWithPassword = async (email: string, password: string): Promise<LoginResponse> => {
+      let lastStatus = 0;
+      let lastBody = '';
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const response = await request.post(`${credentials.apiBaseUrl}/v1/auth/login`, {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          data: {
+            email,
+            password,
+          },
+        });
+
+        if (response.ok()) {
+          const payload = (await response.json()) as LoginResponse;
+          if (!payload?.access_token) {
+            throw new Error(
+              `Login succeeded but no access_token in response. ` +
+              `Status: ${response.status()}, Body: ${JSON.stringify(payload)}`
+            );
+          }
+          return payload;
+        }
+
+        lastStatus = response.status();
+        lastBody = await response.text();
+
+        if (lastStatus === 401 && attempt < 2) {
+          await sleep(500);
+          continue;
+        }
+        break;
       }
-    }
-    const loginResponse = await request.post(`${credentials.apiBaseUrl}/v1/auth/login`, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      data: {
-        email: createdUser.email,
-        password: createdUser.temp_password,
-      },
-    });
 
-    if (!loginResponse.ok()) {
-      const text = await loginResponse.text();
-      throw new Error(`SaaS login failed (${loginResponse.status()}): ${text}`);
-    }
+      throw new Error(`SaaS login failed (${lastStatus}): ${lastBody}`);
+    };
 
-    const loginPayload = (await loginResponse.json()) as LoginResponse;
-
-    if (!loginPayload?.access_token) {
-      throw new Error(
-        `Login succeeded but no access_token in response. ` +
-        `Status: ${loginResponse.status()}, Body: ${JSON.stringify(loginPayload)}`
-      );
-    }
-
-    let accessToken = loginPayload.access_token;
-
-    if (loginPayload.must_change_password) {
-      const newPassword = `E2eDataRights${crypto.randomUUID()}1A`;
+    const changePassword = async (
+      accessToken: string,
+      currentPassword: string,
+      newPassword: string
+    ): Promise<LoginResponse> => {
       const changeResponse = await request.post(
         `${credentials.apiBaseUrl}/v1/auth/change-password`,
         {
@@ -212,7 +250,7 @@ async function getSaasAuthHeaders(
             'Content-Type': 'application/json',
           },
           data: {
-            current_password: createdUser.temp_password,
+            current_password: currentPassword,
             new_password: newPassword,
           },
         }
@@ -223,23 +261,58 @@ async function getSaasAuthHeaders(
         throw new Error(`Change password failed (${changeResponse.status()}): ${text}`);
       }
 
-      const changePayload = (await changeResponse.json()) as LoginResponse;
-
-      if (!changePayload?.access_token) {
+      const payload = (await changeResponse.json()) as LoginResponse;
+      if (!payload?.access_token) {
         throw new Error(
           `Password change succeeded but no access_token in response. ` +
-          `Status: ${changeResponse.status()}, Body: ${JSON.stringify(changePayload)}`
+          `Status: ${changeResponse.status()}, Body: ${JSON.stringify(payload)}`
         );
       }
+      return payload;
+    };
 
-      accessToken = changePayload.access_token;
+    const candidateEmails = SAAS_E2E_EMAIL
+      ? [SAAS_E2E_EMAIL]
+      : [buildSaasE2eEmail(), buildSaasE2eEmail('recovery')];
 
-      if (typeof accessToken !== 'string' || accessToken.split('.').length !== 3) {
-        throw new Error(
-          `Invalid JWT format after password change. ` +
-          `Token: ${accessToken}, Expected 3 parts (header.payload.signature)`
+    let accessToken: string | null = null;
+
+    for (const email of candidateEmails) {
+      const createdUser = await createUser(email);
+      if (createdUser) {
+        const loginPayload = await loginWithPassword(
+          createdUser.email,
+          createdUser.temp_password
         );
+        let token = loginPayload.access_token;
+        const changePayload = await changePassword(
+          token,
+          createdUser.temp_password,
+          SAAS_E2E_PASSWORD
+        );
+        token = changePayload.access_token;
+
+        accessToken = token;
+        break;
       }
+
+      try {
+        const existingLogin = await loginWithPassword(email, SAAS_E2E_PASSWORD);
+        accessToken = existingLogin.access_token;
+        break;
+      } catch (error) {
+        console.warn('[getSaasAuthHeaders] Login with known password failed:', error);
+      }
+    }
+
+    if (!accessToken) {
+      throw new Error('Unable to obtain SaaS access token for data rights tests.');
+    }
+
+    if (typeof accessToken !== 'string' || accessToken.split('.').length !== 3) {
+      throw new Error(
+        `Invalid JWT format. Token: ${accessToken}, Expected 3 parts (header.payload.signature)`
+      );
     }
 
     console.log('[getSaasAuthHeaders] Successfully obtained SaaS JWT:', {

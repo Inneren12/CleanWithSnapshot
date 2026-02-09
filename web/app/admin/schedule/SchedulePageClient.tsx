@@ -5,6 +5,12 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import AdminNav from "../components/AdminNav";
 import {
+  ADMIN_STORAGE_PASSWORD_KEY,
+  ADMIN_STORAGE_USERNAME_KEY,
+  resolveAdminAuthHeaders,
+} from "../lib/adminAuth";
+import { DEFAULT_FEATURE_CONFIG, DEFAULT_UI_PREFS } from "../lib/adminDefaults";
+import {
   type AdminProfile,
   type FeatureConfigResponse,
   type UiPrefsResponse,
@@ -12,8 +18,6 @@ import {
 } from "../lib/featureVisibility";
 import { DEFAULT_ORG_TIMEZONE, type OrgSettingsResponse } from "../lib/orgSettings";
 
-const STORAGE_USERNAME_KEY = "admin_basic_username";
-const STORAGE_PASSWORD_KEY = "admin_basic_password";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const START_HOUR = 8;
 const END_HOUR = 18;
@@ -488,7 +492,11 @@ export default function SchedulePage() {
   const [workerFilter, setWorkerFilter] = useState<string>(searchParams.get("worker_id") ?? "");
   const [statusFilter, setStatusFilter] = useState<string>(searchParams.get("status") ?? "");
 
-  const isAuthenticated = Boolean(username && password);
+  const { headers: authHeaders, hasCredentials } = useMemo(
+    () => resolveAdminAuthHeaders(username, password),
+    [username, password]
+  );
+  const isAuthenticated = hasCredentials;
   const permissionKeys = profile?.permissions ?? [];
   const canAssign =
     permissionKeys.includes("bookings.assign") || permissionKeys.includes("bookings.edit");
@@ -592,12 +600,6 @@ export default function SchedulePage() {
       .map(({ featureKey, requiresPermission, ...link }) => link);
   }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
 
-  const authHeaders = useMemo<Record<string, string>>(() => {
-    if (!username || !password) return {} as Record<string, string>;
-    const encoded = btoa(`${username}:${password}`);
-    return { Authorization: `Basic ${encoded}` };
-  }, [password, username]);
-
   const showToast = useCallback((message: string, kind: "error" | "success" = "error") => {
     setToast({ message, kind });
   }, []);
@@ -682,8 +684,8 @@ export default function SchedulePage() {
   }, [toast]);
 
   useEffect(() => {
-    const storedUsername = window.localStorage.getItem(STORAGE_USERNAME_KEY);
-    const storedPassword = window.localStorage.getItem(STORAGE_PASSWORD_KEY);
+    const storedUsername = window.localStorage.getItem(ADMIN_STORAGE_USERNAME_KEY);
+    const storedPassword = window.localStorage.getItem(ADMIN_STORAGE_PASSWORD_KEY);
     if (storedUsername) setUsername(storedUsername);
     if (storedPassword) setPassword(storedPassword);
   }, []);
@@ -730,7 +732,7 @@ export default function SchedulePage() {
   );
 
   const loadProfile = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     const response = await fetch(`${API_BASE}/v1/admin/profile`, {
       headers: authHeaders,
       cache: "no-store",
@@ -741,38 +743,48 @@ export default function SchedulePage() {
     } else {
       setProfile(null);
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadFeatureConfig = useCallback(async () => {
-    if (!username || !password) return;
-    const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as FeatureConfigResponse;
-      setFeatureConfig(data);
-    } else {
-      setFeatureConfig(null);
+    if (!hasCredentials) return;
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/settings/features`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as FeatureConfigResponse;
+        setFeatureConfig(data);
+      } else {
+        setFeatureConfig(DEFAULT_FEATURE_CONFIG);
+      }
+    } catch (error) {
+      console.error("Failed to load module settings:", error);
+      setFeatureConfig(DEFAULT_FEATURE_CONFIG);
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadUiPrefs = useCallback(async () => {
-    if (!username || !password) return;
-    const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
-      headers: authHeaders,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const data = (await response.json()) as UiPrefsResponse;
-      setUiPrefs(data);
-    } else {
-      setUiPrefs(null);
+    if (!hasCredentials) return;
+    try {
+      const response = await fetch(`${API_BASE}/v1/admin/users/me/ui_prefs`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const data = (await response.json()) as UiPrefsResponse;
+        setUiPrefs(data);
+      } else {
+        setUiPrefs(DEFAULT_UI_PREFS);
+      }
+    } catch (error) {
+      console.error("Failed to load UI preferences:", error);
+      setUiPrefs(DEFAULT_UI_PREFS);
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   const loadOrgSettings = useCallback(async () => {
-    if (!username || !password) return;
+    if (!hasCredentials) return;
     const response = await fetch(`${API_BASE}/v1/admin/settings/org`, {
       headers: authHeaders,
       cache: "no-store",
@@ -783,7 +795,7 @@ export default function SchedulePage() {
     } else {
       setOrgSettings(null);
     }
-  }, [authHeaders, password, username]);
+  }, [authHeaders, hasCredentials]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -2022,8 +2034,8 @@ export default function SchedulePage() {
                 data-testid="schedule-save-btn"
                 onClick={() => {
                   if (username && password) {
-                    window.localStorage.setItem(STORAGE_USERNAME_KEY, username);
-                    window.localStorage.setItem(STORAGE_PASSWORD_KEY, password);
+                    window.localStorage.setItem(ADMIN_STORAGE_USERNAME_KEY, username);
+                    window.localStorage.setItem(ADMIN_STORAGE_PASSWORD_KEY, password);
                     void loadProfile();
                     void loadFeatureConfig();
                     void loadUiPrefs();
@@ -2040,8 +2052,8 @@ export default function SchedulePage() {
                 onClick={() => {
                   setUsername("");
                   setPassword("");
-                  window.localStorage.removeItem(STORAGE_USERNAME_KEY);
-                  window.localStorage.removeItem(STORAGE_PASSWORD_KEY);
+                  window.localStorage.removeItem(ADMIN_STORAGE_USERNAME_KEY);
+                  window.localStorage.removeItem(ADMIN_STORAGE_PASSWORD_KEY);
                   setProfile(null);
                   setSchedule(null);
                 }}
