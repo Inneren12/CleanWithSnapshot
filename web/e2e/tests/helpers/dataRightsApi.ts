@@ -310,15 +310,10 @@ async function getSaasAuthHeaders(
     }
 
     if (typeof accessToken !== 'string' || accessToken.split('.').length !== 3) {
-      throw new Error(
-        `Invalid JWT format. Token: ${accessToken}, Expected 3 parts (header.payload.signature)`
-      );
+      throw new Error('Invalid JWT format. Expected 3 parts (header.payload.signature).');
     }
 
-    console.log('[getSaasAuthHeaders] Successfully obtained SaaS JWT:', {
-      tokenPreview: accessToken.substring(0, 50) + '...',
-      tokenParts: accessToken.split('.').length,
-    });
+    console.log('[getSaasAuthHeaders] Successfully obtained SaaS JWT.');
 
     cachedSaasAuthHeaders = {
       Authorization: `Bearer ${accessToken}`,

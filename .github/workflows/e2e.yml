@@ -458,6 +458,14 @@ jobs:
         run: |
           PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:3000/v1/admin/profile
 
+      - name: Verify admin endpoints via basic auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS -u "${ADMIN_BASIC_USERNAME}:${ADMIN_BASIC_PASSWORD}" http://127.0.0.1:3000/v1/admin/profile >/dev/null
+          curl -fsS -u "${ADMIN_BASIC_USERNAME}:${ADMIN_BASIC_PASSWORD}" http://127.0.0.1:3000/v1/admin/settings/features >/dev/null
+          curl -fsS -u "${ADMIN_BASIC_USERNAME}:${ADMIN_BASIC_PASSWORD}" http://127.0.0.1:3000/v1/admin/users/me/ui_prefs >/dev/null
+
       - name: E2E admin auth probe (headers)
         shell: bash
         run: |
@@ -503,6 +511,7 @@ jobs:
           PW_CHANNEL: chrome
           PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
           PLAYWRIGHT_API_BASE_URL: http://127.0.0.1:3000
+          SAAS_E2E_ACCESS_TOKEN: ${{ secrets.SAAS_E2E_ACCESS_TOKEN }}
           ADMIN_BASIC_USERNAME: ${{ env.ADMIN_BASIC_USERNAME }}
           ADMIN_BASIC_PASSWORD: ${{ env.ADMIN_BASIC_PASSWORD }}
           ADMIN_PROXY_AUTH_ENABLED: ${{ env.ADMIN_PROXY_AUTH_ENABLED }}
@@ -518,6 +527,7 @@ jobs:
           PW_CHANNEL=chrome \
           PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
           PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:3000 \
+          SAAS_E2E_ACCESS_TOKEN="$SAAS_E2E_ACCESS_TOKEN" \
           ADMIN_BASIC_USERNAME="$ADMIN_BASIC_USERNAME" \
           ADMIN_BASIC_PASSWORD="$ADMIN_BASIC_PASSWORD" \
           ADMIN_PROXY_AUTH_ENABLED="$ADMIN_PROXY_AUTH_ENABLED" \
