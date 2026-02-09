@@ -10,3 +10,4 @@ def test_anon_client_rejects_admin_profile(client):
     response = client.get("/v1/admin/profile")
 
     assert response.status_code == 401
+    assert response.headers.get("X-Admin-Auth-Fail-Reason") == "missing_authorization"

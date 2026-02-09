@@ -458,6 +458,29 @@ jobs:
         run: |
           PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:3000/v1/admin/profile
 
+      - name: E2E admin auth probe (headers)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== E2E admin auth probe (headers) ==="
+          for path in /v1/admin/settings/features /v1/admin/users/me/ui_prefs; do
+            echo "== ${path} =="
+            # Print only a small whitelist of headers + status line
+            curl -sS -D - "http://127.0.0.1:3000${path}" -o /dev/null \
+              | awk 'BEGIN{IGNORECASE=1} \
+                /^HTTP\// || \
+                /^x-admin-auth-fail-reason:/ || \
+                /^x-request-id:/ || \
+                /^x-correlation-id:/ || \
+                /^server:/ || \
+                /^date:/ || \
+                /^www-authenticate:/ \
+                {print}' \
+              || true
+            echo
+          done
+
       - name: Install web dependencies
         working-directory: web
         run: npm ci

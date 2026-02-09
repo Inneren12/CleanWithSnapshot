@@ -61,4 +61,4 @@ def test_untrusted_proxy_rejects_mfa_header(unauthenticated_client, monkeypatch)
     )
 
     assert response.status_code == 401
-    assert response.headers.get("X-Admin-Auth-Fail-Reason") == "untrusted_proxy"
+    assert response.headers.get("X-Admin-Auth-Fail-Reason") == "proxy_untrusted"

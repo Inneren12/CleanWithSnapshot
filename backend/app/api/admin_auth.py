@@ -54,6 +54,25 @@ _ADMIN_AUTH_FAILURE_REASON_MAP = {
     "unauthorized": "invalid_credentials",
     "unconfigured_credentials": "invalid_credentials",
 }
+_ADMIN_AUTH_HEADER_REASON_MAP = {
+    "missing_credentials": "missing_authorization",
+    "missing_headers": "missing_authorization",
+    "proxy_auth_required": "missing_authorization",
+    "missing_authorization": "missing_authorization",
+    "malformed_authorization_header": "invalid_basic_format",
+    "missing_username": "invalid_basic_format",
+    "invalid_proxy_secret": "proxy_missing_secret",
+    "bad_signature": "proxy_invalid_signature",
+    "expired_timestamp": "proxy_invalid_signature",
+    "untrusted_proxy": "proxy_untrusted",
+    "mfa_required": "mfa_required",
+    "invalid_credentials": "invalid_credentials",
+    "invalid_authentication": "invalid_credentials",
+    "basic_auth_disabled": "invalid_credentials",
+    "bearer_token_present_for_admin": "invalid_credentials",
+    "unauthorized": "invalid_credentials",
+    "unconfigured_credentials": "invalid_credentials",
+}
 
 
 def _normalize_failure_reason(reason: str | None) -> str:
@@ -63,6 +82,17 @@ def _normalize_failure_reason(reason: str | None) -> str:
     if normalized in ADMIN_AUTH_FAILURE_REASONS:
         return normalized
     return _ADMIN_AUTH_FAILURE_REASON_MAP.get(normalized, "invalid_credentials")
+
+
+def _resolve_header_reason(reason: str | None) -> str:
+    if not reason:
+        return "invalid_credentials"
+    normalized = reason.strip().lower()
+    mapped = _ADMIN_AUTH_HEADER_REASON_MAP.get(normalized)
+    if mapped:
+        return mapped
+    normalized = _normalize_failure_reason(normalized)
+    return _ADMIN_AUTH_HEADER_REASON_MAP.get(normalized, "invalid_credentials")
 
 
 def _resolve_source_ip(request: Request) -> str:
@@ -99,7 +129,7 @@ class AdminAuthException(HTTPException):
             detail=detail,
             headers={
                 "WWW-Authenticate": "Basic",
-                "X-Admin-Auth-Fail-Reason": reason,
+                "X-Admin-Auth-Fail-Reason": _resolve_header_reason(reason),
             },
         )
         self.reason = reason
@@ -214,6 +244,16 @@ def _build_auth_exception(
     *, detail: str = "Invalid authentication", reason: str = "invalid_authentication"
 ) -> AdminAuthException:
     return AdminAuthException(detail=detail, reason=_normalize_failure_reason(reason))
+
+
+def build_admin_forbidden_exception(
+    *, reason: str = "forbidden_permission", detail: str = "Forbidden"
+) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=detail,
+        headers={"X-Admin-Auth-Fail-Reason": reason},
+    )
 
 
 def _resolve_request_id(request: Request) -> str | None:
@@ -725,7 +765,7 @@ def _assert_permissions(
         )
     missing = required_keys - permission_keys
     if missing:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        raise build_admin_forbidden_exception(reason="forbidden_permission", detail="Forbidden")
 
 
 def _credentials_from_header(request: Request) -> HTTPBasicCredentials | None:
@@ -811,7 +851,7 @@ def require_permission_keys(*permission_keys: str):
         granted = _resolve_permission_keys(request, identity)
         missing = {key for key in permission_keys if key} - granted
         if missing:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+            raise build_admin_forbidden_exception(reason="forbidden_permission", detail="Forbidden")
         return identity
 
     return _require
@@ -824,7 +864,7 @@ def require_any_permission_keys(*permission_keys: str):
         granted = _resolve_permission_keys(request, identity)
         required = {key for key in permission_keys if key}
         if required and granted.isdisjoint(required):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+            raise build_admin_forbidden_exception(reason="forbidden_permission", detail="Forbidden")
         return identity
 
     return _require
@@ -940,8 +980,13 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                 credentials=None,
                 extra_detail={"auth_method": "bearer"},
             )
-            unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-            return await http_exception_handler(request, unauthorized)
+            return await http_exception_handler(
+                request,
+                _build_auth_exception(
+                    reason="bearer_token_present_for_admin",
+                    detail="Unauthorized",
+                ),
+            )
 
         configured_users = _configured_users()
         basic_auth_enabled = bool(settings.legacy_basic_auth_enabled)
@@ -962,7 +1007,10 @@ class AdminAccessMiddleware(BaseHTTPMiddleware):
                     }
                 },
             )
-            return await http_exception_handler(request, _build_auth_exception())
+            return await http_exception_handler(
+                request,
+                _build_auth_exception(reason="basic_auth_disabled"),
+            )
 
         credentials: HTTPBasicCredentials | None = None
         try:

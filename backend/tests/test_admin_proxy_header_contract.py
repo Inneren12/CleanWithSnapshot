@@ -78,7 +78,7 @@ def test_missing_identity_and_signature_rejected(unauthenticated_client, monkeyp
     )
 
     assert response.status_code == 401
-    assert response.headers.get("X-Admin-Auth-Fail-Reason") == "proxy_auth_required"
+    assert response.headers.get("X-Admin-Auth-Fail-Reason") == "missing_authorization"
 
 
 def test_invalid_signature_rejected(unauthenticated_client, monkeypatch):
@@ -99,7 +99,7 @@ def test_invalid_signature_rejected(unauthenticated_client, monkeypatch):
     )
 
     assert response.status_code == 401
-    assert response.headers.get("X-Admin-Auth-Fail-Reason") == "bad_signature"
+    assert response.headers.get("X-Admin-Auth-Fail-Reason") == "proxy_invalid_signature"
 
 
 def test_mfa_missing_rejected(unauthenticated_client, monkeypatch):
