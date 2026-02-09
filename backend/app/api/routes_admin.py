@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from pydantic import BaseModel, EmailStr
 import sqlalchemy as sa
 from sqlalchemy import and_, case, func, select, or_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -6597,13 +6597,22 @@ async def list_outbox_dead_letter(
 ) -> List[OutboxEventResponse]:
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     org_uuid = uuid.UUID(str(org_id)) if org_id else None
-    result = await session.execute(
-        select(OutboxEvent)
-        .where(OutboxEvent.status == "dead", *_org_scope_filters(org_uuid, OutboxEvent))
-        .order_by(OutboxEvent.created_at.desc())
-        .limit(limit)
-    )
-    records = result.scalars().all()
+    try:
+        result = await session.execute(
+            select(OutboxEvent)
+            .where(OutboxEvent.status == "dead", *_org_scope_filters(org_uuid, OutboxEvent))
+            .order_by(OutboxEvent.created_at.desc())
+            .limit(limit)
+        )
+        records = result.scalars().all()
+    except (ProgrammingError, OperationalError, SQLAlchemyError) as exc:
+        if isinstance(exc, SQLAlchemyError) and _is_missing_table_error(exc):
+            logger.warning(
+                "outbox_dead_letter_missing_table",
+                extra={"extra": {"org_id": str(org_uuid) if org_uuid else None}},
+            )
+            return []
+        raise
     return [
         OutboxEventResponse(
             event_id=record.event_id,
@@ -7059,6 +7068,46 @@ def _sanitize_row(values: Iterable[object]) -> list[str]:
     return [ops_service.safe_csv_value(value) for value in values]
 
 
+def _is_missing_table_error(exc: SQLAlchemyError) -> bool:
+    message = str(exc).lower()
+    if "undefinedtable" in message or "does not exist" in message or "no such table" in message:
+        return True
+    return False
+
+
+def _empty_metrics_response(start: datetime, end: datetime) -> analytics_schemas.AdminMetricsResponse:
+    return analytics_schemas.AdminMetricsResponse(
+        range_start=start,
+        range_end=end,
+        conversions=analytics_schemas.ConversionMetrics(
+            lead_created=0,
+            booking_created=0,
+            booking_confirmed=0,
+            job_completed=0,
+        ),
+        revenue=analytics_schemas.RevenueMetrics(average_estimated_revenue_cents=None),
+        accuracy=analytics_schemas.DurationAccuracy(
+            sample_size=0,
+            average_delta_minutes=None,
+            average_actual_duration_minutes=None,
+            average_estimated_duration_minutes=None,
+        ),
+        financial=analytics_schemas.FinancialKpis(
+            total_revenue_cents=0,
+            revenue_per_day_cents=0.0,
+            margin_cents=0,
+            average_order_value_cents=None,
+        ),
+        operational=analytics_schemas.OperationalKpis(
+            crew_utilization=None,
+            cancellation_rate=0.0,
+            retention_30_day=0.0,
+            retention_60_day=0.0,
+            retention_90_day=0.0,
+        ),
+    )
+
+
 @router.get("/v1/admin/metrics", response_model=analytics_schemas.AdminMetricsResponse)
 async def get_admin_metrics(
     request: Request,
@@ -7071,42 +7120,22 @@ async def get_admin_metrics(
     org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
     start, end = _normalize_range(from_ts, to_ts)
     if not settings.metrics_enabled:
-        return analytics_schemas.AdminMetricsResponse(
-            range_start=start,
-            range_end=end,
-            conversions=analytics_schemas.ConversionMetrics(
-                lead_created=0,
-                booking_created=0,
-                booking_confirmed=0,
-                job_completed=0,
-            ),
-            revenue=analytics_schemas.RevenueMetrics(average_estimated_revenue_cents=None),
-            accuracy=analytics_schemas.DurationAccuracy(
-                sample_size=0,
-                average_delta_minutes=None,
-                average_actual_duration_minutes=None,
-                average_estimated_duration_minutes=None,
-            ),
-            financial=analytics_schemas.FinancialKpis(
-                total_revenue_cents=0,
-                revenue_per_day_cents=0.0,
-                margin_cents=0,
-                average_order_value_cents=None,
-            ),
-            operational=analytics_schemas.OperationalKpis(
-                crew_utilization=None,
-                cancellation_rate=0.0,
-                retention_30_day=0.0,
-                retention_60_day=0.0,
-                retention_90_day=0.0,
-            ),
+        return _empty_metrics_response(start, end)
+    try:
+        conversions = await conversion_counts(session, start, end, org_id=org_id)
+        avg_revenue = await average_revenue_cents(session, start, end, org_id=org_id)
+        avg_estimated, avg_actual, avg_delta, sample_size = await duration_accuracy(
+            session, start, end, org_id=org_id
         )
-    conversions = await conversion_counts(session, start, end, org_id=org_id)
-    avg_revenue = await average_revenue_cents(session, start, end, org_id=org_id)
-    avg_estimated, avg_actual, avg_delta, sample_size = await duration_accuracy(
-        session, start, end, org_id=org_id
-    )
-    kpis = await kpi_aggregates(session, start, end, org_id=org_id)
+        kpis = await kpi_aggregates(session, start, end, org_id=org_id)
+    except (ProgrammingError, OperationalError, SQLAlchemyError) as exc:
+        if isinstance(exc, SQLAlchemyError) and _is_missing_table_error(exc):
+            logger.warning(
+                "admin_metrics_missing_table",
+                extra={"extra": {"org_id": str(org_id) if org_id else None}},
+            )
+            return _empty_metrics_response(start, end)
+        raise
 
     response_body = analytics_schemas.AdminMetricsResponse(
         range_start=start,
