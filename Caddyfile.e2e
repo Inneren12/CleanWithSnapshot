@@ -8,7 +8,7 @@
     reverse_proxy api:8000
   }
 
-  @admin path /v1/admin /v1/admin/*
+  @admin path /v1/admin*
   handle @admin {
     reverse_proxy api:8000 {
       header_up -Authorization

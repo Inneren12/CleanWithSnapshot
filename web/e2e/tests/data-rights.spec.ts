@@ -15,13 +15,15 @@ import {
   requestDataExportAsync,
   requestDataExportSync,
   runRetentionCleanup,
+  setSaasAuthWorkerIndex,
   seedTestLead,
   waitForExportCompletion,
 } from './helpers/dataRightsApi';
 
 test.describe('GDPR Data Rights', () => {
-  test.beforeEach(async ({ page, request }) => {
+  test.beforeEach(async ({ page, request }, testInfo) => {
     const admin = defaultAdminCredentials();
+    setSaasAuthWorkerIndex(testInfo.workerIndex);
     await verifyAdminCredentials(request, admin);
     await seedAdminStorage(page, admin);
   });

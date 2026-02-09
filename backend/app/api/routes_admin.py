@@ -2298,7 +2298,19 @@ async def admin_mark_chat_read(
 
 
 def _resolve_membership_role(target_type: str, explicit: MembershipRole | None) -> MembershipRole:
+    if target_type not in {"client", "worker"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid target type")
     if explicit:
+        if target_type == "worker" and explicit != MembershipRole.WORKER:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Worker target type requires worker role",
+            )
+        if target_type == "client" and explicit == MembershipRole.WORKER:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Client target type cannot use worker role",
+            )
         return explicit
     if target_type == "worker":
         return MembershipRole.WORKER
