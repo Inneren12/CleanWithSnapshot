@@ -342,7 +342,7 @@ jobs:
       - name: Compose up (db + redis)
         run: |
           set +e
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 db redis
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d db redis
           status=$?
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
@@ -351,34 +351,43 @@ jobs:
       - name: Wait for DB healthy
         run: |
           set -euo pipefail
+          compose_cmd=(docker compose -f docker-compose.yml -f docker-compose.e2e.yml)
           db_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q db)
           if [ -z "$db_container_id" ]; then
             echo "DB container not found."
             exit 1
           fi
-          deadline=$((SECONDS + 180))
-          while true; do
+
+          max_tries=${DB_HEALTH_MAX_TRIES:-40}
+          sleep_s=${DB_HEALTH_SLEEP_SECONDS:-3}
+          health="unknown"
+          attempt=1
+          while [ "$attempt" -le "$max_tries" ]; do
             health=$(docker inspect "$db_container_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}')
+            echo "DB health attempt ${attempt}/${max_tries}: ${health}"
             if [ "$health" = "healthy" ]; then
               echo "DB is healthy."
               break
             fi
             if [ "$health" = "unhealthy" ]; then
               echo "DB is unhealthy."
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+              "${compose_cmd[@]}" ps || true
+              "${compose_cmd[@]}" logs --no-color db --tail=200 || true
               docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
               exit 1
             fi
-            if [ $SECONDS -ge $deadline ]; then
-              echo "Timed out waiting for DB health."
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
-              docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
-              exit 1
-            fi
-            sleep 3
+
+            attempt=$((attempt + 1))
+            sleep "$sleep_s"
           done
+
+          if [ "$health" != "healthy" ]; then
+            echo "Timed out waiting for DB health after ${max_tries} attempts."
+            "${compose_cmd[@]}" ps || true
+            "${compose_cmd[@]}" logs --no-color db --tail=200 || true
+            docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
+            exit 1
+          fi
 
       - name: Validate pg_stat_statements preload
         run: |
