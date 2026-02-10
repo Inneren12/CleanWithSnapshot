@@ -542,6 +542,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          compose_cmd=(docker compose -f docker-compose.yml -f docker-compose.e2e.yml)
+          declare -A status_codes
+          declare -A request_ids
+          declare -a failing_paths
+
           evidence_check() {
             local path="$1"
             local url="http://127.0.0.1:3000${path}"
@@ -567,15 +572,49 @@ jobs:
             body_preview=$(LC_ALL=C head -c 200 "$body_file" | tr '\r\n' ' ')
             echo "Body (first 200 bytes): ${body_preview}"
             rm -f "$headers_file" "$body_file"
-            if [ "$status_code" != "200" ]; then
-              echo "ERROR: ${path} returned ${status_code:-<missing>} (expected 200)"
-              exit 1
-            fi
+            status_codes["$path"]="${status_code:-}"
+            request_ids["$path"]="${request_id:-}"
           }
 
           evidence_check "/v1/admin/profile"
           evidence_check "/v1/admin/settings/features"
           evidence_check "/v1/admin/users/me/ui_prefs"
+
+          for path in "/v1/admin/profile" "/v1/admin/settings/features" "/v1/admin/users/me/ui_prefs"; do
+            if [ "${status_codes[$path]:-}" != "200" ]; then
+              failing_paths+=("$path")
+            fi
+          done
+
+          if [ "${#failing_paths[@]}" -gt 0 ]; then
+            echo ""
+            echo "=== Admin preflight failures detected ==="
+            for path in "${failing_paths[@]}"; do
+              echo "ERROR: ${path} returned ${status_codes[$path]:-<missing>} (expected 200)"
+            done
+
+            echo ""
+            echo "=== docker compose ps (e2e) ==="
+            "${compose_cmd[@]}" ps || true
+
+            echo ""
+            echo "=== docker compose logs db (tail=300) ==="
+            "${compose_cmd[@]}" logs --no-color --tail=300 db || true
+
+            echo ""
+            echo "=== API log correlation for failing request_ids ==="
+            for path in "${failing_paths[@]}"; do
+              request_id="${request_ids[$path]:-}"
+              if [ -z "$request_id" ]; then
+                echo "== ${path} (no request id captured) =="
+                continue
+              fi
+              echo "== ${path} (request_id=${request_id}) =="
+              "${compose_cmd[@]}" logs --no-color --tail=3000 api | rg -n -C 10 "${request_id}" || true
+              echo ""
+            done
+            exit 1
+          fi
 
       - name: E2E admin auth probe (headers)
         shell: bash
@@ -672,8 +711,8 @@ jobs:
           set -euo pipefail
           log_path="${DIAG_DIR:-.}/playwright.log"
           if [ ! -f "$log_path" ]; then
-            echo "Playwright log not found at $log_path"
-            exit 1
+            echo "Playwright did not run (preflight failed)"
+            exit 0
           fi
           rg -n "\\[E2E\\] SAAS_E2E_ACCESS_TOKEN present: true" "$log_path"
           if rg -n "/v1/admin/users" "$log_path"; then
