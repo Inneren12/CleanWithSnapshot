@@ -529,7 +529,9 @@ jobs:
               continue
             fi
             echo "== ${path} (request_id=${request_id}) =="
-            "${compose_cmd[@]}" logs --no-color --tail=2000 api | rg -n -C 5 "${request_id}|admin_auth|proxy|untrusted|forbidden|ui_prefs|features|metrics|dead-letter" || true
+            "${compose_cmd[@]}" logs --no-color --tail=2000 api \
+              | grep -n -C 5 -E "${request_id}|admin_auth|proxy|untrusted|forbidden|ui_prefs|features|metrics|dead-letter" \
+              || true
             echo ""
           done
 
@@ -610,7 +612,9 @@ jobs:
                 continue
               fi
               echo "== ${path} (request_id=${request_id}) =="
-              "${compose_cmd[@]}" logs --no-color --tail=3000 api | rg -n -C 10 "${request_id}" || true
+              "${compose_cmd[@]}" logs --no-color --tail=4000 api \
+                | grep -n -C 20 "${request_id}" \
+                || true
               echo ""
             done
             exit 1
@@ -714,8 +718,8 @@ jobs:
             echo "Playwright did not run (preflight failed)"
             exit 0
           fi
-          rg -n "\\[E2E\\] SAAS_E2E_ACCESS_TOKEN present: true" "$log_path"
-          if rg -n "/v1/admin/users" "$log_path"; then
+          grep -n "\\[E2E\\] SAAS_E2E_ACCESS_TOKEN present: true" "$log_path"
+          if grep -n "/v1/admin/users" "$log_path"; then
             echo "Unexpected /v1/admin/users call in Playwright log."
             exit 1
           fi
