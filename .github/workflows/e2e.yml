@@ -401,7 +401,7 @@ jobs:
       - name: Compose up (api + web + jobs + caddy)
         run: |
           set +e
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 api web jobs caddy
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml -f docker-compose.e2e.override.yml up -d --wait --wait-timeout 300 api web jobs caddy
           status=$?
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=400 api || true

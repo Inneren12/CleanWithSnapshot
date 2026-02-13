@@ -13,6 +13,7 @@ from app.infra.db import get_session_factory
 from app.infra.email import EmailAdapter, resolve_email_adapter
 from app.infra.logging import clear_log_context
 from app.infra.metrics import configure_metrics, metrics
+from app.infra import db_models_all  # noqa: F401
 from app.infra.tracing import configure_tracing, shutdown_tracing
 from app.jobs.heartbeat import _resolve_runner_id, record_heartbeat
 from app.jobs import (

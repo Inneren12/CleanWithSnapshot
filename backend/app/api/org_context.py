@@ -1,4 +1,5 @@
 import uuid
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, HTTPException, Request, status
 
@@ -7,10 +8,19 @@ from app.api.saas_auth import SaaSIdentity, _get_cached_identity, _get_saas_toke
 from app.infra.org_context import set_current_org_id
 from app.settings import settings
 
+if TYPE_CHECKING:
+    from app.api.admin_auth import AdminIdentity
+
 
 async def require_org_context(
     request: Request, identity: SaaSIdentity | None = Depends(_get_cached_identity)
 ) -> uuid.UUID:
+    admin_identity: AdminIdentity | None = getattr(request.state, "admin_identity", None)
+    if admin_identity:
+        request.state.current_org_id = admin_identity.org_id
+        set_current_org_id(admin_identity.org_id)
+        return admin_identity.org_id
+
     token_present = _get_saas_token(request) is not None
 
     if identity:

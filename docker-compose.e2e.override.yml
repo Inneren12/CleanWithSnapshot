@@ -1,0 +1,7 @@
+services:
+  api:
+    environment:
+      DATABASE_POOL_SIZE: "20"
+  jobs:
+    environment:
+      DATABASE_POOL_SIZE: "20"
