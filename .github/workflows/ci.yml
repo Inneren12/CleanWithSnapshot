@@ -427,6 +427,13 @@ jobs:
             docker image inspect --format='{{.RepoTags}} {{.Id}}' cleanwithsnapshot-web:ci
           } > built-image-ids.txt
 
+      - name: Save local images to TAR
+        run: |
+          echo "Saving images to tar for disconnected scanning..."
+          docker save cleanwithsnapshot-api:ci -o api-image.tar
+          docker save cleanwithsnapshot-web:ci -o web-image.tar
+          ls -lh *.tar
+
       - name: Verify api image wheel/jaraco versions
         run: |
           docker run --rm cleanwithsnapshot-api:ci \
@@ -448,7 +455,7 @@ jobs:
         uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
         with:
           scan-type: image
-          image-ref: cleanwithsnapshot-api:ci
+          input: api-image.tar
           format: json
           output: trivy-cleanwithsnapshot-api.json
           scanners: vuln
@@ -462,7 +469,7 @@ jobs:
         uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
         with:
           scan-type: image
-          image-ref: cleanwithsnapshot-api:ci
+          input: api-image.tar
           format: sarif
           output: trivy-cleanwithsnapshot-api.sarif
           scanners: vuln
@@ -476,7 +483,7 @@ jobs:
         uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
         with:
           scan-type: image
-          image-ref: cleanwithsnapshot-web:ci
+          input: web-image.tar
           format: json
           output: trivy-cleanwithsnapshot-web.json
           scanners: vuln
@@ -490,7 +497,7 @@ jobs:
         uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
         with:
           scan-type: image
-          image-ref: cleanwithsnapshot-web:ci
+          input: web-image.tar
           format: sarif
           output: trivy-cleanwithsnapshot-web.sarif
           scanners: vuln
@@ -527,7 +534,7 @@ jobs:
         uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
         with:
           scan-type: image
-          image-ref: cleanwithsnapshot-api:ci
+          input: api-image.tar
           format: spdx-json
           output: sbom-trivy-cleanwithsnapshot-api.json
           exit-code: "0"
@@ -536,7 +543,7 @@ jobs:
         uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
         with:
           scan-type: image
-          image-ref: cleanwithsnapshot-web:ci
+          input: web-image.tar
           format: spdx-json
           output: sbom-trivy-cleanwithsnapshot-web.json
           exit-code: "0"
@@ -605,6 +612,17 @@ jobs:
       - name: Build api and web images
         run: docker compose build api web
 
+      - name: Verify local images exist
+        run: |
+          docker image inspect cleanwithsnapshot-api:ci cleanwithsnapshot-web:ci >/dev/null
+
+      - name: Save local images to TAR
+        run: |
+          echo "Saving images to tar for disconnected scanning..."
+          docker save cleanwithsnapshot-api:ci -o api-image.tar
+          docker save cleanwithsnapshot-web:ci -o web-image.tar
+          ls -lh *.tar
+
       - name: Validate Grype severity cutoff
         run: |
           case "${GRYPE_FAIL_ON}" in
@@ -623,7 +641,7 @@ jobs:
         continue-on-error: true
         uses: anchore/scan-action@62b74fb7bb810d2c45b1865f47a77655621862a5
         with:
-          image: cleanwithsnapshot-api:ci
+          image: "archive:api-image.tar"
           output-format: json
           output-file: grype-cleanwithsnapshot-api.json
           fail-build: true
@@ -635,7 +653,7 @@ jobs:
         continue-on-error: true
         uses: anchore/scan-action@62b74fb7bb810d2c45b1865f47a77655621862a5
         with:
-          image: cleanwithsnapshot-web:ci
+          image: "archive:web-image.tar"
           output-format: json
           output-file: grype-cleanwithsnapshot-web.json
           fail-build: true
@@ -645,7 +663,7 @@ jobs:
       - name: Generate SBOM (api, optional)
         uses: anchore/sbom-action@62ad5284b8ced813296287a0b63906cb364b73ee
         with:
-          image: cleanwithsnapshot-api:ci
+          image: "archive:api-image.tar"
           format: spdx-json
           output-file: sbom-cleanwithsnapshot-api.json
           syft-version: ${{ env.SYFT_VERSION }}
@@ -653,7 +671,7 @@ jobs:
       - name: Generate SBOM (web, optional)
         uses: anchore/sbom-action@62ad5284b8ced813296287a0b63906cb364b73ee
         with:
-          image: cleanwithsnapshot-web:ci
+          image: "archive:web-image.tar"
           format: spdx-json
           output-file: sbom-cleanwithsnapshot-web.json
           syft-version: ${{ env.SYFT_VERSION }}
