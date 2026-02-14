@@ -402,6 +402,7 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
       TRIVY_SEVERITY: "CRITICAL"
+      SYFT_VERSION: "v1.40.1"
 
     steps:
       - name: Checkout code
@@ -450,57 +451,193 @@ jobs:
             echo '=== DONE ==='"
 
       - name: Install Trivy
-        uses: aquasecurity/setup-trivy@6e0cbac2e1fb586a11122601d36098256338e9c4 # v0.2.2
+        uses: aquasecurity/setup-trivy@v0.2.2
         with:
           version: v0.58.1
 
-      - name: Generate SBOM (api, Trivy SPDX)
-        run: |
-          touch sbom-trivy-cleanwithsnapshot-api.json
-          trivy image --input api-image.tar --format spdx-json --output sbom-trivy-cleanwithsnapshot-api.json --timeout 15m
-          ls -lh sbom-trivy-cleanwithsnapshot-api.json
-          head -n 20 sbom-trivy-cleanwithsnapshot-api.json
+      - name: Install Syft
+        uses: anchore/setup-syft@8e1740924be24f2b3ec21bb0b7713d0779836932 # v3
+        with:
+          version: ${{ env.SYFT_VERSION }}
 
-      - name: Generate SBOM (web, Trivy SPDX)
+      # Use tar-based scanning to avoid Docker API vs Client version mismatches 
+      # when running inside actions, and to ensure stable scanning of the exact built artifacts.
+      - name: Scan API Image (Trivy)
         run: |
-          touch sbom-trivy-cleanwithsnapshot-web.json
-          trivy image --input web-image.tar --format spdx-json --output sbom-trivy-cleanwithsnapshot-web.json --timeout 15m
-          ls -lh sbom-trivy-cleanwithsnapshot-web.json
-          head -n 20 sbom-trivy-cleanwithsnapshot-web.json
+          set +e
+          IMAGE_TAR="api-image.tar"
+          BASE_NAME="cleanwithsnapshot-api"
+          
+          echo "Scanning ${IMAGE_TAR}..."
+          ls -lh ${IMAGE_TAR}
+          
+          # JSON Report (Full)
+          trivy image --input ${IMAGE_TAR} \
+            --format json \
+            --output trivy-${BASE_NAME}.json \
+            --timeout 15m 2> trivy-api.log
+          EXIT_JSON=$?
+          
+          # SARIF Report
+          trivy image --input ${IMAGE_TAR} \
+            --format sarif \
+            --output trivy-${BASE_NAME}.sarif \
+            --timeout 15m >> trivy-api.log 2>&1
+            
+          # SBOM (SPDX)
+          trivy image --input ${IMAGE_TAR} \
+            --format spdx-json \
+            --output sbom-trivy-${BASE_NAME}.json \
+            --timeout 15m >> trivy-api.log 2>&1
+            
+          # Determine status
+          if [ $EXIT_JSON -ne 0 ]; then
+             echo "❌ Trivy failed to run on API image (Exit: $EXIT_JSON)"
+             echo '{"_tool_error": "Trivy execution failed"}' > trivy-${BASE_NAME}.json
+             TRIVY_API_EXIT_CODE=2
+             
+             echo "=== Trivy Debug Log (First 50 lines) ==="
+             trivy --version
+             head -n 50 trivy-api.log
+          else
+             # Check for CRITICALs
+             trivy image --input ${IMAGE_TAR} --severity CRITICAL --exit-code 1 --format table > /dev/null 2>> trivy-api.log
+             if [ $? -eq 1 ]; then
+                echo "⚠️ CRITICAL vulnerabilities found in API image"
+                TRIVY_API_EXIT_CODE=1
+             else
+                echo "✅ API image scan clean (no CRITICALs)"
+                TRIVY_API_EXIT_CODE=0
+             fi
+          fi
+          
+          echo "TRIVY_API_EXIT_CODE=$TRIVY_API_EXIT_CODE" >> $GITHUB_ENV
+          set -e
+
+      - name: Scan Web Image (Trivy)
+        run: |
+          set +e
+          IMAGE_TAR="web-image.tar"
+          BASE_NAME="cleanwithsnapshot-web"
+          
+          echo "Scanning ${IMAGE_TAR}..."
+          ls -lh ${IMAGE_TAR}
+          
+          # JSON Report (Full)
+          trivy image --input ${IMAGE_TAR} \
+            --format json \
+            --output trivy-${BASE_NAME}.json \
+            --timeout 15m 2> trivy-web.log
+          EXIT_JSON=$?
+          
+          # SARIF Report
+          trivy image --input ${IMAGE_TAR} \
+            --format sarif \
+            --output trivy-${BASE_NAME}.sarif \
+            --timeout 15m >> trivy-web.log 2>&1
+            
+          # SBOM (SPDX)
+          trivy image --input ${IMAGE_TAR} \
+            --format spdx-json \
+            --output sbom-trivy-${BASE_NAME}.json \
+            --timeout 15m >> trivy-web.log 2>&1
+            
+          # Determine status
+          if [ $EXIT_JSON -ne 0 ]; then
+             echo "❌ Trivy failed to run on Web image (Exit: $EXIT_JSON)"
+             echo '{"_tool_error": "Trivy execution failed"}' > trivy-${BASE_NAME}.json
+             TRIVY_WEB_EXIT_CODE=2
+             
+             echo "=== Trivy Debug Log (First 50 lines) ==="
+             trivy --version
+             head -n 50 trivy-web.log
+          else
+             # Check for CRITICALs
+             trivy image --input ${IMAGE_TAR} --severity CRITICAL --exit-code 1 --format table > /dev/null 2>> trivy-web.log
+             if [ $? -eq 1 ]; then
+                echo "⚠️ CRITICAL vulnerabilities found in Web image"
+                TRIVY_WEB_EXIT_CODE=1
+             else
+                echo "✅ Web image scan clean (no CRITICALs)"
+                TRIVY_WEB_EXIT_CODE=0
+             fi
+          fi
+          
+          echo "TRIVY_WEB_EXIT_CODE=$TRIVY_WEB_EXIT_CODE" >> $GITHUB_ENV
+          set -e
+
+      - name: Generate SBOM (api, Syft SPDX)
+        run: syft docker-archive:api-image.tar -o spdx-json > sbom-cleanwithsnapshot-api.json
+
+      - name: Generate SBOM (web, Syft SPDX)
+        run: syft docker-archive:web-image.tar -o spdx-json > sbom-cleanwithsnapshot-web.json
       
-      - name: Upload Trivy SBOMs
+      - name: Upload Container Scan Artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: trivy-sboms
+          name: container-sboms
           path: |
+            trivy-cleanwithsnapshot-*.json
+            trivy-cleanwithsnapshot-*.sarif
             sbom-trivy-cleanwithsnapshot-*.json
+            sbom-cleanwithsnapshot-*.json
             built-image-ids.txt
+            trivy-*.log
           retention-days: 30
 
-      - name: Verify SBOMs
+      - name: Enforce Trivy Gate
         if: always()
         run: |
           tool_failure=0
-          check_sbom() {
+          vuln_failure=0
+
+          check_trivy() {
             local label="$1"
-            local report="$2"
+            local exit_code="$2"
+            local report="$3"
+            
+            if [ -z "$exit_code" ]; then
+              echo "⚠️ Exit code missing for ${label}. Assuming tool failure."
+              exit_code=2
+            fi
+
             if [ ! -s "$report" ]; then
-              echo "Trivy failure: missing or empty SBOM for ${label} (${report})."
+              echo "Trivy failure: missing report for ${label} (${report})."
               ls -lh "$report" || true
               tool_failure=1
+            elif grep -q "_tool_error" "$report"; then
+              echo "Trivy tool error detected in report for ${label}."
+              cat "$report"
+              tool_failure=1
+            fi
+
+            if [ "$exit_code" -eq 2 ]; then
+               echo "Trivy explicitly exited with 2 for ${label} (Scanner failure)."
+               tool_failure=1
+            elif [ "$exit_code" -eq 1 ]; then
+               echo "CRITICAL vulnerabilities found for ${label}."
+               vuln_failure=1
+            elif [ "$exit_code" -eq 0 ]; then
+               echo "Trivy scan clean for ${label}."
             else
-              echo "✓ SBOM generated for ${label} ($(stat -c%s "$report" 2>/devRKnull || stat -f%z "$report") bytes)"
+               echo "Unknown exit code ${exit_code} for ${label}."
+               tool_failure=1
             fi
           }
 
-          check_sbom "api" "sbom-trivy-cleanwithsnapshot-api.json"
-          check_sbom "web" "sbom-trivy-cleanwithsnapshot-web.json"
+          check_trivy "api" "$TRIVY_API_EXIT_CODE" "trivy-cleanwithsnapshot-api.json"
+          check_trivy "web" "$TRIVY_WEB_EXIT_CODE" "trivy-cleanwithsnapshot-web.json"
 
           if [ "$tool_failure" -eq 1 ]; then
-            echo "SBOM generation failed"
+            echo "Trivy tool failure"
             exit 2
           fi
+          if [ "$vuln_failure" -eq 1 ]; then
+            echo "CRITICAL vulnerabilities found"
+            exit 1
+          fi
+          echo "Trivy scan passed."
 
   grype-scan:
     name: Security - Grype Image Scan
@@ -510,16 +647,15 @@ jobs:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
       GRYPE_FAIL_ON: "critical"
       GRYPE_VERSION: "v0.105.0"
-      SYFT_VERSION: "v1.40.1"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Download Trivy SBOMs
+      - name: Download Container SBOMs
         uses: actions/download-artifact@fa0a91b85d4f404e8442c7e9977684ae160f5450 # v4
         with:
-          name: trivy-sboms
+          name: container-sboms
 
       - name: Validate Grype severity cutoff
         run: |
@@ -533,31 +669,61 @@ jobs:
           esac
           echo "Grype severity cutoff: ${GRYPE_FAIL_ON}"
           echo "Grype version: ${GRYPE_VERSION}"
-          ls -lh sbom-trivy-*.json
+          ls -lh sbom-cleanwithsnapshot-*.json
 
       - name: Install Grype
         uses: anchore/setup-grype@3e6a9640428fc9444f4da646927da80486fa4143 # v3
         with:
           version: ${{ env.GRYPE_VERSION }}
 
-      - name: Install Syft
-        uses: anchore/setup-syft@8e1740924be24f2b3ec21bb0b7713d0779836932 # v3
-        with:
-          version: ${{ env.SYFT_VERSION }}
-
+      # Use Syft SBOMs for stability (avoids docker-archive exit 2 flakiness in Grype)
       - name: Scan api SBOM (Grype JSON)
         id: grype_api
-        continue-on-error: true
         run: |
+          set +e
           touch grype-cleanwithsnapshot-api.json
-          grype sbom:sbom-trivy-cleanwithsnapshot-api.json -o json > grype-cleanwithsnapshot-api.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+          echo "Running Grype on API SBOM..."
+          grype sbom:sbom-cleanwithsnapshot-api.json -o json > grype-cleanwithsnapshot-api.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+          exit_code=$?
+          set -e
+          echo "GRYPE_API_EXIT_CODE=$exit_code" >> "$GITHUB_ENV"
+
+          if [ "$exit_code" -eq 2 ]; then
+            echo "⚠️ Grype failed (exit 2). Debug info:"
+            grype version
+            ls -lh sbom-cleanwithsnapshot-api.json
+            echo "first 30 lines of SBOM:"
+            head -n 30 sbom-cleanwithsnapshot-api.json
+          fi
+
+          if [ ! -s grype-cleanwithsnapshot-api.json ]; then
+            echo '{"_tool_error": "Grype produced empty output"}' > grype-cleanwithsnapshot-api.json
+          fi
+          exit 0
 
       - name: Scan web SBOM (Grype JSON)
         id: grype_web
-        continue-on-error: true
         run: |
+          set +e
           touch grype-cleanwithsnapshot-web.json
-          grype sbom:sbom-trivy-cleanwithsnapshot-web.json -o json > grype-cleanwithsnapshot-web.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+          echo "Running Grype on Web SBOM..."
+          grype sbom:sbom-cleanwithsnapshot-web.json -o json > grype-cleanwithsnapshot-web.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+          exit_code=$?
+          set -e
+          echo "GRYPE_WEB_EXIT_CODE=$exit_code" >> "$GITHUB_ENV"
+
+          if [ "$exit_code" -eq 2 ]; then
+            echo "⚠️ Grype failed (exit 2). Debug info:"
+            grype version
+            ls -lh sbom-cleanwithsnapshot-web.json
+            echo "first 30 lines of SBOM:"
+            head -n 30 sbom-cleanwithsnapshot-web.json
+          fi
+
+          if [ ! -s grype-cleanwithsnapshot-web.json ]; then
+            echo '{"_tool_error": "Grype produced empty output"}' > grype-cleanwithsnapshot-web.json
+          fi
+          exit 0
 
       - name: Enforce Grype severity gate
         if: always()
@@ -570,21 +736,39 @@ jobs:
 
           check_grype() {
             local label="$1"
-            local outcome="$2"
+            local exit_code="$2"
             local report="$3"
+            
+            if [ -z "$exit_code" ]; then
+              echo "⚠️ Exit code missing for ${label}. Assuming tool failure."
+              exit_code=2
+            fi
+
             if [ ! -s "$report" ]; then
               echo "Grype tool failure: missing report for ${label} (${report})."
               tool_failure=1
-              return
+            elif grep -q "_tool_error" "$report"; then
+              echo "Grype tool error detected in report for ${label}."
+              cat "$report"
+              tool_failure=1
             fi
-            if [ "$outcome" = "failure" ]; then
-              echo "Grype vulnerability failure: ${GRYPE_FAIL_ON} or higher vulnerabilities found for ${label}."
-              vuln_failure=1
+
+            if [ "$exit_code" -eq 2 ]; then
+               echo "Grype explicitly exited with 2 for ${label} (Scanner failure)."
+               tool_failure=1
+            elif [ "$exit_code" -eq 1 ]; then
+               echo "Grype found vulnerabilities above cutoff for ${label}."
+               vuln_failure=1
+            elif [ "$exit_code" -eq 0 ]; then
+               echo "Grype scan clean for ${label}."
+            else
+               echo "Unknown exit code ${exit_code} for ${label}."
+               tool_failure=1
             fi
           }
 
-          check_grype "api" "${{ steps.grype_api.outcome }}" "grype-cleanwithsnapshot-api.json"
-          check_grype "web" "${{ steps.grype_web.outcome }}" "grype-cleanwithsnapshot-web.json"
+          check_grype "api" "$GRYPE_API_EXIT_CODE" "grype-cleanwithsnapshot-api.json"
+          check_grype "web" "$GRYPE_WEB_EXIT_CODE" "grype-cleanwithsnapshot-web.json"
 
           if [ "$tool_failure" -eq 1 ]; then
             echo "Grype tool failure"
