@@ -420,14 +420,18 @@ jobs:
           docker save cleanwithsnapshot-web:ci -o "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar"
 
       - name: Install Trivy CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
-          trivy --version
+        uses: aquasecurity/setup-trivy@v0.2.2
+        with:
+          trivy-version: ${{ env.TRIVY_VERSION }}
+
+      - name: Verify Trivy version
+        run: trivy --version
 
       - name: Print Docker diagnostics (Trivy job)
         run: |
           docker version
           docker info
+          docker image ls | grep cleanwithsnapshot- || true
 
       - name: Capture built image IDs
         run: |
@@ -565,6 +569,7 @@ jobs:
             ${{ env.SECURITY_REPORT_DIR }}/trivy-cleanwithsnapshot-*.json
             ${{ env.SECURITY_REPORT_DIR }}/trivy-cleanwithsnapshot-*.sarif
             ${{ env.SECURITY_REPORT_DIR }}/sbom-trivy-cleanwithsnapshot-*.json
+            ${{ env.SECURITY_REPORT_DIR }}/trivy-*.stderr.log
             built-image-ids.txt
           retention-days: 30
 
@@ -644,6 +649,7 @@ jobs:
           syft version
           docker version
           docker info
+          docker image ls | grep cleanwithsnapshot- || true
 
       - name: Validate Grype severity cutoff
         run: |
@@ -662,9 +668,18 @@ jobs:
         if: always()
         run: |
           set +e
-          grype "docker-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" --fail-on "${GRYPE_FAIL_ON}" -o json > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json"
+          tmp_report="${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json.tmp"
+          stderr_log="${SECURITY_REPORT_DIR}/grype-api.stderr.log"
+          grype "cleanwithsnapshot-api:ci" --fail-on "${GRYPE_FAIL_ON}" -o json > "${tmp_report}" 2> "${stderr_log}"
           status=$?
           set -e
+          if [ -s "${tmp_report}" ]; then
+            mv "${tmp_report}" "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json"
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "Grype API stderr tail (status=${status}):"
+            tail -n 200 "${stderr_log}" || true
+          fi
           if [ ! -s "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json" ]; then
             echo '{"matches":[],"source":{"target":{"userInput":"cleanwithsnapshot-api:ci"}},"_tool_error":"grype failed to produce report"}' > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json"
           fi
@@ -675,9 +690,18 @@ jobs:
         if: always()
         run: |
           set +e
-          grype "docker-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" --fail-on "${GRYPE_FAIL_ON}" -o json > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json"
+          tmp_report="${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json.tmp"
+          stderr_log="${SECURITY_REPORT_DIR}/grype-web.stderr.log"
+          grype "cleanwithsnapshot-web:ci" --fail-on "${GRYPE_FAIL_ON}" -o json > "${tmp_report}" 2> "${stderr_log}"
           status=$?
           set -e
+          if [ -s "${tmp_report}" ]; then
+            mv "${tmp_report}" "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json"
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "Grype WEB stderr tail (status=${status}):"
+            tail -n 200 "${stderr_log}" || true
+          fi
           if [ ! -s "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json" ]; then
             echo '{"matches":[],"source":{"target":{"userInput":"cleanwithsnapshot-web:ci"}},"_tool_error":"grype failed to produce report"}' > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json"
           fi
@@ -687,7 +711,7 @@ jobs:
       - name: Generate SBOM (api, optional)
         if: always()
         run: |
-          syft "docker-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json" || true
+          syft "cleanwithsnapshot-api:ci" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json" || true
           if [ ! -s "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json" ]; then
             echo '{"spdxVersion":"SPDX-2.3","creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: syft"]},"name":"cleanwithsnapshot-api:ci","packages":[]}' > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json"
           fi
@@ -695,7 +719,7 @@ jobs:
       - name: Generate SBOM (web, optional)
         if: always()
         run: |
-          syft "docker-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json" || true
+          syft "cleanwithsnapshot-web:ci" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json" || true
           if [ ! -s "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json" ]; then
             echo '{"spdxVersion":"SPDX-2.3","creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: syft"]},"name":"cleanwithsnapshot-web:ci","packages":[]}' > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json"
           fi
@@ -761,6 +785,7 @@ jobs:
           name: grype-reports
           path: |
             ${{ env.SECURITY_REPORT_DIR }}/grype-cleanwithsnapshot-*.json
+            ${{ env.SECURITY_REPORT_DIR }}/grype-*.stderr.log
             ${{ env.SECURITY_REPORT_DIR }}/sbom-cleanwithsnapshot-*.json
           retention-days: 30
 
