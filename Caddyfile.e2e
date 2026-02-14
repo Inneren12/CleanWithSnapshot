@@ -1,22 +1,24 @@
 {
   auto_https off
+  debug
 }
 
 :80 {
-  @health path /healthz /readyz
-  handle @health {
+  handle /healthz {
+    reverse_proxy api:8000
+  }
+  handle /readyz {
     reverse_proxy api:8000
   }
 
-  @admin path /v1/admin*
-  handle @admin {
+  handle /v1/admin* {
     reverse_proxy api:8000 {
       header_up -Authorization
       header_up X-Proxy-Auth-Secret {env.ADMIN_PROXY_AUTH_SECRET}
       header_up X-Admin-User {env.ADMIN_PROXY_AUTH_USER}
       header_up X-Admin-Email {env.ADMIN_PROXY_AUTH_EMAIL}
       header_up X-Admin-Roles {env.ADMIN_PROXY_AUTH_ROLES}
-      header_up X-Auth-MFA {env.ADMIN_PROXY_AUTH_MFA}
+      header_up X-Auth-Mfa {env.ADMIN_PROXY_AUTH_MFA}
     }
   }
 

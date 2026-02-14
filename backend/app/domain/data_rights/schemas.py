@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, model_validator
 
 from app.infra.email_validation import E2EEmailStr
 
@@ -11,12 +11,11 @@ class DataExportRequest(BaseModel):
     lead_id: str | None = None
     email: E2EEmailStr | None = None
 
-    @field_validator("email")
-    @classmethod
-    def at_least_one(cls, value: str | None, values: dict[str, object]) -> str | None:  # noqa: ANN001
-        if not value and not values.get("lead_id"):
+    @model_validator(mode="after")
+    def at_least_one(self) -> DataExportRequest:
+        if not self.lead_id and not self.email:
             raise ValueError("lead_id_or_email_required")
-        return value
+        return self
 
 
 class DataExportResponse(BaseModel):
@@ -31,6 +30,12 @@ class DataRightsExportRequestPayload(BaseModel):
     lead_id: str | None = None
     email: E2EEmailStr | None = None
 
+    @model_validator(mode="after")
+    def at_least_one(self) -> DataRightsExportRequestPayload:
+        if not self.lead_id and not self.email:
+            raise ValueError("lead_id_or_email_required")
+        return self
+
 
 class DataRightsExportRequestResponse(BaseModel):
     export_id: str
@@ -41,6 +46,8 @@ class DataRightsExportRequestResponse(BaseModel):
 class DataRightsExportListItem(BaseModel):
     export_id: str
     status: str
+    subject_id: str
+    subject_type: str
     created_at: datetime
     completed_at: datetime | None = None
 
@@ -55,12 +62,11 @@ class DataDeletionRequestPayload(BaseModel):
     email: E2EEmailStr | None = None
     reason: str | None = None
 
-    @field_validator("email")
-    @classmethod
-    def validate_target(cls, value: str | None, values: dict[str, object]) -> str | None:  # noqa: ANN001
-        if not value and not values.get("lead_id"):
+    @model_validator(mode="after")
+    def validate_target(self) -> DataDeletionRequestPayload:
+        if not self.lead_id and not self.email:
             raise ValueError("lead_id_or_email_required")
-        return value
+        return self
 
 
 class DataDeletionResponse(BaseModel):

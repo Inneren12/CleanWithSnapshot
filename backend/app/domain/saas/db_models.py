@@ -73,7 +73,8 @@ class Membership(Base):
         UUID_TYPE, sa.ForeignKey("users.user_id", ondelete="CASCADE")
     )
     role: Mapped[MembershipRole] = mapped_column(
-        sa.Enum(MembershipRole, name="membershiprole"), nullable=False
+        sa.Enum(MembershipRole, name="membershiprole", values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
     )
     custom_role_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID_TYPE,
@@ -101,7 +102,8 @@ class ApiToken(Base):
     )
     token_hash: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     role: Mapped[MembershipRole] = mapped_column(
-        sa.Enum(MembershipRole, name="membershiprole"), nullable=False
+        sa.Enum(MembershipRole, name="membershiprole", values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
     )
     description: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
@@ -120,7 +122,10 @@ class SaaSSession(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID_TYPE, sa.ForeignKey("organizations.org_id", ondelete="CASCADE")
     )
-    role: Mapped[MembershipRole] = mapped_column(sa.Enum(MembershipRole, name="membershiprole"), nullable=False)
+    role: Mapped[MembershipRole] = mapped_column(
+        sa.Enum(MembershipRole, name="membershiprole", values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     refresh_token_hash: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
@@ -148,7 +153,8 @@ class TokenEvent(Base):
     event_type: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     token_type: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     actor_role: Mapped[MembershipRole] = mapped_column(
-        sa.Enum(MembershipRole, name="membershiprole"), nullable=False
+        sa.Enum(MembershipRole, name="membershiprole", values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
     )
     request_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     details: Mapped[dict] = mapped_column("metadata", sa.JSON(), default=dict, server_default=sa.text("'{}'"))

@@ -1,7 +1,13 @@
 services:
   api:
+    ports:
+      - "8000:8000"
     environment:
-      DATABASE_POOL_SIZE: "20"
-  jobs:
-    environment:
-      DATABASE_POOL_SIZE: "20"
+      APP_ENV: e2e
+      AUTH_SECRET_KEY: dev-auth-secret
+      ADMIN_PROXY_AUTH_ENABLED: "${ADMIN_PROXY_AUTH_ENABLED:-true}"
+      ADMIN_PROXY_AUTH_REQUIRED: "${ADMIN_PROXY_AUTH_REQUIRED:-true}"
+      ADMIN_PROXY_AUTH_SECRET: "${ADMIN_PROXY_AUTH_SECRET}"
+      ADMIN_PROXY_AUTH_E2E_ENABLED: "${ADMIN_PROXY_AUTH_E2E_ENABLED:-false}"
+      ADMIN_PROXY_AUTH_E2E_SECRET: "${ADMIN_PROXY_AUTH_E2E_SECRET}"
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/cleaning

@@ -4,6 +4,7 @@ E2E Test Hooks - endpoints only available in test environments.
 These endpoints are gated by APP_ENV and must not be available in production.
 They provide deterministic control for E2E tests.
 """
+
 from __future__ import annotations
 
 import logging
@@ -69,7 +70,9 @@ async def seed_test_lead(
     """
     _require_test_env()
 
-    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(request)
+    org_id = getattr(request.state, "org_id", None) or entitlements.resolve_org_id(
+        request
+    )
 
     # Generate unique email if not provided
     email = payload.email or f"e2e-{uuid.uuid4().hex[:8]}@test.invalid"
@@ -120,12 +123,17 @@ async def process_data_exports(
     # Import here to avoid circular imports
     from app.jobs.data_export import run_pending_data_exports
 
-    storage = getattr(request.app.state, "storage_backend", None) or new_storage_backend()
+    storage = (
+        getattr(request.app.state, "storage_backend", None) or new_storage_backend()
+    )
     result = await run_pending_data_exports(session, storage_backend=storage)
 
     logger.info(
         "Processed data exports for E2E test",
-        extra={"processed": result.get("processed", 0), "completed": result.get("completed", 0)},
+        extra={
+            "processed": result.get("processed", 0),
+            "completed": result.get("completed", 0),
+        },
     )
 
     return ProcessDataExportsResponse(
@@ -149,14 +157,19 @@ async def process_deletions(
     """
     _require_test_env()
 
-    storage = getattr(request.app.state, "storage_backend", None) or new_storage_backend()
+    storage = (
+        getattr(request.app.state, "storage_backend", None) or new_storage_backend()
+    )
     result = await data_rights_service.process_pending_deletions(
         session, storage_backend=storage
     )
 
     logger.info(
         "Processed deletions for E2E test",
-        extra={"processed": result.get("processed", 0), "leads_anonymized": result.get("leads_anonymized", 0)},
+        extra={
+            "processed": result.get("processed", 0),
+            "leads_anonymized": result.get("leads_anonymized", 0),
+        },
     )
 
     return result

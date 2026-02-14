@@ -32,7 +32,9 @@ SENSITIVE_KEYS = PII_KEYS | {
     "signature",
     "sig",
 }
-LOG_CONTEXT: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("log_context", default={})
+LOG_CONTEXT: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
+    "log_context", default={}
+)
 _LOG_RECORD_ATTRS = set(logging.LogRecord(None, 0, "", 0, "", (), None).__dict__.keys())
 
 
@@ -40,7 +42,9 @@ def redact_pii(value: str) -> str:
     value = EMAIL_RE.sub("[REDACTED_EMAIL]", value)
     value = PHONE_RE.sub("[REDACTED_PHONE]", value)
     value = ADDRESS_RE.sub("[REDACTED_ADDRESS]", value)
-    value = TOKEN_QUERY_RE.sub(lambda match: f"{match.group('key')}=[REDACTED_TOKEN]", value)
+    value = TOKEN_QUERY_RE.sub(
+        lambda match: f"{match.group('key')}=[REDACTED_TOKEN]", value
+    )
     value = AUTH_HEADER_RE.sub("authorization=[REDACTED_TOKEN]", value)
     value = BEARER_RE.sub("Bearer [REDACTED_TOKEN]", value)
     return value
@@ -54,7 +58,10 @@ def _sanitize_value(value: Any, key: str | None = None) -> Any:
     if isinstance(value, list):
         return [_sanitize_value(item) for item in value]
     if isinstance(value, dict):
-        return {item_key: _sanitize_value(item_value, item_key) for item_key, item_value in value.items()}
+        return {
+            item_key: _sanitize_value(item_value, item_key)
+            for item_key, item_value in value.items()
+        }
     return value
 
 
@@ -112,6 +119,14 @@ class RedactingJsonFormatter(logging.Formatter):
         extra = _extract_extra(record)
         if extra:
             payload.update(_sanitize_value(extra))
+
+        if record.exc_info:
+            if not record.exc_text:
+                record.exc_text = self.formatException(record.exc_info)
+
+        if record.exc_text:
+            payload["exception"] = record.exc_text
+
         return json.dumps(payload, ensure_ascii=False)
 
 

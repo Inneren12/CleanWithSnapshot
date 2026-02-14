@@ -75,7 +75,7 @@ else
 fi
 
 export PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000
-export PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:3000
+export PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:8000
 
 # NOTE: Do not force ADMIN_PROXY_AUTH_E2E_ENABLED here.
 # If you want to control it, do it via docker-compose.e2e.override.yml (source of truth).

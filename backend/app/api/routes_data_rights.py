@@ -506,6 +506,8 @@ async def list_data_exports(
             data_rights_schemas.DataRightsExportListItem(
                 export_id=str(item.export_id),
                 status=item.status,
+                subject_id=item.subject_id,
+                subject_type=item.subject_type,
                 created_at=item.created_at,
                 completed_at=item.completed_at,
             )

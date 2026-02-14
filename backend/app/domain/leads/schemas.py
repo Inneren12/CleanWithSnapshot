@@ -138,6 +138,7 @@ class AdminLeadResponse(BaseModel):
     referral_code: str
     referred_by_code: Optional[str] = None
     referral_credits: int
+    deleted_at: Optional[datetime] = None
 
 
 class AdminLeadStatusUpdateRequest(BaseModel):
@@ -298,6 +299,7 @@ def admin_lead_from_model(model, referral_credit_count: int | None = None) -> Ad
         referral_code=model.referral_code or "",
         referred_by_code=model.referred_by_code,
         referral_credits=credit_count,
+        deleted_at=model.deleted_at,
     )
 
 
