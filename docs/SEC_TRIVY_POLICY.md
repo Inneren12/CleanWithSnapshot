@@ -23,3 +23,24 @@ The default posture is to **not** use `.trivyignore`. If an ignore file is requi
 
 ## Ownership
 Security and platform owners are responsible for maintaining the policy and reviewing any ignore file additions.
+
+## Local CI-Parity Reproduction
+
+Build and export the same images CI scans:
+
+```bash
+docker buildx build --load -t cleanwithsnapshot-api:ci -f backend/Dockerfile .
+docker buildx build --load -t cleanwithsnapshot-web:ci -f web/Dockerfile .
+docker save cleanwithsnapshot-api:ci -o /tmp/cleanwithsnapshot-api_ci.tar
+docker save cleanwithsnapshot-web:ci -o /tmp/cleanwithsnapshot-web_ci.tar
+```
+
+Run Trivy against tar inputs (no Docker socket API dependency):
+
+```bash
+trivy image --input /tmp/cleanwithsnapshot-api_ci.tar --format json --output trivy-cleanwithsnapshot-api.json --scanners vuln --severity CRITICAL
+trivy image --input /tmp/cleanwithsnapshot-web_ci.tar --format json --output trivy-cleanwithsnapshot-web.json --scanners vuln --severity CRITICAL
+trivy image --input /tmp/cleanwithsnapshot-api_ci.tar --format spdx-json --output sbom-trivy-cleanwithsnapshot-api.json
+trivy image --input /tmp/cleanwithsnapshot-web_ci.tar --format spdx-json --output sbom-trivy-cleanwithsnapshot-web.json
+```
+

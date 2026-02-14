@@ -28,10 +28,11 @@ services:
       # Init script to create WAL archive directory with correct permissions
       - ./config/postgres/init-wal-archive.sh:/docker-entrypoint-initdb.d/init-wal-archive.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
-      retries: 20
+      retries: 30
+      start_period: 20s
     deploy:
       resources:
         limits:

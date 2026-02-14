@@ -25,3 +25,24 @@ fail builds on critical findings while retaining artifact reports for review.
 ## Exceptions
 
 - Exceptions require security review and documented approval.
+
+## Local CI-Parity Reproduction
+
+Build and export images:
+
+```bash
+docker buildx build --load -t cleanwithsnapshot-api:ci -f backend/Dockerfile .
+docker buildx build --load -t cleanwithsnapshot-web:ci -f web/Dockerfile .
+docker save cleanwithsnapshot-api:ci -o /tmp/cleanwithsnapshot-api_ci.tar
+docker save cleanwithsnapshot-web:ci -o /tmp/cleanwithsnapshot-web_ci.tar
+```
+
+Scan `docker save` archives with `docker-archive:` (not `oci-archive:`):
+
+```bash
+grype docker-archive:/tmp/cleanwithsnapshot-api_ci.tar --fail-on critical -o json > grype-cleanwithsnapshot-api.json
+grype docker-archive:/tmp/cleanwithsnapshot-web_ci.tar --fail-on critical -o json > grype-cleanwithsnapshot-web.json
+syft docker-archive:/tmp/cleanwithsnapshot-api_ci.tar -o spdx-json > sbom-cleanwithsnapshot-api.json
+syft docker-archive:/tmp/cleanwithsnapshot-web_ci.tar -o spdx-json > sbom-cleanwithsnapshot-web.json
+```
+
