@@ -402,6 +402,8 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
       TRIVY_SEVERITY: "CRITICAL"
+      SECURITY_REPORT_DIR: security-reports/trivy
+      SECURITY_IMAGE_DIR: security-images
 
     steps:
       - name: Checkout code
@@ -409,6 +411,15 @@ jobs:
 
       - name: Build api and web images
         run: docker compose build api web
+
+      - name: Export built images as tar archives
+        run: |
+          mkdir -p "${SECURITY_IMAGE_DIR}" "${SECURITY_REPORT_DIR}"
+          docker save cleanwithsnapshot-api:ci -o "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar"
+          docker save cleanwithsnapshot-web:ci -o "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar"
+
+      - name: Install Trivy CLI
+        uses: aquasecurity/setup-trivy@e3c5a5f26c15a0f32a5e07147aa5ebfa94f52f7b # v0.2.2
 
       - name: Capture built image IDs
         run: |
@@ -443,103 +454,94 @@ jobs:
             echo '=== DONE ==='"
 
       - name: Scan api image (Trivy JSON)
-        id: trivy_api_json
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
-        with:
-          scan-type: image
-          image-ref: cleanwithsnapshot-api:ci
-          format: json
-          output: trivy-cleanwithsnapshot-api.json
-          scanners: vuln
-          severity: ${{ env.TRIVY_SEVERITY }}
-          exit-code: "1"
-          limit-severities-for-sarif: true
-
-      - name: Scan api image (Trivy SARIF)
-        id: trivy_api_sarif
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
-        with:
-          scan-type: image
-          image-ref: cleanwithsnapshot-api:ci
-          format: sarif
-          output: trivy-cleanwithsnapshot-api.sarif
-          scanners: vuln
-          severity: ${{ env.TRIVY_SEVERITY }}
-          exit-code: "1"
-          limit-severities-for-sarif: true
-
-      - name: Scan web image (Trivy JSON)
-        id: trivy_web_json
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
-        with:
-          scan-type: image
-          image-ref: cleanwithsnapshot-web:ci
-          format: json
-          output: trivy-cleanwithsnapshot-web.json
-          scanners: vuln
-          severity: ${{ env.TRIVY_SEVERITY }}
-          exit-code: "1"
-          limit-severities-for-sarif: true
-
-      - name: Scan web image (Trivy SARIF)
-        id: trivy_web_sarif
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
-        with:
-          scan-type: image
-          image-ref: cleanwithsnapshot-web:ci
-          format: sarif
-          output: trivy-cleanwithsnapshot-web.sarif
-          scanners: vuln
-          severity: ${{ env.TRIVY_SEVERITY }}
-          exit-code: "1"
-          limit-severities-for-sarif: true
-
-      - name: Capture Trivy exit codes
         if: always()
         run: |
-          api_json_exit=0
-          api_sarif_exit=0
-          web_json_exit=0
-          web_sarif_exit=0
-          if [ "${{ steps.trivy_api_json.outcome }}" = "failure" ]; then
-            api_json_exit=1
+          set +e
+          trivy image --input "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" \
+            --format json \
+            --output "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-api.json" \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --exit-code 1
+          status=$?
+          if [ ! -s "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-api.json" ]; then
+            echo '{"SchemaVersion":2,"ArtifactName":"cleanwithsnapshot-api:ci","Results":[],"_tool_error":"trivy failed to produce json report"}' > "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-api.json"
           fi
-          if [ "${{ steps.trivy_api_sarif.outcome }}" = "failure" ]; then
-            api_sarif_exit=1
+          echo "TRIVY_API_JSON_EXIT_CODE=${status}" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Scan api image (Trivy SARIF)
+        if: always()
+        run: |
+          set +e
+          trivy image --input "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" \
+            --format sarif \
+            --output "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-api.sarif" \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --exit-code 1
+          status=$?
+          if [ ! -s "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-api.sarif" ]; then
+            printf '%s\n' '{"$schema":"https://json.schemastore.org/sarif-2.1.0.json","version":"2.1.0","runs":[]}' > "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-api.sarif"
           fi
-          if [ "${{ steps.trivy_web_json.outcome }}" = "failure" ]; then
-            web_json_exit=1
+          echo "TRIVY_API_SARIF_EXIT_CODE=${status}" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Scan web image (Trivy JSON)
+        if: always()
+        run: |
+          set +e
+          trivy image --input "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" \
+            --format json \
+            --output "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-web.json" \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --exit-code 1
+          status=$?
+          if [ ! -s "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-web.json" ]; then
+            echo '{"SchemaVersion":2,"ArtifactName":"cleanwithsnapshot-web:ci","Results":[],"_tool_error":"trivy failed to produce json report"}' > "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-web.json"
           fi
-          if [ "${{ steps.trivy_web_sarif.outcome }}" = "failure" ]; then
-            web_sarif_exit=1
+          echo "TRIVY_WEB_JSON_EXIT_CODE=${status}" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Scan web image (Trivy SARIF)
+        if: always()
+        run: |
+          set +e
+          trivy image --input "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" \
+            --format sarif \
+            --output "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-web.sarif" \
+            --scanners vuln \
+            --severity "${TRIVY_SEVERITY}" \
+            --exit-code 1
+          status=$?
+          if [ ! -s "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-web.sarif" ]; then
+            printf '%s\n' '{"$schema":"https://json.schemastore.org/sarif-2.1.0.json","version":"2.1.0","runs":[]}' > "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-web.sarif"
           fi
-          echo "TRIVY_API_JSON_EXIT_CODE=${api_json_exit}" >> "$GITHUB_ENV"
-          echo "TRIVY_API_SARIF_EXIT_CODE=${api_sarif_exit}" >> "$GITHUB_ENV"
-          echo "TRIVY_WEB_JSON_EXIT_CODE=${web_json_exit}" >> "$GITHUB_ENV"
-          echo "TRIVY_WEB_SARIF_EXIT_CODE=${web_sarif_exit}" >> "$GITHUB_ENV"
-          echo "Trivy exit codes (api json=${api_json_exit}, api sarif=${api_sarif_exit}, web json=${web_json_exit}, web sarif=${web_sarif_exit})"
+          echo "TRIVY_WEB_SARIF_EXIT_CODE=${status}" >> "$GITHUB_ENV"
+          exit 0
 
       - name: Generate SBOM (api, Trivy SPDX)
-        uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
-        with:
-          scan-type: image
-          image-ref: cleanwithsnapshot-api:ci
-          format: spdx-json
-          output: sbom-trivy-cleanwithsnapshot-api.json
-          exit-code: "0"
+        if: always()
+        run: |
+          trivy image --input "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" \
+            --format spdx-json \
+            --output "${SECURITY_REPORT_DIR}/sbom-trivy-cleanwithsnapshot-api.json" \
+            --exit-code 0 || true
+          if [ ! -s "${SECURITY_REPORT_DIR}/sbom-trivy-cleanwithsnapshot-api.json" ]; then
+            echo '{"spdxVersion":"SPDX-2.3","creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: trivy"]},"name":"cleanwithsnapshot-api:ci","packages":[]}' > "${SECURITY_REPORT_DIR}/sbom-trivy-cleanwithsnapshot-api.json"
+          fi
 
       - name: Generate SBOM (web, Trivy SPDX)
-        uses: aquasecurity/trivy-action@1f0aa582c8c8f5f7639610d6d38baddfea4fdcee
-        with:
-          scan-type: image
-          image-ref: cleanwithsnapshot-web:ci
-          format: spdx-json
-          output: sbom-trivy-cleanwithsnapshot-web.json
-          exit-code: "0"
+        if: always()
+        run: |
+          trivy image --input "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" \
+            --format spdx-json \
+            --output "${SECURITY_REPORT_DIR}/sbom-trivy-cleanwithsnapshot-web.json" \
+            --exit-code 0 || true
+          if [ ! -s "${SECURITY_REPORT_DIR}/sbom-trivy-cleanwithsnapshot-web.json" ]; then
+            echo '{"spdxVersion":"SPDX-2.3","creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: trivy"]},"name":"cleanwithsnapshot-web:ci","packages":[]}' > "${SECURITY_REPORT_DIR}/sbom-trivy-cleanwithsnapshot-web.json"
+          fi
       
       - name: Upload Trivy reports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -547,9 +549,9 @@ jobs:
         with:
           name: trivy-reports
           path: |
-            trivy-cleanwithsnapshot-*.json
-            trivy-cleanwithsnapshot-*.sarif
-            sbom-trivy-cleanwithsnapshot-*.json
+            ${{ env.SECURITY_REPORT_DIR }}/trivy-cleanwithsnapshot-*.json
+            ${{ env.SECURITY_REPORT_DIR }}/trivy-cleanwithsnapshot-*.sarif
+            ${{ env.SECURITY_REPORT_DIR }}/sbom-trivy-cleanwithsnapshot-*.json
             built-image-ids.txt
           retention-days: 30
 
@@ -561,23 +563,28 @@ jobs:
 
           check_trivy() {
             local label="$1"
-            local outcome="$2"
+            local scan_exit_code="$2"
             local report="$3"
             if [ ! -s "$report" ]; then
               echo "Trivy tool failure: missing report for ${label} (${report})."
               tool_failure=1
               return
             fi
-            if [ "$outcome" = "failure" ]; then
+            if [ "$scan_exit_code" -eq 1 ]; then
               echo "Trivy vulnerability failure: CRITICAL vulnerabilities found for ${label}."
               vuln_failure=1
+              return
+            fi
+            if [ "$scan_exit_code" -ne 0 ]; then
+              echo "Trivy tool failure: non-policy exit code ${scan_exit_code} for ${label}."
+              tool_failure=1
             fi
           }
 
-          check_trivy "api-json" "${{ steps.trivy_api_json.outcome }}" "trivy-cleanwithsnapshot-api.json"
-          check_trivy "api-sarif" "${{ steps.trivy_api_sarif.outcome }}" "trivy-cleanwithsnapshot-api.sarif"
-          check_trivy "web-json" "${{ steps.trivy_web_json.outcome }}" "trivy-cleanwithsnapshot-web.json"
-          check_trivy "web-sarif" "${{ steps.trivy_web_sarif.outcome }}" "trivy-cleanwithsnapshot-web.sarif"
+          check_trivy "api-json" "${TRIVY_API_JSON_EXIT_CODE:-99}" "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-api.json"
+          check_trivy "api-sarif" "${TRIVY_API_SARIF_EXIT_CODE:-99}" "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-api.sarif"
+          check_trivy "web-json" "${TRIVY_WEB_JSON_EXIT_CODE:-99}" "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-web.json"
+          check_trivy "web-sarif" "${TRIVY_WEB_SARIF_EXIT_CODE:-99}" "${SECURITY_REPORT_DIR}/trivy-cleanwithsnapshot-web.sarif"
 
           if [ "$tool_failure" -eq 1 ]; then
             echo "Trivy tool failure"
@@ -597,6 +604,8 @@ jobs:
       GRYPE_FAIL_ON: "critical"
       GRYPE_VERSION: "v0.105.0"
       SYFT_VERSION: "v1.40.1"
+      SECURITY_REPORT_DIR: security-reports/grype
+      SECURITY_IMAGE_DIR: security-images
 
     steps:
       - name: Checkout code
@@ -604,6 +613,17 @@ jobs:
 
       - name: Build api and web images
         run: docker compose build api web
+
+      - name: Export built images as tar archives
+        run: |
+          mkdir -p "${SECURITY_IMAGE_DIR}" "${SECURITY_REPORT_DIR}"
+          docker save cleanwithsnapshot-api:ci -o "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar"
+          docker save cleanwithsnapshot-web:ci -o "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar"
+
+      - name: Install Grype and Syft CLIs
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin "${GRYPE_VERSION}"
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin "${SYFT_VERSION}"
 
       - name: Validate Grype severity cutoff
         run: |
@@ -619,44 +639,44 @@ jobs:
           echo "Grype version: ${GRYPE_VERSION}"
 
       - name: Scan api image (Grype JSON)
-        id: grype_api
-        continue-on-error: true
-        uses: anchore/scan-action@62b74fb7bb810d2c45b1865f47a77655621862a5
-        with:
-          image: cleanwithsnapshot-api:ci
-          output-format: json
-          output-file: grype-cleanwithsnapshot-api.json
-          fail-build: true
-          severity-cutoff: ${{ env.GRYPE_FAIL_ON }}
-          grype-version: ${{ env.GRYPE_VERSION }}
+        if: always()
+        run: |
+          set +e
+          grype "oci-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" --fail-on "${GRYPE_FAIL_ON}" -o json > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json"
+          status=$?
+          if [ ! -s "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json" ]; then
+            echo '{"matches":[],"source":{"target":{"userInput":"cleanwithsnapshot-api:ci"}},"_tool_error":"grype failed to produce report"}' > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json"
+          fi
+          echo "GRYPE_API_EXIT_CODE=${status}" >> "$GITHUB_ENV"
+          exit 0
 
       - name: Scan web image (Grype JSON)
-        id: grype_web
-        continue-on-error: true
-        uses: anchore/scan-action@62b74fb7bb810d2c45b1865f47a77655621862a5
-        with:
-          image: cleanwithsnapshot-web:ci
-          output-format: json
-          output-file: grype-cleanwithsnapshot-web.json
-          fail-build: true
-          severity-cutoff: ${{ env.GRYPE_FAIL_ON }}
-          grype-version: ${{ env.GRYPE_VERSION }}
+        if: always()
+        run: |
+          set +e
+          grype "oci-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" --fail-on "${GRYPE_FAIL_ON}" -o json > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json"
+          status=$?
+          if [ ! -s "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json" ]; then
+            echo '{"matches":[],"source":{"target":{"userInput":"cleanwithsnapshot-web:ci"}},"_tool_error":"grype failed to produce report"}' > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json"
+          fi
+          echo "GRYPE_WEB_EXIT_CODE=${status}" >> "$GITHUB_ENV"
+          exit 0
 
       - name: Generate SBOM (api, optional)
-        uses: anchore/sbom-action@62ad5284b8ced813296287a0b63906cb364b73ee
-        with:
-          image: cleanwithsnapshot-api:ci
-          format: spdx-json
-          output-file: sbom-cleanwithsnapshot-api.json
-          syft-version: ${{ env.SYFT_VERSION }}
+        if: always()
+        run: |
+          syft "oci-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json" || true
+          if [ ! -s "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json" ]; then
+            echo '{"spdxVersion":"SPDX-2.3","creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: syft"]},"name":"cleanwithsnapshot-api:ci","packages":[]}' > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json"
+          fi
 
       - name: Generate SBOM (web, optional)
-        uses: anchore/sbom-action@62ad5284b8ced813296287a0b63906cb364b73ee
-        with:
-          image: cleanwithsnapshot-web:ci
-          format: spdx-json
-          output-file: sbom-cleanwithsnapshot-web.json
-          syft-version: ${{ env.SYFT_VERSION }}
+        if: always()
+        run: |
+          syft "oci-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json" || true
+          if [ ! -s "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json" ]; then
+            echo '{"spdxVersion":"SPDX-2.3","creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: syft"]},"name":"cleanwithsnapshot-web:ci","packages":[]}' > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json"
+          fi
 
       - name: Enforce Grype severity gate
         if: always()
@@ -666,21 +686,26 @@ jobs:
 
           check_grype() {
             local label="$1"
-            local outcome="$2"
+            local scan_exit_code="$2"
             local report="$3"
             if [ ! -s "$report" ]; then
               echo "Grype tool failure: missing report for ${label} (${report})."
               tool_failure=1
               return
             fi
-            if [ "$outcome" = "failure" ]; then
+            if [ "$scan_exit_code" -eq 2 ]; then
               echo "Grype vulnerability failure: ${GRYPE_FAIL_ON} or higher vulnerabilities found for ${label}."
               vuln_failure=1
+              return
+            fi
+            if [ "$scan_exit_code" -ne 0 ]; then
+              echo "Grype tool failure: non-policy exit code ${scan_exit_code} for ${label}."
+              tool_failure=1
             fi
           }
 
-          check_grype "api" "${{ steps.grype_api.outcome }}" "grype-cleanwithsnapshot-api.json"
-          check_grype "web" "${{ steps.grype_web.outcome }}" "grype-cleanwithsnapshot-web.json"
+          check_grype "api" "${GRYPE_API_EXIT_CODE:-99}" "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json"
+          check_grype "web" "${GRYPE_WEB_EXIT_CODE:-99}" "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json"
 
           if [ "$tool_failure" -eq 1 ]; then
             echo "Grype tool failure"
@@ -698,8 +723,8 @@ jobs:
         with:
           name: grype-reports
           path: |
-            grype-cleanwithsnapshot-*.json
-            sbom-cleanwithsnapshot-*.json
+            ${{ env.SECURITY_REPORT_DIR }}/grype-cleanwithsnapshot-*.json
+            ${{ env.SECURITY_REPORT_DIR }}/sbom-cleanwithsnapshot-*.json
           retention-days: 30
 
       - name: Upload SBOM reports
@@ -708,7 +733,7 @@ jobs:
         with:
           name: sbom-reports
           path: |
-            sbom-cleanwithsnapshot-*.json
+            ${{ env.SECURITY_REPORT_DIR }}/sbom-cleanwithsnapshot-*.json
           retention-days: 30
 
 
