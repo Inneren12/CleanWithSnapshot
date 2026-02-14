@@ -18,7 +18,9 @@ import {
 } from "../lib/featureVisibility";
 import { DEFAULT_ORG_TIMEZONE, type OrgSettingsResponse } from "../lib/orgSettings";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  (typeof window !== "undefined" ? window.location.origin : "");
 const START_HOUR = 8;
 const END_HOUR = 18;
 const SLOT_MINUTES = 30;
@@ -1467,10 +1469,9 @@ export default function SchedulePage() {
             <td>${worker}<br/><span class="muted">${team}</span></td>
             <td>${booking.duration_minutes ?? "—"}</td>
             <td>${booking.price_cents !== null ? formatCurrencyFromCents(booking.price_cents) : "—"}</td>
-            ${
-              includeNotesColumn
-                ? `<td>${formatNotesForPrint(booking.notes)}</td>`
-                : ""
+            ${includeNotesColumn
+              ? `<td>${formatNotesForPrint(booking.notes)}</td>`
+              : ""
             }
           </tr>`;
         })
@@ -2617,10 +2618,10 @@ export default function SchedulePage() {
                         <div className="muted">
                           {timelineAvailableMinutes && workerTimeline.workers.length
                             ? `${Math.round(
-                                (workerTimeline.totals.booked_minutes /
-                                  (timelineAvailableMinutes * workerTimeline.workers.length)) *
-                                  100
-                              )}%`
+                              (workerTimeline.totals.booked_minutes /
+                                (timelineAvailableMinutes * workerTimeline.workers.length)) *
+                              100
+                            )}%`
                             : "—"}
                         </div>
                       </td>
@@ -2692,9 +2693,8 @@ export default function SchedulePage() {
                               <div>{formatBookingCount(entry.bookings)}</div>
                               <div className="muted">
                                 {entry.workers_used
-                                  ? `${entry.workers_used} worker${
-                                      entry.workers_used === 1 ? "" : "s"
-                                    }`
+                                  ? `${entry.workers_used} worker${entry.workers_used === 1 ? "" : "s"
+                                  }`
                                   : "—"}
                               </div>
                               <div className="muted">{revenueLabel}</div>
@@ -2765,9 +2765,8 @@ export default function SchedulePage() {
                     return (
                       <div
                         key={booking.booking_id}
-                        className={`schedule-booking${
-                          draggingBookingId === booking.booking_id ? " dragging" : ""
-                        }`}
+                        className={`schedule-booking${draggingBookingId === booking.booking_id ? " dragging" : ""
+                          }`}
                         style={{
                           top: clampedTop,
                           height: clampedHeight,

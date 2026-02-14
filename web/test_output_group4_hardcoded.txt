@@ -1,0 +1,447 @@
+
+Running 12 tests using 1 worker
+
+  ✘   1 e2e/tests/bookings-management.spec.ts:44:7 › Bookings management › bookings section loads on admin dashboard (263ms)
+  ✘   2 e2e/tests/bookings-management.spec.ts:52:7 › Bookings management › bookings table is displayed (239ms)
+  ✘   3 e2e/tests/bookings-management.spec.ts:59:7 › Bookings management › bookings date filter is functional (268ms)
+  ✘   4 e2e/tests/bookings-management.spec.ts:94:7 › Bookings management › bookings refresh button is functional (256ms)
+[BROWSER][info] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold
+[BROWSER][log] [Fast Refresh] rebuilding
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/metrics?from=2025-01-01T00%3A00%3A00Z&to=2025-01-07T23%3A59%3A59Z 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/metrics?from=2025-01-01T00%3A00%3A00Z&to=2025-01-07T23%3A59%3A59Z 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/metrics?from=2025-01-01T00%3A00%3A00Z&to=2025-01-07T23%3A59%3A59Z 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[BROWSER][log] [Fast Refresh] done in 1415ms
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+  ✘   5 e2e/tests/bookings-management.spec.ts:128:7 › Bookings management › bookings table has expected columns (18.5s)
+[BROWSER][info] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[BROWSER][error] Failed to load resource: the server responded with a status of 404 (Not Found)
+  ✓   6 e2e/tests/bookings-management.spec.ts:162:7 › Bookings management › week view is displayed (906ms)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+  ✓   7 e2e/tests/leads-management.spec.ts:39:7 › Leads management › leads section loads on admin dashboard (1.0s)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+  ✓   8 e2e/tests/leads-management.spec.ts:47:7 › Leads management › leads table is displayed (882ms)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/metrics?from=2025-01-01T00%3A00%3A00Z&to=2025-01-07T23%3A59%3A59Z 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/metrics?from=2025-01-01T00%3A00%3A00Z&to=2025-01-07T23%3A59%3A59Z 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/metrics?from=2025-01-01T00%3A00%3A00Z&to=2025-01-07T23%3A59%3A59Z 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads?status=NEW 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads?status=NEW 
+  ✘   9 e2e/tests/leads-management.spec.ts:54:7 › Leads management › leads status filter is functional (16.6s)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/metrics?from=2025-01-01T00%3A00%3A00Z&to=2025-01-07T23%3A59%3A59Z 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/metrics?from=2025-01-01T00%3A00%3A00Z&to=2025-01-07T23%3A59%3A59Z 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/export-dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=50 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/bookings?from=2025-01-01&to=2025-01-07 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/metrics?from=2025-01-01T00%3A00%3A00Z&to=2025-01-07T23%3A59%3A59Z 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads 
+  ✘  10 e2e/tests/leads-management.spec.ts:89:7 › Leads management › leads refresh button is functional (16.4s)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads?page=1 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+  ✓  11 e2e/tests/leads-management.spec.ts:123:7 › Leads management › dedicated leads page loads (1.1s)
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads?page=1 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads?page=1 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/profile 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/settings/features 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/users/me/ui_prefs 
+[E2E][API FAIL] [33m404[39m http://127.0.0.1:3000/v1/admin/leads?page=1 
+  ✓  12 e2e/tests/leads-management.spec.ts:131:7 › Leads management › leads page shows pipeline stages (853ms)
+
+
+  1) e2e/tests/bookings-management.spec.ts:44:7 › Bookings management › bookings section loads on admin dashboard 
+
+    Error: apiRequestContext.get: socket hang up
+    Call log:
+    [2m  - → GET http://127.0.0.1:8000/v1/admin/profile[22m
+    [2m    - user-agent: Playwright/1.58.2 (x64; ubuntu 24.04) node/20.20[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - X-Proxy-Auth-Secret: ci-proxy-c935e81058344551234439092bec1a3c2dbcd61f3d12564ad7817d96514f0ef3[22m
+    [2m    - X-Auth-MFA: true[22m
+    [2m    - X-E2E-Admin-User: e2e[22m
+    [2m    - X-E2E-Admin-Email: e2e@example.com[22m
+    [2m    - X-E2E-Admin-Roles: admin[22m
+    [2m    - X-E2E-Proxy-Timestamp: 1770966333[22m
+    [2m    - X-E2E-Proxy-Signature: b27929c3b8ea45aa70e24689117b75820b0d27bf4f75ae64d13cef83b6d5e165[22m
+
+
+       at helpers/adminAuth.ts:68
+
+      66 |   { username, password, apiBaseUrl }: AdminCredentials
+      67 | ): Promise<void> {
+    > 68 |   const response = await request.get(`${apiBaseUrl}/v1/admin/profile`, {
+         |                                  ^
+      69 |     headers: ADMIN_PROXY_AUTH_ENABLED
+      70 |       ? buildProxyHeaders({ username, password, apiBaseUrl })
+      71 |       : {
+        at verifyAdminCredentials (/home/chulk/CleanWithSnapshot/web/e2e/tests/helpers/adminAuth.ts:68:34)
+        at /home/chulk/CleanWithSnapshot/web/e2e/tests/bookings-management.spec.ts:40:33
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-f7b5c-on-loads-on-admin-dashboard/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-f7b5c-on-loads-on-admin-dashboard/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-f7b5c-on-loads-on-admin-dashboard/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace e2e/test-results/bookings-management-Bookin-f7b5c-on-loads-on-admin-dashboard/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) e2e/tests/bookings-management.spec.ts:52:7 › Bookings management › bookings table is displayed 
+
+    Error: apiRequestContext.get: socket hang up
+    Call log:
+    [2m  - → GET http://127.0.0.1:8000/v1/admin/profile[22m
+    [2m    - user-agent: Playwright/1.58.2 (x64; ubuntu 24.04) node/20.20[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - X-Proxy-Auth-Secret: ci-proxy-c935e81058344551234439092bec1a3c2dbcd61f3d12564ad7817d96514f0ef3[22m
+    [2m    - X-Auth-MFA: true[22m
+    [2m    - X-E2E-Admin-User: e2e[22m
+    [2m    - X-E2E-Admin-Email: e2e@example.com[22m
+    [2m    - X-E2E-Admin-Roles: admin[22m
+    [2m    - X-E2E-Proxy-Timestamp: 1770966334[22m
+    [2m    - X-E2E-Proxy-Signature: 8bee89b2440f70b3bc101c427413999e555dd5a80fa6172b2c1ea4da0cf0d5b9[22m
+
+
+       at helpers/adminAuth.ts:68
+
+      66 |   { username, password, apiBaseUrl }: AdminCredentials
+      67 | ): Promise<void> {
+    > 68 |   const response = await request.get(`${apiBaseUrl}/v1/admin/profile`, {
+         |                                  ^
+      69 |     headers: ADMIN_PROXY_AUTH_ENABLED
+      70 |       ? buildProxyHeaders({ username, password, apiBaseUrl })
+      71 |       : {
+        at verifyAdminCredentials (/home/chulk/CleanWithSnapshot/web/e2e/tests/helpers/adminAuth.ts:68:34)
+        at /home/chulk/CleanWithSnapshot/web/e2e/tests/bookings-management.spec.ts:40:33
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-283e3-bookings-table-is-displayed/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-283e3-bookings-table-is-displayed/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-283e3-bookings-table-is-displayed/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace e2e/test-results/bookings-management-Bookin-283e3-bookings-table-is-displayed/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) e2e/tests/bookings-management.spec.ts:59:7 › Bookings management › bookings date filter is functional 
+
+    Error: apiRequestContext.get: socket hang up
+    Call log:
+    [2m  - → GET http://127.0.0.1:8000/v1/admin/profile[22m
+    [2m    - user-agent: Playwright/1.58.2 (x64; ubuntu 24.04) node/20.20[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - X-Proxy-Auth-Secret: ci-proxy-c935e81058344551234439092bec1a3c2dbcd61f3d12564ad7817d96514f0ef3[22m
+    [2m    - X-Auth-MFA: true[22m
+    [2m    - X-E2E-Admin-User: e2e[22m
+    [2m    - X-E2E-Admin-Email: e2e@example.com[22m
+    [2m    - X-E2E-Admin-Roles: admin[22m
+    [2m    - X-E2E-Proxy-Timestamp: 1770966335[22m
+    [2m    - X-E2E-Proxy-Signature: 88efe0fe331e956fc1c773e712197b67fd7f462daf4d533608aa87eaafe5020a[22m
+
+
+       at helpers/adminAuth.ts:68
+
+      66 |   { username, password, apiBaseUrl }: AdminCredentials
+      67 | ): Promise<void> {
+    > 68 |   const response = await request.get(`${apiBaseUrl}/v1/admin/profile`, {
+         |                                  ^
+      69 |     headers: ADMIN_PROXY_AUTH_ENABLED
+      70 |       ? buildProxyHeaders({ username, password, apiBaseUrl })
+      71 |       : {
+        at verifyAdminCredentials (/home/chulk/CleanWithSnapshot/web/e2e/tests/helpers/adminAuth.ts:68:34)
+        at /home/chulk/CleanWithSnapshot/web/e2e/tests/bookings-management.spec.ts:40:33
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-ec104-s-date-filter-is-functional/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-ec104-s-date-filter-is-functional/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-ec104-s-date-filter-is-functional/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace e2e/test-results/bookings-management-Bookin-ec104-s-date-filter-is-functional/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  4) e2e/tests/bookings-management.spec.ts:94:7 › Bookings management › bookings refresh button is functional 
+
+    Error: apiRequestContext.get: socket hang up
+    Call log:
+    [2m  - → GET http://127.0.0.1:8000/v1/admin/profile[22m
+    [2m    - user-agent: Playwright/1.58.2 (x64; ubuntu 24.04) node/20.20[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - X-Proxy-Auth-Secret: ci-proxy-c935e81058344551234439092bec1a3c2dbcd61f3d12564ad7817d96514f0ef3[22m
+    [2m    - X-Auth-MFA: true[22m
+    [2m    - X-E2E-Admin-User: e2e[22m
+    [2m    - X-E2E-Admin-Email: e2e@example.com[22m
+    [2m    - X-E2E-Admin-Roles: admin[22m
+    [2m    - X-E2E-Proxy-Timestamp: 1770966336[22m
+    [2m    - X-E2E-Proxy-Signature: 91445636f13226cd9187a712c1a179590b81139cb4cac5fed04f0556a0d72f2a[22m
+
+
+       at helpers/adminAuth.ts:68
+
+      66 |   { username, password, apiBaseUrl }: AdminCredentials
+      67 | ): Promise<void> {
+    > 68 |   const response = await request.get(`${apiBaseUrl}/v1/admin/profile`, {
+         |                                  ^
+      69 |     headers: ADMIN_PROXY_AUTH_ENABLED
+      70 |       ? buildProxyHeaders({ username, password, apiBaseUrl })
+      71 |       : {
+        at verifyAdminCredentials (/home/chulk/CleanWithSnapshot/web/e2e/tests/helpers/adminAuth.ts:68:34)
+        at /home/chulk/CleanWithSnapshot/web/e2e/tests/bookings-management.spec.ts:40:33
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-f1e12-efresh-button-is-functional/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-f1e12-efresh-button-is-functional/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-f1e12-efresh-button-is-functional/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace e2e/test-results/bookings-management-Bookin-f1e12-efresh-button-is-functional/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  5) e2e/tests/bookings-management.spec.ts:128:7 › Bookings management › bookings table has expected columns 
+
+    TimeoutError: page.waitForResponse: Timeout 15000ms exceeded while waiting for event "response"
+
+      141 |     await expect(refreshButton).toBeVisible({ timeout: 30_000 });
+      142 |     await expect(refreshButton).toBeEnabled({ timeout: 30_000 });
+    > 143 |     const waitForBookings = page.waitForResponse((response) => {
+          |                                  ^
+      144 |       return (
+      145 |         response.request().method() === 'GET' &&
+      146 |         response.url().includes('/v1/admin/bookings?from=') &&
+        at /home/chulk/CleanWithSnapshot/web/e2e/tests/bookings-management.spec.ts:143:34
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-604e2--table-has-expected-columns/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-604e2--table-has-expected-columns/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: e2e/test-results/bookings-management-Bookin-604e2--table-has-expected-columns/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    e2e/test-results/bookings-management-Bookin-604e2--table-has-expected-columns/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace e2e/test-results/bookings-management-Bookin-604e2--table-has-expected-columns/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  6) e2e/tests/leads-management.spec.ts:54:7 › Leads management › leads status filter is functional 
+
+    TimeoutError: page.waitForResponse: Timeout 15000ms exceeded while waiting for event "response"
+
+      72 |
+      73 |     // Type a filter value
+    > 74 |     const waitForLeads = page.waitForResponse((response) => {
+         |                               ^
+      75 |       return (
+      76 |         response.request().method() === 'GET' &&
+      77 |         response.url().includes('/v1/admin/leads') &&
+        at /home/chulk/CleanWithSnapshot/web/e2e/tests/leads-management.spec.ts:74:31
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    e2e/test-results/leads-management-Leads-man-dfc90-status-filter-is-functional/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    e2e/test-results/leads-management-Leads-man-dfc90-status-filter-is-functional/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: e2e/test-results/leads-management-Leads-man-dfc90-status-filter-is-functional/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    e2e/test-results/leads-management-Leads-man-dfc90-status-filter-is-functional/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace e2e/test-results/leads-management-Leads-man-dfc90-status-filter-is-functional/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  7) e2e/tests/leads-management.spec.ts:89:7 › Leads management › leads refresh button is functional 
+
+    TimeoutError: page.waitForResponse: Timeout 15000ms exceeded while waiting for event "response"
+
+      104 |
+      105 |     // Click refresh button
+    > 106 |     const waitForLeads = page.waitForResponse((response) => {
+          |                               ^
+      107 |       return (
+      108 |         response.request().method() === 'GET' &&
+      109 |         response.url().includes('/v1/admin/leads') &&
+        at /home/chulk/CleanWithSnapshot/web/e2e/tests/leads-management.spec.ts:106:31
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    e2e/test-results/leads-management-Leads-man-042a8-efresh-button-is-functional/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    e2e/test-results/leads-management-Leads-man-042a8-efresh-button-is-functional/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: e2e/test-results/leads-management-Leads-man-042a8-efresh-button-is-functional/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    e2e/test-results/leads-management-Leads-man-042a8-efresh-button-is-functional/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace e2e/test-results/leads-management-Leads-man-042a8-efresh-button-is-functional/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  7 failed
+    e2e/tests/bookings-management.spec.ts:44:7 › Bookings management › bookings section loads on admin dashboard 
+    e2e/tests/bookings-management.spec.ts:52:7 › Bookings management › bookings table is displayed ─
+    e2e/tests/bookings-management.spec.ts:59:7 › Bookings management › bookings date filter is functional 
+    e2e/tests/bookings-management.spec.ts:94:7 › Bookings management › bookings refresh button is functional 
+    e2e/tests/bookings-management.spec.ts:128:7 › Bookings management › bookings table has expected columns 
+    e2e/tests/leads-management.spec.ts:54:7 › Leads management › leads status filter is functional ─
+    e2e/tests/leads-management.spec.ts:89:7 › Leads management › leads refresh button is functional 
+  5 passed (1.1m)

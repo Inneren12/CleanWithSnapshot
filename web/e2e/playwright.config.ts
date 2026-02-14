@@ -17,7 +17,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-    channel: process.env.PW_CHANNEL ?? 'chrome',
+    channel: process.env.PW_CHANNEL || undefined,
     headless: true,
     viewport: { width: 1280, height: 720 },
     launchOptions: {

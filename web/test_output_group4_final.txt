@@ -1,0 +1,11 @@
+
+Running 6 tests using 1 worker
+
+  ✓  1 e2e/tests/bookings-management.spec.ts:44:7 › Bookings management › bookings section loads on admin dashboard (1.2s)
+  ✓  2 e2e/tests/bookings-management.spec.ts:52:7 › Bookings management › bookings table is displayed (1.2s)
+  ✓  3 e2e/tests/bookings-management.spec.ts:59:7 › Bookings management › bookings date filter is functional (1.5s)
+  ✓  4 e2e/tests/bookings-management.spec.ts:94:7 › Bookings management › bookings refresh button is functional (3.5s)
+  ✓  5 e2e/tests/bookings-management.spec.ts:128:7 › Bookings management › bookings table has expected columns (769ms)
+  ✓  6 e2e/tests/bookings-management.spec.ts:162:7 › Bookings management › week view is displayed (469ms)
+
+  6 passed (10.3s)

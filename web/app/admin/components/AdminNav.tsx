@@ -11,7 +11,7 @@ export type AdminNavLink = {
 export default function AdminNav({ links, activeKey }: { links: AdminNavLink[]; activeKey?: string }) {
   return (
     <nav className="admin-nav" aria-label="Admin navigation" data-testid="admin-nav">
-      {links.map((link) => (
+      {Array.isArray(links) && links.map((link) => (
         <Link
           key={link.key}
           className={`admin-nav-link${activeKey === link.key ? " is-active" : ""}`}

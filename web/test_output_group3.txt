@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 e2e/tests/admin-login.spec.ts:10:7 › Admin login flow › login via credential form saves to localStorage (2.6s)
+  ✓  2 e2e/tests/admin-login.spec.ts:41:7 › Admin login flow › login persists after page reload (2.1s)
+  ✓  3 e2e/tests/admin-login.spec.ts:60:7 › Admin login flow › clear credentials logs out user (1.8s)
+
+  3 passed (7.9s)

@@ -16,7 +16,9 @@ import {
   isVisible,
 } from "../lib/featureVisibility";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  (typeof window !== "undefined" ? window.location.origin : "");
 
 const STATUS_OPTIONS = ["NEW", "CONTACTED", "QUOTED", "WON", "LOST"];
 
@@ -407,88 +409,88 @@ export default function LeadsPage() {
           {leads?.items.length ? (
             <div className="table-responsive">
               <table className="table-like" data-testid="leads-table">
-              <thead>
-                <tr>
-                  <th>Lead</th>
-                  <th>Source</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Notes</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {leads.items.map((lead) => {
-                  const draft = drafts[lead.lead_id] ?? {};
-                  const statusValue = draft.status ?? lead.status;
-                  const notesValue = draft.notes ?? (lead.notes ?? "");
-                  const lossReasonValue = draft.loss_reason ?? (lead.loss_reason ?? "");
-                  const showLossReason = statusValue === "LOST";
-                  return (
-                    <tr key={lead.lead_id}>
-                      <td>
-                        <strong>{lead.name}</strong>
-                        <div className="muted">
-                          {lead.email ?? "no email"} · {lead.phone}
-                        </div>
-                      </td>
-                      <td>
-                        <div>{lead.source ?? "—"}</div>
-                        <div className="muted">
-                          {lead.campaign ?? ""}
-                          {lead.keyword ? ` · ${lead.keyword}` : ""}
-                        </div>
-                        <div className="muted">{lead.landing_page ?? ""}</div>
-                      </td>
-                      <td>
-                        <select
-                          value={statusValue}
-                          disabled={!canEditLeads}
-                          onChange={(event) => updateDraft(lead.lead_id, "status", event.target.value)}
-                        >
-                          {STATUS_OPTIONS.map((status) => (
-                            <option key={status} value={status}>
-                              {status}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td>{new Date(lead.created_at).toLocaleDateString("en-CA")}</td>
-                      <td>
-                        <input
-                          value={notesValue}
-                          onChange={(event) => updateDraft(lead.lead_id, "notes", event.target.value)}
-                          placeholder="Add notes"
-                        />
-                        {showLossReason ? (
+                <thead>
+                  <tr>
+                    <th>Lead</th>
+                    <th>Source</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Notes</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leads.items.map((lead) => {
+                    const draft = drafts[lead.lead_id] ?? {};
+                    const statusValue = draft.status ?? lead.status;
+                    const notesValue = draft.notes ?? (lead.notes ?? "");
+                    const lossReasonValue = draft.loss_reason ?? (lead.loss_reason ?? "");
+                    const showLossReason = statusValue === "LOST";
+                    return (
+                      <tr key={lead.lead_id}>
+                        <td>
+                          <strong>{lead.name}</strong>
+                          <div className="muted">
+                            {lead.email ?? "no email"} · {lead.phone}
+                          </div>
+                        </td>
+                        <td>
+                          <div>{lead.source ?? "—"}</div>
+                          <div className="muted">
+                            {lead.campaign ?? ""}
+                            {lead.keyword ? ` · ${lead.keyword}` : ""}
+                          </div>
+                          <div className="muted">{lead.landing_page ?? ""}</div>
+                        </td>
+                        <td>
+                          <select
+                            value={statusValue}
+                            disabled={!canEditLeads}
+                            onChange={(event) => updateDraft(lead.lead_id, "status", event.target.value)}
+                          >
+                            {STATUS_OPTIONS.map((status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>{new Date(lead.created_at).toLocaleDateString("en-CA")}</td>
+                        <td>
                           <input
-                            value={lossReasonValue}
-                            onChange={(event) =>
-                              updateDraft(lead.lead_id, "loss_reason", event.target.value)
-                            }
-                            placeholder="Loss reason"
-                            style={{ marginTop: 8 }}
+                            value={notesValue}
+                            onChange={(event) => updateDraft(lead.lead_id, "notes", event.target.value)}
+                            placeholder="Add notes"
                           />
-                        ) : null}
-                      </td>
-                      <td>
-                        <button
-                          className="btn btn-ghost"
-                          type="button"
-                          disabled={!canEditLeads}
-                          onClick={() => void saveLead(lead)}
-                        >
-                          Save
-                        </button>
-                        <a className="btn btn-ghost" href={`/admin/leads/${lead.lead_id}`}>
-                          View
-                        </a>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                          {showLossReason ? (
+                            <input
+                              value={lossReasonValue}
+                              onChange={(event) =>
+                                updateDraft(lead.lead_id, "loss_reason", event.target.value)
+                              }
+                              placeholder="Loss reason"
+                              style={{ marginTop: 8 }}
+                            />
+                          ) : null}
+                        </td>
+                        <td>
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            disabled={!canEditLeads}
+                            onClick={() => void saveLead(lead)}
+                          >
+                            Save
+                          </button>
+                          <a className="btn btn-ghost" href={`/admin/leads/${lead.lead_id}`}>
+                            View
+                          </a>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : null}
         </div>

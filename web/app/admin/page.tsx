@@ -17,7 +17,9 @@ import {
 } from "./lib/featureVisibility";
 import { DEFAULT_ORG_TIMEZONE, type OrgSettingsResponse } from "./lib/orgSettings";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  (typeof window !== "undefined" ? window.location.origin : "");
 const KPI_PRESETS = [7, 28, 90];
 
 type AdminMetricsResponse = {
@@ -139,19 +141,34 @@ function formatDateTime(value: string, timeZone: string) {
 }
 
 function formatYMDInTz(date: Date, timeZone: string) {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  const parts = formatter.formatToParts(date);
-  const lookup: Record<string, string> = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${lookup.year}-${lookup.month}-${lookup.day}`;
+  if (!date || isNaN(date.getTime())) return "0000-00-00";
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const parts = formatter.formatToParts(date);
+    const lookup: Record<string, string> = Object.fromEntries(
+      (Array.isArray(parts) ? parts : []).map((part) => [part.type, part.value])
+    );
+    return `${lookup.year}-${lookup.month}-${lookup.day}`;
+  } catch (error) {
+    console.error("formatYMDInTz failed:", error);
+    return "0000-00-00";
+  }
 }
 
 function ymdToDate(ymd: string) {
-  const [year, month, day] = ymd.split("-").map((value) => parseInt(value, 10));
+  if (!ymd || typeof ymd !== "string" || !ymd.includes("-")) {
+    return new Date(0);
+  }
+  const parts = ymd.split("-");
+  if (parts.length < 3) return new Date(0);
+  if (!Array.isArray(parts)) return new Date(0);
+  const [year, month, day] = (Array.isArray(parts) ? parts : []).map((value) => parseInt(value, 10) || 0);
+  if (!year || !month || !day) return new Date(0);
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 }
 
@@ -161,8 +178,15 @@ function addDaysYMD(day: string, delta: number, timeZone: string) {
   return formatYMDInTz(base, timeZone);
 }
 
-function bookingLocalYMD(startsAt: string, timeZone: string) {
-  return formatYMDInTz(new Date(startsAt), timeZone);
+function bookingLocalYMD(iso: string | null | undefined, timeZone: string) {
+  if (!iso || typeof iso !== "string") return "0000-00-00";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "0000-00-00";
+    return formatYMDInTz(d, timeZone);
+  } catch {
+    return "0000-00-00";
+  }
 }
 
 function statusBadge(status?: string) {
@@ -222,15 +246,12 @@ export default function AdminPage() {
   const [metrics, setMetrics] = useState<AdminMetricsResponse | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
-  const [metricsRange, setMetricsRange] = useState(() => presetRange(7));
+  const [metricsRange, setMetricsRange] = useState({ from: "2025-01-01T00:00:00Z", to: "2025-01-07T23:59:59Z" });
   const [metricsPreset, setMetricsPreset] = useState<number | null>(7);
   const [leadStatusFilter, setLeadStatusFilter] = useState<string>("");
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [bookingsLoading, setBookingsLoading] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<string>(() => {
-    const today = new Date();
-    return formatYMDInTz(today, DEFAULT_ORG_TIMEZONE);
-  });
+  const [selectedDate, setSelectedDate] = useState<string>("2025-01-01");
   const [message, setMessage] = useState<string | null>(null);
   const timezoneRef = useRef(DEFAULT_ORG_TIMEZONE);
 
@@ -239,7 +260,7 @@ export default function AdminPage() {
     [username, password]
   );
 
-  const permissionKeys = profile?.permissions ?? [];
+  const permissionKeys = profile?.permissions || [];
   const canManageBookings =
     permissionKeys.includes("bookings.edit") || permissionKeys.includes("bookings.assign");
   const isReadOnly = !canManageBookings;
@@ -247,10 +268,10 @@ export default function AdminPage() {
   const canAdminMetrics = permissionKeys.includes("admin.manage");
 
   const visibilityReady = Boolean(profile && featureConfig && uiPrefs);
-  const featureOverrides = featureConfig?.overrides ?? {};
-  const hiddenKeys = uiPrefs?.hidden_keys ?? [];
+  const featureOverrides = featureConfig?.overrides || {};
+  const hiddenKeys = uiPrefs?.hidden_keys || [];
 
-  const orgTimezone = orgSettings?.timezone ?? DEFAULT_ORG_TIMEZONE;
+  const orgTimezone = orgSettings?.timezone || DEFAULT_ORG_TIMEZONE;
 
   const dashboardVisible = visibilityReady
     ? isVisible("module.dashboard", permissionKeys, featureOverrides, hiddenKeys)
@@ -307,8 +328,8 @@ export default function AdminPage() {
       },
     ];
 
-    return candidates
-      .filter((entry) => !entry.requiresPermission || permissionKeys.includes(entry.requiresPermission))
+    return (Array.isArray(candidates) ? candidates : [])
+      .filter((entry) => !entry.requiresPermission || (permissionKeys || []).includes(entry.requiresPermission))
       .filter((entry) => isVisible(entry.featureKey, permissionKeys, featureOverrides, hiddenKeys))
       .map(({ featureKey, requiresPermission, ...link }) => link);
   }, [featureOverrides, hiddenKeys, permissionKeys, profile, visibilityReady]);
@@ -473,7 +494,7 @@ export default function AdminPage() {
       });
       if (!response.ok) return;
       const data = (await response.json()) as LeadListResponse;
-      setLeads(data.items);
+      setLeads(data?.items || []);
     } catch (error) {
       console.error("Failed to load leads:", error);
     } finally {
@@ -492,7 +513,7 @@ export default function AdminPage() {
       );
       if (!response.ok) return;
       const data = (await response.json()) as Booking[];
-      setBookings(data);
+      setBookings(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Failed to load bookings:", error);
     } finally {
@@ -511,8 +532,8 @@ export default function AdminPage() {
         setExportEvents([]);
         return;
       }
-      const data = (await response.json()) as ExportEvent[];
-      setExportEvents(data);
+      const data = (await response.json()) as { items: ExportEvent[] };
+      setExportEvents(data.items || []);
     } catch (error) {
       console.error("Failed to load export dead letter:", error);
       setExportEvents([]);
@@ -531,7 +552,7 @@ export default function AdminPage() {
         return;
       }
       const data = (await response.json()) as OutboxEvent[];
-      setOutboxEvents(data);
+      setOutboxEvents(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Failed to load outbox dead letter:", error);
       setOutboxEvents([]);
@@ -712,39 +733,39 @@ export default function AdminPage() {
   };
 
   const metricsFromInput = metricsRange.from.slice(0, 10);
-const metricsToInput = metricsRange.to.slice(0, 10);
+  const metricsToInput = metricsRange.to.slice(0, 10);
 
-if (visibilityReady && !dashboardVisible) {
+  if (visibilityReady && !dashboardVisible) {
+    return (
+      <div className="admin-page">
+        <AdminNav links={navLinks} activeKey="dashboard" />
+        <div className="admin-card admin-section">
+          <h1>Dashboard</h1>
+          <p className="alert alert-warning">Disabled by org settings.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="admin-page">
       <AdminNav links={navLinks} activeKey="dashboard" />
-      <div className="admin-card admin-section">
-        <h1>Dashboard</h1>
-        <p className="alert alert-warning">Disabled by org settings.</p>
+      <div className="admin-section" data-testid="admin-shell-ready">
+        <h1>Admin / Dispatcher</h1>
+        <p className="muted">Save credentials locally, then load leads, bookings, and exports.</p>
       </div>
-    </div>
-  );
-}
 
-return (
-  <div className="admin-page">
-    <AdminNav links={navLinks} activeKey="dashboard" />
-    <div className="admin-section" data-testid="admin-shell-ready">
-      <h1>Admin / Dispatcher</h1>
-      <p className="muted">Save credentials locally, then load leads, bookings, and exports.</p>
-    </div>
+      {settingsError ? <p className="alert alert-warning">{settingsError}</p> : null}
+      {orgSettingsError ? <p className="alert alert-warning">{orgSettingsError}</p> : null}
 
-    {settingsError ? <p className="alert alert-warning">{settingsError}</p> : null}
-    {orgSettingsError ? <p className="alert alert-warning">{orgSettingsError}</p> : null}
+      {profile ? (
+        <div className={`alert ${isReadOnly ? "alert-warning" : "alert-info"}`}>
+          Signed in as <strong>{profile.username}</strong> ({profile.role})
+          {isReadOnly ? " · Your account is read-only without booking edit/assign permissions." : ""}
+        </div>
+      ) : null}
 
-    {profile ? (
-      <div className={`alert ${isReadOnly ? "alert-warning" : "alert-info"}`}>
-        Signed in as <strong>{profile.username}</strong> ({profile.role})
-        {isReadOnly ? " · Your account is read-only without booking edit/assign permissions." : ""}
-      </div>
-    ) : null}
-
-        <div className="admin-card" data-testid="admin-credentials-card">
+      <div className="admin-card" data-testid="admin-credentials-card">
         <div className="admin-section">
           <h2>Credentials</h2>
           <div className="admin-actions" data-testid="admin-login-form">
@@ -773,146 +794,146 @@ return (
             <h2>KPI Dashboard</h2>
             <p className="muted">Preset ranges keep dates consistent while KPIs come directly from the backend.</p>
           </div>
-        <div className="kpi-controls">
-          <div className="chip-group">
-            {KPI_PRESETS.map((days) => (
+          <div className="kpi-controls">
+            <div className="chip-group">
+              {(Array.isArray(KPI_PRESETS) ? KPI_PRESETS : []).map((days) => (
+                <button
+                  key={days}
+                  className={`chip ${metricsPreset === days ? "chip-selected" : ""}`}
+                  type="button"
+                  onClick={() => applyPresetRange(days)}
+                >
+                  Last {days} days
+                </button>
+              ))}
+            </div>
+            <div className="kpi-date-range">
+              <label>
+                <span className="label">From</span>
+                <input type="date" value={metricsFromInput} onChange={(e) => updateRangeBoundary("from", e.target.value)} />
+              </label>
+              <label>
+                <span className="label">To</span>
+                <input type="date" value={metricsToInput} onChange={(e) => updateRangeBoundary("to", e.target.value)} />
+              </label>
+            </div>
+            <div className="admin-actions" style={{ marginLeft: "auto" }}>
               <button
-                key={days}
-                className={`chip ${metricsPreset === days ? "chip-selected" : ""}`}
+                className="btn btn-ghost"
                 type="button"
-                onClick={() => applyPresetRange(days)}
+                onClick={() => void loadMetrics()}
+                disabled={metricsLoading || (profile ? !canAdminMetrics : false)}
               >
-                Last {days} days
+                Refresh
               </button>
-            ))}
-          </div>
-          <div className="kpi-date-range">
-            <label>
-              <span className="label">From</span>
-              <input type="date" value={metricsFromInput} onChange={(e) => updateRangeBoundary("from", e.target.value)} />
-            </label>
-            <label>
-              <span className="label">To</span>
-              <input type="date" value={metricsToInput} onChange={(e) => updateRangeBoundary("to", e.target.value)} />
-            </label>
-          </div>
-          <div className="admin-actions" style={{ marginLeft: "auto" }}>
-            <button
-              className="btn btn-ghost"
-              type="button"
-              onClick={() => void loadMetrics()}
-              disabled={metricsLoading || (profile ? !canAdminMetrics : false)}
-            >
-              Refresh
-            </button>
-            <button
-              className="btn btn-secondary"
-              type="button"
-              onClick={() => void downloadMetricsCsv()}
-              disabled={metricsLoading || !!metricsError || (profile ? !canAdminMetrics : false)}
-            >
-              Download CSV
-            </button>
-          </div>
-        </div>
-        {metricsError ? <p className="alert alert-warning">{metricsError}</p> : null}
-        {metricsLoading ? <p className="muted">Loading metrics…</p> : null}
-        {metrics ? (
-          <div className="kpi-grid">
-            <div className="kpi-card">
-              <div className="kpi-label">Range</div>
-              <div className="kpi-value">
-                {readableDate(metrics.range_start)} – {readableDate(metrics.range_end)}
-              </div>
-              <div className="muted">UTC timestamps</div>
-            </div>
-            <div className="kpi-card">
-              <div className="kpi-label">Conversions</div>
-              <div className="kpi-list">
-                <div className="kpi-row">
-                  <span>Leads</span>
-                  <strong>{metrics.conversions.lead_created.toLocaleString()}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Bookings</span>
-                  <strong>{metrics.conversions.booking_created.toLocaleString()}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Confirmed</span>
-                  <strong>{metrics.conversions.booking_confirmed.toLocaleString()}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Jobs completed</span>
-                  <strong>{metrics.conversions.job_completed.toLocaleString()}</strong>
-                </div>
-              </div>
-            </div>
-            <div className="kpi-card">
-              <div className="kpi-label">Financial</div>
-              <div className="kpi-list">
-                <div className="kpi-row">
-                  <span>Total revenue</span>
-                  <strong>{formatCurrency(metrics.financial.total_revenue_cents)}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Revenue / day</span>
-                  <strong>{formatCurrency(metrics.financial.revenue_per_day_cents)}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Margin</span>
-                  <strong>{formatCurrency(metrics.financial.margin_cents)}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Average order value</span>
-                  <strong>{formatCurrency(metrics.financial.average_order_value_cents)}</strong>
-                </div>
-              </div>
-            </div>
-            <div className="kpi-card">
-              <div className="kpi-label">Duration accuracy</div>
-              <div className="kpi-list">
-                <div className="kpi-row">
-                  <span>Sample size</span>
-                  <strong>{metrics.accuracy.sample_size.toLocaleString()}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Estimated</span>
-                  <strong>{formatMinutes(metrics.accuracy.average_estimated_duration_minutes)}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Actual</span>
-                  <strong>{formatMinutes(metrics.accuracy.average_actual_duration_minutes)}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Delta</span>
-                  <strong>{formatMinutes(metrics.accuracy.average_delta_minutes)}</strong>
-                </div>
-              </div>
-            </div>
-            <div className="kpi-card">
-              <div className="kpi-label">Operational</div>
-              <div className="kpi-list">
-                <div className="kpi-row">
-                  <span>Crew utilization</span>
-                  <strong>{formatPercentage(metrics.operational.crew_utilization)}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Cancellation rate</span>
-                  <strong>{formatPercentage(metrics.operational.cancellation_rate)}</strong>
-                </div>
-                <div className="kpi-row">
-                  <span>Retention 30 / 60 / 90</span>
-                  <strong>
-                    {formatPercentage(metrics.operational.retention_30_day)} / {formatPercentage(metrics.operational.retention_60_day)}
-                    {" "}/ {formatPercentage(metrics.operational.retention_90_day)}
-                  </strong>
-                </div>
-              </div>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => void downloadMetricsCsv()}
+                disabled={metricsLoading || !!metricsError || (profile ? !canAdminMetrics : false)}
+              >
+                Download CSV
+              </button>
             </div>
           </div>
-        ) : metricsLoading ? null : (
-          <div className="muted">Metrics will load after credentials are saved.</div>
-        )}
+          {metricsError ? <p className="alert alert-warning">{metricsError}</p> : null}
+          {metricsLoading ? <p className="muted">Loading metrics…</p> : null}
+          {metrics ? (
+            <div className="kpi-grid">
+              <div className="kpi-card">
+                <div className="kpi-label">Range</div>
+                <div className="kpi-value">
+                  {readableDate(metrics.range_start)} – {readableDate(metrics.range_end)}
+                </div>
+                <div className="muted">UTC timestamps</div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-label">Conversions</div>
+                <div className="kpi-list">
+                  <div className="kpi-row">
+                    <span>Leads</span>
+                    <strong>{metrics.conversions.lead_created.toLocaleString()}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Bookings</span>
+                    <strong>{metrics.conversions.booking_created.toLocaleString()}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Confirmed</span>
+                    <strong>{metrics.conversions.booking_confirmed.toLocaleString()}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Jobs completed</span>
+                    <strong>{metrics.conversions.job_completed.toLocaleString()}</strong>
+                  </div>
+                </div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-label">Financial</div>
+                <div className="kpi-list">
+                  <div className="kpi-row">
+                    <span>Total revenue</span>
+                    <strong>{formatCurrency(metrics.financial.total_revenue_cents)}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Revenue / day</span>
+                    <strong>{formatCurrency(metrics.financial.revenue_per_day_cents)}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Margin</span>
+                    <strong>{formatCurrency(metrics.financial.margin_cents)}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Average order value</span>
+                    <strong>{formatCurrency(metrics.financial.average_order_value_cents)}</strong>
+                  </div>
+                </div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-label">Duration accuracy</div>
+                <div className="kpi-list">
+                  <div className="kpi-row">
+                    <span>Sample size</span>
+                    <strong>{metrics.accuracy.sample_size.toLocaleString()}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Estimated</span>
+                    <strong>{formatMinutes(metrics.accuracy.average_estimated_duration_minutes)}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Actual</span>
+                    <strong>{formatMinutes(metrics.accuracy.average_actual_duration_minutes)}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Delta</span>
+                    <strong>{formatMinutes(metrics.accuracy.average_delta_minutes)}</strong>
+                  </div>
+                </div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-label">Operational</div>
+                <div className="kpi-list">
+                  <div className="kpi-row">
+                    <span>Crew utilization</span>
+                    <strong>{formatPercentage(metrics.operational.crew_utilization)}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Cancellation rate</span>
+                    <strong>{formatPercentage(metrics.operational.cancellation_rate)}</strong>
+                  </div>
+                  <div className="kpi-row">
+                    <span>Retention 30 / 60 / 90</span>
+                    <strong>
+                      {formatPercentage(metrics.operational.retention_30_day)} / {formatPercentage(metrics.operational.retention_60_day)}
+                      {" "}/ {formatPercentage(metrics.operational.retention_90_day)}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : metricsLoading ? null : (
+            <div className="muted">Metrics will load after credentials are saved.</div>
+          )}
         </section>
       ) : null}
 
@@ -922,7 +943,7 @@ return (
             <h2>Leads</h2>
             <p className="muted">Filter and set statuses directly.</p>
           </div>
-        <div className="admin-actions" data-testid="leads-controls">
+          <div className="admin-actions" data-testid="leads-controls">
             <label style={{ width: "100%" }}>
               <span className="label">Status filter</span>
               <input
@@ -962,7 +983,7 @@ return (
               </tr>
             </thead>
             <tbody>
-              {leads.map((lead) => (
+              {(Array.isArray(leads) ? leads : []).map((lead) => (
                 <tr key={lead.lead_id}>
                   <td>{lead.name}</td>
                   <td>{lead.email || "no email"}</td>
@@ -1000,7 +1021,7 @@ return (
           </div>
           {exportEvents.length === 0 ? <div className="muted">No failed exports recorded.</div> : null}
           <div className="dead-letter-list">
-            {exportEvents.map((event) => (
+            {(Array.isArray(exportEvents) ? exportEvents : []).map((event) => (
               <div key={event.event_id} className="admin-card">
                 <div className="admin-section">
                   <div className="admin-actions" style={{ justifyContent: "space-between" }}>
@@ -1029,7 +1050,7 @@ return (
           </div>
           {outboxEvents.length === 0 ? <div className="muted">No failed outbox events.</div> : null}
           <div className="dead-letter-list">
-            {outboxEvents.map((event) => (
+            {(Array.isArray(outboxEvents) ? outboxEvents : []).map((event) => (
               <div key={event.event_id} className="admin-card">
                 <div className="admin-section">
                   <div className="admin-actions" style={{ justifyContent: "space-between" }}>
@@ -1097,7 +1118,7 @@ return (
             </tr>
           </thead>
           <tbody>
-            {bookings
+            {(Array.isArray(bookings) ? bookings : [])
               .filter((booking) => bookingLocalYMD(booking.starts_at, orgTimezone) === selectedDate)
               .map((booking) => (
                 <tr key={booking.booking_id}>
@@ -1143,13 +1164,13 @@ return (
 
         <h2 data-testid="bookings-week-view">Week view</h2>
         <div className="slot-grid">
-          {weekView.map((day) => (
+          {(Array.isArray(weekView) ? weekView : []).map((day) => (
             <div key={day.date} className="slot-column admin-card" style={{ boxShadow: "none" }}>
               <div className="admin-section">
                 <strong>{day.label}</strong>
                 <div className="muted">{day.items.length} bookings</div>
                 <ul style={{ paddingLeft: 16, margin: 0, display: "grid", gap: 6 }}>
-                  {day.items.map((booking) => (
+                  {(Array.isArray(day.items) ? day.items : []).map((booking) => (
                     <li key={booking.booking_id}>• {formatDateTime(booking.starts_at, orgTimezone)}</li>
                   ))}
                 </ul>

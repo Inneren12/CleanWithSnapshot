@@ -204,15 +204,16 @@ export function effectiveFeatureEnabled(overrides: Record<string, boolean>, key:
 }
 
 export function isHidden(hiddenKeys: string[], key: string): boolean {
+  if (!Array.isArray(hiddenKeys)) return false;
   const trimmed = key.trim();
   const base = moduleBaseForKey(trimmed);
   const moduleKey = moduleKeyForBase(base);
-  const normalized = new Set(hiddenKeys.map((entry) => entry.trim()));
+  const normalized = new Set((Array.isArray(hiddenKeys) ? hiddenKeys : []).map((entry) => entry?.trim?.() || ""));
   return normalized.has(trimmed) || normalized.has(moduleKey);
 }
 
 export function permissionsAllow(permissions: string[] | undefined, key: string): boolean {
-  if (!permissions) return false;
+  if (!Array.isArray(permissions)) return false;
   const base = moduleBaseForKey(key);
   const required = MODULE_PERMISSIONS[base] ?? "core.view";
   return permissions.includes(required);

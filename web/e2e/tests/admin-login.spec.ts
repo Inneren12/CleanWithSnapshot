@@ -25,17 +25,23 @@ test.describe('Admin login flow', () => {
     await expect(usernameInput).toBeVisible();
     await expect(passwordInput).toBeVisible();
     await expect(saveButton).toBeVisible();
+    await expect(saveButton).toBeEnabled();
 
     // Fill in credentials
     await usernameInput.fill(admin.username);
     await passwordInput.fill(admin.password);
+
+    // enhance stability: ensure button is still enabled after typing
+    await expect(saveButton).toBeEnabled();
     await saveButton.click();
 
     // Should see success message
-    await expect(page.getByTestId('admin-message')).toBeVisible();
+    const message = page.getByTestId('admin-message');
+    await expect(message).toBeVisible();
+    await expect(message).toContainText(/Saved/i);
 
     // Verify admin shell is ready
-    await expect(page.getByTestId('admin-shell-ready')).toBeVisible();
+    await expect(page.getByTestId('admin-shell-ready')).toBeVisible({ timeout: 15_000 });
   });
 
   test('login persists after page reload', async ({ page, request }) => {
