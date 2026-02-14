@@ -404,6 +404,7 @@ jobs:
       TRIVY_SEVERITY: "CRITICAL"
       SECURITY_REPORT_DIR: security-reports/trivy
       SECURITY_IMAGE_DIR: security-images
+      TRIVY_VERSION: "v0.57.1"
 
     steps:
       - name: Checkout code
@@ -419,7 +420,9 @@ jobs:
           docker save cleanwithsnapshot-web:ci -o "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar"
 
       - name: Install Trivy CLI
-        uses: aquasecurity/setup-trivy@e3c5a5f26c15a0f32a5e07147aa5ebfa94f52f7b # v0.2.2
+        run: |
+          curl -sSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
+          trivy --version
 
       - name: Capture built image IDs
         run: |
@@ -693,9 +696,14 @@ jobs:
               tool_failure=1
               return
             fi
-            if [ "$scan_exit_code" -eq 2 ]; then
+            if [ "$scan_exit_code" -eq 1 ]; then
               echo "Grype vulnerability failure: ${GRYPE_FAIL_ON} or higher vulnerabilities found for ${label}."
               vuln_failure=1
+              return
+            fi
+            if [ "$scan_exit_code" -eq 2 ]; then
+              echo "Grype tool failure: scanner execution failed for ${label}."
+              tool_failure=1
               return
             fi
             if [ "$scan_exit_code" -ne 0 ]; then
