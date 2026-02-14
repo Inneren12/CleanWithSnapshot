@@ -645,8 +645,9 @@ jobs:
         if: always()
         run: |
           set +e
-          grype "oci-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" --fail-on "${GRYPE_FAIL_ON}" -o json > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json"
+          grype "docker-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" --fail-on "${GRYPE_FAIL_ON}" -o json > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json"
           status=$?
+          set -e
           if [ ! -s "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json" ]; then
             echo '{"matches":[],"source":{"target":{"userInput":"cleanwithsnapshot-api:ci"}},"_tool_error":"grype failed to produce report"}' > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-api.json"
           fi
@@ -657,8 +658,9 @@ jobs:
         if: always()
         run: |
           set +e
-          grype "oci-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" --fail-on "${GRYPE_FAIL_ON}" -o json > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json"
+          grype "docker-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" --fail-on "${GRYPE_FAIL_ON}" -o json > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json"
           status=$?
+          set -e
           if [ ! -s "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json" ]; then
             echo '{"matches":[],"source":{"target":{"userInput":"cleanwithsnapshot-web:ci"}},"_tool_error":"grype failed to produce report"}' > "${SECURITY_REPORT_DIR}/grype-cleanwithsnapshot-web.json"
           fi
@@ -668,7 +670,7 @@ jobs:
       - name: Generate SBOM (api, optional)
         if: always()
         run: |
-          syft "oci-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json" || true
+          syft "docker-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-api_ci.tar" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json" || true
           if [ ! -s "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json" ]; then
             echo '{"spdxVersion":"SPDX-2.3","creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: syft"]},"name":"cleanwithsnapshot-api:ci","packages":[]}' > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-api.json"
           fi
@@ -676,7 +678,7 @@ jobs:
       - name: Generate SBOM (web, optional)
         if: always()
         run: |
-          syft "oci-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json" || true
+          syft "docker-archive:${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar" -o spdx-json > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json" || true
           if [ ! -s "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json" ]; then
             echo '{"spdxVersion":"SPDX-2.3","creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: syft"]},"name":"cleanwithsnapshot-web:ci","packages":[]}' > "${SECURITY_REPORT_DIR}/sbom-cleanwithsnapshot-web.json"
           fi
@@ -696,9 +698,19 @@ jobs:
               tool_failure=1
               return
             fi
+            if jq -e 'has("_tool_error")' "$report" >/dev/null 2>&1; then
+              echo "Grype tool failure: report contains _tool_error for ${label}."
+              tool_failure=1
+              return
+            fi
             if [ "$scan_exit_code" -eq 1 ]; then
-              echo "Grype vulnerability failure: ${GRYPE_FAIL_ON} or higher vulnerabilities found for ${label}."
-              vuln_failure=1
+              if jq -e '.matches | length > 0' "$report" >/dev/null 2>&1; then
+                echo "Grype vulnerability failure: ${GRYPE_FAIL_ON} or higher vulnerabilities found for ${label}."
+                vuln_failure=1
+              else
+                echo "Grype tool failure: exit code 1 without matches for ${label}."
+                tool_failure=1
+              fi
               return
             fi
             if [ "$scan_exit_code" -eq 2 ]; then
