@@ -404,7 +404,7 @@ jobs:
       TRIVY_SEVERITY: "CRITICAL"
       SECURITY_REPORT_DIR: security-reports/trivy
       SECURITY_IMAGE_DIR: security-images
-      TRIVY_VERSION: "0.57.1"
+      TRIVY_VERSION: "v0.57.1"
 
     steps:
       - name: Checkout code
@@ -420,9 +420,14 @@ jobs:
           docker save cleanwithsnapshot-web:ci -o "${SECURITY_IMAGE_DIR}/cleanwithsnapshot-web_ci.tar"
 
       - name: Install Trivy CLI
-        uses: aquasecurity/setup-trivy@v0.2.2
-        with:
-          trivy-version: ${{ env.TRIVY_VERSION }}
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
+          trivy --version
+
+      - name: Print Docker diagnostics (Trivy job)
+        run: |
+          docker version
+          docker info
 
       - name: Capture built image IDs
         run: |
@@ -546,6 +551,11 @@ jobs:
             echo '{"spdxVersion":"SPDX-2.3","creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: trivy"]},"name":"cleanwithsnapshot-web:ci","packages":[]}' > "${SECURITY_REPORT_DIR}/sbom-trivy-cleanwithsnapshot-web.json"
           fi
       
+      - name: List Trivy report outputs
+        if: always()
+        run: |
+          ls -lah "${SECURITY_REPORT_DIR}" || true
+
       - name: Upload Trivy reports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
@@ -628,6 +638,13 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin "${GRYPE_VERSION}"
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin "${SYFT_VERSION}"
 
+      - name: Print scanner and Docker diagnostics (Grype job)
+        run: |
+          grype version
+          syft version
+          docker version
+          docker info
+
       - name: Validate Grype severity cutoff
         run: |
           case "${GRYPE_FAIL_ON}" in
@@ -704,13 +721,8 @@ jobs:
               return
             fi
             if [ "$scan_exit_code" -eq 1 ]; then
-              if jq -e '.matches | length > 0' "$report" >/dev/null 2>&1; then
-                echo "Grype vulnerability failure: ${GRYPE_FAIL_ON} or higher vulnerabilities found for ${label}."
-                vuln_failure=1
-              else
-                echo "Grype tool failure: exit code 1 without matches for ${label}."
-                tool_failure=1
-              fi
+              echo "Grype vulnerability failure: ${GRYPE_FAIL_ON} or higher vulnerabilities found for ${label}."
+              vuln_failure=1
               return
             fi
             if [ "$scan_exit_code" -eq 2 ]; then
@@ -736,6 +748,11 @@ jobs:
             exit 1
           fi
           echo "Grype scan passed with no ${GRYPE_FAIL_ON} findings."
+
+      - name: List Grype report outputs
+        if: always()
+        run: |
+          ls -lah "${SECURITY_REPORT_DIR}" || true
 
       - name: Upload Grype reports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -836,7 +853,7 @@ jobs:
       - name: Start Docker Compose stack (smoke)
         run: |
           set -euo pipefail
-          if ! docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait db redis api web; then
+          if ! docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait --wait-timeout 600 db redis api web; then
             echo "Docker compose startup failed; collecting db diagnostics..."
             docker compose -f docker-compose.yml -f docker-compose.ci.yml ps || true
             docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color db || true
