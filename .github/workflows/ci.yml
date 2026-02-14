@@ -566,6 +566,9 @@ jobs:
           tool_failure=0
           vuln_failure=0
 
+          echo "Generated Trivy reports:"
+          ls -lh trivy-*.json trivy-*.sarif sbom-trivy-*.json || true
+
           check_trivy() {
             local label="$1"
             local outcome="$2"
@@ -681,6 +684,9 @@ jobs:
         run: |
           tool_failure=0
           vuln_failure=0
+
+          echo "Generated Grype reports:"
+          ls -lh grype-*.json sbom-*.json || true
 
           check_grype() {
             local label="$1"
