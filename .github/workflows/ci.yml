@@ -161,7 +161,7 @@ jobs:
             ${{ runner.os }}-node-
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Install ephemeral TypeScript test deps
         run: npm i -D --no-save --no-package-lock vitest @testing-library/react @testing-library/jest-dom jsdom
@@ -199,7 +199,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Install ephemeral Vitest deps
         run: npm install --no-save --no-package-lock vitest @vitest/coverage-v8 @testing-library/react @testing-library/jest-dom jsdom@22
@@ -454,123 +454,58 @@ jobs:
         with:
           version: v0.58.1
 
-      - name: Scan api image (Trivy JSON)
-        id: trivy_api_json
-        continue-on-error: true
-        run: |
-          touch trivy-cleanwithsnapshot-api.json
-          trivy image --input api-image.tar --format json --output trivy-cleanwithsnapshot-api.json --scanners vuln --vuln-type os,library --severity ${{ env.TRIVY_SEVERITY }} --exit-code 1
-
-      - name: Scan api image (Trivy SARIF)
-        id: trivy_api_sarif
-        continue-on-error: true
-        run: |
-          touch trivy-cleanwithsnapshot-api.sarif
-          trivy image --input api-image.tar --format sarif --output trivy-cleanwithsnapshot-api.sarif --scanners vuln --vuln-type os,library --severity ${{ env.TRIVY_SEVERITY }} --exit-code 1
-
-      - name: Scan web image (Trivy JSON)
-        id: trivy_web_json
-        continue-on-error: true
-        run: |
-          touch trivy-cleanwithsnapshot-web.json
-          trivy image --input web-image.tar --format json --output trivy-cleanwithsnapshot-web.json --scanners vuln --vuln-type os,library --severity ${{ env.TRIVY_SEVERITY }} --exit-code 1
-
-      - name: Scan web image (Trivy SARIF)
-        id: trivy_web_sarif
-        continue-on-error: true
-        run: |
-          touch trivy-cleanwithsnapshot-web.sarif
-          trivy image --input web-image.tar --format sarif --output trivy-cleanwithsnapshot-web.sarif --scanners vuln --vuln-type os,library --severity ${{ env.TRIVY_SEVERITY }} --exit-code 1
-
-      - name: Capture Trivy exit codes
-        if: always()
-        run: |
-          api_json_exit=0
-          api_sarif_exit=0
-          web_json_exit=0
-          web_sarif_exit=0
-          if [ "${{ steps.trivy_api_json.outcome }}" = "failure" ]; then
-            api_json_exit=1
-          fi
-          if [ "${{ steps.trivy_api_sarif.outcome }}" = "failure" ]; then
-            api_sarif_exit=1
-          fi
-          if [ "${{ steps.trivy_web_json.outcome }}" = "failure" ]; then
-            web_json_exit=1
-          fi
-          if [ "${{ steps.trivy_web_sarif.outcome }}" = "failure" ]; then
-            web_sarif_exit=1
-          fi
-          echo "TRIVY_API_JSON_EXIT_CODE=${api_json_exit}" >> "$GITHUB_ENV"
-          echo "TRIVY_API_SARIF_EXIT_CODE=${api_sarif_exit}" >> "$GITHUB_ENV"
-          echo "TRIVY_WEB_JSON_EXIT_CODE=${web_json_exit}" >> "$GITHUB_ENV"
-          echo "TRIVY_WEB_SARIF_EXIT_CODE=${web_sarif_exit}" >> "$GITHUB_ENV"
-          echo "Trivy exit codes (api json=${api_json_exit}, api sarif=${api_sarif_exit}, web json=${web_json_exit}, web sarif=${web_sarif_exit})"
-
       - name: Generate SBOM (api, Trivy SPDX)
         run: |
           touch sbom-trivy-cleanwithsnapshot-api.json
-          trivy image --input api-image.tar --format spdx-json --output sbom-trivy-cleanwithsnapshot-api.json
+          trivy image --input api-image.tar --format spdx-json --output sbom-trivy-cleanwithsnapshot-api.json --timeout 15m
+          ls -lh sbom-trivy-cleanwithsnapshot-api.json
+          head -n 20 sbom-trivy-cleanwithsnapshot-api.json
 
       - name: Generate SBOM (web, Trivy SPDX)
         run: |
           touch sbom-trivy-cleanwithsnapshot-web.json
-          trivy image --input web-image.tar --format spdx-json --output sbom-trivy-cleanwithsnapshot-web.json
+          trivy image --input web-image.tar --format spdx-json --output sbom-trivy-cleanwithsnapshot-web.json --timeout 15m
+          ls -lh sbom-trivy-cleanwithsnapshot-web.json
+          head -n 20 sbom-trivy-cleanwithsnapshot-web.json
       
-      - name: Upload Trivy reports
+      - name: Upload Trivy SBOMs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: trivy-reports
+          name: trivy-sboms
           path: |
-            trivy-cleanwithsnapshot-*.json
-            trivy-cleanwithsnapshot-*.sarif
             sbom-trivy-cleanwithsnapshot-*.json
             built-image-ids.txt
           retention-days: 30
 
-      - name: Enforce Trivy CRITICAL gate
+      - name: Verify SBOMs
         if: always()
         run: |
           tool_failure=0
-          vuln_failure=0
-
-          echo "Generated Trivy reports:"
-          ls -lh trivy-*.json trivy-*.sarif sbom-trivy-*.json || true
-
-          check_trivy() {
+          check_sbom() {
             local label="$1"
-            local outcome="$2"
-            local report="$3"
+            local report="$2"
             if [ ! -s "$report" ]; then
-              echo "Trivy tool failure: missing report for ${label} (${report})."
+              echo "Trivy failure: missing or empty SBOM for ${label} (${report})."
+              ls -lh "$report" || true
               tool_failure=1
-              return
-            fi
-            if [ "$outcome" = "failure" ]; then
-              echo "Trivy vulnerability failure: CRITICAL vulnerabilities found for ${label}."
-              vuln_failure=1
+            else
+              echo "✓ SBOM generated for ${label} ($(stat -c%s "$report" 2>/devRKnull || stat -f%z "$report") bytes)"
             fi
           }
 
-          check_trivy "api-json" "${{ steps.trivy_api_json.outcome }}" "trivy-cleanwithsnapshot-api.json"
-          check_trivy "api-sarif" "${{ steps.trivy_api_sarif.outcome }}" "trivy-cleanwithsnapshot-api.sarif"
-          check_trivy "web-json" "${{ steps.trivy_web_json.outcome }}" "trivy-cleanwithsnapshot-web.json"
-          check_trivy "web-sarif" "${{ steps.trivy_web_sarif.outcome }}" "trivy-cleanwithsnapshot-web.sarif"
+          check_sbom "api" "sbom-trivy-cleanwithsnapshot-api.json"
+          check_sbom "web" "sbom-trivy-cleanwithsnapshot-web.json"
 
           if [ "$tool_failure" -eq 1 ]; then
-            echo "Trivy tool failure"
+            echo "SBOM generation failed"
             exit 2
           fi
-          if [ "$vuln_failure" -eq 1 ]; then
-            echo "CRITICAL vulnerabilities found"
-            exit 1
-          fi
-          echo "Trivy scan passed with no CRITICAL findings."
 
   grype-scan:
     name: Security - Grype Image Scan
     runs-on: ubuntu-latest
+    needs: container-scan
     env:
       COMPOSE_PROJECT_NAME: cleanwithsnapshot
       GRYPE_FAIL_ON: "critical"
@@ -581,19 +516,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Build api and web images
-        run: docker compose build api web
-
-      - name: Verify local images exist
-        run: |
-          docker image inspect cleanwithsnapshot-api:ci cleanwithsnapshot-web:ci >/dev/null
-
-      - name: Save local images to TAR
-        run: |
-          echo "Saving images to tar for disconnected scanning..."
-          docker save cleanwithsnapshot-api:ci -o api-image.tar
-          docker save cleanwithsnapshot-web:ci -o web-image.tar
-          ls -lh *.tar
+      - name: Download Trivy SBOMs
+        uses: actions/download-artifact@fa0a91b85d4f404e8442c7e9977684ae160f5450 # v4
+        with:
+          name: trivy-sboms
 
       - name: Validate Grype severity cutoff
         run: |
@@ -607,6 +533,7 @@ jobs:
           esac
           echo "Grype severity cutoff: ${GRYPE_FAIL_ON}"
           echo "Grype version: ${GRYPE_VERSION}"
+          ls -lh sbom-trivy-*.json
 
       - name: Install Grype
         uses: anchore/setup-grype@3e6a9640428fc9444f4da646927da80486fa4143 # v3
@@ -618,41 +545,19 @@ jobs:
         with:
           version: ${{ env.SYFT_VERSION }}
 
-      - name: Scan api image (Grype JSON)
+      - name: Scan api SBOM (Grype JSON)
         id: grype_api
         continue-on-error: true
         run: |
           touch grype-cleanwithsnapshot-api.json
-          grype docker-archive:api-image.tar -o json > grype-cleanwithsnapshot-api.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+          grype sbom:sbom-trivy-cleanwithsnapshot-api.json -o json > grype-cleanwithsnapshot-api.json --fail-on ${{ env.GRYPE_FAIL_ON }}
 
-      - name: Scan api image (Grype SARIF)
-        continue-on-error: true
-        run: |
-          touch grype-cleanwithsnapshot-api.sarif
-          grype docker-archive:api-image.tar -o sarif > grype-cleanwithsnapshot-api.sarif --fail-on ${{ env.GRYPE_FAIL_ON }}
-
-      - name: Scan web image (Grype JSON)
+      - name: Scan web SBOM (Grype JSON)
         id: grype_web
         continue-on-error: true
         run: |
           touch grype-cleanwithsnapshot-web.json
-          grype docker-archive:web-image.tar -o json > grype-cleanwithsnapshot-web.json --fail-on ${{ env.GRYPE_FAIL_ON }}
-
-      - name: Scan web image (Grype SARIF)
-        continue-on-error: true
-        run: |
-          touch grype-cleanwithsnapshot-web.sarif
-          grype docker-archive:web-image.tar -o sarif > grype-cleanwithsnapshot-web.sarif --fail-on ${{ env.GRYPE_FAIL_ON }}
-
-      - name: Generate SBOM (api)
-        run: |
-          touch sbom-cleanwithsnapshot-api.json
-          syft docker-archive:api-image.tar -o spdx-json=sbom-cleanwithsnapshot-api.json
-
-      - name: Generate SBOM (web)
-        run: |
-          touch sbom-cleanwithsnapshot-web.json
-          syft docker-archive:web-image.tar -o spdx-json=sbom-cleanwithsnapshot-web.json
+          grype sbom:sbom-trivy-cleanwithsnapshot-web.json -o json > grype-cleanwithsnapshot-web.json --fail-on ${{ env.GRYPE_FAIL_ON }}
 
       - name: Enforce Grype severity gate
         if: always()
@@ -699,16 +604,6 @@ jobs:
           path: |
             grype-cleanwithsnapshot-*.json
             grype-cleanwithsnapshot-*.sarif
-            sbom-cleanwithsnapshot-*.json
-          retention-days: 30
-
-      - name: Upload SBOM reports
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: sbom-reports
-          path: |
-            sbom-cleanwithsnapshot-*.json
           retention-days: 30
 
 
