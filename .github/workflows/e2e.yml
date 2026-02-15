@@ -342,7 +342,7 @@ jobs:
       - name: Compose up (db + redis)
         run: |
           set +e
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait --wait-timeout 300 db redis
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d db redis
           status=$?
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=300 db || true
@@ -351,34 +351,43 @@ jobs:
       - name: Wait for DB healthy
         run: |
           set -euo pipefail
+          compose_cmd=(docker compose -f docker-compose.yml -f docker-compose.e2e.yml)
           db_container_id=$(docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps -q db)
           if [ -z "$db_container_id" ]; then
             echo "DB container not found."
             exit 1
           fi
-          deadline=$((SECONDS + 180))
-          while true; do
+
+          max_tries=${DB_HEALTH_MAX_TRIES:-40}
+          sleep_s=${DB_HEALTH_SLEEP_SECONDS:-3}
+          health="unknown"
+          attempt=1
+          while [ "$attempt" -le "$max_tries" ]; do
             health=$(docker inspect "$db_container_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}')
+            echo "DB health attempt ${attempt}/${max_tries}: ${health}"
             if [ "$health" = "healthy" ]; then
               echo "DB is healthy."
               break
             fi
             if [ "$health" = "unhealthy" ]; then
               echo "DB is unhealthy."
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
+              "${compose_cmd[@]}" ps || true
+              "${compose_cmd[@]}" logs --no-color db --tail=200 || true
               docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
               exit 1
             fi
-            if [ $SECONDS -ge $deadline ]; then
-              echo "Timed out waiting for DB health."
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml ps || true
-              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color db --tail=300 || true
-              docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
-              exit 1
-            fi
-            sleep 3
+
+            attempt=$((attempt + 1))
+            sleep "$sleep_s"
           done
+
+          if [ "$health" != "healthy" ]; then
+            echo "Timed out waiting for DB health after ${max_tries} attempts."
+            "${compose_cmd[@]}" ps || true
+            "${compose_cmd[@]}" logs --no-color db --tail=200 || true
+            docker inspect "$db_container_id" --format '{{json .State.Health}}' || true
+            exit 1
+          fi
 
       - name: Validate pg_stat_statements preload
         run: |
@@ -454,41 +463,6 @@ jobs:
           wait_on "http://127.0.0.1:3000/readyz" "api readyz (via caddy)"
           wait_on "http://127.0.0.1:3000/" "web (via caddy)"
 
-      - name: Preflight admin auth
-        run: |
-          PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:3000/v1/admin/profile
-
-      - name: Verify admin endpoints via basic auth
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsS -u "${ADMIN_BASIC_USERNAME}:${ADMIN_BASIC_PASSWORD}" http://127.0.0.1:3000/v1/admin/profile >/dev/null
-          curl -fsS -u "${ADMIN_BASIC_USERNAME}:${ADMIN_BASIC_PASSWORD}" http://127.0.0.1:3000/v1/admin/settings/features >/dev/null
-          curl -fsS -u "${ADMIN_BASIC_USERNAME}:${ADMIN_BASIC_PASSWORD}" http://127.0.0.1:3000/v1/admin/users/me/ui_prefs >/dev/null
-
-      - name: E2E admin auth probe (headers)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== E2E admin auth probe (headers) ==="
-          for path in /v1/admin/settings/features /v1/admin/users/me/ui_prefs; do
-            echo "== ${path} =="
-            # Print only a small whitelist of headers + status line
-            curl -sS -D - "http://127.0.0.1:3000${path}" -o /dev/null \
-              | awk 'BEGIN{IGNORECASE=1} \
-                /^HTTP\// || \
-                /^x-admin-auth-fail-reason:/ || \
-                /^x-request-id:/ || \
-                /^x-correlation-id:/ || \
-                /^server:/ || \
-                /^date:/ || \
-                /^www-authenticate:/ \
-                {print}' \
-              || true
-            echo
-          done
-
       - name: Install web dependencies
         working-directory: web
         run: npm ci
@@ -504,6 +478,207 @@ jobs:
       - name: Sanity check Playwright module resolution
         working-directory: web
         run: node -e "require.resolve('@playwright/test')"
+
+      - name: E2E admin auth wiretap (evidence)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          compose_cmd=(docker compose -f docker-compose.yml -f docker-compose.e2e.yml)
+          from_ts=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          to_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          echo "=== E2E admin auth wiretap (evidence) ==="
+          echo "Metrics range: ${from_ts} -> ${to_ts}"
+
+          declare -a endpoints=(
+            "/v1/admin/profile"
+            "/v1/admin/settings/features"
+            "/v1/admin/users/me/ui_prefs"
+            "/v1/admin/outbox/dead-letter?limit=1"
+            "/v1/admin/metrics?from=${from_ts}&to=${to_ts}"
+          )
+
+          declare -A request_ids
+          for path in "${endpoints[@]}"; do
+            url="http://127.0.0.1:3000${path}"
+            headers_file=$(mktemp)
+            body_file=$(mktemp)
+            echo ""
+            echo "== ${url} =="
+            curl -sS --max-time 8 -D "$headers_file" "$url" -o "$body_file" || true
+            status_line=$(head -n 1 "$headers_file" | tr -d '\r')
+            request_id=$(awk 'BEGIN{IGNORECASE=1} /^x-request-id:/ {sub(/\r$/,""); $1=""; sub(/^ /,""); print; exit}' "$headers_file")
+            auth_fail_reason=$(awk 'BEGIN{IGNORECASE=1} /^x-admin-auth-fail-reason:/ {sub(/\r$/,""); $1=""; sub(/^ /,""); print; exit}' "$headers_file")
+            content_type=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/ {sub(/\r$/,""); $1=""; sub(/^ /,""); print; exit}' "$headers_file")
+            echo "${status_line:-HTTP status missing}"
+            echo "X-Request-Id: ${request_id:-<missing>}"
+            echo "X-Admin-Auth-Fail-Reason: ${auth_fail_reason:-<missing>}"
+            echo "Content-Type: ${content_type:-<missing>}"
+            body_preview=$(LC_ALL=C head -c 200 "$body_file" | tr '\r\n' ' ')
+            echo "Body (first 200 bytes): ${body_preview}"
+            request_ids["$path"]="$request_id"
+            rm -f "$headers_file" "$body_file"
+          done
+
+          echo ""
+          echo "=== Env presence in containers (caddy) ==="
+          "${compose_cmd[@]}" exec -T caddy sh -lc 'for v in ADMIN_PROXY_AUTH_SECRET ADMIN_PROXY_AUTH_USER ADMIN_PROXY_AUTH_EMAIL ADMIN_PROXY_AUTH_ROLES ADMIN_PROXY_AUTH_MFA ADMIN_PROXY_AUTH_E2E_USER ADMIN_PROXY_AUTH_E2E_EMAIL ADMIN_PROXY_AUTH_E2E_ROLES ADMIN_PROXY_AUTH_E2E_SECRET; do val="$(printenv "$v" 2>/dev/null || true)"; if [ -n "$val" ]; then echo "$v=SET"; else echo "$v=EMPTY"; fi; done'
+
+          echo ""
+          echo "=== Env presence in containers (api) ==="
+          "${compose_cmd[@]}" exec -T api sh -lc 'for v in ADMIN_PROXY_AUTH_SECRET ADMIN_PROXY_AUTH_USER ADMIN_PROXY_AUTH_EMAIL ADMIN_PROXY_AUTH_ROLES ADMIN_PROXY_AUTH_MFA ADMIN_PROXY_AUTH_E2E_USER ADMIN_PROXY_AUTH_E2E_EMAIL ADMIN_PROXY_AUTH_E2E_ROLES ADMIN_PROXY_AUTH_E2E_SECRET; do val="$(printenv "$v" 2>/dev/null || true)"; if [ -n "$val" ]; then echo "$v=SET"; else echo "$v=EMPTY"; fi; done'
+
+          echo ""
+          echo "=== Backend log correlation (api) ==="
+          for path in "${endpoints[@]}"; do
+            request_id="${request_ids[$path]:-}"
+            if [ -z "$request_id" ]; then
+              echo "== ${path} (no request id captured) =="
+              continue
+            fi
+            echo "== ${path} (request_id=${request_id}) =="
+            "${compose_cmd[@]}" logs --no-color --tail=2000 api \
+              | grep -n -C 5 -E "${request_id}|admin_auth|proxy|untrusted|forbidden|ui_prefs|features|metrics|dead-letter" \
+              || true
+            echo ""
+          done
+
+      - name: Preflight admin auth
+        run: |
+          PYTHONPATH=backend python backend/scripts/e2e_admin_probe.py --url http://127.0.0.1:3000/v1/admin/profile
+
+      - name: Verify admin endpoints via basic auth (evidence gate)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          compose_cmd=(docker compose -f docker-compose.yml -f docker-compose.e2e.yml)
+          declare -A status_codes
+          declare -A request_ids
+          declare -a failing_paths
+
+          evidence_check() {
+            local path="$1"
+            local url="http://127.0.0.1:3000${path}"
+            local headers_file
+            local body_file
+            headers_file=$(mktemp)
+            body_file=$(mktemp)
+            echo ""
+            echo "== ${url} =="
+            curl -sS --max-time 8 -u "${ADMIN_BASIC_USERNAME}:${ADMIN_BASIC_PASSWORD}" \
+              -D "$headers_file" -o "$body_file" "$url" || true
+            local status_line
+            local status_code
+            local request_id
+            local auth_fail_reason
+            status_line=$(head -n 1 "$headers_file" | tr -d '\r')
+            status_code=$(awk 'NR==1 {print $2}' "$headers_file")
+            request_id=$(awk 'BEGIN{IGNORECASE=1} /^x-request-id:/ {sub(/\r$/,""); $1=""; sub(/^ /,""); print; exit}' "$headers_file")
+            auth_fail_reason=$(awk 'BEGIN{IGNORECASE=1} /^x-admin-auth-fail-reason:/ {sub(/\r$/,""); $1=""; sub(/^ /,""); print; exit}' "$headers_file")
+            echo "${status_line:-HTTP status missing}"
+            echo "X-Request-Id: ${request_id:-<missing>}"
+            echo "X-Admin-Auth-Fail-Reason: ${auth_fail_reason:-<missing>}"
+            body_preview=$(LC_ALL=C head -c 200 "$body_file" | tr '\r\n' ' ')
+            echo "Body (first 200 bytes): ${body_preview}"
+            rm -f "$headers_file" "$body_file"
+            status_codes["$path"]="${status_code:-}"
+            request_ids["$path"]="${request_id:-}"
+          }
+
+          evidence_check "/v1/admin/profile"
+          evidence_check "/v1/admin/settings/features"
+          evidence_check "/v1/admin/users/me/ui_prefs"
+
+          for path in "/v1/admin/profile" "/v1/admin/settings/features" "/v1/admin/users/me/ui_prefs"; do
+            if [ "${status_codes[$path]:-}" != "200" ]; then
+              failing_paths+=("$path")
+            fi
+          done
+
+          if [ "${#failing_paths[@]}" -gt 0 ]; then
+            echo ""
+            echo "=== Admin preflight failures detected ==="
+            for path in "${failing_paths[@]}"; do
+              echo "ERROR: ${path} returned ${status_codes[$path]:-<missing>} (expected 200)"
+            done
+
+            echo ""
+            echo "=== docker compose ps (e2e) ==="
+            "${compose_cmd[@]}" ps || true
+
+            echo ""
+            echo "=== docker compose logs db (tail=300) ==="
+            "${compose_cmd[@]}" logs --no-color --tail=300 db || true
+
+            echo ""
+            echo "=== API log correlation for failing request_ids ==="
+            for path in "${failing_paths[@]}"; do
+              request_id="${request_ids[$path]:-}"
+              if [ -z "$request_id" ]; then
+                echo "== ${path} (no request id captured) =="
+                continue
+              fi
+              echo "== ${path} (request_id=${request_id}) =="
+              "${compose_cmd[@]}" logs --no-color --tail=4000 api \
+                | grep -n -C 20 "${request_id}" \
+                || true
+              echo ""
+            done
+            exit 1
+          fi
+
+      - name: E2E admin auth probe (headers)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== E2E admin auth probe (headers) ==="
+          for path in /v1/admin/settings/features /v1/admin/users/me/ui_prefs; do
+            echo "== ${path} =="
+            # Print only a small whitelist of headers + status line
+            curl -sS --max-time 8 -D - "http://127.0.0.1:3000${path}" -o /dev/null \
+              | awk 'BEGIN{IGNORECASE=1} \
+                /^HTTP\// || \
+                /^x-admin-auth-fail-reason:/ || \
+                /^x-request-id:/ || \
+                /^x-correlation-id:/ || \
+                /^server:/ || \
+                /^date:/ || \
+                /^www-authenticate:/ \
+                {print}' \
+              || true
+            echo
+          done
+
+      - name: Preflight SAAS token curl
+        shell: bash
+        env:
+          SAAS_E2E_ACCESS_TOKEN: ${{ secrets.SAAS_E2E_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SAAS_E2E_ACCESS_TOKEN:-}" ]; then
+            echo "SAAS_E2E_ACCESS_TOKEN is missing."
+            exit 1
+          fi
+          headers_file=$(mktemp)
+          body_file=$(mktemp)
+          curl -sS --max-time 8 -H "Authorization: Bearer ${SAAS_E2E_ACCESS_TOKEN}" \
+            -D "$headers_file" -o "$body_file" \
+            "http://127.0.0.1:3000/v1/data-rights/exports" || true
+          status_line=$(head -n 1 "$headers_file" | tr -d '\r')
+          status_code=$(awk 'NR==1 {print $2}' "$headers_file")
+          request_id=$(awk 'BEGIN{IGNORECASE=1} /^x-request-id:/ {sub(/\r$/,""); $1=""; sub(/^ /,""); print; exit}' "$headers_file")
+          echo "${status_line:-HTTP status missing}"
+          echo "X-Request-Id: ${request_id:-<missing>}"
+          body_preview=$(LC_ALL=C head -c 200 "$body_file" | tr '\r\n' ' ')
+          echo "Body (first 200 bytes): ${body_preview}"
+          rm -f "$headers_file" "$body_file"
+          if [ "$status_code" != "200" ]; then
+            echo "ERROR: SAAS token preflight returned ${status_code:-<missing>} (expected 200)"
+            exit 1
+          fi
 
       - name: Run Playwright tests
         working-directory: web
@@ -524,6 +699,7 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_EMAIL: ${{ env.ADMIN_PROXY_AUTH_E2E_EMAIL }}
           ADMIN_PROXY_AUTH_E2E_ROLES: ${{ env.ADMIN_PROXY_AUTH_E2E_ROLES }}
         run: |
+          set -euo pipefail
           PW_CHANNEL=chrome \
           PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 \
           PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:3000 \
@@ -539,7 +715,23 @@ jobs:
           ADMIN_PROXY_AUTH_E2E_USER="$ADMIN_PROXY_AUTH_E2E_USER" \
           ADMIN_PROXY_AUTH_E2E_EMAIL="$ADMIN_PROXY_AUTH_E2E_EMAIL" \
           ADMIN_PROXY_AUTH_E2E_ROLES="$ADMIN_PROXY_AUTH_E2E_ROLES" \
-          pnpm exec playwright test --config e2e/playwright.config.ts
+          pnpm exec playwright test --config e2e/playwright.config.ts | tee "${DIAG_DIR:-.}/playwright.log"
+
+      - name: Assert SAAS token usage in Playwright logs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          log_path="${DIAG_DIR:-.}/playwright.log"
+          if [ ! -f "$log_path" ]; then
+            echo "Playwright did not run (preflight failed)"
+            exit 0
+          fi
+          grep -n "\\[E2E\\] SAAS_E2E_ACCESS_TOKEN present: true" "$log_path"
+          if grep -n "/v1/admin/users" "$log_path"; then
+            echo "Unexpected /v1/admin/users call in Playwright log."
+            exit 1
+          fi
 
       - name: Assert no unauthenticated admin probes
         if: always()
