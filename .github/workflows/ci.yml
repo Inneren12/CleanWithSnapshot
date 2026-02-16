@@ -161,10 +161,7 @@ jobs:
             ${{ runner.os }}-node-
 
       - name: Install dependencies
-        run: npm install
-
-      - name: Install ephemeral TypeScript test deps
-        run: npm i -D --no-save --no-package-lock vitest @testing-library/react @testing-library/jest-dom jsdom
+        run: npm ci
 
       - name: Typecheck
         run: npx tsc --noEmit
@@ -199,10 +196,10 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install ephemeral Vitest deps
-        run: npm install --no-save --no-package-lock vitest @vitest/coverage-v8 @testing-library/react @testing-library/jest-dom jsdom@22
+        run: npm install --no-save @vitest/coverage-v8@1.6.0
 
       - name: Run Vitest with coverage
         run: npx vitest run --coverage --pool=threads
@@ -451,7 +448,7 @@ jobs:
             echo '=== DONE ==='"
 
       - name: Install Trivy
-        uses: aquasecurity/setup-trivy@v0.2.2
+        uses: aquasecurity/setup-trivy@ff1b8b060f23b650436d419b5e13f67f5d4c3087 # v0.2.2
         with:
           version: v0.58.1
 
@@ -471,12 +468,20 @@ jobs:
           echo "Scanning ${IMAGE_TAR}..."
           ls -lh ${IMAGE_TAR}
           
-          # JSON Report (Full)
-          trivy image --input ${IMAGE_TAR} \
-            --format json \
-            --output trivy-${BASE_NAME}.json \
-            --timeout 15m 2> trivy-api.log
-          EXIT_JSON=$?
+          # JSON Report (Full) with retry
+          EXIT_JSON=0
+          for i in 1 2 3; do
+            trivy image --input ${IMAGE_TAR} \
+              --format json \
+              --output trivy-${BASE_NAME}.json \
+              --timeout 15m 2> trivy-api.log
+            EXIT_JSON=$?
+            if [ $EXIT_JSON -eq 0 ]; then
+              break
+            fi
+            echo "Trivy failed with exit code $EXIT_JSON. Retrying ($i/3)..."
+            sleep 10
+          done
           
           # SARIF Report
           trivy image --input ${IMAGE_TAR} \
@@ -523,12 +528,20 @@ jobs:
           echo "Scanning ${IMAGE_TAR}..."
           ls -lh ${IMAGE_TAR}
           
-          # JSON Report (Full)
-          trivy image --input ${IMAGE_TAR} \
-            --format json \
-            --output trivy-${BASE_NAME}.json \
-            --timeout 15m 2> trivy-web.log
-          EXIT_JSON=$?
+          # JSON Report (Full) with retry
+          EXIT_JSON=0
+          for i in 1 2 3; do
+            trivy image --input ${IMAGE_TAR} \
+              --format json \
+              --output trivy-${BASE_NAME}.json \
+              --timeout 15m 2> trivy-web.log
+            EXIT_JSON=$?
+            if [ $EXIT_JSON -eq 0 ]; then
+              break
+            fi
+            echo "Trivy failed with exit code $EXIT_JSON. Retrying ($i/3)..."
+            sleep 10
+          done
           
           # SARIF Report
           trivy image --input ${IMAGE_TAR} \
@@ -683,8 +696,19 @@ jobs:
           set +e
           touch grype-cleanwithsnapshot-api.json
           echo "Running Grype on API SBOM..."
-          grype sbom:sbom-cleanwithsnapshot-api.json -o json > grype-cleanwithsnapshot-api.json --fail-on ${{ env.GRYPE_FAIL_ON }}
-          exit_code=$?
+
+          exit_code=0
+          for i in 1 2 3; do
+            grype sbom:sbom-cleanwithsnapshot-api.json -o json > grype-cleanwithsnapshot-api.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+            exit_code=$?
+            # Grype exit codes: 0=clean, 1=vuln (with fail-on), 2=error
+            if [ $exit_code -ne 2 ]; then
+               break
+            fi
+            echo "Grype failed with exit code 2. Retrying ($i/3)..."
+            sleep 10
+          done
+
           set -e
           echo "GRYPE_API_EXIT_CODE=$exit_code" >> "$GITHUB_ENV"
 
@@ -707,8 +731,19 @@ jobs:
           set +e
           touch grype-cleanwithsnapshot-web.json
           echo "Running Grype on Web SBOM..."
-          grype sbom:sbom-cleanwithsnapshot-web.json -o json > grype-cleanwithsnapshot-web.json --fail-on ${{ env.GRYPE_FAIL_ON }}
-          exit_code=$?
+
+          exit_code=0
+          for i in 1 2 3; do
+            grype sbom:sbom-cleanwithsnapshot-web.json -o json > grype-cleanwithsnapshot-web.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+            exit_code=$?
+            # Grype exit codes: 0=clean, 1=vuln (with fail-on), 2=error
+            if [ $exit_code -ne 2 ]; then
+               break
+            fi
+            echo "Grype failed with exit code 2. Retrying ($i/3)..."
+            sleep 10
+          done
+
           set -e
           echo "GRYPE_WEB_EXIT_CODE=$exit_code" >> "$GITHUB_ENV"
 
@@ -805,7 +840,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -916,7 +951,7 @@ jobs:
           python-version-file: .python-version
 
       - name: Install k6
-        uses: grafana/setup-k6-action@ffe7d7290dfa715e48c2ccc924d068444c94bde2 # v1
+        uses: grafana/setup-k6-action@98db1bcacc2d06234a3cade8629ebc97e0130ec2 # v1
 
       - name: Preflight perf baseline target
         env:
