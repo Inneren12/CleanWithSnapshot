@@ -10,7 +10,6 @@ import anyio
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.domain.export_events.db_models import ExportEvent
 from app.domain.outbox.service import enqueue_outbox_event
 from app.infra.db import get_session_factory
 from app.settings import settings
@@ -132,51 +131,6 @@ async def _enqueue_export_outbox(
     except Exception as exc:  # noqa: BLE001
         logger.debug(
             "export_outbox_enqueue_failed",
-            extra={"extra": {"lead_id": (payload or {}).get("lead_id"), "error": str(exc)}},
-        )
-
-
-async def _record_export_dead_letter(
-    session_factory: async_sessionmaker[AsyncSession] | None,
-    payload: dict | None,
-    url: str,
-    attempts: int,
-    last_error_code: str,
-    mode: str,
-) -> None:
-    try:
-        factory = session_factory or get_session_factory()
-    except Exception:  # noqa: BLE001
-        logger.warning("export_dead_letter_session_unavailable")
-        return
-
-    try:
-        host = urlparse(url).hostname
-    except Exception:  # noqa: BLE001
-        host = None
-
-    try:
-        async with factory() as session:
-            org_id = (payload or {}).get("org_id") or settings.default_org_id
-            try:
-                org_uuid = uuid.UUID(str(org_id))
-            except Exception:
-                org_uuid = settings.default_org_id
-            event = ExportEvent(
-                lead_id=(payload or {}).get("lead_id"),
-                mode=mode,
-                payload=payload,
-                target_url_host=host,
-                target_url=url,
-                attempts=attempts,
-                last_error_code=last_error_code,
-                org_id=org_uuid,
-            )
-            session.add(event)
-            await session.commit()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug(
-            "export_dead_letter_record_failed",
             extra={"extra": {"lead_id": (payload or {}).get("lead_id"), "error": str(exc)}},
         )
 
