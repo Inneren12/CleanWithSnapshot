@@ -456,9 +456,9 @@ jobs:
           version: v0.58.1
 
       - name: Install Syft
-        uses: anchore/setup-syft@8e1740924be24f2b3ec21bb0b7713d0779836932 # v3
-        with:
-          version: ${{ env.SYFT_VERSION }}
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin ${{ env.SYFT_VERSION }}
+          syft --version
 
       # Use tar-based scanning to avoid Docker API vs Client version mismatches 
       # when running inside actions, and to ensure stable scanning of the exact built artifacts.

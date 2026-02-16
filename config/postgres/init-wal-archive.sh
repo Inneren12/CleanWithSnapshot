@@ -19,9 +19,13 @@ if [ ! -d "$WAL_ARCHIVE_DIR" ]; then
 fi
 
 # Ensure correct ownership (postgres user, uid 999 in official image)
-chown -R postgres:postgres "$WAL_ARCHIVE_DIR"
-
-# Secure permissions (only postgres can read/write)
-chmod 700 "$WAL_ARCHIVE_DIR"
+# Only run chown if we are root, otherwise assume permissions are correct or managed by volume driver
+if [ "$(id -u)" = "0" ]; then
+    echo "[init-wal-archive] Running chown -R postgres:postgres $WAL_ARCHIVE_DIR"
+    chown -R postgres:postgres "$WAL_ARCHIVE_DIR"
+    chmod 700 "$WAL_ARCHIVE_DIR"
+else
+    echo "[init-wal-archive] Not running as root (uid=$(id -u)), skipping chown/chmod"
+fi
 
 echo "[init-wal-archive] WAL archive directory ready: $WAL_ARCHIVE_DIR"
