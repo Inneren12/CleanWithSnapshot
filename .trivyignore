@@ -1,0 +1,5 @@
+# Vulnerabilities in Next.js < 15.x which require major refactor to fix.
+# Remediation planned for future release.
+CVE-2024-46982
+GHSA-9g9p-9gw9-jx7f
+GHSA-h25m-26qc-wcjf

@@ -1,36 +1,176 @@
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
 
-Running 2 tests using 1 worker
+ RUN  v1.6.0 /app/web
+      Coverage enabled with v8
 
-[TEST START] Creating test lead...
-[TEST] Lead created: f7249d6b-6cfb-419b-ab31-1e71bf6e116a
-[TEST] Requesting async export...
-[E2E] SAAS_E2E_ACCESS_TOKEN present: [33mfalse[39m
-[getSaasAuthHeaders] Successfully obtained SaaS JWT.
-[TEST] Async export SUCCESS: {
-  response: {
-    export_id: [32m'd2cf3a8f-1ae2-463f-ad1a-00e288ae140d'[39m,
-    status: [32m'pending'[39m,
-    created_at: [32m'2026-02-13T06:12:45.642372Z'[39m
-  },
-  status: [33m200[39m
-}
-[TEST] Export ID: d2cf3a8f-1ae2-463f-ad1a-00e288ae140d
-[TEST] Waiting for export completion...
-[E2E] SAAS_E2E_ACCESS_TOKEN present: [33mfalse[39m
-[E2E] SAAS_E2E_ACCESS_TOKEN present: [33mfalse[39m
-[E2E] SAAS_E2E_ACCESS_TOKEN present: [33mfalse[39m
-[E2E] SAAS_E2E_ACCESS_TOKEN present: [33mfalse[39m
-[TEST] Export completed: {
-  export_id: [32m'd2cf3a8f-1ae2-463f-ad1a-00e288ae140d'[39m,
-  status: [32m'completed'[39m,
-  subject_id: [32m'f7249d6b-6cfb-419b-ab31-1e71bf6e116a'[39m,
-  subject_type: [32m'lead'[39m,
-  created_at: [32m'2026-02-13T06:12:45.642372Z'[39m,
-  completed_at: [32m'2026-02-13T06:12:48.766808Z'[39m
-}
-  ✓  1 e2e/tests/data-rights.spec.ts:91:9 › GDPR Data Rights › Data Export - Async Flow with Job Processing › creates export request and completes via job processing (4.1s)
-[E2E] SAAS_E2E_ACCESS_TOKEN present: [33mfalse[39m
-[E2E] SAAS_E2E_ACCESS_TOKEN present: [33mfalse[39m
-  ✓  2 e2e/tests/data-rights.spec.ts:135:9 › GDPR Data Rights › Data Export - Async Flow with Job Processing › lists export requests for a subject (259ms)
+ ✓ tests/booleanUtils.test.ts  (8 tests) 14ms
+ ✓ tests/primaryCTA.test.tsx  (2 tests) 189ms
+ ✓ tests/summaryCard.test.tsx  (1 test) 221ms
+ ✓ tests/stepProgress.test.tsx  (1 test) 116ms
+ ✓ tests/bookingFormValidation.test.ts  (2 tests) 4ms
+ ✓ tests/timezoneFormat.test.ts  (2 tests) 29ms
 
-  2 passed (5.4s)
+ Test Files  6 passed (6)
+      Tests  16 passed (16)
+   Start at  21:48:01
+   Duration  3.58s (transform 247ms, setup 865ms, collect 845ms, tests 573ms, environment 4.84s, prepare 1.02s)
+
+ % Coverage report from v8
+-------------------|---------|----------|---------|---------|-------------------
+File               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+-------------------|---------|----------|---------|---------|-------------------
+All files          |    0.76 |    36.09 |   13.54 |    0.76 |
+ web               |       0 |        0 |       0 |       0 |
+  next.config.mjs  |       0 |        0 |       0 |       0 | 1-6
+ web/app           |    1.16 |       50 |      20 |    1.16 |
+  ...Validation.ts |     100 |      100 |     100 |     100 |
+  layout.tsx       |       0 |        0 |       0 |       0 | 1-30
+  page.tsx         |       0 |        0 |       0 |       0 | 1-1628
+  robots.ts        |       0 |        0 |       0 |       0 | 1-16
+  sitemap.ts       |       0 |        0 |       0 |       0 | 1-22
+ web/app/admin     |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-1184
+ ...dmin/analytics |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-310
+ ...cs/attribution |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-302
+ ...lytics/clients |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-486
+ ...cs/competitors |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-665
+ ...alytics/funnel |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-368
+ .../analytics/geo |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-340
+ ...n/clients/[id] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-274
+ ...min/components |       0 |        0 |       0 |       0 |
+  AdminNav.tsx     |       0 |        0 |       0 |       0 | 1-25
+ .../dashboard/ops |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-1238
+ ...min/dispatcher |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-2551
+ .../balance-sheet |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-442
+ ...inance/budgets |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-464
+ ...nance/cashflow |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-502
+ ...nance/expenses |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-1089
+ ...in/finance/pnl |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-477
+ .../finance/taxes |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-669
+ ...dmin/iam/roles |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-628
+ ...dmin/inventory |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-1093
+ ...urchase-orders |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-846
+ ...orders/[po_id] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-897
+ ...tory/suppliers |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-677
+ ...admin/invoices |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-1292
+ ...s/[invoice_id] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-895
+ ...pp/admin/leads |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-525
+ ...eads/[lead_id] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-1286
+ .../leads/nurture |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-518
+ .../[campaign_id] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-602
+ .../leads/scoring |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-735
+ web/app/admin/lib |    4.86 |    42.85 |      20 |    4.86 |
+  adminAuth.ts     |       0 |        0 |       0 |       0 | 1-27
+  adminDefaults.ts |       0 |        0 |       0 |       0 | 1-13
+  ...Visibility.ts |       0 |        0 |       0 |       0 | 1-248
+  orgSettings.ts   |       0 |        0 |       0 |       0 | 1-25
+  timezone.ts      |     100 |      100 |     100 |     100 |
+ ...ting/analytics |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-395
+ ...mail-campaigns |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-600
+ ...s/[campaignId] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-428
+ ...ng/promo-codes |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-629
+ .../notifications |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-517
+ ...ications/rules |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-916
+ .../admin/quality |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-338
+ ...quality/common |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-391
+ ...ty/issues/[id] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-767
+ ...ty/leaderboard |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-433
+ ...in/quality/nps |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-592
+ ...quality/photos |       0 |        0 |       0 |       0 |
+  ...tosClient.tsx |       0 |        0 |       0 |       0 | 1-541
+  page.tsx         |       0 |        0 |       0 |       0 | 1-17
+ ...uality/reviews |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-791
+ ...admin/schedule |       0 |        0 |       0 |       0 |
+  ...ageClient.tsx |       0 |        0 |       0 |       0 | 1-3160
+  page.tsx         |       0 |        0 |       0 |       0 | 1-11
+ ...ability-blocks |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-546
+ ...oking-policies |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-644
+ ...s/integrations |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-937
+ ...ttings/modules |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-378
+ ...n/settings/org |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-667
+ ...ttings/pricing |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-974
+ .../subscriptions |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-503
+ ...pp/admin/teams |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-294
+ ...eams/[team_id] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-928
+ .../teams/compare |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-344
+ ...ining/calendar |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-807
+ ...cert-templates |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-151
+ ...aining/courses |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-440
+ ...es/[course_id] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-510
+ ...aining/library |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-151
+ ...aining/quizzes |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-151
+ ...n/workers/[id] |       0 |        0 |       0 |       0 |
+  page.tsx         |       0 |        0 |       0 |       0 | 1-634
+ web/app/healthz   |       0 |        0 |       0 |       0 |
+  route.ts         |       0 |        0 |       0 |       0 | 1-23
+ web/components    |   56.71 |       82 |   61.11 |   56.71 |
+  ...leHandoff.tsx |       0 |        0 |       0 |       0 | 1-52
+  PrimaryCTA.tsx   |     100 |       75 |     100 |     100 | 51
+  QuickChips.tsx   |       0 |        0 |       0 |       0 | 1-76
+  StepProgress.tsx |     100 |      100 |     100 |     100 |
+  SummaryCard.tsx  |   88.09 |    88.23 |      70 |   88.09 | ...32,150,156-157
+  ThankYou.tsx     |       0 |        0 |       0 |       0 | 1-58
+  booleanUtils.ts  |     100 |      100 |     100 |     100 |
+  index.ts         |       0 |        0 |       0 |       0 | 1-21
+ web/e2e           |       0 |        0 |       0 |       0 |
+  ...ght.config.ts |       0 |        0 |       0 |       0 | 1-29
+ .../tests/helpers |       0 |        0 |       0 |       0 |
+  adminAuth.ts     |       0 |        0 |       0 |       0 | 1-104
+  dataRightsApi.ts |       0 |        0 |       0 |       0 | 1-673
+  ...ghtContext.ts |       0 |        0 |       0 |       0 | 1-37
+-------------------|---------|----------|---------|---------|-------------------
