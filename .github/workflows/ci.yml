@@ -672,9 +672,9 @@ jobs:
           ls -lh sbom-cleanwithsnapshot-*.json
 
       - name: Install Grype
-        uses: anchore/setup-grype@3e6a9640428fc9444f4da646927da80486fa4143 # v3
-        with:
-          version: ${{ env.GRYPE_VERSION }}
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin ${{ env.GRYPE_VERSION }}
+          grype --version
 
       # Use Syft SBOMs for stability (avoids docker-archive exit 2 flakiness in Grype)
       - name: Scan api SBOM (Grype JSON)
