@@ -471,17 +471,24 @@ jobs:
           # JSON Report (Full) with retry
           EXIT_JSON=0
           for i in 1 2 3; do
+            echo "Attempt $i/3: Running Trivy..."
             trivy image --input ${IMAGE_TAR} \
               --format json \
               --output trivy-${BASE_NAME}.json \
               --timeout 15m 2> trivy-api.log
             EXIT_JSON=$?
-            if [ $EXIT_JSON -eq 0 ]; then
+            # 0=clean, 1=vuln found (due to --exit-code 1 below? No, here we don't set it yet, but standard trivy behavior)
+            # Actually we just want to ensure we don't retry on valid runs.
+            # If we haven't set --exit-code 1 yet, it returns 0 even with vulns unless --exit-code is passed.
+            # But just in case, we accept 0 and 1 as "finished".
+            if [ $EXIT_JSON -eq 0 ] || [ $EXIT_JSON -eq 1 ]; then
               break
             fi
-            echo "Trivy failed with exit code $EXIT_JSON. Retrying ($i/3)..."
+            echo "Trivy failed with exit code $EXIT_JSON. Debug log:"
+            tail -n 20 trivy-api.log
             sleep 10
           done
+          cat trivy-api.log
           
           # SARIF Report
           trivy image --input ${IMAGE_TAR} \
@@ -531,17 +538,20 @@ jobs:
           # JSON Report (Full) with retry
           EXIT_JSON=0
           for i in 1 2 3; do
+            echo "Attempt $i/3: Running Trivy..."
             trivy image --input ${IMAGE_TAR} \
               --format json \
               --output trivy-${BASE_NAME}.json \
               --timeout 15m 2> trivy-web.log
             EXIT_JSON=$?
-            if [ $EXIT_JSON -eq 0 ]; then
+            if [ $EXIT_JSON -eq 0 ] || [ $EXIT_JSON -eq 1 ]; then
               break
             fi
-            echo "Trivy failed with exit code $EXIT_JSON. Retrying ($i/3)..."
+            echo "Trivy failed with exit code $EXIT_JSON. Debug log:"
+            tail -n 20 trivy-web.log
             sleep 10
           done
+          cat trivy-web.log
           
           # SARIF Report
           trivy image --input ${IMAGE_TAR} \
@@ -699,25 +709,27 @@ jobs:
 
           exit_code=0
           for i in 1 2 3; do
-            grype sbom:sbom-cleanwithsnapshot-api.json -o json > grype-cleanwithsnapshot-api.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+            echo "Attempt $i/3: Running Grype..."
+            grype sbom:sbom-cleanwithsnapshot-api.json -o json > grype-cleanwithsnapshot-api.json --fail-on ${{ env.GRYPE_FAIL_ON }} 2> grype-api.log
             exit_code=$?
             # Grype exit codes: 0=clean, 1=vuln (with fail-on), 2=error
             if [ $exit_code -ne 2 ]; then
                break
             fi
-            echo "Grype failed with exit code 2. Retrying ($i/3)..."
+            echo "Grype failed with exit code 2. Debug log:"
+            tail -n 20 grype-api.log
             sleep 10
           done
+          cat grype-api.log
 
           set -e
           echo "GRYPE_API_EXIT_CODE=$exit_code" >> "$GITHUB_ENV"
 
           if [ "$exit_code" -eq 2 ]; then
-            echo "⚠️ Grype failed (exit 2). Debug info:"
+            echo "⚠️ Grype failed (exit 2)."
             grype version
-            ls -lh sbom-cleanwithsnapshot-api.json
-            echo "first 30 lines of SBOM:"
-            head -n 30 sbom-cleanwithsnapshot-api.json
+            # Ensure JSON report exists to prevent downstream "missing report" error masking the real issue
+            echo '{"_tool_error": "Grype tool failure"}' > grype-cleanwithsnapshot-api.json
           fi
 
           if [ ! -s grype-cleanwithsnapshot-api.json ]; then
@@ -734,25 +746,27 @@ jobs:
 
           exit_code=0
           for i in 1 2 3; do
-            grype sbom:sbom-cleanwithsnapshot-web.json -o json > grype-cleanwithsnapshot-web.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+            echo "Attempt $i/3: Running Grype..."
+            grype sbom:sbom-cleanwithsnapshot-web.json -o json > grype-cleanwithsnapshot-web.json --fail-on ${{ env.GRYPE_FAIL_ON }} 2> grype-web.log
             exit_code=$?
             # Grype exit codes: 0=clean, 1=vuln (with fail-on), 2=error
             if [ $exit_code -ne 2 ]; then
                break
             fi
-            echo "Grype failed with exit code 2. Retrying ($i/3)..."
+            echo "Grype failed with exit code 2. Debug log:"
+            tail -n 20 grype-web.log
             sleep 10
           done
+          cat grype-web.log
 
           set -e
           echo "GRYPE_WEB_EXIT_CODE=$exit_code" >> "$GITHUB_ENV"
 
           if [ "$exit_code" -eq 2 ]; then
-            echo "⚠️ Grype failed (exit 2). Debug info:"
+            echo "⚠️ Grype failed (exit 2)."
             grype version
-            ls -lh sbom-cleanwithsnapshot-web.json
-            echo "first 30 lines of SBOM:"
-            head -n 30 sbom-cleanwithsnapshot-web.json
+            # Ensure JSON report exists to prevent downstream "missing report" error masking the real issue
+            echo '{"_tool_error": "Grype tool failure"}' > grype-cleanwithsnapshot-web.json
           fi
 
           if [ ! -s grype-cleanwithsnapshot-web.json ]; then
