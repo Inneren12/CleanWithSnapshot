@@ -456,9 +456,9 @@ jobs:
           version: v0.58.1
 
       - name: Install Syft
-        uses: anchore/setup-syft@8e1740924be24f2b3ec21bb0b7713d0779836932 # v3
-        with:
-          version: ${{ env.SYFT_VERSION }}
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin ${{ env.SYFT_VERSION }}
+          syft --version
 
       # Use tar-based scanning to avoid Docker API vs Client version mismatches 
       # when running inside actions, and to ensure stable scanning of the exact built artifacts.
@@ -653,7 +653,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download Container SBOMs
-        uses: actions/download-artifact@fa0a91b85d4f404e8442c7e9977684ae160f5450 # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4 (v4.3.0)
         with:
           name: container-sboms
 
@@ -672,9 +672,9 @@ jobs:
           ls -lh sbom-cleanwithsnapshot-*.json
 
       - name: Install Grype
-        uses: anchore/setup-grype@3e6a9640428fc9444f4da646927da80486fa4143 # v3
-        with:
-          version: ${{ env.GRYPE_VERSION }}
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin ${{ env.GRYPE_VERSION }}
+          grype --version
 
       # Use Syft SBOMs for stability (avoids docker-archive exit 2 flakiness in Grype)
       - name: Scan api SBOM (Grype JSON)
