@@ -653,24 +653,23 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download Container SBOMs
-        uses: actions/download-artifact@fa0a91b85d4f404e8442c7e9977684ae160f5450 # v4
+        uses: actions/download-artifact@fa0a91b85d4f404e8442c7e9977684ae160f5450
         with:
           name: container-sboms
+          path: sboms
 
       - name: Validate Grype severity cutoff
         run: |
           case "${GRYPE_FAIL_ON}" in
-            critical|high|medium|low)
-              ;;
-            *)
-              echo "Invalid GRYPE_FAIL_ON value: ${GRYPE_FAIL_ON}"
-              exit 1
-              ;;
+            critical|high|medium|low) ;;
+            *) echo "Invalid GRYPE_FAIL_ON value: ${GRYPE_FAIL_ON}"; exit 1 ;;
           esac
           echo "Grype severity cutoff: ${GRYPE_FAIL_ON}"
           echo "Grype version: ${GRYPE_VERSION}"
-          ls -lh sbom-cleanwithsnapshot-*.json
-
+          ls -lh sboms/sbom-cleanwithsnapshot-*.json
+          test -s sboms/sbom-cleanwithsnapshot-api.json
+          test -s sboms/sbom-cleanwithsnapshot-web.json
+          
       - name: Install Grype
         uses: anchore/setup-grype@3e6a9640428fc9444f4da646927da80486fa4143 # v3
         with:
@@ -681,23 +680,22 @@ jobs:
         id: grype_api
         run: |
           set +e
-          touch grype-cleanwithsnapshot-api.json
+          mkdir -p security-reports/grype
           echo "Running Grype on API SBOM..."
-          grype sbom:sbom-cleanwithsnapshot-api.json -o json > grype-cleanwithsnapshot-api.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+          grype "sbom:sboms/sbom-cleanwithsnapshot-api.json" \
+            --fail-on "${GRYPE_FAIL_ON}" \
+            -o json > security-reports/grype/grype-cleanwithsnapshot-api.json
           exit_code=$?
           set -e
           echo "GRYPE_API_EXIT_CODE=$exit_code" >> "$GITHUB_ENV"
-
           if [ "$exit_code" -eq 2 ]; then
             echo "⚠️ Grype failed (exit 2). Debug info:"
             grype version
-            ls -lh sbom-cleanwithsnapshot-api.json
-            echo "first 30 lines of SBOM:"
-            head -n 30 sbom-cleanwithsnapshot-api.json
+            ls -lh sboms/sbom-cleanwithsnapshot-api.json
+            head -n 30 sboms/sbom-cleanwithsnapshot-api.json
           fi
-
-          if [ ! -s grype-cleanwithsnapshot-api.json ]; then
-            echo '{"_tool_error": "Grype produced empty output"}' > grype-cleanwithsnapshot-api.json
+          if [ ! -s security-reports/grype/grype-cleanwithsnapshot-api.json ]; then
+            echo '{"_tool_error":"Grype produced empty output"}' > security-reports/grype/grype-cleanwithsnapshot-api.json
           fi
           exit 0
 
@@ -705,26 +703,25 @@ jobs:
         id: grype_web
         run: |
           set +e
-          touch grype-cleanwithsnapshot-web.json
+          mkdir -p security-reports/grype
           echo "Running Grype on Web SBOM..."
-          grype sbom:sbom-cleanwithsnapshot-web.json -o json > grype-cleanwithsnapshot-web.json --fail-on ${{ env.GRYPE_FAIL_ON }}
+          grype "sbom:sboms/sbom-cleanwithsnapshot-web.json" \
+            --fail-on "${GRYPE_FAIL_ON}" \
+            -o json > security-reports/grype/grype-cleanwithsnapshot-web.json
           exit_code=$?
           set -e
           echo "GRYPE_WEB_EXIT_CODE=$exit_code" >> "$GITHUB_ENV"
-
           if [ "$exit_code" -eq 2 ]; then
             echo "⚠️ Grype failed (exit 2). Debug info:"
             grype version
-            ls -lh sbom-cleanwithsnapshot-web.json
-            echo "first 30 lines of SBOM:"
-            head -n 30 sbom-cleanwithsnapshot-web.json
+            ls -lh sboms/sbom-cleanwithsnapshot-web.json
+            head -n 30 sboms/sbom-cleanwithsnapshot-web.json
           fi
-
-          if [ ! -s grype-cleanwithsnapshot-web.json ]; then
-            echo '{"_tool_error": "Grype produced empty output"}' > grype-cleanwithsnapshot-web.json
+          if [ ! -s security-reports/grype/grype-cleanwithsnapshot-web.json ]; then
+            echo '{"_tool_error":"Grype produced empty output"}' > security-reports/grype/grype-cleanwithsnapshot-web.json
           fi
           exit 0
-
+      
       - name: Enforce Grype severity gate
         if: always()
         run: |
@@ -732,43 +729,18 @@ jobs:
           vuln_failure=0
 
           echo "Generated Grype reports:"
-          ls -lh grype-*.json sbom-*.json || true
+          ls -lh security-reports/grype/grype-*.json sboms/sbom-*.json || true
 
           check_grype() {
             local label="$1"
             local exit_code="$2"
             local report="$3"
-            
-            if [ -z "$exit_code" ]; then
-              echo "⚠️ Exit code missing for ${label}. Assuming tool failure."
-              exit_code=2
-            fi
-
-            if [ ! -s "$report" ]; then
-              echo "Grype tool failure: missing report for ${label} (${report})."
-              tool_failure=1
-            elif grep -q "_tool_error" "$report"; then
-              echo "Grype tool error detected in report for ${label}."
-              cat "$report"
-              tool_failure=1
-            fi
-
-            if [ "$exit_code" -eq 2 ]; then
-               echo "Grype explicitly exited with 2 for ${label} (Scanner failure)."
-               tool_failure=1
-            elif [ "$exit_code" -eq 1 ]; then
-               echo "Grype found vulnerabilities above cutoff for ${label}."
-               vuln_failure=1
-            elif [ "$exit_code" -eq 0 ]; then
-               echo "Grype scan clean for ${label}."
-            else
-               echo "Unknown exit code ${exit_code} for ${label}."
-               tool_failure=1
-            fi
+            ...
           }
 
-          check_grype "api" "$GRYPE_API_EXIT_CODE" "grype-cleanwithsnapshot-api.json"
-          check_grype "web" "$GRYPE_WEB_EXIT_CODE" "grype-cleanwithsnapshot-web.json"
+          check_grype "api" "$GRYPE_API_EXIT_CODE" "security-reports/grype/grype-cleanwithsnapshot-api.json"
+          check_grype "web" "$GRYPE_WEB_EXIT_CODE" "security-reports/grype/grype-cleanwithsnapshot-web.json"
+          ...
 
           if [ "$tool_failure" -eq 1 ]; then
             echo "Grype tool failure"
@@ -781,15 +753,14 @@ jobs:
           echo "Grype scan passed with no ${GRYPE_FAIL_ON} findings."
 
       - name: Upload Grype reports
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: grype-reports
           path: |
-            grype-cleanwithsnapshot-*.json
-            grype-cleanwithsnapshot-*.sarif
+            security-reports/grype/grype-cleanwithsnapshot-*.json
+            sboms/sbom-cleanwithsnapshot-*.json
           retention-days: 30
-
 
   secrets-scan:
     name: Security - Secrets Scan (Gitleaks)
