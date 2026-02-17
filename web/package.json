@@ -22,7 +22,8 @@
     "jsdom": "^24.1.0",
     "ts-node": "^10.9.2",
     "typescript": "5.9.3",
-    "vitest": "^1.6.0"
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0"
   },
   "overrides": {
     "cross-spawn": "7.0.5",
