@@ -320,17 +320,17 @@ def _validate_prod_config(app_settings) -> None:
             errors.append(f"{context} requires {name} to be set to a non-default value")
 
     _validate_secret(
-        app_settings.auth_secret_key,
+        app_settings.auth_secret_key.get_secret_value(),
         "AUTH_SECRET_KEY",
         forbidden={"dev-auth-secret"},
     )
     _validate_secret(
-        app_settings.client_portal_secret,
+        app_settings.client_portal_secret.get_secret_value(),
         "CLIENT_PORTAL_SECRET",
         forbidden={"dev-client-portal-secret"},
     )
     _validate_secret(
-        app_settings.worker_portal_secret,
+        app_settings.worker_portal_secret.get_secret_value(),
         "WORKER_PORTAL_SECRET",
         forbidden={"dev-worker-portal-secret"},
     )
@@ -357,7 +357,7 @@ def _validate_prod_config(app_settings) -> None:
 
     if getattr(app_settings, "admin_proxy_auth_enabled", False):
         _validate_secret(
-            app_settings.admin_proxy_auth_secret,
+            app_settings.admin_proxy_auth_secret.get_secret_value(),
             "ADMIN_PROXY_AUTH_SECRET",
             minimum=32,
         )

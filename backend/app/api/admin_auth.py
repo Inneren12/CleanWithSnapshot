@@ -492,7 +492,7 @@ def _verify_proxy_secret(request: Request) -> bool:
         return False
     return hmac.compare_digest(
         provided_secret.encode("utf-8"),
-        settings.admin_proxy_auth_secret.encode("utf-8"),
+        settings.admin_proxy_auth_secret.get_secret_value().encode("utf-8"),
     )
 
 

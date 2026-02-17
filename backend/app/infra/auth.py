@@ -151,7 +151,9 @@ def create_access_token(
         payload["jti"] = str(token_id)
     if mfa_verified:
         payload["mfa"] = True
-    return jwt.encode(payload, settings.auth_secret_key, algorithm="HS256")
+    return jwt.encode(
+        payload, settings.auth_secret_key.get_secret_value(), algorithm="HS256"
+    )
 
 
 def decode_access_token(token: str, secret: str) -> dict[str, Any]:

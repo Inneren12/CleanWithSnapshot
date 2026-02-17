@@ -78,7 +78,9 @@ async def _get_identity_from_token(token: str | None, request: Request) -> clien
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
-        result = client_service.verify_magic_token(token, secret=settings.client_portal_secret)
+        result = client_service.verify_magic_token(
+            token, secret=settings.client_portal_secret.get_secret_value()
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
 
@@ -149,7 +151,7 @@ async def request_login(
     token = client_service.issue_magic_token(
         email=client.email,
         client_id=client.client_id,
-        secret=settings.client_portal_secret,
+        secret=settings.client_portal_secret.get_secret_value(),
         ttl_minutes=settings.client_portal_token_ttl_minutes,
         org_id=org_id,
     )

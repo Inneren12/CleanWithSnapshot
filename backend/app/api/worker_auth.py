@@ -77,13 +77,7 @@ def _build_auth_exception(detail: str = "Invalid authentication") -> HTTPExcepti
 
 
 def _worker_secret() -> str:
-    secret = settings.worker_portal_secret
-    if secret:
-        return secret
-    if settings.app_env == "dev":
-        logger.warning("worker_portal_secret_missing")
-        return "worker-secret"
-    raise RuntimeError("worker_portal_secret not configured; set WORKER_PORTAL_SECRET")
+    return settings.worker_portal_secret.get_secret_value()
 
 
 def _session_token(username: str, role: str, team_id: int, org_id: uuid.UUID) -> str:
