@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select, func
@@ -8,6 +9,7 @@ from app.domain.clients import service as client_service
 from app.domain.invoices.db_models import Invoice
 from app.domain.subscriptions import schemas as subscription_schemas
 from app.domain.subscriptions import service as subscription_service
+from app.infra.email import EmailAdapter
 from app.settings import settings
 
 
@@ -15,7 +17,7 @@ def _issue_client_token(client_id: str, email: str) -> str:
     return client_service.issue_magic_token(
         email=email,
         client_id=client_id,
-        secret=settings.client_portal_secret,
+        secret=settings.client_portal_secret.get_secret_value(),
         ttl_minutes=settings.client_portal_token_ttl_minutes,
     )
 
@@ -239,3 +241,54 @@ def test_monthly_subscription_non_leap_year_february(async_session_maker):
             assert sub.next_run_at.date() == date(2023, 2, 28)
 
     asyncio.run(_test())
+
+
+def test_subscription_email_failure_is_logged(async_session_maker, caplog):
+    """
+    Test that an email sending failure during subscription order generation
+    is logged and does not prevent the order from being created.
+    """
+    class FailingEmailAdapter(EmailAdapter):
+        def __init__(self):
+            super().__init__()
+
+        async def send_email(self, recipient: str, subject: str, body: str, *, headers: dict[str, str] | None = None) -> bool:
+            raise Exception("Simulated email failure")
+
+    # Capture all logs from the subscriptions service
+    caplog.set_level(logging.ERROR)
+
+    async def _test():
+        async with async_session_maker() as session:
+            client_user = await client_service.get_or_create_client(session, "email_fail@example.com", commit=False)
+            payload = subscription_schemas.SubscriptionCreateRequest(
+                frequency="MONTHLY",
+                start_date=date(2024, 1, 1),
+                base_service_type="standard",
+                base_price=10000,
+            )
+            sub = await subscription_service.create_subscription(session, client_user.client_id, payload)
+            await session.commit()
+            await session.refresh(sub)
+
+            failing_adapter = FailingEmailAdapter()
+
+            # Run generation
+            await subscription_service.generate_due_orders(
+                session,
+                now=datetime(2024, 2, 1, 12, tzinfo=timezone.utc),
+                email_adapter=failing_adapter
+            )
+            await session.commit()
+
+            # Check booking created
+            result = await session.execute(
+                select(Booking).where(Booking.subscription_id == sub.subscription_id)
+            )
+            bookings = result.scalars().all()
+            assert len(bookings) == 1, "Booking should be created despite email failure"
+
+    asyncio.run(_test())
+
+    # Check logs
+    assert "Simulated email failure" in caplog.text

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -21,6 +22,7 @@ from app.domain.subscriptions.schemas import SubscriptionCreateRequest
 from app.infra.email import EmailAdapter
 
 
+logger = logging.getLogger(__name__)
 LOCAL_TZ = booking_service.LOCAL_TZ
 
 
@@ -242,5 +244,15 @@ async def _notify_client(
     )
     try:
         await email_adapter.send_email(recipient=client.email, subject=subject, body=body)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error(
+            "subscription_notification_failed",
+            extra={
+                "extra": {
+                    "subscription_id": subscription.subscription_id,
+                    "booking_id": booking.booking_id,
+                    "error": str(exc),
+                }
+            },
+            exc_info=True,
+        )
