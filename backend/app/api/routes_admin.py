@@ -17447,24 +17447,39 @@ async def admin_clients_edit_form(
             .limit(50)
         )
     ).scalars().all()
-    booking_stats = await _client_booking_stats(session, org_id=org_id, client_id=client_id)
-    weekly_series = await _client_booking_time_series(
-        session, org_id=org_id, client_id=client_id, period="week"
+    session_factory = getattr(request.app.state, "db_session_factory", None) or get_session_factory()
+
+    async def _run_in_new_session(coro_fn, **kwargs):
+        async with session_factory() as s:
+            return await coro_fn(s, **kwargs)
+
+    (
+        booking_stats,
+        weekly_series,
+        monthly_series,
+        frequency_stats,
+        favorite_workers,
+        feedback_summary,
+        risk_summary,
+        recent_feedback,
+        service_preferences,
+        finance_summary,
+        invoice_history,
+        payment_history,
+    ) = await asyncio.gather(
+        _run_in_new_session(_client_booking_stats, org_id=org_id, client_id=client_id),
+        _run_in_new_session(_client_booking_time_series, org_id=org_id, client_id=client_id, period="week"),
+        _run_in_new_session(_client_booking_time_series, org_id=org_id, client_id=client_id, period="month"),
+        _run_in_new_session(_client_booking_frequency_stats, org_id=org_id, client_id=client_id),
+        _run_in_new_session(_client_favorite_workers, org_id=org_id, client_id=client_id),
+        _run_in_new_session(_client_feedback_summary, org_id=org_id, client_id=client_id),
+        _run_in_new_session(_client_risk_summary, org_id=org_id, client_id=client_id),
+        _run_in_new_session(_client_recent_feedback, org_id=org_id, client_id=client_id),
+        _run_in_new_session(_client_service_preferences, org_id=org_id, client_id=client_id),
+        _run_in_new_session(_client_finance_aggregates, org_id=org_id, client_id=client_id),
+        _run_in_new_session(_client_invoice_history, org_id=org_id, client_id=client_id),
+        _run_in_new_session(_client_payment_history, org_id=org_id, client_id=client_id),
     )
-    monthly_series = await _client_booking_time_series(
-        session, org_id=org_id, client_id=client_id, period="month"
-    )
-    frequency_stats = await _client_booking_frequency_stats(
-        session, org_id=org_id, client_id=client_id
-    )
-    favorite_workers = await _client_favorite_workers(session, org_id=org_id, client_id=client_id)
-    feedback_summary = await _client_feedback_summary(session, org_id=org_id, client_id=client_id)
-    risk_summary = await _client_risk_summary(session, org_id=org_id, client_id=client_id)
-    recent_feedback = await _client_recent_feedback(session, org_id=org_id, client_id=client_id)
-    service_preferences = await _client_service_preferences(session, org_id=org_id, client_id=client_id)
-    finance_summary = await _client_finance_aggregates(session, org_id=org_id, client_id=client_id)
-    invoice_history = await _client_invoice_history(session, org_id=org_id, client_id=client_id)
-    payment_history = await _client_payment_history(session, org_id=org_id, client_id=client_id)
     last_booking = bookings[0].starts_at if bookings else None
     notes_query = select(ClientNote).where(ClientNote.client_id == client_id, ClientNote.org_id == org_id)
     note_filter_value = note_filter_options[note_filter]
