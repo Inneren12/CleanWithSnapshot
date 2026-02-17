@@ -71,7 +71,9 @@ async def _load_identity(request: Request, token: str | None, *, strict: bool = 
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing SaaS token")
         return None
     try:
-        payload = decode_access_token(token, request.app.state.app_settings.auth_secret_key)
+        payload = decode_access_token(
+            token, request.app.state.app_settings.auth_secret_key.get_secret_value()
+        )
     except Exception:  # noqa: BLE001
         logger.info("saas_token_invalid")
         metrics.record_auth_failure("saas", "invalid_token")
