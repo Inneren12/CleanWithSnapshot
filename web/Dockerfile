@@ -1,4 +1,4 @@
-FROM node:22.11.0-alpine AS build
+FROM node:22.14.0-alpine AS build
 WORKDIR /app
 RUN apk update && apk upgrade --no-cache
 ARG NEXT_PUBLIC_SHOW_ADMIN_LINK
@@ -8,11 +8,12 @@ ENV NEXT_PUBLIC_SHOW_ADMIN_LINK=$NEXT_PUBLIC_SHOW_ADMIN_LINK
 ENV NEXT_PUBLIC_E2E_MODE=$NEXT_PUBLIC_E2E_MODE
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY . .
 RUN npm run build
+RUN npm prune --production
 
-FROM node:22.11.0-alpine AS run
+FROM node:22.14.0-alpine AS run
 WORKDIR /app
 RUN apk update && apk upgrade --no-cache
 ARG NEXT_PUBLIC_SHOW_ADMIN_LINK

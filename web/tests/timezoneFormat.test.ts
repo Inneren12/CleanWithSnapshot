@@ -1,6 +1,5 @@
-import assert from "node:assert";
-
-import { formatDateKeyInTz } from "../app/admin/lib/timezone";
+import { test, expect } from 'vitest';
+import { formatDateKeyInTz } from '../app/admin/lib/timezone';
 
 const cases = [
   {
@@ -15,12 +14,6 @@ const cases = [
   },
 ];
 
-cases.forEach(({ iso, timeZone, expected }) => {
-  assert.strictEqual(
-    formatDateKeyInTz(iso, timeZone),
-    expected,
-    `formatDateKeyInTz(${iso}, ${timeZone}) should be ${expected}`,
-  );
+test.each(cases)('formatDateKeyInTz($iso, $timeZone) should be $expected', ({ iso, timeZone, expected }) => {
+  expect(formatDateKeyInTz(iso, timeZone)).toBe(expected);
 });
-
-console.log("All timezone date key tests passed.");
