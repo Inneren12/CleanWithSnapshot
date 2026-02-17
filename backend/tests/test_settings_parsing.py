@@ -36,7 +36,7 @@ def test_list_env_parsing(monkeypatch, env_name, attr_name, env_value, expected)
 def test_dev_defaults_allow_placeholders():
     settings = Settings(app_env="dev", _env_file=None)
 
-    assert settings.auth_secret_key == "dev-auth-secret"
+    assert settings.auth_secret_key.get_secret_value() == "dev-auth-secret"
 
 
 def test_defaults_to_prod_when_env_missing(monkeypatch):
@@ -113,6 +113,7 @@ def test_prod_rejects_testing_mode_override():
             auth_secret_key="super-secret",
             client_portal_secret="client-secret",
             worker_portal_secret="worker-secret",
+            admin_proxy_auth_secret="p" * 32,
             metrics_enabled=False,
             testing=True,
             _env_file=None,

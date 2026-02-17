@@ -77,9 +77,10 @@ def _build_auth_exception(detail: str = "Invalid authentication") -> HTTPExcepti
 
 
 def _worker_secret() -> str:
-    secret = settings.worker_portal_secret
+    secret = settings.worker_portal_secret.get_secret_value()
     if secret:
         return secret
+    # Should not happen given settings validation, but safe fallback
     if settings.app_env == "dev":
         logger.warning("worker_portal_secret_missing")
         return "worker-secret"

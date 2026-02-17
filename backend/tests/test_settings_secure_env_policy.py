@@ -20,6 +20,6 @@ def test_secure_envs_require_secrets(monkeypatch, app_env):
 def test_dev_like_envs_allow_default_secrets(app_env):
     settings = Settings(app_env=app_env, _env_file=None)
 
-    assert settings.auth_secret_key == "dev-auth-secret"
-    assert settings.client_portal_secret == "dev-client-portal-secret"
-    assert settings.worker_portal_secret == "dev-worker-portal-secret"
+    assert settings.auth_secret_key.get_secret_value() == "dev-auth-secret"
+    assert settings.client_portal_secret.get_secret_value() == "dev-client-portal-secret"
+    assert settings.worker_portal_secret.get_secret_value() == "dev-worker-portal-secret"

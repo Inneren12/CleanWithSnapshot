@@ -85,7 +85,7 @@ def _public_base_url() -> str | None:
 
 
 def _unsubscribe_secret() -> str:
-    return settings.email_unsubscribe_secret or settings.auth_secret_key
+    return settings.email_unsubscribe_secret or settings.auth_secret_key.get_secret_value()
 
 
 def issue_unsubscribe_token(email: str, scope: str, org_id: str) -> str:

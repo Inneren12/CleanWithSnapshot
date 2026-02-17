@@ -17,7 +17,10 @@ def test_secret_env_aliases(monkeypatch, env_var, value, attr):
 
     settings = Settings(_env_file=None)
 
-    assert getattr(settings, attr) == value
+    val = getattr(settings, attr)
+    if hasattr(val, "get_secret_value"):
+        val = val.get_secret_value()
+    assert val == value
 
 
 @pytest.mark.parametrize(
@@ -34,4 +37,7 @@ def test_secret_env_aliases_accept_legacy_names(monkeypatch, env_var, value, att
 
     settings = Settings(_env_file=None)
 
-    assert getattr(settings, attr) == value
+    val = getattr(settings, attr)
+    if hasattr(val, "get_secret_value"):
+        val = val.get_secret_value()
+    assert val == value

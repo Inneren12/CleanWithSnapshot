@@ -3,7 +3,7 @@ import uuid
 from ipaddress import ip_network
 from typing import Any, Literal
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.infra.environment import DEV_DEFAULT_ENVIRONMENTS, SECURE_ENVIRONMENTS
@@ -107,14 +107,14 @@ class Settings(BaseSettings):
     admin_proxy_auth_header_email: str = Field("X-Admin-Email")
     admin_proxy_auth_header_roles: str = Field("X-Admin-Roles")
     admin_proxy_auth_header_mfa: str = Field("X-Auth-MFA")
-    admin_proxy_auth_secret: str | None = Field(
-        None, validation_alias=AliasChoices("ADMIN_PROXY_AUTH_SECRET", "admin_proxy_auth_secret")
+    admin_proxy_auth_secret: SecretStr = Field(
+        validation_alias=AliasChoices("ADMIN_PROXY_AUTH_SECRET", "admin_proxy_auth_secret")
     )
     admin_proxy_auth_e2e_enabled: bool = Field(False)
     admin_proxy_auth_e2e_secret: str | None = Field(None)
     admin_proxy_auth_e2e_ttl_seconds: int = Field(300)
-    auth_secret_key: str | None = Field(
-        None, validation_alias=AliasChoices("AUTH_SECRET_KEY", "auth_secret_key")
+    auth_secret_key: SecretStr = Field(
+        validation_alias=AliasChoices("AUTH_SECRET_KEY", "auth_secret_key")
     )
     auth_token_ttl_minutes: int = Field(60 * 24)
     auth_access_token_ttl_minutes: int = Field(
@@ -265,11 +265,11 @@ class Settings(BaseSettings):
     stripe_circuit_recovery_seconds: float = Field(30.0)
     stripe_circuit_window_seconds: float = Field(60.0)
     stripe_circuit_half_open_max_calls: int = Field(2)
-    client_portal_secret: str | None = Field(
-        None, validation_alias=AliasChoices("CLIENT_PORTAL_SECRET", "client_portal_secret")
+    client_portal_secret: SecretStr = Field(
+        validation_alias=AliasChoices("CLIENT_PORTAL_SECRET", "client_portal_secret")
     )
-    worker_portal_secret: str | None = Field(
-        None, validation_alias=AliasChoices("WORKER_PORTAL_SECRET", "worker_portal_secret")
+    worker_portal_secret: SecretStr = Field(
+        validation_alias=AliasChoices("WORKER_PORTAL_SECRET", "worker_portal_secret")
     )
     client_portal_token_ttl_minutes: int = Field(30)
     client_portal_base_url: str | None = Field(None)
@@ -448,6 +448,29 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @model_validator(mode="before")
+    @classmethod
+    def inject_dev_defaults(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        # Only inject defaults if explicitly in a dev/test environment
+        app_env = data.get("app_env") or data.get("APP_ENV")
+        if not app_env or str(app_env) not in DEV_DEFAULT_ENVIRONMENTS:
+            return data
+
+        # Inject defaults for required secrets if missing
+        if "auth_secret_key" not in data and "AUTH_SECRET_KEY" not in data:
+            data["auth_secret_key"] = "dev-auth-secret"
+        if "client_portal_secret" not in data and "CLIENT_PORTAL_SECRET" not in data:
+            data["client_portal_secret"] = "dev-client-portal-secret"
+        if "worker_portal_secret" not in data and "WORKER_PORTAL_SECRET" not in data:
+            data["worker_portal_secret"] = "dev-worker-portal-secret"
+        if "admin_proxy_auth_secret" not in data and "ADMIN_PROXY_AUTH_SECRET" not in data:
+            data["admin_proxy_auth_secret"] = "dev-admin-proxy-secret-must-be-at-least-32-chars-long"
+
+        return data
+
     @model_validator(mode="after")
     def validate_prod_settings(self) -> "Settings":
         def _basic_auth_creds_configured() -> bool:
@@ -469,12 +492,6 @@ class Settings(BaseSettings):
                 raise ValueError("ADMIN_PROXY_AUTH_E2E_SECRET must be set when E2E proxy auth is enabled")
 
         if self.app_env in DEV_DEFAULT_ENVIRONMENTS:
-            if not self.auth_secret_key or not self.auth_secret_key.strip():
-                self.auth_secret_key = "dev-auth-secret"
-            if not self.client_portal_secret or not self.client_portal_secret.strip():
-                self.client_portal_secret = "dev-client-portal-secret"
-            if not self.worker_portal_secret or not self.worker_portal_secret.strip():
-                self.worker_portal_secret = "dev-worker-portal-secret"
             if self.testing:
                 self.captcha_enabled = False
                 self.captcha_mode = "off"
@@ -522,10 +539,10 @@ class Settings(BaseSettings):
                         f"APP_ENV={self.app_env} requires strong legacy Basic Auth passwords (min 12 chars, not a default placeholder)"
                     )
 
-        def _require_secret(value: str | None, field_name: str, placeholders: set[str]) -> None:
+        def _require_secret(value: SecretStr | None, field_name: str, placeholders: set[str]) -> None:
             if value is None:
                 raise ValueError(f"APP_ENV={self.app_env} requires {field_name} to be configured")
-            normalized = value.strip()
+            normalized = value.get_secret_value().strip()
             if not normalized or normalized in placeholders:
                 raise ValueError(
                     f"APP_ENV={self.app_env} requires {field_name} to be set to a non-default value"
@@ -543,7 +560,7 @@ class Settings(BaseSettings):
         _require_secret(
             self.admin_proxy_auth_secret,
             "ADMIN_PROXY_AUTH_SECRET",
-            set(),
+            {"dev-admin-proxy-secret-must-be-at-least-32-chars-long"},
         )
 
         if self.strict_cors:
@@ -567,11 +584,12 @@ class Settings(BaseSettings):
             )
 
         if self.admin_proxy_auth_enabled:
-            if not self.admin_proxy_auth_secret or not self.admin_proxy_auth_secret.strip():
+            secret_value = self.admin_proxy_auth_secret.get_secret_value().strip()
+            if not secret_value:
                 raise ValueError(
                     f"ADMIN_PROXY_AUTH_SECRET is required when ADMIN_PROXY_AUTH_ENABLED=true in APP_ENV={self.app_env}"
                 )
-            if len(self.admin_proxy_auth_secret.strip()) < 32:
+            if len(secret_value) < 32:
                 raise ValueError(
                     f"ADMIN_PROXY_AUTH_SECRET must be at least 32 characters in APP_ENV={self.app_env}"
                 )

@@ -485,14 +485,15 @@ def _authenticate_credentials(
 
 def _verify_proxy_secret(request: Request) -> bool:
     """Verify that the request comes from a trusted reverse proxy."""
-    if not settings.admin_proxy_auth_secret:
+    secret_value = settings.admin_proxy_auth_secret.get_secret_value()
+    if not secret_value:
         return False
     provided_secret = request.headers.get(PROXY_AUTH_HEADER_SECRET, "")
     if not provided_secret:
         return False
     return hmac.compare_digest(
         provided_secret.encode("utf-8"),
-        settings.admin_proxy_auth_secret.encode("utf-8"),
+        secret_value.encode("utf-8"),
     )
 
 

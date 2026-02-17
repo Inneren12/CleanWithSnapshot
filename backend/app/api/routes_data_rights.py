@@ -256,7 +256,7 @@ async def _get_client_identity(request: Request) -> client_schemas.ClientIdentit
     if not token:
         return None
     try:
-        result = client_service.verify_magic_token(token, secret=settings.client_portal_secret)
+        result = client_service.verify_magic_token(token, secret=settings.client_portal_secret.get_secret_value())
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
 

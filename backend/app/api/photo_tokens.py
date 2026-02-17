@@ -35,7 +35,7 @@ def _photo_signing_secret() -> str:
     return (
         settings.photo_token_secret
         or settings.order_photo_signing_secret
-        or settings.auth_secret_key
+        or settings.auth_secret_key.get_secret_value()
     )
 
 

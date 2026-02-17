@@ -16,7 +16,7 @@ def _new_backend() -> StorageBackend:
     if backend == "cf_images":
         backend = "cloudflare_images"
     if backend == "local":
-        signing_secret = settings.order_photo_signing_secret or settings.auth_secret_key
+        signing_secret = settings.order_photo_signing_secret or settings.auth_secret_key.get_secret_value()
         return LocalStorageBackend(Path(settings.order_upload_root), signing_secret=signing_secret)
     if backend == "s3":
         if not settings.s3_bucket:
