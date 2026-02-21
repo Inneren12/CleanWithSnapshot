@@ -39,26 +39,32 @@ Configurable via:
 ORDER_PHOTO_ALLOWED_MIMES=image/jpeg,image/png,image/webp
 ```
 
-### 2. Early Size Rejection via Content-Length Header
+### 2. Early DoS Rejection via Content-Length Header
 
 If the client sends a `Content-Length` header (all standard HTTP/1.1 clients do), its
-value is compared against `MAX_UPLOAD_BYTES` **before reading any body data**.  Requests
-where `Content-Length` exceeds the limit are rejected immediately with
-`413 Request Entity Too Large`.
+value is compared against the system limit `ORDER_PHOTO_MAX_BYTES` **before reading
+any body data**.  Requests where `Content-Length` exceeds the limit are rejected
+immediately with `413 Request Entity Too Large`.
 
-> **Note:** `Content-Length` for a multipart request represents the total body size
-> (including boundaries and form fields), not just the file payload.  It therefore
-> acts as a conservative upper-bound check.  The per-chunk enforcement below provides
-> accurate byte-level gating regardless.
+> **Important:** `Content-Length` is **only** used for this early Denial-of-Service
+> (DoS) check. It is **never** used for business quota reservation or billing, as
+> multipart `Content-Length` includes protocol overhead (boundaries, headers) and
+> does not reflect the exact file size.
 
-### 3. Per-Chunk Streaming Enforcement
+### 3. Per-Chunk Streaming Enforcement (DoS & Quota)
 
-The upload body is consumed in **64 KB chunks**.  A running byte counter is maintained
-during streaming; if it exceeds `MAX_UPLOAD_BYTES` at any point the upload is aborted
-with `413 Request Entity Too Large` and any partially written file is deleted.
+The upload body is consumed in **64 KB chunks**. Two distinct checks are performed
+inside the streaming loop:
 
-This enforcement applies even when no `Content-Length` header is present (e.g.,
-chunked transfer encoding).
+1.  **System Limit (DoS):** A running byte counter is maintained; if it exceeds
+    `ORDER_PHOTO_MAX_BYTES` at any point, the upload is aborted with
+    `413 Request Entity Too Large`.
+2.  **Organization Quota:** The running counter is checked against the organization's
+    remaining storage quota. If the file size exceeds the available quota, the
+    upload is aborted with `409 Conflict`.
+
+This streaming enforcement applies even when no `Content-Length` header is present
+(e.g., chunked transfer encoding).
 
 ### 4. Partial File Cleanup
 
@@ -124,6 +130,8 @@ The security behaviour is covered by `backend/tests/test_upload_streaming.py`:
 | `test_upload_does_not_full_read_file` | **Streaming guard** — asserts `file.read()` is never called without an explicit chunk size; catches any regression that re-introduces a full-buffer read |
 | `test_upload_png_allowed` | PNG MIME type accepted |
 | `test_upload_webp_allowed` | WebP MIME type accepted |
+| `test_upload_missing_content_length_succeeds` | Upload without Content-Length header is accepted |
+| `test_upload_quota_enforcement_on_actual_bytes` | Quota is enforced based on actual streamed bytes, not Content-Length |
 
 Run with:
 

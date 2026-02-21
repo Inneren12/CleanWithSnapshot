@@ -198,8 +198,8 @@ async def reserve_bytes(
     expires_in_seconds: int | None = None,
     audit_identity: AdminIdentity | Any | None = None,
 ) -> StorageReservation:
-    if bytes_requested <= 0:
-        raise ValueError("bytes_requested must be positive")
+    if bytes_requested < 0:
+        raise ValueError("bytes_requested must be non-negative")
 
     await org_settings_service.get_or_create_org_settings(session, org_id)
     now = _now_for_db(session)
