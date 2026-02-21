@@ -241,37 +241,121 @@ def create_rate_limiter(
     )
 
 
+_MAX_HEADER_LEN = 2048
+_MAX_FORWARDED_HOPS = 20
+
+
+def get_client_ip(request: Request, trusted_cidrs: list[str]) -> str:
+    """Resolve the real client IP address.
+
+    If the direct connection source is not in *trusted_cidrs*, return it as-is
+    so forwarded headers cannot be spoofed by arbitrary clients.
+
+    When the source IS in *trusted_cidrs* (e.g. a Caddy ingress), inspect
+    forwarded headers in priority order:
+      1. ``Forwarded`` (RFC 7239) – left-most ``for=`` value
+      2. ``X-Forwarded-For`` – left-most IP
+
+    Returns *source_ip* when the header is absent, malformed, or contains an
+    invalid IP address.
+    """
+    source_ip = request.client.host if request.client else "unknown"
+    if not trusted_cidrs or not _is_in_cidrs(source_ip, trusted_cidrs):
+        return source_ip
+
+    forwarded = request.headers.get("forwarded")
+    if forwarded and len(forwarded) <= _MAX_HEADER_LEN:
+        extracted = _extract_forwarded_for(forwarded)
+        if extracted:
+            return extracted
+
+    xff = request.headers.get("x-forwarded-for")
+    if xff and len(xff) <= _MAX_HEADER_LEN:
+        extracted = _extract_xff(xff)
+        if extracted:
+            return extracted
+
+    return source_ip
+
+
 def resolve_client_key(
     request: Request,
     trust_proxy_headers: bool,
     trusted_proxy_ips: list[str],
     trusted_proxy_cidrs: list[str],
 ) -> str:
-    client_host = request.client.host if request.client else "unknown"
-    if not trust_proxy_headers or not _is_trusted_proxy(client_host, trusted_proxy_ips, trusted_proxy_cidrs):
-        return client_host
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if not forwarded_for:
-        return client_host
-    first_ip = forwarded_for.split(",")[0].strip()
-    try:
-        ip_address(first_ip)
-    except ValueError:
-        return client_host
-    return first_ip
+    if not trust_proxy_headers:
+        return request.client.host if request.client else "unknown"
+    # Merge individual trusted IPs (expressed as host CIDRs) with CIDR ranges.
+    cidrs: list[str] = list(trusted_proxy_cidrs)
+    for ip_str in trusted_proxy_ips:
+        try:
+            ip_obj = ip_address(ip_str)
+            bits = 32 if ip_obj.version == 4 else 128
+            cidrs.append(f"{ip_str}/{bits}")
+        except ValueError:
+            continue
+    return get_client_ip(request, cidrs)
 
 
-def _is_trusted_proxy(client_host: str, trusted_ips: list[str], trusted_cidrs: list[str]) -> bool:
-    if client_host in trusted_ips:
-        return True
+def _is_in_cidrs(client_host: str, cidrs: list[str]) -> bool:
     try:
         client_ip = ip_address(client_host)
     except ValueError:
         return False
-    for cidr in trusted_cidrs:
+    for cidr in cidrs:
         try:
-            if client_ip in ip_network(cidr):
+            if client_ip in ip_network(cidr, strict=False):
                 return True
         except ValueError:
             continue
     return False
+
+
+def _extract_forwarded_for(header: str) -> str | None:
+    """Parse RFC 7239 ``Forwarded`` header; return left-most ``for=`` IP.
+
+    Handles:
+    - ``for=192.0.2.1``
+    - ``for="192.0.2.1"``
+    - ``for="[2001:db8::1]"`` (quoted IPv6)
+    - ``for=[2001:db8::1]`` (unquoted IPv6)
+    - ``for=192.0.2.1:4711`` (IPv4 with port)
+    """
+    element = header.split(",")[0].strip()
+    for directive in element.split(";"):
+        directive = directive.strip()
+        if not directive.lower().startswith("for="):
+            continue
+        value = directive[4:]
+        # Strip surrounding double-quotes.
+        if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+            value = value[1:-1]
+        # IPv6 in brackets: [2001:db8::1] or [2001:db8::1]:port
+        if value.startswith("["):
+            close = value.find("]")
+            if close == -1:
+                return None
+            value = value[1:close]
+        else:
+            # IPv4 may carry a port (exactly one colon). Strip it.
+            if value.count(":") == 1:
+                value = value.split(":")[0]
+        try:
+            ip_address(value)
+            return value
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_xff(header: str) -> str | None:
+    """Parse ``X-Forwarded-For`` header; return left-most valid IP."""
+    ips = [ip.strip() for ip in header.split(",")]
+    if not ips or len(ips) > _MAX_FORWARDED_HOPS:
+        return None
+    try:
+        ip_address(ips[0])
+        return ips[0]
+    except ValueError:
+        return None
