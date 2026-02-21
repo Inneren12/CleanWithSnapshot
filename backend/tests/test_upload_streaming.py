@@ -239,8 +239,11 @@ def test_upload_quota_enforcement_on_actual_bytes(client, async_session_maker, u
 def test_upload_quota_near_limit_allows_exact_remaining(
     client, async_session_maker, upload_root, admin_headers
 ):
-    """Uploads that exactly fit remaining quota should pass, but overage must fail."""
+    """Uploads that fit remaining quota exactly must succeed without reservation rounding overage."""
     from app.domain.org_settings.service import get_or_create_org_settings
+
+    quota_bytes = 2 * 1024 * 1024
+    first_size = int(1.6 * 1024 * 1024)
 
     async def _set_quota(max_bytes: int):
         async with async_session_maker() as session:
@@ -256,30 +259,29 @@ def test_upload_quota_near_limit_allows_exact_remaining(
             settings_obj.storage_bytes_used = 0
             await session.commit()
 
-    asyncio.run(_set_quota(3 * 1024 * 1024))
+    asyncio.run(_set_quota(quota_bytes))
     try:
         booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+        used_before, pending_before = asyncio.run(_get_quota_state(async_session_maker))
+        assert pending_before == 0
 
         first = client.post(
             f"/v1/orders/{booking_id}/photos",
             data={"phase": "AFTER"},
-            files={"file": ("first.jpg", b"A" * (1024 * 1024), "image/jpeg")},
+            files={"file": ("first.jpg", b"A" * first_size, "image/jpeg")},
             headers=admin_headers,
         )
         assert first.status_code == 201
 
-        exact_remaining = client.post(
-            f"/v1/orders/{booking_id}/photos",
-            data={"phase": "AFTER"},
-            files={"file": ("second.jpg", b"B" * (1024 * 1024), "image/jpeg")},
-            headers=admin_headers,
-        )
-        assert exact_remaining.status_code == 201
+        used_after_first, pending_after_first = asyncio.run(_get_quota_state(async_session_maker))
+        assert used_after_first == used_before + first_size
+        assert pending_after_first == 0
 
+        remaining = quota_bytes - (used_after_first - used_before)
         exceed = client.post(
             f"/v1/orders/{booking_id}/photos",
             data={"phase": "AFTER"},
-            files={"file": ("third.jpg", b"C" * (1024 * 1024 + 1), "image/jpeg")},
+            files={"file": ("second.jpg", b"B" * (remaining + 1), "image/jpeg")},
             headers=admin_headers,
         )
         assert exceed.status_code == 409

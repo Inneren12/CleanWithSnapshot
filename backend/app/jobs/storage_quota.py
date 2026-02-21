@@ -10,7 +10,6 @@ from app.api.admin_auth import AdminIdentity, AdminRole
 from app.domain.admin_audit import service as admin_audit_service
 from app.domain.bookings.db_models import BookingPhoto, OrderPhoto
 from app.domain.documents.db_models import Document
-from app.domain.org_settings.db_models import OrganizationSettings
 from app.domain.org_settings import service as org_settings_service
 from app.domain.storage_quota.db_models import OrgStorageReservation
 from app.domain.storage_quota.service import StorageReservationStatus
@@ -50,30 +49,6 @@ async def run_storage_quota_cleanup(
 
     expired = 0
     if reservation_ids:
-        expired_rows = await session.execute(
-            sa.select(
-                OrgStorageReservation.org_id,
-                sa.func.coalesce(sa.func.sum(OrgStorageReservation.bytes_reserved), 0),
-            )
-            .where(OrgStorageReservation.reservation_id.in_(reservation_ids))
-            .group_by(OrgStorageReservation.org_id)
-        )
-        for org_id, expired_bytes in expired_rows.all():
-            expired_bytes = int(expired_bytes or 0)
-            if expired_bytes:
-                await session.execute(
-                    sa.update(OrganizationSettings)
-                    .where(OrganizationSettings.org_id == org_id)
-                    .values(
-                        storage_bytes_used=sa.case(
-                            (
-                                OrganizationSettings.storage_bytes_used >= expired_bytes,
-                                OrganizationSettings.storage_bytes_used - expired_bytes,
-                            ),
-                            else_=0,
-                        )
-                    )
-                )
         update_stmt = (
             sa.update(OrgStorageReservation)
             .where(OrgStorageReservation.reservation_id.in_(reservation_ids))
