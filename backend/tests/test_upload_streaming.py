@@ -168,6 +168,93 @@ def test_upload_quota_enforcement_on_actual_bytes(client, async_session_maker, u
         asyncio.run(_reset_quota())
 
 
+def test_upload_quota_near_limit_allows_exact_remaining(
+    client, async_session_maker, upload_root, admin_headers
+):
+    """Uploads that exactly fit remaining quota should pass, but overage must fail."""
+    from app.domain.org_settings.service import get_or_create_org_settings
+
+    async def _set_quota(max_bytes: int):
+        async with async_session_maker() as session:
+            settings_obj = await get_or_create_org_settings(session, settings.default_org_id)
+            settings_obj.max_storage_bytes = max_bytes
+            settings_obj.storage_bytes_used = 0
+            await session.commit()
+
+    async def _reset_quota():
+        async with async_session_maker() as session:
+            settings_obj = await get_or_create_org_settings(session, settings.default_org_id)
+            settings_obj.max_storage_bytes = None
+            settings_obj.storage_bytes_used = 0
+            await session.commit()
+
+    asyncio.run(_set_quota(100))
+    try:
+        booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+
+        first = client.post(
+            f"/v1/orders/{booking_id}/photos",
+            data={"phase": "AFTER"},
+            files={"file": ("first.jpg", b"A" * 60, "image/jpeg")},
+            headers=admin_headers,
+        )
+        assert first.status_code == 201
+
+        exact_remaining = client.post(
+            f"/v1/orders/{booking_id}/photos",
+            data={"phase": "AFTER"},
+            files={"file": ("second.jpg", b"B" * 40, "image/jpeg")},
+            headers=admin_headers,
+        )
+        assert exact_remaining.status_code == 201
+
+        exceed = client.post(
+            f"/v1/orders/{booking_id}/photos",
+            data={"phase": "AFTER"},
+            files={"file": ("third.jpg", b"C", "image/jpeg")},
+            headers=admin_headers,
+        )
+        assert exceed.status_code == 409
+    finally:
+        asyncio.run(_reset_quota())
+
+
+def test_upload_quota_exceeded_cleans_partial_local_file(
+    client, async_session_maker, upload_root, admin_headers
+):
+    """A quota failure during streaming must not leave partial files in local storage."""
+    from app.domain.org_settings.service import get_or_create_org_settings
+
+    async def _set_quota(max_bytes: int):
+        async with async_session_maker() as session:
+            settings_obj = await get_or_create_org_settings(session, settings.default_org_id)
+            settings_obj.max_storage_bytes = max_bytes
+            settings_obj.storage_bytes_used = 0
+            await session.commit()
+
+    async def _reset_quota():
+        async with async_session_maker() as session:
+            settings_obj = await get_or_create_org_settings(session, settings.default_org_id)
+            settings_obj.max_storage_bytes = None
+            settings_obj.storage_bytes_used = 0
+            await session.commit()
+
+    asyncio.run(_set_quota(64 * 1024))
+    try:
+        booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+        response = client.post(
+            f"/v1/orders/{booking_id}/photos",
+            data={"phase": "AFTER"},
+            files={"file": ("too-big.jpg", b"X" * (64 * 1024 + 16), "image/jpeg")},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 409
+        assert not [p for p in Path(upload_root).rglob("*") if p.is_file()], "Partial upload file should be deleted"
+    finally:
+        asyncio.run(_reset_quota())
+
+
 def test_upload_increments_storage_usage_correctly(client, async_session_maker, upload_root, admin_headers):
     """Storage usage must be incremented by the actual file size."""
     from app.domain.org_settings.service import get_or_create_org_settings
