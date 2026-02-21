@@ -32,4 +32,4 @@ venv/
 
 # test artifacts
 test.db
-*.db
+backend/tests/**/*.db

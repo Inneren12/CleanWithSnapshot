@@ -25,7 +25,7 @@ from app.domain.bookings import service as booking_service
 from app.domain.leads.db_models import Lead
 from app.domain.clients import service as client_service
 from app.domain.notifications import email_service
-from app.infra import stripe as stripe_infra
+from app.infra import stripe_client as stripe_infra
 from app.infra.captcha import log_captcha_event, log_captcha_unavailable, verify_turnstile
 from app.infra.email import resolve_app_email_adapter
 from app.settings import settings
@@ -366,9 +366,9 @@ async def create_booking(
         if request.lead_id:
             metadata["lead_id"] = request.lead_id
         try:
-            stripe_checkout_session = await stripe_infra.create_checkout_session(
-                stripe_client=stripe_client,
-                secret_key=settings.stripe_secret_key,
+            stripe_checkout_session = await stripe_infra.call_stripe_client_method(
+                stripe_client,
+                "create_checkout_session",
                 amount_cents=deposit_decision.deposit_cents,
                 currency=settings.deposit_currency,
                 success_url=settings.stripe_success_url.replace("{BOOKING_ID}", pending_booking_id),
@@ -467,10 +467,10 @@ async def create_booking(
         if stripe_checkout_session is not None:
             try:
                 stripe_client = _stripe_client(http_request)
-                await stripe_infra.cancel_checkout_session(
-                    stripe_client=stripe_client,
-                    secret_key=settings.stripe_secret_key,
-                    session_id=stripe_checkout_session.id,
+                await stripe_infra.call_stripe_client_method(
+                    stripe_client,
+                    "cancel_checkout_session",
+                    stripe_checkout_session.id,
                 )
             except Exception as cancel_exc:  # noqa: BLE001
                 logger.warning(
@@ -490,10 +490,10 @@ async def create_booking(
         if stripe_checkout_session is not None:
             try:
                 stripe_client = _stripe_client(http_request)
-                await stripe_infra.cancel_checkout_session(
-                    stripe_client=stripe_client,
-                    secret_key=settings.stripe_secret_key,
-                    session_id=stripe_checkout_session.id,
+                await stripe_infra.call_stripe_client_method(
+                    stripe_client,
+                    "cancel_checkout_session",
+                    stripe_checkout_session.id,
                 )
             except Exception as cancel_exc:  # noqa: BLE001
                 logger.warning(
