@@ -106,6 +106,19 @@ class StripeClient:
             payload["customer"] = customer
         return await self._call(lambda: self.stripe.checkout.Session.create(**payload))
 
+    async def cancel_checkout_session(self, session_id: str) -> Any:
+        """Best-effort expire (cancel) of a Stripe Checkout Session.
+
+        Stripe uses ``Session.expire`` to prevent further payment collection on
+        an open checkout session.
+        """
+        if not self.secret_key:
+            raise ValueError("Stripe secret key not configured")
+        self.stripe.api_key = self.secret_key
+        return await self._call(
+            lambda: self.stripe.checkout.Session.expire(session_id)
+        )
+
     async def create_billing_portal_session(
         self,
         *,

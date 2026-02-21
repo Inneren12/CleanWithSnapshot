@@ -61,6 +61,28 @@ async def create_checkout_session(
         raise
 
 
+async def cancel_checkout_session(
+    stripe_client: Any,
+    secret_key: str,
+    session_id: str,
+) -> Any:
+    """Best-effort cancellation (expire) of a Stripe Checkout Session.
+
+    Stripe does not have a direct "cancel" for checkout sessions; the
+    idiomatic equivalent is ``Session.expire``, which marks the session as
+    expired so no payment can be collected.
+    """
+    stripe_client.api_key = secret_key
+    try:
+        return await stripe_circuit.call(
+            lambda: anyio.to_thread.run_sync(
+                lambda: stripe_client.checkout.Session.expire(session_id)
+            )
+        )
+    except CircuitBreakerOpenError:
+        raise
+
+
 async def parse_webhook_event(
     stripe_client: Any, payload: bytes, signature: str | None, webhook_secret: str
 ):

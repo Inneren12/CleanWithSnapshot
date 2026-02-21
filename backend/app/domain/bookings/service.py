@@ -913,6 +913,7 @@ async def create_booking(
     service_type: str | CleaningType | None = None,
     team_id: int | None = None,
     org_id: uuid.UUID | None = None,
+    booking_id: str | None = None,
 ) -> Booking:
     normalized = _normalize_datetime(starts_at)
     resolved_lead = lead
@@ -995,7 +996,7 @@ async def create_booking(
         if not await is_slot_available(normalized, duration_minutes, session, team_id=team.team_id):
             raise ValueError("Requested slot is no longer available")
 
-        booking = Booking(
+        booking_kwargs: dict = dict(
             org_id=org_id or settings.default_org_id,
             team_id=team.team_id,
             lead_id=lead_id,
@@ -1015,6 +1016,9 @@ async def create_booking(
             risk_band=risk.risk_band.value,
             risk_reasons=risk.risk_reasons,
         )
+        if booking_id is not None:
+            booking_kwargs["booking_id"] = booking_id
+        booking = Booking(**booking_kwargs)
         session.add(booking)
         await session.flush()
         await session.refresh(booking)

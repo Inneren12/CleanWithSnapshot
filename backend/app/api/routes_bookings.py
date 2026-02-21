@@ -1,4 +1,5 @@
 from datetime import timedelta
+import uuid
 
 import logging
 
@@ -353,6 +354,46 @@ async def create_booking(
     email_adapter = resolve_app_email_adapter(http_request)
     booking: Booking | None = None
 
+    # ── Phase 1: call Stripe BEFORE opening any DB transaction ───────────────
+    # We generate the booking_id up-front so it can be embedded in the Stripe
+    # session metadata without requiring an open transaction.
+    pending_booking_id = str(uuid.uuid4())
+    stripe_checkout_session = None
+
+    if deposit_decision.required and deposit_decision.deposit_cents:
+        stripe_client = _stripe_client(http_request)
+        metadata: dict[str, str] = {"booking_id": pending_booking_id}
+        if request.lead_id:
+            metadata["lead_id"] = request.lead_id
+        try:
+            stripe_checkout_session = await stripe_infra.create_checkout_session(
+                stripe_client=stripe_client,
+                secret_key=settings.stripe_secret_key,
+                amount_cents=deposit_decision.deposit_cents,
+                currency=settings.deposit_currency,
+                success_url=settings.stripe_success_url.replace("{BOOKING_ID}", pending_booking_id),
+                cancel_url=settings.stripe_cancel_url.replace("{BOOKING_ID}", pending_booking_id),
+                metadata=metadata,
+            )
+        except Exception as exc:  # noqa: BLE001
+            deposit_decision = booking_service.downgrade_deposit_requirement(
+                deposit_decision, reason="checkout_unavailable"
+            )
+            logger.warning(
+                "stripe_checkout_creation_failed",
+                extra={
+                    "extra": {
+                        "event": "policy_downgraded",
+                        "booking_id": pending_booking_id,
+                        "lead_id": request.lead_id,
+                        "reason": type(exc).__name__,
+                    }
+                },
+            )
+
+    # ── Phase 2: write booking record inside a DB transaction ─────────────────
+    # If this fails after Stripe already created a session, we compensate by
+    # expiring the Stripe session (best-effort).
     try:
         transaction_ctx = session.begin_nested() if session.in_transaction() else session.begin()
         async with transaction_ctx:
@@ -369,6 +410,7 @@ async def create_booking(
                 client_id=client_id,
                 lead=lead,
                 service_type=request.service_type,
+                booking_id=pending_booking_id,
             )
 
             try:
@@ -401,56 +443,71 @@ async def create_booking(
                     },
                 )
 
-            if deposit_decision.required and deposit_decision.deposit_cents:
-                stripe_client = _stripe_client(http_request)
-                metadata = {"booking_id": booking.booking_id}
-                if booking.lead_id:
-                    metadata["lead_id"] = booking.lead_id
-                try:
-                    checkout_session = await stripe_infra.create_checkout_session(
-                        stripe_client=stripe_client,
-                        secret_key=settings.stripe_secret_key,
-                        amount_cents=deposit_decision.deposit_cents,
-                        currency=settings.deposit_currency,
-                        success_url=settings.stripe_success_url.replace("{BOOKING_ID}", booking.booking_id),
-                        cancel_url=settings.stripe_cancel_url.replace("{BOOKING_ID}", booking.booking_id),
-                        metadata=metadata,
-                    )
-                    checkout_url = getattr(checkout_session, "url", None) or checkout_session.get("url")
-                    payment_intent = getattr(checkout_session, "payment_intent", None) or checkout_session.get("payment_intent")
-                    await booking_service.attach_checkout_session(
-                        session,
-                        booking.booking_id,
-                        checkout_session.id,
-                        payment_intent_id=payment_intent,
-                        commit=False,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    deposit_decision = booking_service.downgrade_deposit_requirement(
-                        deposit_decision, reason="checkout_unavailable"
-                    )
-                    booking.deposit_required = False
-                    booking.deposit_status = None
-                    booking.deposit_policy = list(deposit_decision.reasons)
-                    booking.deposit_cents = None
-                    booking.policy_snapshot = deposit_decision.policy_snapshot.model_dump(mode="json")
-                    await session.flush()
-                    logger.warning(
-                        "stripe_checkout_creation_failed",
-                        extra={
-                            "extra": {
-                                "event": "policy_downgraded",
-                                "booking_id": booking.booking_id,
-                                "lead_id": booking.lead_id,
-                                "reason": type(exc).__name__,
-                            }
-                        },
-                    )
+            if stripe_checkout_session is not None:
+                checkout_url = (
+                    getattr(stripe_checkout_session, "url", None)
+                    or stripe_checkout_session.get("url")
+                )
+                payment_intent = (
+                    getattr(stripe_checkout_session, "payment_intent", None)
+                    or stripe_checkout_session.get("payment_intent")
+                )
+                await booking_service.attach_checkout_session(
+                    session,
+                    booking.booking_id,
+                    stripe_checkout_session.id,
+                    payment_intent_id=payment_intent,
+                    commit=False,
+                )
 
         if booking is not None:
             await session.refresh(booking)
     except ValueError as exc:
+        # Slot conflict or other domain validation: compensate Stripe if needed.
+        if stripe_checkout_session is not None:
+            try:
+                stripe_client = _stripe_client(http_request)
+                await stripe_infra.cancel_checkout_session(
+                    stripe_client=stripe_client,
+                    secret_key=settings.stripe_secret_key,
+                    session_id=stripe_checkout_session.id,
+                )
+            except Exception as cancel_exc:  # noqa: BLE001
+                logger.warning(
+                    "stripe_session_cancel_failed",
+                    extra={
+                        "extra": {
+                            "event": "compensation_failed",
+                            "booking_id": pending_booking_id,
+                            "stripe_session_id": stripe_checkout_session.id,
+                            "reason": type(cancel_exc).__name__,
+                        }
+                    },
+                )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except Exception:
+        # Unexpected DB failure: compensate Stripe if needed.
+        if stripe_checkout_session is not None:
+            try:
+                stripe_client = _stripe_client(http_request)
+                await stripe_infra.cancel_checkout_session(
+                    stripe_client=stripe_client,
+                    secret_key=settings.stripe_secret_key,
+                    session_id=stripe_checkout_session.id,
+                )
+            except Exception as cancel_exc:  # noqa: BLE001
+                logger.warning(
+                    "stripe_session_cancel_failed",
+                    extra={
+                        "extra": {
+                            "event": "compensation_failed",
+                            "booking_id": pending_booking_id,
+                            "stripe_session_id": stripe_checkout_session.id,
+                            "reason": type(cancel_exc).__name__,
+                        }
+                    },
+                )
+        raise
 
     if booking.lead_id and lead:
         try:
