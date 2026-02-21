@@ -102,7 +102,6 @@ async def save_photo(
     org_id: uuid.UUID,
     storage: StorageBackend,
     *,
-    expected_size_bytes: int,
     audit_identity=None,
 ) -> OrderPhoto:
     content_type = _validate_content_type(upload.content_type)
@@ -119,7 +118,7 @@ async def save_photo(
         reservation = await storage_quota_service.reserve_bytes(
             session,
             org_id,
-            expected_size_bytes,
+            1,
             resource_type="order_photo",
             resource_id=photo_id,
             audit_identity=audit_identity,

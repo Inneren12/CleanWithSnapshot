@@ -51,6 +51,9 @@ where `Content-Length` exceeds the limit are rejected immediately with
 > acts as a conservative upper-bound check.  The per-chunk enforcement below provides
 > accurate byte-level gating regardless.
 
+It is **not** used as the file-size value for storage-quota accounting. Quota is
+finalized from the actual streamed file bytes written.
+
 ### 3. Per-Chunk Streaming Enforcement
 
 The upload body is consumed in **64 KB chunks**.  A running byte counter is maintained

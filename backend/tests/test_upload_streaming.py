@@ -13,6 +13,7 @@ import pytest
 
 from app.domain.bookings.db_models import Booking
 from app.domain.leads.db_models import Lead
+from app.domain.org_settings.db_models import OrganizationSettings
 from app.main import app
 from app.settings import settings
 
@@ -226,3 +227,73 @@ def test_upload_webp_allowed(client, async_session_maker, upload_root, admin_hea
     )
 
     assert response.status_code == 201
+
+
+def test_upload_without_content_length_does_not_500(
+    client, async_session_maker, upload_root, admin_headers, monkeypatch
+):
+    """Uploads should stream successfully even when Content-Length is unavailable."""
+    from starlette.datastructures import Headers
+
+    original_get = Headers.get
+
+    def _headers_get(self, key, default=None):
+        if str(key).lower() == "content-length":
+            return None
+        return original_get(self, key, default)
+
+    monkeypatch.setattr(Headers, "get", _headers_get)
+
+    booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+
+    response = client.post(
+        f"/v1/orders/{booking_id}/photos",
+        data={"phase": "AFTER"},
+        files={"file": ("chunked-like.jpg", b"chunked-stream-payload", "image/jpeg")},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 201, response.text
+
+
+def test_upload_quota_uses_streamed_file_bytes_not_request_content_length(
+    client, async_session_maker, upload_root, admin_headers, monkeypatch
+):
+    """Quota enforcement must use actual streamed bytes, not multipart Content-Length."""
+    from starlette.datastructures import Headers
+
+    booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+
+    async def _set_max_storage():
+        async with async_session_maker() as session:
+            settings_row = await session.get(OrganizationSettings, settings.default_org_id)
+            assert settings_row is not None
+            settings_row.max_storage_bytes = 64
+            settings_row.storage_bytes_used = 0
+            await session.commit()
+
+    asyncio.run(_set_max_storage())
+
+    original_get = Headers.get
+
+    def _headers_get(self, key, default=None):
+        if str(key).lower() == "content-length":
+            # Simulate multipart overhead / inflated body size hint.
+            return "5000"
+        return original_get(self, key, default)
+
+    monkeypatch.setattr(Headers, "get", _headers_get)
+
+    original_max = settings.order_photo_max_bytes
+    settings.order_photo_max_bytes = 10_000
+    try:
+        response = client.post(
+            f"/v1/orders/{booking_id}/photos",
+            data={"phase": "AFTER"},
+            files={"file": ("small.jpg", b"small-file", "image/jpeg")},
+            headers=admin_headers,
+        )
+    finally:
+        settings.order_photo_max_bytes = original_max
+
+    assert response.status_code == 201, response.text

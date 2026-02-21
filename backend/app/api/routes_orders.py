@@ -221,23 +221,25 @@ async def upload_order_photo(
         )
 
     # Enforce max size via the Content-Length header before streaming any data.
-    # If the header is absent the per-chunk limit inside save_photo() still applies.
+    # This is only a conservative upper-bound gate for 413; it is not used for
+    # storage quota accounting because multipart Content-Length includes
+    # boundaries and non-file form fields.
     max_bytes = settings.order_photo_max_bytes
     raw_cl = request.headers.get("content-length")
-    size_hint: int = 0
     if raw_cl is not None:
         try:
             declared_bytes = int(raw_cl)
         except ValueError:
-            declared_bytes = 0
-        if declared_bytes > max_bytes:
+            declared_bytes = None
+        if declared_bytes is not None and declared_bytes > max_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="File too large",
             )
-        size_hint = declared_bytes
 
-    await entitlements.enforce_storage_entitlement(request, size_hint, session=session)
+    # Storage entitlement check is kept as a lightweight preflight gate only;
+    # exact storage quota accounting is performed from streamed file bytes.
+    await entitlements.enforce_storage_entitlement(request, 1, session=session)
 
     if admin_override:
         permission_keys = permission_keys_for_request(request, identity)
@@ -266,7 +268,6 @@ async def upload_order_photo(
             uploaded_by,
             org_id,
             storage,
-            expected_size_bytes=size_hint,
             audit_identity=identity,
         )
     except storage_quota_service.OrgStorageQuotaExceeded as exc:
