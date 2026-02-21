@@ -29,3 +29,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# test artifacts
+test.db
+*.db
