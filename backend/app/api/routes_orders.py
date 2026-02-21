@@ -211,10 +211,10 @@ async def upload_order_photo(
     order = await photos_service.fetch_order(session, order_id, org_id)
     parsed_phase = booking_schemas.PhotoPhase.from_any_case(phase)
 
-    contents = await file.read()
-    size_bytes = len(contents or b"")
+    # Do not read file into memory to prevent DoS
+    content_length = request.headers.get("content-length")
+    size_bytes = int(content_length) if content_length and content_length.isdigit() else settings.order_photo_max_bytes
     await entitlements.enforce_storage_entitlement(request, size_bytes, session=session)
-    await file.seek(0)
 
     if admin_override:
         permission_keys = permission_keys_for_request(request, identity)

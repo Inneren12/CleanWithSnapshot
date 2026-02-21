@@ -1861,10 +1861,10 @@ async def worker_upload_photo(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    contents = await file.read()
-    size_bytes = len(contents or b"")
+    # Do not read file into memory to prevent DoS
+    content_length = request.headers.get("content-length")
+    size_bytes = int(content_length) if content_length and content_length.isdigit() else settings.order_photo_max_bytes
     await entitlements.enforce_storage_entitlement(request, size_bytes, session=session)
-    await file.seek(0)
     storage = _storage_backend(request)
     org_id = entitlements.resolve_org_id(request)
     try:
