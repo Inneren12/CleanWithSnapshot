@@ -16,6 +16,7 @@ from app.domain.leads.db_models import Lead
 from app.domain.reason_logs.db_models import ReasonLog
 from app.domain.time_tracking.db_models import WorkTimeEntry
 from app.settings import settings
+from pydantic import SecretStr
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +29,7 @@ def _restore_worker_settings():
         "admin_basic_password": settings.admin_basic_password,
         "worker_portal_secret": settings.worker_portal_secret,
     }
-    settings.worker_portal_secret = "test-worker-secret"
+    settings.worker_portal_secret = SecretStr("test-worker-secret")
     yield
     for key, value in original.items():
         setattr(settings, key, value)

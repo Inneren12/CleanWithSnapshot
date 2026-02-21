@@ -354,8 +354,11 @@ async def create_booking(
     booking: Booking | None = None
 
     try:
-        transaction_ctx = session.begin_nested() if session.in_transaction() else session.begin()
-        async with transaction_ctx:
+        if session.in_transaction():
+            await session.commit()
+
+        # 1. Create booking in DB transaction
+        async with session.begin():
             booking = await booking_service.create_booking(
                 starts_at=start,
                 duration_minutes=request.duration_minutes,
@@ -401,23 +404,28 @@ async def create_booking(
                     },
                 )
 
-            if deposit_decision.required and deposit_decision.deposit_cents:
-                stripe_client = _stripe_client(http_request)
-                metadata = {"booking_id": booking.booking_id}
-                if booking.lead_id:
-                    metadata["lead_id"] = booking.lead_id
-                try:
-                    checkout_session = await stripe_infra.create_checkout_session(
-                        stripe_client=stripe_client,
-                        secret_key=settings.stripe_secret_key,
-                        amount_cents=deposit_decision.deposit_cents,
-                        currency=settings.deposit_currency,
-                        success_url=settings.stripe_success_url.replace("{BOOKING_ID}", booking.booking_id),
-                        cancel_url=settings.stripe_cancel_url.replace("{BOOKING_ID}", booking.booking_id),
-                        metadata=metadata,
-                    )
-                    checkout_url = getattr(checkout_session, "url", None) or checkout_session.get("url")
-                    payment_intent = getattr(checkout_session, "payment_intent", None) or checkout_session.get("payment_intent")
+        # 2. Call Stripe (External I/O) outside DB transaction
+        if deposit_decision.required and deposit_decision.deposit_cents:
+            stripe_client = _stripe_client(http_request)
+            metadata = {"booking_id": booking.booking_id}
+            if booking.lead_id:
+                metadata["lead_id"] = booking.lead_id
+
+            try:
+                checkout_session = await stripe_infra.create_checkout_session(
+                    stripe_client=stripe_client,
+                    secret_key=settings.stripe_secret_key,
+                    amount_cents=deposit_decision.deposit_cents,
+                    currency=settings.deposit_currency,
+                    success_url=settings.stripe_success_url.replace("{BOOKING_ID}", booking.booking_id),
+                    cancel_url=settings.stripe_cancel_url.replace("{BOOKING_ID}", booking.booking_id),
+                    metadata=metadata,
+                )
+                checkout_url = getattr(checkout_session, "url", None) or checkout_session.get("url")
+                payment_intent = getattr(checkout_session, "payment_intent", None) or checkout_session.get("payment_intent")
+
+                # 3. Update booking with Stripe info in new transaction
+                async with session.begin():
                     await booking_service.attach_checkout_session(
                         session,
                         booking.booking_id,
@@ -425,30 +433,41 @@ async def create_booking(
                         payment_intent_id=payment_intent,
                         commit=False,
                     )
-                except Exception as exc:  # noqa: BLE001
-                    deposit_decision = booking_service.downgrade_deposit_requirement(
-                        deposit_decision, reason="checkout_unavailable"
-                    )
-                    booking.deposit_required = False
-                    booking.deposit_status = None
-                    booking.deposit_policy = list(deposit_decision.reasons)
-                    booking.deposit_cents = None
-                    booking.policy_snapshot = deposit_decision.policy_snapshot.model_dump(mode="json")
-                    await session.flush()
-                    logger.warning(
-                        "stripe_checkout_creation_failed",
-                        extra={
-                            "extra": {
-                                "event": "policy_downgraded",
-                                "booking_id": booking.booking_id,
-                                "lead_id": booking.lead_id,
-                                "reason": type(exc).__name__,
-                            }
-                        },
-                    )
+                    # Update local object for response
+                    booking.deposit_status = "pending"
+            except Exception as exc:  # noqa: BLE001
+                # 4. Downgrade on failure in new transaction
+                async with session.begin():
+                    booking_db = await session.get(Booking, booking.booking_id)
+                    if booking_db:
+                        deposit_decision = booking_service.downgrade_deposit_requirement(
+                            deposit_decision, reason="checkout_unavailable"
+                        )
+                        booking_db.deposit_required = False
+                        booking_db.deposit_status = None
+                        booking_db.deposit_policy = list(deposit_decision.reasons)
+                        booking_db.deposit_cents = None
+                        booking_db.policy_snapshot = deposit_decision.policy_snapshot.model_dump(mode="json")
 
-        if booking is not None:
-            await session.refresh(booking)
+                        # Update local object
+                        booking.deposit_required = False
+                        booking.deposit_status = None
+                        booking.deposit_policy = list(deposit_decision.reasons)
+                        booking.deposit_cents = None
+                        booking.policy_snapshot = deposit_decision.policy_snapshot.model_dump(mode="json")
+
+                logger.warning(
+                    "stripe_checkout_creation_failed",
+                    extra={
+                        "extra": {
+                            "event": "policy_downgraded",
+                            "booking_id": booking.booking_id,
+                            "lead_id": booking.lead_id,
+                            "reason": type(exc).__name__,
+                        }
+                    },
+                )
+
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
