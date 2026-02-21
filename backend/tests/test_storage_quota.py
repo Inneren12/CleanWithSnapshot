@@ -102,7 +102,8 @@ async def test_storage_quota_concurrent_reservations(async_session_maker):
 async def test_storage_quota_reservation_expiry_releases(async_session_maker):
     async with async_session_maker() as session:
         org = await saas_service.create_organization(session, "Expire Storage Org")
-        await org_settings_service.get_or_create_org_settings(session, org.org_id)
+        settings = await org_settings_service.get_or_create_org_settings(session, org.org_id)
+        settings.storage_bytes_used = 111
         await session.commit()
 
     async with async_session_maker() as session:
@@ -112,6 +113,9 @@ async def test_storage_quota_reservation_expiry_releases(async_session_maker):
             40,
             expires_in_seconds=-5,
         )
+        snapshot_before = await storage_quota_service.get_org_storage_quota_snapshot(session, org.org_id)
+        assert snapshot_before.storage_bytes_used == 111
+        assert snapshot_before.storage_bytes_pending == 40
         await session.commit()
 
     async with async_session_maker() as session:
@@ -122,6 +126,10 @@ async def test_storage_quota_reservation_expiry_releases(async_session_maker):
         db_reservation = await session.get(OrgStorageReservation, reservation.reservation_id)
         assert db_reservation is not None
         assert db_reservation.status == storage_quota_service.StorageReservationStatus.EXPIRED.value
+
+        snapshot = await storage_quota_service.get_org_storage_quota_snapshot(session, org.org_id)
+        assert snapshot.storage_bytes_used == 111
+        assert snapshot.storage_bytes_pending == 0
 
 
 @pytest.mark.anyio

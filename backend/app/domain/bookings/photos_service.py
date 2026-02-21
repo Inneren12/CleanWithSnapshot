@@ -20,9 +20,6 @@ from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
-RESERVATION_STEP_BYTES = 1024 * 1024
-
-
 def _allowed_mime_types() -> set[str]:
     return set(settings.order_photo_allowed_mimes)
 
@@ -148,7 +145,7 @@ async def save_photo(
                     )
 
                 if size > reserved_bytes:
-                    delta = max(size - reserved_bytes, RESERVATION_STEP_BYTES)
+                    delta = size - reserved_bytes
                     if reservation_id is None:
                         reservation = await storage_quota_service.reserve_bytes(
                             session,
