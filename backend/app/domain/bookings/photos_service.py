@@ -87,7 +87,9 @@ def _validate_content_type(content_type: str | None) -> str:
     if not content_type:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing content type")
     if content_type.lower() not in _allowed_mime_types():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported file type")
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type"
+        )
     return content_type
 
 

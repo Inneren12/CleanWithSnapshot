@@ -211,10 +211,33 @@ async def upload_order_photo(
     order = await photos_service.fetch_order(session, order_id, org_id)
     parsed_phase = booking_schemas.PhotoPhase.from_any_case(phase)
 
-    contents = await file.read()
-    size_bytes = len(contents or b"")
-    await entitlements.enforce_storage_entitlement(request, size_bytes, session=session)
-    await file.seek(0)
+    # Validate content-type early — before reading any bytes — to reject
+    # disallowed types with 415 without consuming the upload body.
+    declared_ct = (file.content_type or "").split(";")[0].strip().lower()
+    if declared_ct not in photos_service.allowed_mime_types():
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported media type",
+        )
+
+    # Enforce max size via the Content-Length header before streaming any data.
+    # If the header is absent the per-chunk limit inside save_photo() still applies.
+    max_bytes = settings.order_photo_max_bytes
+    raw_cl = request.headers.get("content-length")
+    size_hint: int = 0
+    if raw_cl is not None:
+        try:
+            declared_bytes = int(raw_cl)
+        except ValueError:
+            declared_bytes = 0
+        if declared_bytes > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="File too large",
+            )
+        size_hint = declared_bytes
+
+    await entitlements.enforce_storage_entitlement(request, size_hint, session=session)
 
     if admin_override:
         permission_keys = permission_keys_for_request(request, identity)
@@ -243,7 +266,7 @@ async def upload_order_photo(
             uploaded_by,
             org_id,
             storage,
-            expected_size_bytes=size_bytes,
+            expected_size_bytes=size_hint,
             audit_identity=identity,
         )
     except storage_quota_service.OrgStorageQuotaExceeded as exc:
