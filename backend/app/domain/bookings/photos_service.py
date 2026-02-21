@@ -20,6 +20,9 @@ from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
+RESERVATION_STEP_BYTES = 1024 * 1024
+
+
 def _allowed_mime_types() -> set[str]:
     return set(settings.order_photo_allowed_mimes)
 
@@ -112,7 +115,7 @@ async def save_photo(
     hasher = hashlib.sha256()
     size = 0
     stored: StoredObject | None = None
-    reservation_ids: list[uuid.UUID] = []
+    reservation_id: uuid.UUID | None = None
     finalized_reservation_id: uuid.UUID | None = None
     reserved_bytes = 0
     photo: OrderPhoto | None = None
@@ -127,11 +130,11 @@ async def save_photo(
                 resource_id=photo_id,
                 audit_identity=audit_identity,
             )
-            reservation_ids.append(reservation.reservation_id)
+            reservation_id = reservation.reservation_id
             reserved_bytes = expected_size_bytes
 
         async def _stream():
-            nonlocal size, reserved_bytes
+            nonlocal reservation_id, size, reserved_bytes
             while True:
                 chunk = await upload.read(64 * 1024)
                 if not chunk:
@@ -145,16 +148,24 @@ async def save_photo(
                     )
 
                 if size > reserved_bytes:
-                    delta = size - reserved_bytes
-                    reservation = await storage_quota_service.reserve_bytes(
-                        session,
-                        org_id,
-                        delta,
-                        resource_type="order_photo",
-                        resource_id=photo_id,
-                        audit_identity=audit_identity,
-                    )
-                    reservation_ids.append(reservation.reservation_id)
+                    delta = max(size - reserved_bytes, RESERVATION_STEP_BYTES)
+                    if reservation_id is None:
+                        reservation = await storage_quota_service.reserve_bytes(
+                            session,
+                            org_id,
+                            delta,
+                            resource_type="order_photo",
+                            resource_id=photo_id,
+                            audit_identity=audit_identity,
+                        )
+                        reservation_id = reservation.reservation_id
+                    else:
+                        await storage_quota_service.extend_reservation(
+                            session,
+                            reservation_id,
+                            delta,
+                            audit_identity=audit_identity,
+                        )
                     reserved_bytes += delta
 
                 hasher.update(chunk)
@@ -167,21 +178,23 @@ async def save_photo(
             storage_provider = "cloudflare_images"
 
         actual_size = stored.size if stored else size
-        if reservation_ids:
+        if reservation_id is not None:
+            if actual_size > reserved_bytes:
+                delta = actual_size - reserved_bytes
+                await storage_quota_service.extend_reservation(
+                    session,
+                    reservation_id,
+                    delta,
+                    audit_identity=audit_identity,
+                )
+                reserved_bytes += delta
             await storage_quota_service.finalize_reservation(
                 session,
-                reservation_ids[0],
+                reservation_id,
                 actual_size,
                 audit_identity=audit_identity,
             )
-            finalized_reservation_id = reservation_ids[0]
-            for reservation_id in reservation_ids[1:]:
-                await storage_quota_service.release_reservation(
-                    session,
-                    reservation_id,
-                    reason="consolidated_after_finalize",
-                    audit_identity=audit_identity,
-                )
+            finalized_reservation_id = reservation_id
 
         photo = OrderPhoto(
             photo_id=photo_id,
@@ -227,47 +240,38 @@ async def save_photo(
     except storage_quota_service.OrgStorageQuotaExceeded:
         target_key = stored.key if stored else key
         await storage.delete(key=target_key)
-        for reservation_id in reservation_ids:
-            if reservation_id == finalized_reservation_id:
-                continue
+        if reservation_id is not None and reservation_id != finalized_reservation_id:
             await storage_quota_service.release_reservation(
                 session,
                 reservation_id,
                 reason="finalize_rejected",
                 audit_identity=audit_identity,
             )
-        if reservation_ids:
             await session.commit()
         raise
     except HTTPException:
         target_key = stored.key if stored else key
         await storage.delete(key=target_key)
-        for reservation_id in reservation_ids:
-            if reservation_id == finalized_reservation_id:
-                continue
+        if reservation_id is not None and reservation_id != finalized_reservation_id:
             await storage_quota_service.release_reservation(
                 session,
                 reservation_id,
                 reason="upload_failed",
                 audit_identity=audit_identity,
             )
-        if reservation_ids:
             await session.commit()
         raise
     except Exception:  # noqa: BLE001
         target_key = stored.key if stored else key
         await storage.delete(key=target_key)
         logger.exception("order_photo_save_failed", extra={"extra": {"order_id": order.booking_id}})
-        for reservation_id in reservation_ids:
-            if reservation_id == finalized_reservation_id:
-                continue
+        if reservation_id is not None and reservation_id != finalized_reservation_id:
             await storage_quota_service.release_reservation(
                 session,
                 reservation_id,
                 reason="upload_failed",
                 audit_identity=audit_identity,
             )
-        if reservation_ids:
             await session.commit()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed")
     finally:

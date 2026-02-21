@@ -50,6 +50,9 @@ immediately with `413 Request Entity Too Large`.
 > (DoS) check. It is **never** used for business quota reservation or billing, as
 > multipart `Content-Length` includes protocol overhead (boundaries, headers) and
 > does not reflect the exact file size.
+>
+> The API performs only a plan-active entitlement check before streaming;
+> byte-based quota checks happen only on streamed file bytes.
 
 ### 3. Per-Chunk Streaming Enforcement (DoS & Quota)
 

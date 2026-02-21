@@ -280,6 +280,100 @@ async def reserve_bytes(
     )
 
 
+async def extend_reservation(
+    session: AsyncSession,
+    reservation_id: uuid.UUID,
+    bytes_delta: int,
+    *,
+    audit_identity: AdminIdentity | Any | None = None,
+) -> StorageReservation:
+    if bytes_delta < 0:
+        raise ValueError("bytes_delta must be non-negative")
+
+    now = _now_for_db(session)
+    result = await session.execute(
+        sa.select(OrgStorageReservation)
+        .where(OrgStorageReservation.reservation_id == reservation_id)
+        .with_for_update()
+    )
+    reservation = result.scalar_one_or_none()
+    if reservation is None:
+        raise ValueError("reservation_not_found")
+    if reservation.status == StorageReservationStatus.FINALIZED.value:
+        raise ValueError("reservation_finalized")
+    if reservation.status == StorageReservationStatus.RELEASED.value:
+        raise ValueError("reservation_released")
+
+    await _expire_pending_reservations(session, reservation.org_id, now)
+    if reservation.status != StorageReservationStatus.PENDING.value:
+        raise ValueError("reservation_not_pending")
+
+    update_stmt = (
+        sa.update(OrganizationSettings)
+        .where(OrganizationSettings.org_id == reservation.org_id)
+        .where(
+            sa.or_(
+                OrganizationSettings.max_storage_bytes.is_(None),
+                OrganizationSettings.storage_bytes_used + bytes_delta
+                <= OrganizationSettings.max_storage_bytes,
+            )
+        )
+        .values(
+            storage_bytes_used=OrganizationSettings.storage_bytes_used + bytes_delta,
+        )
+    )
+    update_result = await session.execute(update_stmt)
+    if not update_result.rowcount:
+        snapshot = await get_org_storage_quota_snapshot(session, reservation.org_id)
+        identity = audit_identity or _system_identity(reservation.org_id)
+        await admin_audit_service.record_action(
+            session,
+            identity=identity,  # type: ignore[arg-type]
+            org_id=reservation.org_id,
+            action="org_storage_quota_rejected",
+            resource_type=reservation.resource_type or "storage",
+            resource_id=reservation.resource_id,
+            before=None,
+            after={
+                "bytes_requested": bytes_delta,
+                "storage_bytes_used": snapshot.storage_bytes_used,
+                "storage_bytes_pending": snapshot.storage_bytes_pending,
+                "max_storage_bytes": snapshot.max_storage_bytes,
+                "remaining_bytes": snapshot.remaining_bytes,
+            },
+        )
+        logger.warning(
+            "org_storage_quota_rejected",
+            extra={
+                "extra": {
+                    "org_id": str(reservation.org_id),
+                    "reason": "hard_limit",
+                    "resource_type": reservation.resource_type or "storage",
+                    "resource_id": reservation.resource_id,
+                    "bytes_requested": bytes_delta,
+                    "storage_bytes_used": snapshot.storage_bytes_used,
+                    "storage_bytes_pending": snapshot.storage_bytes_pending,
+                    "max_storage_bytes": snapshot.max_storage_bytes,
+                    "remaining_bytes": snapshot.remaining_bytes,
+                }
+            },
+        )
+        metrics.record_org_storage_quota_rejection("hard_limit")
+        raise OrgStorageQuotaExceeded(snapshot, bytes_delta)
+
+    reservation.bytes_reserved += bytes_delta
+    await session.flush()
+    return StorageReservation(
+        reservation_id=reservation.reservation_id,
+        org_id=reservation.org_id,
+        bytes_reserved=reservation.bytes_reserved,
+        expires_at=_ensure_utc(reservation.expires_at),
+        status=StorageReservationStatus.PENDING,
+        resource_type=reservation.resource_type,
+        resource_id=reservation.resource_id,
+    )
+
+
 async def finalize_reservation(
     session: AsyncSession,
     reservation_id: uuid.UUID,

@@ -224,7 +224,6 @@ async def upload_order_photo(
     # If the header is absent the per-chunk limit inside save_photo() still applies.
     max_bytes = settings.order_photo_max_bytes
     raw_cl = request.headers.get("content-length")
-    size_hint: int | None = None
     if raw_cl is not None:
         try:
             declared_bytes = int(raw_cl)
@@ -235,14 +234,10 @@ async def upload_order_photo(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="File too large",
             )
-        size_hint = declared_bytes
-
-    # Perform a soft entitlement check (size=0) to ensure the organization has
-    # a valid plan and is not blocked, without reserving specific bytes yet.
-    # Actual quota usage is enforced based on streamed bytes in save_photo.
+    # Perform a soft entitlement check (size=None) to ensure the organization
+    # has a valid plan and is not blocked, without using multipart size hints.
+    # Actual quota usage is enforced on streamed file bytes in save_photo.
     await entitlements.enforce_storage_plan_active(request, session=session)
-    if size_hint is not None:
-        await entitlements.enforce_storage_entitlement(request, size_hint, session=session)
 
     if admin_override:
         permission_keys = permission_keys_for_request(request, identity)

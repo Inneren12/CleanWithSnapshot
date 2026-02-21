@@ -114,7 +114,7 @@ def test_upload_missing_content_length_succeeds(client, async_session_maker, upl
     booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
 
     # Simulate missing Content-Length by sending an empty string, which triggers
-    # the same fallback path (size_hint=0) as a missing header.
+    # the same fallback path as a missing header.
     headers = {**admin_headers, "Content-Length": ""}
 
     response = client.post(
@@ -127,6 +127,66 @@ def test_upload_missing_content_length_succeeds(client, async_session_maker, upl
     assert response.status_code == 201
     body = response.json()
     assert body["size_bytes"] > 0
+
+
+def test_upload_skips_content_length_quota_gating(
+    client, async_session_maker, upload_root, admin_headers, monkeypatch
+):
+    """Multipart Content-Length must not be used for storage entitlement bytes gating."""
+    from app.api import entitlements
+
+    booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+
+    async def _should_not_be_called(request, bytes_to_add, session):
+        raise AssertionError(f"unexpected entitlement bytes check: {bytes_to_add}")
+
+    monkeypatch.setattr(entitlements, "enforce_storage_entitlement", _should_not_be_called)
+
+    response = client.post(
+        f"/v1/orders/{booking_id}/photos",
+        data={"phase": "AFTER"},
+        files={"file": ("near-limit.jpg", b"X" * 32, "image/jpeg")},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 201
+
+
+def test_upload_finalizes_with_actual_not_exceeding_reserved(
+    client, async_session_maker, upload_root, admin_headers, monkeypatch
+):
+    """Finalize must never be called with actual_bytes greater than reserved bytes."""
+    from sqlalchemy import select
+
+    from app.domain.storage_quota import service as storage_quota_service
+    from app.domain.storage_quota.db_models import OrgStorageReservation
+
+    booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+    original_finalize = storage_quota_service.finalize_reservation
+
+    async def _checked_finalize(session, reservation_id, actual_bytes, *, audit_identity=None):
+        result = await session.execute(
+            select(OrgStorageReservation).where(OrgStorageReservation.reservation_id == reservation_id)
+        )
+        reservation = result.scalar_one()
+        assert actual_bytes <= reservation.bytes_reserved
+        return await original_finalize(
+            session,
+            reservation_id,
+            actual_bytes,
+            audit_identity=audit_identity,
+        )
+
+    monkeypatch.setattr(storage_quota_service, "finalize_reservation", _checked_finalize)
+
+    response = client.post(
+        f"/v1/orders/{booking_id}/photos",
+        data={"phase": "AFTER"},
+        files={"file": ("finalize-check.jpg", b"Y" * (96 * 1024), "image/jpeg")},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 201
 
 
 def test_upload_quota_enforcement_on_actual_bytes(client, async_session_maker, upload_root, admin_headers):
