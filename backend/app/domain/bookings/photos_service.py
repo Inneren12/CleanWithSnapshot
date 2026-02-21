@@ -126,6 +126,10 @@ async def save_photo(
         )
         reservation_id = reservation.reservation_id
 
+        # Check quota availability before streaming to enforce mid-stream
+        snapshot = await storage_quota_service.get_org_storage_quota_snapshot(session, org_id)
+        remaining = snapshot.remaining_bytes
+
         async def _stream():
             nonlocal size
             while True:
@@ -133,10 +137,20 @@ async def save_photo(
                 if not chunk:
                     break
                 size += len(chunk)
+
+                # Defense-in-depth: enforce system max size during streaming
                 if size > _max_bytes():
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large"
                     )
+
+                # Enforce org storage quota during streaming
+                if remaining is not None and size > remaining:
+                    # Raise Exceeded exception to be caught and mapped to 409 Conflict
+                    raise storage_quota_service.OrgStorageQuotaExceeded(
+                        snapshot, size
+                    )
+
                 hasher.update(chunk)
                 yield chunk
 

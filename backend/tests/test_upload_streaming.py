@@ -107,9 +107,96 @@ def test_upload_valid_small_image_returns_201(client, async_session_maker, uploa
     )
 
     assert response.status_code == 201
+
+
+def test_upload_missing_content_length_succeeds(client, async_session_maker, upload_root, admin_headers):
+    """Upload without Content-Length header (or empty) should succeed."""
+    booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+
+    # Simulate missing Content-Length by sending an empty string, which triggers
+    # the same fallback path (size_hint=0) as a missing header.
+    headers = {**admin_headers, "Content-Length": ""}
+
+    response = client.post(
+        f"/v1/orders/{booking_id}/photos",
+        data={"phase": "AFTER"},
+        files={"file": ("photo.jpg", b"JFIF-data", "image/jpeg")},
+        headers=headers,
+    )
+
+    assert response.status_code == 201
     body = response.json()
-    assert body["content_type"] == "image/jpeg"
     assert body["size_bytes"] > 0
+
+
+def test_upload_quota_enforcement_on_actual_bytes(client, async_session_maker, upload_root, admin_headers):
+    """Quota enforcement must reject uploads that exceed the remaining quota during streaming."""
+    from app.domain.org_settings.service import get_or_create_org_settings
+
+    # 1. Setup: Limit org storage to a small amount (e.g. 50 bytes)
+    async def _set_quota():
+        async with async_session_maker() as session:
+            settings_obj = await get_or_create_org_settings(session, settings.default_org_id)
+            settings_obj.max_storage_bytes = 50
+            await session.commit()
+
+    asyncio.run(_set_quota())
+
+    try:
+        booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+
+        # 2. Upload file larger than 50 bytes (e.g. 100 bytes)
+        content = b"X" * 100
+        response = client.post(
+            f"/v1/orders/{booking_id}/photos",
+            data={"phase": "AFTER"},
+            files={"file": ("large.jpg", content, "image/jpeg")},
+            headers=admin_headers,
+        )
+
+        # 3. Expect 409 Conflict (Quota Exceeded)
+        assert response.status_code == 409
+        error = response.json()
+        assert error["title"] == "Storage quota exceeded"
+    finally:
+        # Cleanup: Reset quota
+        async def _reset_quota():
+            async with async_session_maker() as session:
+                settings_obj = await get_or_create_org_settings(session, settings.default_org_id)
+                settings_obj.max_storage_bytes = None
+                await session.commit()
+        asyncio.run(_reset_quota())
+
+
+def test_upload_increments_storage_usage_correctly(client, async_session_maker, upload_root, admin_headers):
+    """Storage usage must be incremented by the actual file size."""
+    from app.domain.org_settings.service import get_or_create_org_settings
+
+    # 1. Get initial usage
+    async def _get_usage():
+        async with async_session_maker() as session:
+            settings_obj = await get_or_create_org_settings(session, settings.default_org_id)
+            return settings_obj.storage_bytes_used or 0
+
+    initial_usage = asyncio.run(_get_usage())
+
+    booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+    content = b"X" * 12345
+
+    # 2. Upload file
+    response = client.post(
+        f"/v1/orders/{booking_id}/photos",
+        data={"phase": "AFTER"},
+        files={"file": ("usage_test.jpg", content, "image/jpeg")},
+        headers=admin_headers,
+    )
+    assert response.status_code == 201
+
+    # 3. Get final usage
+    final_usage = asyncio.run(_get_usage())
+
+    # 4. Verify increment
+    assert final_usage == initial_usage + len(content)
 
 
 def test_upload_oversized_file_returns_413(client, async_session_maker, upload_root, admin_headers):

@@ -237,7 +237,10 @@ async def upload_order_photo(
             )
         size_hint = declared_bytes
 
-    await entitlements.enforce_storage_entitlement(request, size_hint, session=session)
+    # Perform a soft entitlement check (size=0) to ensure the organization has
+    # a valid plan and is not blocked, without reserving specific bytes yet.
+    # Actual quota usage is enforced based on streamed bytes in save_photo.
+    await entitlements.enforce_storage_entitlement(request, 0, session=session)
 
     if admin_override:
         permission_keys = permission_keys_for_request(request, identity)
@@ -258,6 +261,8 @@ async def upload_order_photo(
     uploaded_by = identity.role.value or identity.username
     storage = _storage_backend(request)
     try:
+        # Pass 0 for expected_size_bytes to avoid reserving quota based on
+        # unreliable Content-Length. Quota is enforced on actual streamed bytes.
         photo = await photos_service.save_photo(
             session,
             order,
@@ -266,7 +271,7 @@ async def upload_order_photo(
             uploaded_by,
             org_id,
             storage,
-            expected_size_bytes=size_hint,
+            expected_size_bytes=0,
             audit_identity=identity,
         )
     except storage_quota_service.OrgStorageQuotaExceeded as exc:
