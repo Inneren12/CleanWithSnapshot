@@ -112,26 +112,26 @@ async def save_photo(
     hasher = hashlib.sha256()
     size = 0
     stored: StoredObject | None = None
-    reservation_id: uuid.UUID | None = None
+    reservation_ids: list[uuid.UUID] = []
+    finalized_reservation_id: uuid.UUID | None = None
+    reserved_bytes = 0
     photo: OrderPhoto | None = None
 
     try:
-        reservation = await storage_quota_service.reserve_bytes(
-            session,
-            org_id,
-            expected_size_bytes,
-            resource_type="order_photo",
-            resource_id=photo_id,
-            audit_identity=audit_identity,
-        )
-        reservation_id = reservation.reservation_id
-
-        # Check quota availability before streaming to enforce mid-stream
-        snapshot = await storage_quota_service.get_org_storage_quota_snapshot(session, org_id)
-        remaining = snapshot.remaining_bytes
+        if expected_size_bytes > 0:
+            reservation = await storage_quota_service.reserve_bytes(
+                session,
+                org_id,
+                expected_size_bytes,
+                resource_type="order_photo",
+                resource_id=photo_id,
+                audit_identity=audit_identity,
+            )
+            reservation_ids.append(reservation.reservation_id)
+            reserved_bytes = expected_size_bytes
 
         async def _stream():
-            nonlocal size
+            nonlocal size, reserved_bytes
             while True:
                 chunk = await upload.read(64 * 1024)
                 if not chunk:
@@ -144,12 +144,18 @@ async def save_photo(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large"
                     )
 
-                # Enforce org storage quota during streaming
-                if remaining is not None and size > remaining:
-                    # Raise Exceeded exception to be caught and mapped to 409 Conflict
-                    raise storage_quota_service.OrgStorageQuotaExceeded(
-                        snapshot, size
+                if size > reserved_bytes:
+                    delta = size - reserved_bytes
+                    reservation = await storage_quota_service.reserve_bytes(
+                        session,
+                        org_id,
+                        delta,
+                        resource_type="order_photo",
+                        resource_id=photo_id,
+                        audit_identity=audit_identity,
                     )
+                    reservation_ids.append(reservation.reservation_id)
+                    reserved_bytes += delta
 
                 hasher.update(chunk)
                 yield chunk
@@ -160,12 +166,22 @@ async def save_photo(
         if storage_provider == "cf_images":
             storage_provider = "cloudflare_images"
 
-        await storage_quota_service.finalize_reservation(
-            session,
-            reservation_id,
-            stored.size if stored else size,
-            audit_identity=audit_identity,
-        )
+        actual_size = stored.size if stored else size
+        if reservation_ids:
+            await storage_quota_service.finalize_reservation(
+                session,
+                reservation_ids[0],
+                actual_size,
+                audit_identity=audit_identity,
+            )
+            finalized_reservation_id = reservation_ids[0]
+            for reservation_id in reservation_ids[1:]:
+                await storage_quota_service.release_reservation(
+                    session,
+                    reservation_id,
+                    reason="consolidated_after_finalize",
+                    audit_identity=audit_identity,
+                )
 
         photo = OrderPhoto(
             photo_id=photo_id,
@@ -175,7 +191,7 @@ async def save_photo(
             filename=filename,
             original_filename=upload.filename,
             content_type=content_type,
-            size_bytes=stored.size if stored else size,
+            size_bytes=actual_size,
             sha256=hasher.hexdigest(),
             uploaded_by=uploaded_by,
             storage_provider=storage_provider,
@@ -209,40 +225,49 @@ async def save_photo(
         )
         return photo
     except storage_quota_service.OrgStorageQuotaExceeded:
-        if stored:
-            await storage.delete(key=stored.key)
-        if reservation_id:
+        target_key = stored.key if stored else key
+        await storage.delete(key=target_key)
+        for reservation_id in reservation_ids:
+            if reservation_id == finalized_reservation_id:
+                continue
             await storage_quota_service.release_reservation(
                 session,
                 reservation_id,
                 reason="finalize_rejected",
                 audit_identity=audit_identity,
             )
+        if reservation_ids:
             await session.commit()
         raise
     except HTTPException:
-        if stored:
-            await storage.delete(key=stored.key)
-        if reservation_id:
+        target_key = stored.key if stored else key
+        await storage.delete(key=target_key)
+        for reservation_id in reservation_ids:
+            if reservation_id == finalized_reservation_id:
+                continue
             await storage_quota_service.release_reservation(
                 session,
                 reservation_id,
                 reason="upload_failed",
                 audit_identity=audit_identity,
             )
+        if reservation_ids:
             await session.commit()
         raise
     except Exception:  # noqa: BLE001
-        if stored:
-            await storage.delete(key=stored.key)
+        target_key = stored.key if stored else key
+        await storage.delete(key=target_key)
         logger.exception("order_photo_save_failed", extra={"extra": {"order_id": order.booking_id}})
-        if reservation_id:
+        for reservation_id in reservation_ids:
+            if reservation_id == finalized_reservation_id:
+                continue
             await storage_quota_service.release_reservation(
                 session,
                 reservation_id,
                 reason="upload_failed",
                 audit_identity=audit_identity,
             )
+        if reservation_ids:
             await session.commit()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed")
     finally:

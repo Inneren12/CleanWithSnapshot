@@ -1861,10 +1861,7 @@ async def worker_upload_photo(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    contents = await file.read()
-    size_bytes = len(contents or b"")
-    await entitlements.enforce_storage_entitlement(request, size_bytes, session=session)
-    await file.seek(0)
+    await entitlements.enforce_storage_plan_active(request, session=session)
     storage = _storage_backend(request)
     org_id = entitlements.resolve_org_id(request)
     try:
@@ -1876,7 +1873,7 @@ async def worker_upload_photo(
             identity.username,
             org_id,
             storage,
-            expected_size_bytes=size_bytes,
+            expected_size_bytes=0,
             audit_identity=identity,
         )
     except storage_quota_service.OrgStorageQuotaExceeded as exc:

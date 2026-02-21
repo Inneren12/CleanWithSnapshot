@@ -162,7 +162,7 @@ async def require_booking_entitlement(
 
 async def enforce_storage_entitlement(
     request: Request,
-    bytes_to_add: int,
+    bytes_to_add: int | None,
     session: AsyncSession = Depends(get_db_session),
 ) -> Plan:
     await _ensure_saas_identity_if_token_present(request)
@@ -170,6 +170,9 @@ async def enforce_storage_entitlement(
         return get_plan(None)
     org_id = resolve_org_id(request)
     plan, usage = await _plan_and_usage(session, org_id)
+    if bytes_to_add is None:
+        return plan
+
     limit_bytes = plan.limits.storage_gb * 1024 * 1024 * 1024
     if usage["storage_bytes"] + bytes_to_add > limit_bytes:
         request_id = _resolve_request_id(request)
@@ -207,6 +210,13 @@ async def enforce_storage_entitlement(
             detail="Storage limit reached for current plan",
         )
     return plan
+
+
+async def enforce_storage_plan_active(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> Plan:
+    return await enforce_storage_entitlement(request, None, session=session)
 
 
 def record_usage(metric: str, quantity_getter: Callable[[Request], int], resource_id_getter: Callable[[Request], str | None] | None = None):
