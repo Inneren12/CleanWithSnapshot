@@ -139,28 +139,6 @@ async def _pending_bytes(session: AsyncSession, org_id: uuid.UUID, now: datetime
 
 
 async def _expire_pending_reservations(session: AsyncSession, org_id: uuid.UUID, now: datetime) -> int:
-    expired_bytes = await session.scalar(
-        sa.select(sa.func.coalesce(sa.func.sum(OrgStorageReservation.bytes_reserved), 0))
-        .where(OrgStorageReservation.org_id == org_id)
-        .where(OrgStorageReservation.status == StorageReservationStatus.PENDING.value)
-        .where(OrgStorageReservation.expires_at <= now)
-    )
-    expired_bytes = int(expired_bytes or 0)
-    if expired_bytes:
-        await session.execute(
-            sa.update(OrganizationSettings)
-            .where(OrganizationSettings.org_id == org_id)
-            .values(
-                storage_bytes_used=sa.case(
-                    (
-                        OrganizationSettings.storage_bytes_used >= expired_bytes,
-                        OrganizationSettings.storage_bytes_used - expired_bytes,
-                    ),
-                    else_=0,
-                )
-            )
-        )
-
     stmt = (
         sa.update(OrgStorageReservation)
         .where(OrgStorageReservation.org_id == org_id)
@@ -178,11 +156,10 @@ async def get_org_storage_quota_snapshot(
     now = _now_for_db(session)
     record = await org_settings_service.get_or_create_org_settings(session, org_id)
     pending = await _pending_bytes(session, org_id, now)
-    total_used = int(record.storage_bytes_used or 0)
-    used = max(total_used - pending, 0)
     return _snapshot(
         org_id,
-        storage_bytes_used=used,
+        # Invariant: pending tracks reserved bytes; used tracks finalized bytes.
+        storage_bytes_used=int(record.storage_bytes_used or 0),
         storage_bytes_pending=pending,
         max_storage_bytes=record.max_storage_bytes,
     )
@@ -201,26 +178,13 @@ async def reserve_bytes(
     if bytes_requested < 0:
         raise ValueError("bytes_requested must be non-negative")
 
-    await org_settings_service.get_or_create_org_settings(session, org_id)
+    record = await _lock_org_settings(session, org_id)
     now = _now_for_db(session)
     await _expire_pending_reservations(session, org_id, now)
+    used = int(record.storage_bytes_used or 0)
+    pending = await _pending_bytes(session, org_id, now)
 
-    update_stmt = (
-        sa.update(OrganizationSettings)
-        .where(OrganizationSettings.org_id == org_id)
-        .where(
-            sa.or_(
-                OrganizationSettings.max_storage_bytes.is_(None),
-                OrganizationSettings.storage_bytes_used + bytes_requested
-                <= OrganizationSettings.max_storage_bytes,
-            )
-        )
-        .values(
-            storage_bytes_used=OrganizationSettings.storage_bytes_used + bytes_requested,
-        )
-    )
-    update_result = await session.execute(update_stmt)
-    if not update_result.rowcount:
+    if record.max_storage_bytes is not None and used + pending + bytes_requested > record.max_storage_bytes:
         snapshot = await get_org_storage_quota_snapshot(session, org_id)
         identity = audit_identity or _system_identity(org_id)
         await admin_audit_service.record_action(
@@ -308,22 +272,10 @@ async def extend_reservation(
     if reservation.status != StorageReservationStatus.PENDING.value:
         raise ValueError("reservation_not_pending")
 
-    update_stmt = (
-        sa.update(OrganizationSettings)
-        .where(OrganizationSettings.org_id == reservation.org_id)
-        .where(
-            sa.or_(
-                OrganizationSettings.max_storage_bytes.is_(None),
-                OrganizationSettings.storage_bytes_used + bytes_delta
-                <= OrganizationSettings.max_storage_bytes,
-            )
-        )
-        .values(
-            storage_bytes_used=OrganizationSettings.storage_bytes_used + bytes_delta,
-        )
-    )
-    update_result = await session.execute(update_stmt)
-    if not update_result.rowcount:
+    record = await _lock_org_settings(session, reservation.org_id)
+    pending = await _pending_bytes(session, reservation.org_id, now)
+    used = int(record.storage_bytes_used or 0)
+    if record.max_storage_bytes is not None and used + pending + bytes_delta > record.max_storage_bytes:
         snapshot = await get_org_storage_quota_snapshot(session, reservation.org_id)
         identity = audit_identity or _system_identity(reservation.org_id)
         await admin_audit_service.record_action(
@@ -409,17 +361,16 @@ async def finalize_reservation(
     record = await _lock_org_settings(session, reservation.org_id)
     await _expire_pending_reservations(session, reservation.org_id, now)
     total_used = int(record.storage_bytes_used or 0)
-    reserved_delta = (
+    pending_now = await _pending_bytes(session, reservation.org_id, now)
+    pending_released = (
         reservation.bytes_reserved if reservation.status == StorageReservationStatus.PENDING.value else 0
     )
-    projected_total = total_used - reserved_delta + actual_bytes
+    projected_total = total_used + (pending_now - pending_released) + actual_bytes
 
     if record.max_storage_bytes is not None and projected_total > record.max_storage_bytes:
-        pending_now = await _pending_bytes(session, reservation.org_id, now)
-        used_actual = max(total_used - pending_now, 0)
         snapshot = _snapshot(
             reservation.org_id,
-            storage_bytes_used=used_actual,
+            storage_bytes_used=total_used,
             storage_bytes_pending=pending_now,
             max_storage_bytes=record.max_storage_bytes,
         )
@@ -462,7 +413,7 @@ async def finalize_reservation(
         raise OrgStorageQuotaExceeded(snapshot, actual_bytes)
 
     if reservation.status in {StorageReservationStatus.PENDING.value, StorageReservationStatus.EXPIRED.value}:
-        record.storage_bytes_used = projected_total
+        record.storage_bytes_used = total_used + actual_bytes
     await session.execute(
         sa.update(OrgStorageReservation)
         .where(OrgStorageReservation.reservation_id == reservation.reservation_id)
@@ -531,11 +482,6 @@ async def release_reservation(
             resource_type=reservation.resource_type,
             resource_id=reservation.resource_id,
         )
-
-    if reservation.status == StorageReservationStatus.PENDING.value:
-        record = await _lock_org_settings(session, reservation.org_id)
-        used = int(record.storage_bytes_used or 0)
-        record.storage_bytes_used = max(used - reservation.bytes_reserved, 0)
 
     reservation.status = StorageReservationStatus.RELEASED.value
     reservation.released_at = now

@@ -66,6 +66,14 @@ async def _create_booking_with_consent(session_maker) -> str:
         return booking.booking_id
 
 
+async def _get_quota_state(session_maker):
+    from app.domain.storage_quota import service as storage_quota_service
+
+    async with session_maker() as session:
+        snapshot = await storage_quota_service.get_org_storage_quota_snapshot(session, settings.default_org_id)
+        return snapshot.storage_bytes_used, snapshot.storage_bytes_pending
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -248,14 +256,14 @@ def test_upload_quota_near_limit_allows_exact_remaining(
             settings_obj.storage_bytes_used = 0
             await session.commit()
 
-    asyncio.run(_set_quota(100))
+    asyncio.run(_set_quota(3 * 1024 * 1024))
     try:
         booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
 
         first = client.post(
             f"/v1/orders/{booking_id}/photos",
             data={"phase": "AFTER"},
-            files={"file": ("first.jpg", b"A" * 60, "image/jpeg")},
+            files={"file": ("first.jpg", b"A" * (1024 * 1024), "image/jpeg")},
             headers=admin_headers,
         )
         assert first.status_code == 201
@@ -263,7 +271,7 @@ def test_upload_quota_near_limit_allows_exact_remaining(
         exact_remaining = client.post(
             f"/v1/orders/{booking_id}/photos",
             data={"phase": "AFTER"},
-            files={"file": ("second.jpg", b"B" * 40, "image/jpeg")},
+            files={"file": ("second.jpg", b"B" * (1024 * 1024), "image/jpeg")},
             headers=admin_headers,
         )
         assert exact_remaining.status_code == 201
@@ -271,7 +279,7 @@ def test_upload_quota_near_limit_allows_exact_remaining(
         exceed = client.post(
             f"/v1/orders/{booking_id}/photos",
             data={"phase": "AFTER"},
-            files={"file": ("third.jpg", b"C", "image/jpeg")},
+            files={"file": ("third.jpg", b"C" * (1024 * 1024 + 1), "image/jpeg")},
             headers=admin_headers,
         )
         assert exceed.status_code == 409
@@ -282,7 +290,7 @@ def test_upload_quota_near_limit_allows_exact_remaining(
 def test_upload_quota_exceeded_cleans_partial_local_file(
     client, async_session_maker, upload_root, admin_headers
 ):
-    """A quota failure during streaming must not leave partial files in local storage."""
+    """A quota failure during streaming must not leave partial files in local storage or leak usage."""
     from app.domain.org_settings.service import get_or_create_org_settings
 
     async def _set_quota(max_bytes: int):
@@ -302,6 +310,7 @@ def test_upload_quota_exceeded_cleans_partial_local_file(
     asyncio.run(_set_quota(64 * 1024))
     try:
         booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+        used_before, pending_before = asyncio.run(_get_quota_state(async_session_maker))
         response = client.post(
             f"/v1/orders/{booking_id}/photos",
             data={"phase": "AFTER"},
@@ -311,26 +320,23 @@ def test_upload_quota_exceeded_cleans_partial_local_file(
 
         assert response.status_code == 409
         assert not [p for p in Path(upload_root).rglob("*") if p.is_file()], "Partial upload file should be deleted"
+        used_after, pending_after = asyncio.run(_get_quota_state(async_session_maker))
+        assert used_after == used_before
+        assert pending_before == 0
+        assert pending_after == 0
     finally:
         asyncio.run(_reset_quota())
 
 
 def test_upload_increments_storage_usage_correctly(client, async_session_maker, upload_root, admin_headers):
-    """Storage usage must be incremented by the actual file size."""
-    from app.domain.org_settings.service import get_or_create_org_settings
+    """A successful upload increases used by exactly file bytes and leaves no pending bytes."""
 
-    # 1. Get initial usage
-    async def _get_usage():
-        async with async_session_maker() as session:
-            settings_obj = await get_or_create_org_settings(session, settings.default_org_id)
-            return settings_obj.storage_bytes_used or 0
-
-    initial_usage = asyncio.run(_get_usage())
+    used_before, pending_before = asyncio.run(_get_quota_state(async_session_maker))
+    assert pending_before == 0
 
     booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
     content = b"X" * 12345
 
-    # 2. Upload file
     response = client.post(
         f"/v1/orders/{booking_id}/photos",
         data={"phase": "AFTER"},
@@ -339,11 +345,9 @@ def test_upload_increments_storage_usage_correctly(client, async_session_maker, 
     )
     assert response.status_code == 201
 
-    # 3. Get final usage
-    final_usage = asyncio.run(_get_usage())
-
-    # 4. Verify increment
-    assert final_usage == initial_usage + len(content)
+    used_after, pending_after = asyncio.run(_get_quota_state(async_session_maker))
+    assert used_after == used_before + len(content)
+    assert pending_after == 0
 
 
 def test_upload_oversized_file_returns_413(client, async_session_maker, upload_root, admin_headers):
