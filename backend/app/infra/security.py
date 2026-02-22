@@ -309,14 +309,11 @@ def _is_in_cidrs(client_host: str, cidrs: list[str]) -> bool:
         try:
             network = ip_network(cidr)
         except ValueError:
-            logger.warning("invalid_trusted_proxy_cidr", extra={"cidr": cidr})
+            logger.warning("invalid_trusted_proxy_cidr", extra={"extra": {"cidr": cidr}})
             continue
 
-        try:
-            if client_ip in network:
-                return True
-        except TypeError:
-            continue
+        if client_ip in network:
+            return True
     return False
 
 

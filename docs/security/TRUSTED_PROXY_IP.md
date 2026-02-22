@@ -27,6 +27,8 @@ TRUSTED_PROXY_CIDRS=172.18.0.0/16,172.19.0.0/16
 | *(empty / unset)* | **Never** trust forwarded headers. Always use `request.client.host`. |
 | One or more CIDRs | Trust forwarded headers **only** when the TCP source IP matches a listed CIDR. |
 
+Invalid CIDRs are ignored with a warning (fail-closed), so malformed entries never widen trust.
+
 ### Resolution logic (`get_client_ip`)
 
 ```
@@ -36,8 +38,8 @@ if source_ip NOT in TRUSTED_PROXY_CIDRS:
     return source_ip          # spoof attempt – ignored
 
 # Source is a trusted proxy; inspect headers in priority order:
-1. RFC 7239 Forwarded: parse left-most "for=" value
-2. X-Forwarded-For:    take left-most IP
+1. X-Forwarded-For:    take left-most IP
+2. RFC 7239 Forwarded: parse left-most "for=" value
 
 if extracted IP is valid:
     return extracted IP
@@ -93,8 +95,7 @@ reverse_proxy api:8000 {
 }
 ```
 
-> **Do not** set both `X-Forwarded-For` and `Forwarded` from Caddy.
-> The API prefers `Forwarded` when both are present.
+> If both `X-Forwarded-For` and `Forwarded` are present, the API prefers `X-Forwarded-For`.
 
 ---
 
@@ -147,8 +148,9 @@ services:
 
 The legacy `TRUST_PROXY_HEADERS=true` / `TRUSTED_PROXY_IPS=…` pair is still
 supported by `resolve_client_key` (used for admin auth and the client portal).
-For the main rate-limiting middleware, only `TRUSTED_PROXY_CIDRS` is
-consulted.
+The main rate-limiting middleware also uses `resolve_client_key`, so both
+`TRUSTED_PROXY_IPS` and `TRUSTED_PROXY_CIDRS` are honored with the same trust
+rules.
 
 Migrate individual IPs to `/32` (IPv4) or `/128` (IPv6) CIDRs:
 

@@ -58,7 +58,7 @@ def test_invalid_cidr_does_not_widen_trust(monkeypatch, caplog) -> None:
     monkeypatch.setattr(settings, "trusted_proxy_cidrs", ["203.0.113.5/24"])
     request = _make_request(client_host="203.0.113.42", xff="1.2.3.4")
 
-    with caplog.at_level(logging.WARNING, logger="app.rate_limit"):
+    with caplog.at_level(logging.WARNING):
         resolved_ip = resolve_client_key(
             request,
             trust_proxy_headers=True,
@@ -67,7 +67,10 @@ def test_invalid_cidr_does_not_widen_trust(monkeypatch, caplog) -> None:
         )
 
     assert resolved_ip == "203.0.113.42"
-    assert "invalid_trusted_proxy_cidr" in caplog.text
+    assert any(
+        rec.levelno >= logging.WARNING and "invalid_trusted_proxy_cidr" in rec.getMessage()
+        for rec in caplog.records
+    )
 
 
 def test_valid_cidr_trusts_correctly(monkeypatch) -> None:
