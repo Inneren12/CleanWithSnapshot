@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import delete, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -821,11 +822,14 @@ async def create_deposit_checkout(
                 or (existing_session.get("url") if isinstance(existing_session, dict) else None)
             )
             if existing_url:
-                return {
-                    "checkout_url": existing_url,
-                    "provider": "stripe",
-                    "booking_id": booking.booking_id,
-                }
+                return JSONResponse(
+                    status_code=status.HTTP_200_OK,
+                    content={
+                        "checkout_url": existing_url,
+                        "provider": "stripe",
+                        "booking_id": booking.booking_id,
+                    },
+                )
         except Exception:  # noqa: BLE001
             # Session may be expired or unretrievable; fall through to create a new one.
             pass
