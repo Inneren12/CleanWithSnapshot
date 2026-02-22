@@ -1020,7 +1020,12 @@ async def create_booking(
             booking_kwargs["booking_id"] = booking_id
         booking = Booking(**booking_kwargs)
         session.add(booking)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            if "uq_bookings_active_slot" in str(exc):
+                raise ValueError("Requested slot is no longer available") from exc
+            raise
         await session.refresh(booking)
         metrics.record_booking("created")
         return booking
