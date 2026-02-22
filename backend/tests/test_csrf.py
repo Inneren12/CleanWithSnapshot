@@ -1,7 +1,9 @@
 import base64
 
 import pytest
+from starlette.requests import Request
 
+from app.infra.csrf import should_enforce_csrf
 from app.settings import settings
 
 
@@ -83,7 +85,7 @@ async def test_csrf_allows_valid_double_submit_token(client):
             },
             follow_redirects=False,
         )
-        assert post_resp.status_code != 403
+        assert post_resp.status_code == 303
     finally:
         settings.testing = original["testing"]
         settings.admin_basic_username = original["admin_basic_username"]
@@ -136,3 +138,52 @@ async def test_csrf_cookie_flags_in_dev(client):
         settings.app_env = original_env
         settings.dispatcher_basic_username = original_user
         settings.dispatcher_basic_password = original_password
+
+
+@pytest.mark.anyio
+async def test_csrf_enforced_with_authorization_header_when_cookie_auth_present(client):
+    original = {
+        "testing": settings.testing,
+        "admin_basic_username": settings.admin_basic_username,
+        "admin_basic_password": settings.admin_basic_password,
+    }
+    settings.testing = False
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        headers = _basic_auth("admin", "secret")
+        get_resp = client.get("/v1/admin/ui/workers", headers=headers)
+        assert get_resp.status_code == 200
+
+        post_resp = client.post(
+            "/v1/admin/ui/workers/new",
+            headers=headers,
+            data={
+                "name": "CSRF Bypass Regression Worker",
+                "phone": "+1 555-0002",
+                "team_id": 1,
+            },
+            follow_redirects=False,
+        )
+        assert post_resp.status_code == 403
+    finally:
+        settings.testing = original["testing"]
+        settings.admin_basic_username = original["admin_basic_username"]
+        settings.admin_basic_password = original["admin_basic_password"]
+
+
+def test_should_not_enforce_csrf_for_pure_token_auth_flow_without_cookies():
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/any/token-endpoint",
+        "headers": [(b"authorization", b"Bearer xyz")],
+        "query_string": b"",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "client": ("testclient", 50000),
+    }
+    request = Request(scope)
+
+    assert should_enforce_csrf(request) is False

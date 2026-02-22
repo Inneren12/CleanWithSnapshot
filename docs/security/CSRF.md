@@ -27,8 +27,12 @@ The following endpoints are exempt because they are signature-authenticated webh
 - `/stripe/webhook`
 
 ## Token-auth exceptions
-Requests carrying an `Authorization` header are treated as explicit non-cookie auth flows and are not CSRF-gated by middleware.
-Use this only for APIs authenticated with bearer/basic tokens where CSRF is not applicable.
+`Authorization` does **not** disable CSRF when cookie auth is in play.
+
+CSRF is skipped only for pure token-auth requests where:
+- an `Authorization` header is present,
+- no cookie-auth session cookies are present (`client_session`, `worker_session`, `saas_session`), and
+- no `csrf_token` cookie is present.
 
 ## How to exempt a route safely
 Prefer avoiding exemptions. If an exemption is required:
