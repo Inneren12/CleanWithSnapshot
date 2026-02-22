@@ -38,6 +38,45 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 FLOW_INTENTS = {Intent.booking, Intent.price, Intent.scope, Intent.reschedule}
+ANON_SESSION_COOKIE_KEYS = ("anon_session_id", "anon_id", "client_session")
+
+
+def _resolve_current_user_id(http_request: Request, request_user_id: Optional[str] = None) -> Optional[str]:
+    if request_user_id:
+        return request_user_id
+    saas_identity = getattr(http_request.state, "saas_identity", None)
+    if saas_identity and getattr(saas_identity, "user_id", None):
+        return str(saas_identity.user_id)
+    return None
+
+
+def _resolve_current_anon_id(http_request: Request, request_anon_id: Optional[str] = None) -> Optional[str]:
+    if request_anon_id:
+        return request_anon_id
+    for cookie_key in ANON_SESSION_COOKIE_KEYS:
+        cookie_value = http_request.cookies.get(cookie_key)
+        if cookie_value:
+            return cookie_value
+    return None
+
+
+def _assert_conversation_access(
+    *,
+    http_request: Request,
+    conversation: ConversationRecord,
+    request_user_id: Optional[str] = None,
+    request_anon_id: Optional[str] = None,
+) -> None:
+    if conversation.user_id:
+        current_user_id = _resolve_current_user_id(http_request, request_user_id)
+        if current_user_id != conversation.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return
+
+    if conversation.anon_id:
+        current_anon_id = _resolve_current_anon_id(http_request, request_anon_id)
+        if current_anon_id != conversation.anon_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
 
 
 def _fsm_step_for_intent(intent: Intent) -> FsmStep:
@@ -79,6 +118,12 @@ async def post_message(
     conversation = await store.get_conversation(request.conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    _assert_conversation_access(
+        http_request=http_request,
+        conversation=conversation,
+        request_user_id=request.user_id,
+        request_anon_id=request.anon_id,
+    )
 
     user_message = MessagePayload(role=MessageRole.user, text=request.text)
     await store.append_message(request.conversation_id, user_message)
@@ -247,6 +292,7 @@ async def post_message(
 
 @router.get("/bot/messages", response_model=list[MessageRecord])
 async def list_messages(
+    http_request: Request,
     conversation_id: Optional[str] = Query(None, alias="conversationId"),
     legacy_conversation_id: Optional[str] = Query(None, alias="conversation_id"),
     store: BotStore = Depends(get_bot_store),
@@ -258,14 +304,20 @@ async def list_messages(
     conversation = await store.get_conversation(conversation_key)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    _assert_conversation_access(http_request=http_request, conversation=conversation)
     return await store.list_messages(conversation_key)
 
 
 @router.get("/bot/session/{conversation_id}", response_model=ConversationRecord)
-async def get_session(conversation_id: str, store: BotStore = Depends(get_bot_store)) -> ConversationRecord:
+async def get_session(
+    http_request: Request,
+    conversation_id: str,
+    store: BotStore = Depends(get_bot_store),
+) -> ConversationRecord:
     conversation = await store.get_conversation(conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    _assert_conversation_access(http_request=http_request, conversation=conversation)
     return conversation
 
 
