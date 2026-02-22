@@ -209,6 +209,12 @@ class Booking(Base):
         back_populates="booking",
         cascade="all, delete-orphan",
     )
+    checkout_attempts: Mapped[list["CheckoutAttempt"]] = relationship(
+        "CheckoutAttempt",
+        back_populates="booking",
+        cascade="all, delete-orphan",
+        order_by="CheckoutAttempt.created_at",
+    )
 
     __table_args__ = (
         Index("ix_bookings_org_id", "org_id"),
@@ -442,6 +448,59 @@ class TeamBlackout(Base):
     )
 
     team: Mapped[Team] = relationship("Team", backref="blackouts")
+
+
+class CheckoutAttempt(Base):
+    """Pre-write record created before a Stripe checkout session is requested.
+
+    Lifecycle:
+        PENDING  → inserted (Phase 0) before the Stripe API call.
+        CREATED  → updated (Phase 2) after Stripe responds and booking is updated.
+        FAILED   → updated on any Stripe or Phase-2 error (error_type holds the
+                   exception class name; no PII is stored).
+
+    The idempotency_key mirrors the Stripe idempotency key so retries reuse the
+    same Stripe session and can locate the existing attempt row.
+    """
+
+    __tablename__ = "checkout_attempts"
+
+    attempt_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    booking_id: Mapped[str] = mapped_column(
+        ForeignKey("bookings.booking_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # PENDING/CREATED/FAILED
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    stripe_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    booking: Mapped["Booking"] = relationship("Booking", back_populates="checkout_attempts")
+
+    __table_args__ = (
+        Index("ix_checkout_attempts_booking_id", "booking_id"),
+        UniqueConstraint("idempotency_key", name="uq_checkout_attempts_idempotency_key"),
+    )
 
 
 class AvailabilityBlock(Base):

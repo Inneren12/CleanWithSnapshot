@@ -17,7 +17,7 @@ from app.domain.analytics.service import (
     estimated_revenue_from_lead,
     log_event,
 )
-from app.domain.bookings.db_models import Booking, Team, TeamBlackout, TeamWorkingHours
+from app.domain.bookings.db_models import Booking, CheckoutAttempt, Team, TeamBlackout, TeamWorkingHours
 from app.domain.bookings.policy import (
     BookingPolicySnapshot,
     CancellationPolicySnapshot,
@@ -1124,6 +1124,92 @@ async def attach_checkout_session(
     if commit:
         await session.commit()
     return booking
+
+
+async def create_checkout_attempt(
+    session: AsyncSession,
+    *,
+    booking_id: str,
+    purpose: str,
+    amount_cents: int,
+    currency: str,
+    idempotency_key: str,
+) -> CheckoutAttempt:
+    """Find-or-create a CheckoutAttempt row with status PENDING.
+
+    Called in Phase 0 (before the Stripe API call) so that a durable DB record
+    exists even if the process crashes between Stripe responding and the Phase 2
+    commit.  Uses the idempotency_key as the natural dedup key so retries always
+    return the same row.
+    """
+    existing = await session.scalar(
+        select(CheckoutAttempt).where(CheckoutAttempt.idempotency_key == idempotency_key)
+    )
+    if existing is not None:
+        return existing
+
+    attempt = CheckoutAttempt(
+        booking_id=booking_id,
+        purpose=purpose,
+        status="PENDING",
+        amount_cents=amount_cents,
+        currency=currency.upper(),
+        idempotency_key=idempotency_key,
+    )
+    session.add(attempt)
+
+    # Use a savepoint so a concurrent duplicate insert doesn't corrupt the outer
+    # transaction; fall back to selecting the winning row on conflict.
+    savepoint = await session.begin_nested()
+    try:
+        await session.flush()
+    except IntegrityError:
+        await savepoint.rollback()
+        existing = await session.scalar(
+            select(CheckoutAttempt).where(CheckoutAttempt.idempotency_key == idempotency_key)
+        )
+        if existing is None:
+            raise
+        return existing
+    else:
+        await savepoint.commit()
+        return attempt
+
+
+async def finalize_checkout_attempt(
+    session: AsyncSession,
+    attempt: CheckoutAttempt,
+    *,
+    stripe_session_id: str,
+    stripe_payment_intent_id: str | None = None,
+) -> CheckoutAttempt:
+    """Update attempt to CREATED after Stripe call succeeds (Phase 2)."""
+    attempt.status = "CREATED"
+    attempt.stripe_session_id = stripe_session_id
+    if stripe_payment_intent_id is not None:
+        attempt.stripe_payment_intent_id = str(stripe_payment_intent_id)
+    await session.flush()
+    return attempt
+
+
+async def fail_checkout_attempt(
+    session: AsyncSession,
+    attempt: CheckoutAttempt,
+    *,
+    error_code: str | None = None,
+    error_type: str | None = None,
+) -> CheckoutAttempt:
+    """Update attempt to FAILED on Stripe error or Phase-2 crash.
+
+    Only non-PII fields (error_code, error_type) are persisted.
+    """
+    attempt.status = "FAILED"
+    if error_code is not None:
+        attempt.error_code = error_code
+    if error_type is not None:
+        attempt.error_type = error_type
+    await session.flush()
+    return attempt
 
 
 async def record_stripe_deposit_payment(
