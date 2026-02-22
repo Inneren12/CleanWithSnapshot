@@ -147,14 +147,14 @@ class TestTrustedProxy:
         )
         assert get_client_ip(request, ["10.0.0.0/8"]) == "203.0.113.5"
 
-    def test_forwarded_preferred_over_xff(self):
-        """RFC 7239 Forwarded takes priority over X-Forwarded-For."""
+    def test_xff_preferred_over_forwarded(self):
+        """X-Forwarded-For takes priority over Forwarded for safety."""
         request = _make_request(
             "10.0.0.1",
             forwarded="for=203.0.113.5",
             xff="1.1.1.1",
         )
-        assert get_client_ip(request, ["10.0.0.0/8"]) == "203.0.113.5"
+        assert get_client_ip(request, ["10.0.0.0/8"]) == "1.1.1.1"
 
     def test_xff_leftmost_ip_taken(self):
         """With multiple hops in XFF the left-most (original client) is used."""

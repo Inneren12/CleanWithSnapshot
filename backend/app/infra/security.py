@@ -253,8 +253,8 @@ def get_client_ip(request: Request, trusted_cidrs: list[str]) -> str:
 
     When the source IS in *trusted_cidrs* (e.g. a Caddy ingress), inspect
     forwarded headers in priority order:
-      1. ``Forwarded`` (RFC 7239) – left-most ``for=`` value
-      2. ``X-Forwarded-For`` – left-most IP
+      1. ``X-Forwarded-For`` – left-most IP
+      2. ``Forwarded`` (RFC 7239) – left-most ``for=`` value
 
     Returns *source_ip* when the header is absent, malformed, or contains an
     invalid IP address.
@@ -263,15 +263,17 @@ def get_client_ip(request: Request, trusted_cidrs: list[str]) -> str:
     if not trusted_cidrs or not _is_in_cidrs(source_ip, trusted_cidrs):
         return source_ip
 
-    forwarded = request.headers.get("forwarded")
-    if forwarded and len(forwarded) <= _MAX_HEADER_LEN:
-        extracted = _extract_forwarded_for(forwarded)
+    xff = request.headers.get("x-forwarded-for")
+    # We prefer X-Forwarded-For over Forwarded because many proxies sanitize
+    # XFF but may pass raw Forwarded through.
+    if xff and len(xff) <= _MAX_HEADER_LEN:
+        extracted = _extract_xff(xff)
         if extracted:
             return extracted
 
-    xff = request.headers.get("x-forwarded-for")
-    if xff and len(xff) <= _MAX_HEADER_LEN:
-        extracted = _extract_xff(xff)
+    forwarded = request.headers.get("forwarded")
+    if forwarded and len(forwarded) <= _MAX_HEADER_LEN:
+        extracted = _extract_forwarded_for(forwarded)
         if extracted:
             return extracted
 
@@ -305,9 +307,15 @@ def _is_in_cidrs(client_host: str, cidrs: list[str]) -> bool:
         return False
     for cidr in cidrs:
         try:
-            if client_ip in ip_network(cidr, strict=False):
-                return True
+            network = ip_network(cidr)
         except ValueError:
+            logger.warning("invalid_trusted_proxy_cidr", extra={"cidr": cidr})
+            continue
+
+        try:
+            if client_ip in network:
+                return True
+        except TypeError:
             continue
     return False
 
