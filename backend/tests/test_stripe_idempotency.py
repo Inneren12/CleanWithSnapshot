@@ -231,18 +231,21 @@ class TestDepositCheckoutDuplicatePrevention:
             await session.commit()
             booking_id = booking.booking_id
 
-        created_kwargs: list[dict] = []
+        calls: list[tuple[str, dict]] = []
 
-        class MockStripeClient:
-            async def create_checkout_session(self, **kwargs):
-                created_kwargs.append(kwargs)
+        async def _capture_call(client_obj, method_name, /, *args, **kwargs):
+            calls.append((method_name, kwargs.copy()))
+            if method_name == "create_checkout_session":
                 return SimpleNamespace(id="cs_fresh", url="https://stripe.test/fresh", payment_intent="pi_fresh")
+            raise AssertionError(f"Unexpected Stripe call: {method_name}")
 
-        monkeypatch.setattr(routes_payments, "_stripe_client", lambda _request: MockStripeClient())
+        monkeypatch.setattr(routes_payments.stripe_infra, "call_stripe_client_method", _capture_call)
 
         response = client.post(f"/v1/payments/deposit/checkout?booking_id={booking_id}")
         assert response.status_code == 201, response.text
-        assert len(created_kwargs) == 1
+
+        create_calls = [kwargs for method_name, kwargs in calls if method_name == "create_checkout_session"]
+        assert len(create_calls) == 1
 
         expected_key = make_stripe_idempotency_key(
             "deposit_checkout",
@@ -250,7 +253,7 @@ class TestDepositCheckoutDuplicatePrevention:
             amount_cents=5000,
             currency=settings.deposit_currency,
         )
-        assert created_kwargs[0]["idempotency_key"] == expected_key
+        assert create_calls[0]["idempotency_key"] == expected_key
 
     def test_retry_with_same_booking_uses_same_idempotency_key(self):
         booking_id = "book-retry-test-unique-id"

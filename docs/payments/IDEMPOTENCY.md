@@ -58,16 +58,16 @@ always stable and minimal.
 
 ## Enforcement behavior
 
-`call_stripe_client_method` now enforces idempotency for known Stripe write
-operations. If a caller invokes `create_checkout_session`,
-`create_subscription_checkout_session`, `create_billing_portal_session`,
-or `cancel_checkout_session` without an `idempotency_key`, the helper raises `ValueError` before any Stripe
-SDK call is attempted. This makes missing keys fail fast in unit tests and local
-execution rather than silently reaching production.
+`call_stripe_client_method` enforces idempotency for Stripe mutation methods
+using a prefix rule. A method is treated as mutating when its name starts with
+one of: `create_`, `cancel_`, `expire_`, `refund_`, `update_`, `void_`.
 
-Read-style calls such as `retrieve_checkout_session` and webhook signature
-verification remain keyless by design, so existing read paths are backward
-compatible.
+Read-only prefixes are explicitly exempt: `retrieve_`, `list_`, and `verify_`.
+
+If a mutating method is invoked without `idempotency_key`, the helper raises
+`ValueError` before any Stripe SDK call is attempted. This makes missing keys
+fail fast in unit tests and local execution rather than silently reaching
+production, while preserving backward-compatible keyless reads.
 
 ## Mutation inventory
 
