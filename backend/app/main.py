@@ -5,10 +5,9 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Callable, Iterable
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from opentelemetry import trace
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -200,8 +199,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             try:
                 await require_csrf(request)
             except HTTPException as exc:
-                if exc.status_code == status.HTTP_403_FORBIDDEN:
-                    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+                handler = request.app.exception_handlers.get(HTTPException)
+                if handler is not None:
+                    return await handler(request, exc)
                 raise
         return await call_next(request)
 
