@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api import entitlements
 from app.domain.bookings import service as booking_service
-from app.domain.bookings.db_models import Booking
+from app.domain.bookings.db_models import Booking, CheckoutAttempt
 from app.domain.invoices import schemas as invoice_schemas, service as invoice_service, statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment, StripeEvent, StripeProcessedEvent
 from app.domain.notifications_center import service as notifications_service
@@ -832,14 +832,9 @@ async def create_deposit_checkout(
         idempotency_key=idempotency_key,
     )
     await session.commit()
-    attempt = await booking_service.create_checkout_attempt(
-        session,
-        booking_id=booking_id_value,
-        purpose="deposit_checkout",
-        amount_cents=deposit_amount_cents,
-        currency=settings.deposit_currency,
-        idempotency_key=idempotency_key,
-    )
+    attempt = await session.get(CheckoutAttempt, attempt.attempt_id)
+    if attempt is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Checkout attempt missing")
 
     # ── Anti-duplicate ─────────────────────────────────────────────────────
     # If the booking already has an active Stripe session (from a previous
@@ -847,20 +842,6 @@ async def create_deposit_checkout(
     # rather than creating a second session.
     _active_deposit_statuses = {"pending", "paid"}
     if booking.stripe_checkout_session_id and booking.deposit_status in _active_deposit_statuses:
-        await booking_service.finalize_checkout_attempt(
-            session,
-            attempt,
-            stripe_session_id=booking.stripe_checkout_session_id,
-        )
-        await session.commit()
-        attempt = await booking_service.create_checkout_attempt(
-            session,
-            booking_id=booking_id_value,
-            purpose="deposit_checkout",
-            amount_cents=deposit_amount_cents,
-            currency=settings.deposit_currency,
-            idempotency_key=idempotency_key,
-        )
         try:
             existing_session = await stripe_infra.call_stripe_client_method(
                 stripe_client,
@@ -872,6 +853,12 @@ async def create_deposit_checkout(
                 or (existing_session.get("url") if isinstance(existing_session, dict) else None)
             )
             if existing_url:
+                await booking_service.finalize_checkout_attempt(
+                    session,
+                    attempt,
+                    stripe_session_id=booking.stripe_checkout_session_id,
+                )
+                await session.commit()
                 return JSONResponse(
                     status_code=status.HTTP_200_OK,
                     content={
@@ -961,14 +948,13 @@ async def create_deposit_checkout(
         await session.commit()
     except Exception as exc:  # noqa: BLE001
         await session.rollback()
-        attempt = await booking_service.create_checkout_attempt(
-            session,
-            booking_id=booking_id_value,
-            purpose="deposit_checkout",
-            amount_cents=deposit_amount_cents,
-            currency=settings.deposit_currency,
-            idempotency_key=idempotency_key,
-        )
+        attempt = await session.get(CheckoutAttempt, attempt.attempt_id)
+        if attempt is None:
+            attempt = await session.scalar(
+                select(CheckoutAttempt).where(CheckoutAttempt.idempotency_key == idempotency_key)
+            )
+        if attempt is None:
+            raise
         await booking_service.fail_checkout_attempt(
             session,
             attempt,
