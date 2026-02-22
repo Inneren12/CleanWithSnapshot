@@ -16,11 +16,11 @@ All tests are deterministic and make zero real network calls.
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.domain.bookings.db_models import Booking
@@ -167,10 +167,11 @@ def admin_headers():
 
 
 @pytest.mark.epic1
-def test_epic1_upload_size_cap_returns_413(client, async_session_maker, upload_root, admin_headers):
+@pytest.mark.anyio
+async def test_epic1_upload_size_cap_returns_413(client, async_session_maker, upload_root, admin_headers):
     """Epic 1 / PR-01: An upload whose size exceeds ORDER_PHOTO_MAX_BYTES is
     rejected with HTTP 413 without loading the payload into server memory."""
-    booking_id = asyncio.run(_create_booking_with_consent(async_session_maker))
+    booking_id = await _create_booking_with_consent(async_session_maker)
 
     original_max = settings.order_photo_max_bytes
     settings.order_photo_max_bytes = 100  # deliberately tiny cap
@@ -198,21 +199,35 @@ def test_epic1_upload_size_cap_returns_413(client, async_session_maker, upload_r
 def test_epic1_csrf_blocks_post_without_token(client):
     """Epic 1 / PR-04: A state-changing request that reaches a CSRF-protected
     endpoint without a valid token is rejected with HTTP 403."""
+    original = {
+        "testing": settings.testing,
+        "admin_basic_username": settings.admin_basic_username,
+        "admin_basic_password": settings.admin_basic_password,
+    }
     settings.testing = False
     settings.admin_basic_username = "admin"
     settings.admin_basic_password = "secret"
 
-    headers = _basic_auth_header("admin", "secret")
-    response = client.post(
-        "/v1/admin/ui/workers/new",
-        headers=headers,
-        data={
-            "name": "Epic1 CSRF Smoke Worker",
-            "phone": "+1 555-0099",
-            "team_id": 1,
-        },
-        follow_redirects=False,
-    )
+    try:
+        headers = _basic_auth_header("admin", "secret")
+        bootstrap = client.get("/v1/admin/ui/workers", headers=headers)
+        assert bootstrap.status_code == 200
+        assert bootstrap.cookies.get("csrf_token")
+
+        response = client.post(
+            "/v1/admin/ui/workers/new",
+            headers=headers,
+            data={
+                "name": "Epic1 CSRF Smoke Worker",
+                "phone": "+1 555-0099",
+                "team_id": 1,
+            },
+            follow_redirects=False,
+        )
+    finally:
+        settings.testing = original["testing"]
+        settings.admin_basic_username = original["admin_basic_username"]
+        settings.admin_basic_password = original["admin_basic_password"]
 
     assert response.status_code == 403, (
         f"Expected 403 (CSRF rejected) but got {response.status_code}: {response.text}"
@@ -253,7 +268,7 @@ def test_epic1_spoofed_xff_from_untrusted_source_is_ignored():
 @pytest.mark.anyio
 @pytest.mark.epic1
 async def test_epic1_stripe_called_outside_db_transaction(
-    client, async_session_maker, monkeypatch
+    async_session_maker, monkeypatch
 ):
     """Epic 1 / PR-02: Structural assertion that Stripe create_checkout_session
     executes BEFORE any DB transaction opens (Phase 1 before Phase 2 per the
@@ -313,10 +328,14 @@ async def test_epic1_stripe_called_outside_db_transaction(
         _mock_stripe,
     )
 
-    response = client.post(
-        "/v1/bookings",
-        json={"starts_at": _future_slot(), "time_on_site_hours": 2.0, "lead_id": lead_id},
-    )
+    from app.main import app
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+        response = await async_client.post(
+            "/v1/bookings",
+            json={"starts_at": _future_slot(), "time_on_site_hours": 2.0, "lead_id": lead_id},
+        )
 
     assert response.status_code == 201, (
         f"Booking creation failed ({response.status_code}): {response.text}"
