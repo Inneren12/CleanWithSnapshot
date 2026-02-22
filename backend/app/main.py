@@ -194,10 +194,28 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: Callable):
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive=receive)
         if should_enforce_csrf(request):
-            await require_csrf(request)
-        return await call_next(request)
+            try:
+                await require_csrf(request)
+            except HTTPException as exc:
+                app = request.app
+                handler = app.exception_handlers.get(HTTPException)
+                if handler is None:
+                    raise
+                response = await handler(request, exc)
+                await response(scope, receive, send)
+                return
+
+        await self.app(scope, receive, send)
 
 class MetricsMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: FastAPI, metrics_client) -> None:
