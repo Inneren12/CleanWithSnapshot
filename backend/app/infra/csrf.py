@@ -107,8 +107,13 @@ def should_enforce_csrf(request: Request) -> bool:
     if path in CSRF_EXEMPT_PATHS:
         return False
 
-    # Explicit bearer/basic auth requests are treated as non-cookie auth flows.
-    if request.headers.get("Authorization"):
+    has_cookie_auth = any(request.cookies.get(cookie_name) for cookie_name in COOKIE_AUTH_NAMES)
+    has_csrf_cookie = bool(request.cookies.get(CSRF_COOKIE_NAME))
+    has_auth_header = bool(request.headers.get("Authorization"))
+
+    # Pure token-auth flow: Authorization present AND no cookie-auth in play.
+    if has_auth_header and not has_cookie_auth and not has_csrf_cookie:
         return False
 
-    return any(request.cookies.get(cookie_name) for cookie_name in COOKIE_AUTH_NAMES)
+    # Enforce CSRF whenever cookie-auth (or csrf cookie) is present.
+    return has_cookie_auth or has_csrf_cookie
