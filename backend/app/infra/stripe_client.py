@@ -9,6 +9,14 @@ from app.infra.stripe_resilience import stripe_circuit
 from app.settings import settings
 
 
+MUTATING_METHODS_REQUIRING_IDEMPOTENCY_KEY: set[str] = {
+    "create_checkout_session",
+    "create_subscription_checkout_session",
+    "create_billing_portal_session",
+    "cancel_checkout_session",
+}
+
+
 class StripeClient:
     def __init__(
         self,
@@ -230,6 +238,12 @@ async def call_stripe_client_method(client: Any, method_name: str, /, *args, **k
     method = getattr(client, method_name)
     if method is None:
         raise AttributeError(f"Stripe client missing method {method_name}")
+
+    if method_name in MUTATING_METHODS_REQUIRING_IDEMPOTENCY_KEY and not kwargs.get("idempotency_key"):
+        raise ValueError(
+            f"Stripe mutation '{method_name}' requires idempotency_key to be provided"
+        )
+
     result = method(*args, **kwargs)
     if inspect.isawaitable(result):
         return await result

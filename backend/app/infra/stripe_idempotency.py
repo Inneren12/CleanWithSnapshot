@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from typing import Any
+
+
+def _stable_extra_value(value: Any) -> str:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return str(value)
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def make_stripe_idempotency_key(
@@ -48,7 +56,7 @@ def make_stripe_idempotency_key(
         parts.append(f"o:{org_id}")
     if extra:
         for k in sorted(extra.keys()):
-            parts.append(f"x:{k}:{extra[k]}")
+            parts.append(f"x:{k}:{_stable_extra_value(extra[k])}")
 
     raw = "|".join(parts)
     digest = hashlib.sha256(raw.encode()).hexdigest()[:32]

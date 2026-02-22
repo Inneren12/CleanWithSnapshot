@@ -479,6 +479,11 @@ async def create_booking(
                     stripe_client,
                     "cancel_checkout_session",
                     session_id=stripe_checkout_session.id,
+                    idempotency_key=make_stripe_idempotency_key(
+                        "checkout_cancel",
+                        booking_id=pending_booking_id,
+                        extra={"session_id": stripe_checkout_session.id},
+                    ),
                 )
             except Exception as cancel_exc:  # noqa: BLE001
                 logger.warning(
@@ -503,6 +508,11 @@ async def create_booking(
                     stripe_client,
                     "cancel_checkout_session",
                     session_id=stripe_checkout_session.id,
+                    idempotency_key=make_stripe_idempotency_key(
+                        "checkout_cancel",
+                        booking_id=pending_booking_id,
+                        extra={"session_id": stripe_checkout_session.id},
+                    ),
                 )
             except Exception as cancel_exc:  # noqa: BLE001
                 logger.warning(
