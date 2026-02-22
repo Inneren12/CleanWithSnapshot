@@ -70,6 +70,22 @@ def _temporary_postgres_database(base_url: str):
         admin_engine.dispose()
 
 
+
+
+def _assert_exclusion_constraint(engine: sa.Engine, table: str, name: str) -> None:
+    with engine.connect() as conn:
+        exists = conn.execute(
+            sa.text(
+                """
+                SELECT 1
+                FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                WHERE c.contype = 'x' AND c.conname = :name AND t.relname = :table
+                """
+            ),
+            {"name": name, "table": table},
+        ).scalar()
+    assert exists == 1, f"Expected exclusion constraint {name} on {table}"
 def _assert_unique_constraint(inspector: sa.Inspector, table: str, name: str, columns: set[str]):
     constraints = inspector.get_unique_constraints(table)
     assert any(
@@ -126,6 +142,7 @@ def test_postgres_migration_invariants():
         _assert_unique_constraint(
             inspector, "unsubscribe", "uq_unsubscribe_recipient_scope", {"org_id", "recipient", "scope"}
         )
+        _assert_exclusion_constraint(engine, "bookings", "bookings_team_time_no_overlap")
 
         with engine.connect() as conn:
             extension_present = conn.execute(

@@ -6,16 +6,19 @@ booking creation now uses a database-enforced uniqueness guarantee for active bo
 ## Strategy
 
 - Keep the existing application-level availability check (`is_slot_available`) for UX-friendly pre-validation.
-- Add a **partial unique index** on `(org_id, team_id, starts_at)` for rows where `status IN ('PENDING', 'CONFIRMED')`.
-- On insert race, the database rejects the second+ insert. The service catches that
-  specific integrity error and maps it to the existing domain conflict message,
-  so the API continues to return **409 Conflict**.
+- Keep the existing **partial unique index** on `(org_id, team_id, starts_at)` for exact-same-start collisions.
+- Add a PostgreSQL-only **exclusion constraint** using `EXCLUDE USING gist` with
+  `tstzrange(starts_at, starts_at + duration_minutes * interval '1 minute', '[)')`
+  so active bookings for the same `team_id` cannot overlap in time.
+- On insert race (exact-match or overlap), the database rejects the second+ insert.
+  The service catches the corresponding integrity error and maps it to the existing
+  domain conflict message, so the API continues to return **409 Conflict**.
 
 ## Why this is safe
 
 - The uniqueness check happens atomically inside the DB engine and is race-safe.
-- It works with PostgreSQL (production target) and SQLite (test suite) via dialect-specific
-  filtered-index support in SQLAlchemy/Alembic.
+- PostgreSQL gets full overlap prevention via exclusion constraints.
+- SQLite test runs remain valid because the migration is guarded to no-op outside PostgreSQL.
 
 ## Test coverage
 
