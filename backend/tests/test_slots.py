@@ -2,6 +2,9 @@ import asyncio
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import httpx
+import pytest
+
 from app.domain.bookings import service as booking_service
 from app.domain.bookings.db_models import Booking
 from app.domain.bookings.service import (
@@ -11,6 +14,7 @@ from app.domain.bookings.service import (
     round_duration_minutes,
 )
 from app.domain.clients import service as client_service
+from app.main import app
 from app.settings import settings
 
 
@@ -197,3 +201,35 @@ def test_round_duration_minutes_uses_slot_step():
     assert round_duration_minutes(1.1) == SLOT_STEP_MINUTES * 3  # 66 minutes => 90 rounded
     assert round_duration_minutes(0.1) == SLOT_STEP_MINUTES
     assert round_duration_minutes(2.5) == SLOT_STEP_MINUTES * 5
+
+
+@pytest.mark.anyio
+async def test_booking_endpoint_prevents_double_booking_under_concurrency(monkeypatch):
+    monkeypatch.setattr(settings, "captcha_enabled", False)
+    monkeypatch.setattr(settings, "deposits_enabled", False)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+        slots_response = await async_client.get(
+            "/v1/slots",
+            params={"date": "2035-01-02", "time_on_site_hours": 2},
+        )
+        assert slots_response.status_code == 200
+        chosen_slot = slots_response.json()["slots"][0]
+
+        ready = asyncio.Event()
+
+        async def attempt_booking() -> int:
+            await ready.wait()
+            response = await async_client.post(
+                "/v1/bookings",
+                json={"starts_at": chosen_slot, "time_on_site_hours": 2},
+            )
+            return response.status_code
+
+        tasks = [asyncio.create_task(attempt_booking()) for _ in range(5)]
+        ready.set()
+        statuses = await asyncio.gather(*tasks)
+
+    assert statuses.count(201) == 1
+    assert statuses.count(409) == 4
