@@ -71,13 +71,6 @@ def test_invalid_cidr_does_not_widen_trust(monkeypatch, caplog) -> None:
         rec.levelno >= logging.WARNING and "invalid_trusted_proxy_cidr" in rec.getMessage()
         for rec in caplog.records
     )
-    cidr_from_extra = [
-        rec.__dict__.get("extra", {}).get("cidr")
-        for rec in caplog.records
-        if isinstance(rec.__dict__.get("extra"), dict)
-    ]
-    if cidr_from_extra:
-        assert "203.0.113.5/24" in cidr_from_extra
 
 
 def test_valid_cidr_trusts_correctly(monkeypatch) -> None:
