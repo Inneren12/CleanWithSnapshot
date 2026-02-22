@@ -1,5 +1,6 @@
 import anyio
 import pytest
+from types import SimpleNamespace
 
 from app import infra
 from app.infra import stripe_resilience
@@ -185,6 +186,25 @@ def test_stripe_client_uses_settings_secret_key_when_not_provided(monkeypatch):
     assert client.webhook_secret == "whsec_settings"
 
 
+@pytest.mark.anyio
+async def test_stripe_client_fallback_still_fails_when_settings_missing(monkeypatch):
+    monkeypatch.setattr(settings, "stripe_secret_key", None)
+    monkeypatch.setattr(settings, "stripe_webhook_secret", None)
+
+    client = StripeClient(secret_key=None, webhook_secret=None, stripe_sdk=_FakeStripe())
+
+    with pytest.raises(ValueError, match="Stripe secret key not configured"):
+        await client.create_checkout_session(
+            amount_cents=2500,
+            currency="usd",
+            success_url="https://success",
+            cancel_url="https://cancel",
+        )
+
+    with pytest.raises(ValueError, match="Stripe secret key not configured"):
+        await client.cancel_checkout_session("cs_test")
+
+
 def test_resolve_client_populates_secret_key_from_app_settings(monkeypatch):
     monkeypatch.setattr(settings, "stripe_secret_key", None)
     monkeypatch.setattr(settings, "stripe_webhook_secret", None)
@@ -198,6 +218,50 @@ def test_resolve_client_populates_secret_key_from_app_settings(monkeypatch):
 
     assert client.secret_key == "sk_test_app_state"
     assert client.webhook_secret == "whsec_app_state"
+
+
+def test_resolve_client_does_not_overwrite_existing_non_empty_keys(monkeypatch):
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_global")
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_global")
+
+    existing = StripeClient(
+        secret_key="sk_test_existing",
+        webhook_secret="whsec_existing",
+        stripe_sdk=_FakeStripe(),
+    )
+    app_state = SimpleNamespace(
+        stripe_client=existing,
+        app_settings=SimpleNamespace(
+            stripe_secret_key="sk_test_app_state",
+            stripe_webhook_secret="whsec_app_state",
+        ),
+    )
+
+    resolved = infra.stripe_client.resolve_client(app_state)
+
+    assert resolved is existing
+    assert resolved.secret_key == "sk_test_existing"
+    assert resolved.webhook_secret == "whsec_existing"
+
+
+def test_resolve_client_populates_empty_keys_from_app_settings(monkeypatch):
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_global")
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_global")
+
+    existing = StripeClient(secret_key=None, webhook_secret=None, stripe_sdk=_FakeStripe())
+    app_state = SimpleNamespace(
+        stripe_client=existing,
+        app_settings=SimpleNamespace(
+            stripe_secret_key="sk_test_app_state",
+            stripe_webhook_secret="whsec_app_state",
+        ),
+    )
+
+    resolved = infra.stripe_client.resolve_client(app_state)
+
+    assert resolved is existing
+    assert resolved.secret_key == "sk_test_global"
+    assert resolved.webhook_secret == "whsec_global"
 
 
 @pytest.mark.anyio
