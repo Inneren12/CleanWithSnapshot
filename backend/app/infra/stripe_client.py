@@ -17,6 +17,13 @@ class StripeClient:
         webhook_secret: str | None,
         stripe_sdk: Any | None = None,
     ) -> None:
+        """Initialize Stripe client credentials.
+
+        ``settings`` is the canonical configuration source for this deployment.
+        Passing ``None`` for a credential means "fall back to global settings".
+        Runtime operations still fail fast with ``ValueError`` when a key is not
+        configured.
+        """
         if stripe_sdk is None:
             import stripe as stripe_sdk  # type: ignore
 
@@ -165,9 +172,14 @@ def resolve_client(app_state: Any) -> StripeClient:
         getattr(app_settings, "stripe_webhook_secret", None)
         or settings.stripe_webhook_secret
     )
+
+    # Stripe keys are global for this deployment (not per-tenant). If that
+    # assumption changes, this hydration logic must be revisited.
     if isinstance(client, StripeClient):
-        client.secret_key = client.secret_key or resolved_secret_key
-        client.webhook_secret = client.webhook_secret or resolved_webhook_secret
+        if not client.secret_key:
+            client.secret_key = resolved_secret_key
+        if not client.webhook_secret:
+            client.webhook_secret = resolved_webhook_secret
     if client is None:
         client = StripeClient(
             secret_key=resolved_secret_key,
