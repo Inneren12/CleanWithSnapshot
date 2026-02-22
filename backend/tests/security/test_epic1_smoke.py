@@ -42,8 +42,8 @@ def _basic_auth_header(username: str, password: str) -> dict[str, str]:
     return {"Authorization": f"Basic {token}", "X-Auth-MFA": "true"}
 
 
-async def _create_booking_with_consent(session_maker) -> str:
-    """Seed a confirmed booking that has photo-consent enabled."""
+async def _create_order_with_consent(session_maker) -> str:
+    """Seed a confirmed order (Booking model) with photo consent enabled."""
     async with session_maker() as session:
         lead = Lead(
             name="Epic1 Smoke Lead",
@@ -171,17 +171,21 @@ def admin_headers():
 async def test_epic1_upload_size_cap_returns_413(client, async_session_maker, upload_root, admin_headers):
     """Epic 1 / PR-01: An upload whose size exceeds ORDER_PHOTO_MAX_BYTES is
     rejected with HTTP 413 without loading the payload into server memory."""
-    booking_id = await _create_booking_with_consent(async_session_maker)
+    order_id = await _create_order_with_consent(async_session_maker)
 
     original_max = settings.order_photo_max_bytes
     settings.order_photo_max_bytes = 100  # deliberately tiny cap
     try:
-        response = client.post(
-            f"/v1/orders/{booking_id}/photos",
-            data={"phase": "AFTER"},
-            files={"file": ("oversized.jpg", b"X" * 200, "image/jpeg")},
-            headers=admin_headers,
-        )
+        from app.main import app
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+            response = await async_client.post(
+                f"/v1/orders/{order_id}/photos",
+                data={"phase": "AFTER"},
+                files={"file": ("oversized.jpg", b"X" * 200, "image/jpeg")},
+                headers=admin_headers,
+            )
     finally:
         settings.order_photo_max_bytes = original_max
 
