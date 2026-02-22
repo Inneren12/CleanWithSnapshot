@@ -815,6 +815,8 @@ async def create_deposit_checkout(
         amount_cents=int(booking.deposit_cents),
         currency=settings.deposit_currency,
     )
+    booking_id_value = booking.booking_id
+    deposit_amount_cents = int(booking.deposit_cents)
 
     # ── Phase 0 ────────────────────────────────────────────────────────────
     # Insert a PENDING attempt row and commit it *before* touching Stripe.
@@ -823,13 +825,21 @@ async def create_deposit_checkout(
     # can find it via the idempotency key.
     attempt = await booking_service.create_checkout_attempt(
         session,
-        booking_id=booking.booking_id,
+        booking_id=booking_id_value,
         purpose="deposit_checkout",
-        amount_cents=int(booking.deposit_cents),
+        amount_cents=deposit_amount_cents,
         currency=settings.deposit_currency,
         idempotency_key=idempotency_key,
     )
     await session.commit()
+    attempt = await booking_service.create_checkout_attempt(
+        session,
+        booking_id=booking_id_value,
+        purpose="deposit_checkout",
+        amount_cents=deposit_amount_cents,
+        currency=settings.deposit_currency,
+        idempotency_key=idempotency_key,
+    )
 
     # ── Anti-duplicate ─────────────────────────────────────────────────────
     # If the booking already has an active Stripe session (from a previous
@@ -837,6 +847,20 @@ async def create_deposit_checkout(
     # rather than creating a second session.
     _active_deposit_statuses = {"pending", "paid"}
     if booking.stripe_checkout_session_id and booking.deposit_status in _active_deposit_statuses:
+        await booking_service.finalize_checkout_attempt(
+            session,
+            attempt,
+            stripe_session_id=booking.stripe_checkout_session_id,
+        )
+        await session.commit()
+        attempt = await booking_service.create_checkout_attempt(
+            session,
+            booking_id=booking_id_value,
+            purpose="deposit_checkout",
+            amount_cents=deposit_amount_cents,
+            currency=settings.deposit_currency,
+            idempotency_key=idempotency_key,
+        )
         try:
             existing_session = await stripe_infra.call_stripe_client_method(
                 stripe_client,
@@ -868,7 +892,7 @@ async def create_deposit_checkout(
         checkout_session = await stripe_infra.call_stripe_client_method(
             stripe_client,
             "create_checkout_session",
-            amount_cents=int(booking.deposit_cents),
+            amount_cents=deposit_amount_cents,
             currency=settings.deposit_currency,
             success_url=settings.stripe_success_url.replace("{CHECKOUT_SESSION_ID}", "{CHECKOUT_SESSION_ID}"),
             cancel_url=settings.stripe_cancel_url,
@@ -906,34 +930,53 @@ async def create_deposit_checkout(
     payment_intent = getattr(checkout_session, "payment_intent", None) or checkout_session.get("payment_intent")
     checkout_session_id = getattr(checkout_session, "id", None) or checkout_session.get("id")
 
-    await booking_service.finalize_checkout_attempt(
-        session,
-        attempt,
-        stripe_session_id=checkout_session_id,
-        stripe_payment_intent_id=payment_intent,
-    )
-    await booking_service.attach_checkout_session(
-        session,
-        booking.booking_id,
-        checkout_session_id,
-        payment_intent_id=payment_intent,
-        commit=False,
-    )
+    try:
+        await booking_service.finalize_checkout_attempt(
+            session,
+            attempt,
+            stripe_session_id=checkout_session_id,
+            stripe_payment_intent_id=payment_intent,
+        )
+        await booking_service.attach_checkout_session(
+            session,
+            booking.booking_id,
+            checkout_session_id,
+            payment_intent_id=payment_intent,
+            commit=False,
+        )
 
-    await booking_service.record_stripe_deposit_payment(
-        session,
-        booking,
-        amount_cents=int(booking.deposit_cents),
-        currency=settings.deposit_currency,
-        status=invoice_statuses.PAYMENT_STATUS_PENDING,
-        provider_ref=str(payment_intent) if payment_intent else None,
-        checkout_session_id=checkout_session_id,
-        payment_intent_id=str(payment_intent) if payment_intent else None,
-        received_at=datetime.now(tz=timezone.utc),
-        reference="stripe_checkout",
-    )
+        await booking_service.record_stripe_deposit_payment(
+            session,
+            booking,
+            amount_cents=deposit_amount_cents,
+            currency=settings.deposit_currency,
+            status=invoice_statuses.PAYMENT_STATUS_PENDING,
+            provider_ref=str(payment_intent) if payment_intent else None,
+            checkout_session_id=checkout_session_id,
+            payment_intent_id=str(payment_intent) if payment_intent else None,
+            received_at=datetime.now(tz=timezone.utc),
+            reference="stripe_checkout",
+        )
 
-    await session.commit()
+        await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        await session.rollback()
+        attempt = await booking_service.create_checkout_attempt(
+            session,
+            booking_id=booking_id_value,
+            purpose="deposit_checkout",
+            amount_cents=deposit_amount_cents,
+            currency=settings.deposit_currency,
+            idempotency_key=idempotency_key,
+        )
+        await booking_service.fail_checkout_attempt(
+            session,
+            attempt,
+            error_type=type(exc).__name__,
+        )
+        await session.commit()
+        raise
+
     return {"checkout_url": checkout_url, "provider": "stripe", "booking_id": booking.booking_id}
 
 

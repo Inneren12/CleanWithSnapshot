@@ -2,15 +2,14 @@
 
 Acceptance criteria verified here:
   1. A PENDING CheckoutAttempt row exists in the DB *before* the Stripe API call.
-  2. A crash between Phase 1 (Stripe call) and Phase 2 (DB attach) leaves the
-     attempt in PENDING state — an auditable record of partial progress.
+  2. A crash between Phase 1 (Stripe call) and Phase 2 (DB attach) marks the
+     attempt FAILED with a non-PII error_type for auditability.
   3. A Stripe failure marks the attempt FAILED (non-PII error_type preserved).
   4. Retry after failure reuses the same idempotency key (no duplicate attempt rows).
   5. Tests are green.
 """
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -141,11 +140,10 @@ async def test_pending_attempt_exists_before_stripe_call(
 # ---------------------------------------------------------------------------
 
 
-async def test_crash_between_phase1_and_phase2_leaves_pending_attempt(
+async def test_crash_between_phase1_and_phase2_marks_attempt_failed(
     client_no_raise, async_session_maker, monkeypatch
 ):
-    """If finalize_checkout_attempt raises (simulating a crash in Phase 2),
-    the Phase 0 PENDING row must survive intact — it is the audit trail."""
+    """If finalize_checkout_attempt raises in Phase 2, attempt is marked FAILED."""
     _set_stripe_settings(monkeypatch)
     booking_id = await _seed_deposit_booking(async_session_maker)
 
@@ -164,11 +162,42 @@ async def test_crash_between_phase1_and_phase2_leaves_pending_attempt(
 
     attempt = await _get_attempt(async_session_maker, booking_id)
     assert attempt is not None, "CheckoutAttempt must exist even after a crash"
-    assert attempt.status == "PENDING", (
-        f"Attempt must stay PENDING after crash, got {attempt.status}"
+    assert attempt.status == "FAILED", (
+        f"Attempt must be FAILED after crash, got {attempt.status}"
     )
+    assert attempt.error_type == "RuntimeError"
     assert attempt.purpose == "deposit_checkout"
     assert attempt.amount_cents == 5000
+
+
+async def test_existing_active_session_finalizes_attempt_before_return(
+    client, async_session_maker, monkeypatch
+):
+    """Early-return path must still finalize the attempt as CREATED."""
+    _set_stripe_settings(monkeypatch)
+    booking_id = await _seed_deposit_booking(async_session_maker)
+
+    async with async_session_maker() as session:
+        booking = await session.get(Booking, booking_id)
+        assert booking is not None
+        booking.deposit_status = "pending"
+        booking.stripe_checkout_session_id = "cs_existing_active"
+        await session.commit()
+
+    monkeypatch.setattr(
+        "app.api.routes_payments.stripe_infra.call_stripe_client_method",
+        _ok_stripe_call("cs_existing_active"),
+    )
+
+    response = client.post(f"/v1/payments/deposit/checkout?booking_id={booking_id}")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["checkout_url"] == "https://stripe.test/cs_existing_active"
+
+    attempt = await _get_attempt(async_session_maker, booking_id)
+    assert attempt is not None
+    assert attempt.status == "CREATED"
+    assert attempt.stripe_session_id == "cs_existing_active"
 
 
 # ---------------------------------------------------------------------------
