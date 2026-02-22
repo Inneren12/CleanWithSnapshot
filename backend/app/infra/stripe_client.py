@@ -149,6 +149,18 @@ class StripeClient:
 
 
 def resolve_client(app_state: Any) -> StripeClient:
+    """Resolve StripeClient for current app state.
+
+    Priority:
+    1) services.stripe_client
+    2) state.stripe_client
+    3) Create new StripeClient with resolved keys
+
+    Resolution order for credentials:
+    app_settings -> global settings
+
+    Existing non-empty credentials are never overwritten.
+    """
     state = getattr(app_state, "state", app_state)
     services = getattr(state, "services", None)
     if services is not None:

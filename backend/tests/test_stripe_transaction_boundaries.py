@@ -61,6 +61,7 @@ def _stripe_method_dispatch(create_mock: AsyncMock, cancel_mock: AsyncMock, *, i
     async def _call(_client, method_name: str, /, *args, **kwargs):
         if method_name == "create_checkout_session":
             if in_txn_ref is not None:
+                # Stripe create must execute outside the DB transaction boundary.
                 assert in_txn_ref["value"] is False
             return await create_mock(*args, **kwargs)
         if method_name == "cancel_checkout_session":
