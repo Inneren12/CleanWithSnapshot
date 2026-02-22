@@ -6,6 +6,7 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.domain.bookings.db_models import Booking
 from app.domain.time_tracking.db_models import WorkTimeEntry
@@ -375,16 +376,20 @@ async def fetch_time_tracking_summary(
 async def list_time_tracking_summaries(
     session: AsyncSession, booking_ids: Iterable[str], now: datetime | None = None
 ) -> list[dict[str, object]]:
-    if not booking_ids:
+    ordered_booking_ids = list(booking_ids)
+    if not ordered_booking_ids:
         return []
+
     stmt = (
-        select(Booking, WorkTimeEntry)
-        .join(WorkTimeEntry, WorkTimeEntry.booking_id == Booking.booking_id, isouter=True)
-        .where(Booking.booking_id.in_(list(booking_ids)))
+        select(Booking)
+        .options(joinedload(Booking.time_entry))
+        .where(Booking.booking_id.in_(ordered_booking_ids))
     )
     result = await session.execute(stmt)
-    rows = result.all()
-    summaries: list[dict[str, object]] = []
-    for booking, entry in rows:
-        summaries.append(summarize_order_time(booking, entry, now))
-    return summaries
+    bookings = result.scalars().all()
+    by_booking_id = {booking.booking_id: booking for booking in bookings}
+    return [
+        summarize_order_time(booking, booking.time_entry, now)
+        for booking_id in ordered_booking_ids
+        if (booking := by_booking_id.get(booking_id)) is not None
+    ]

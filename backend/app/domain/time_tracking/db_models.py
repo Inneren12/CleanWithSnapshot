@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
 from app.infra.db import Base
@@ -37,5 +37,6 @@ class WorkTimeEntry(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    booking = relationship("Booking", back_populates="time_entry")
 
     __table_args__ = (UniqueConstraint("booking_id", name="uq_work_time_booking"),)
