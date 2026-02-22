@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,38 @@ from app.domain.leads.service import export_payload_from_lead
 from app.infra.storage import StorageBackend, new_storage_backend
 from app.settings import settings
 
+
+def encode_data_export_cursor(created_at: datetime, export_id: uuid.UUID) -> str:
+    raw = f"{created_at.isoformat()}|{export_id}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("utf-8")
+
+
+def decode_data_export_cursor(cursor: str) -> tuple[datetime, uuid.UUID] | None:
+    if not cursor:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8")
+        created_raw, export_raw = decoded.split("|", 1)
+        created_at = datetime.fromisoformat(created_raw)
+        export_id = uuid.UUID(export_raw)
+    except Exception:  # noqa: BLE001
+        return None
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return created_at, export_id
+
+
+def _apply_data_export_cursor(stmt: Any, cursor: str | None) -> Any:
+    parsed = decode_data_export_cursor(cursor) if cursor else None
+    if not parsed:
+        return stmt
+    created_at, export_id = parsed
+    return stmt.where(
+        or_(
+            DataExportRequest.created_at < created_at,
+            (DataExportRequest.created_at == created_at) & (DataExportRequest.export_id < export_id),
+        )
+    )
 
 def _sanitize_booking(booking: Booking) -> dict:
     return {
@@ -409,8 +442,8 @@ async def list_data_export_requests(
     subject_email: str | None = None,
     subject_id: str | None = None,
     limit: int = 50,
-    offset: int = 0,
-) -> tuple[list[DataExportRequest], int]:
+    cursor: str | None = None,
+) -> tuple[list[DataExportRequest], int, str | None, str | None]:
     stmt = select(DataExportRequest).where(DataExportRequest.org_id == org_id)
     if subject_email and subject_id:
         stmt = stmt.where(
@@ -423,11 +456,29 @@ async def list_data_export_requests(
         stmt = stmt.where(DataExportRequest.subject_email == subject_email)
     elif subject_id:
         stmt = stmt.where(DataExportRequest.subject_id == subject_id)
+
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await session.execute(count_stmt)).scalar_one()
-    stmt = stmt.order_by(DataExportRequest.created_at.desc()).limit(limit).offset(offset)
-    result = await session.execute(stmt)
-    return list(result.scalars().all()), total
+
+    scoped_stmt = _apply_data_export_cursor(stmt, cursor)
+    paged_stmt = scoped_stmt.order_by(
+        DataExportRequest.created_at.desc(),
+        DataExportRequest.export_id.desc(),
+    ).limit(limit)
+    result = await session.execute(paged_stmt)
+    items = list(result.scalars().all())
+
+    next_cursor = None
+    if items and len(items) == limit:
+        tail = items[-1]
+        next_cursor = encode_data_export_cursor(tail.created_at, tail.export_id)
+
+    prev_cursor = None
+    if items:
+        head = items[0]
+        prev_cursor = encode_data_export_cursor(head.created_at, head.export_id)
+
+    return items, total, next_cursor, prev_cursor
 
 
 async def generate_data_export_bundle(

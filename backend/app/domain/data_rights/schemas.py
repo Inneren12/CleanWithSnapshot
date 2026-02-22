@@ -55,6 +55,8 @@ class DataRightsExportListItem(BaseModel):
 class DataRightsExportListResponse(BaseModel):
     items: list[DataRightsExportListItem]
     total: int
+    next_cursor: str | None = None
+    prev_cursor: str | None = None
 
 
 class DataDeletionRequestPayload(BaseModel):

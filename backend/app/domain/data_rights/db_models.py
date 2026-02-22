@@ -71,4 +71,5 @@ class DataExportRequest(Base):
         Index("ix_data_export_requests_org_status", "org_id", "status"),
         Index("ix_data_export_requests_org_subject", "org_id", "subject_id"),
         Index("ix_data_export_requests_org_created", "org_id", "created_at"),
+        Index("ix_data_export_requests_org_created_export", "org_id", "created_at", "export_id"),
     )
