@@ -7,7 +7,7 @@ import AdminNav from "../components/AdminNav";
 import {
   ADMIN_STORAGE_PASSWORD_KEY,
   ADMIN_STORAGE_USERNAME_KEY,
-  resolveAdminAuthHeaders,
+  resolveAdminRequestHeaders,
 } from "../lib/adminAuth";
 import { DEFAULT_FEATURE_CONFIG, DEFAULT_UI_PREFS } from "../lib/adminDefaults";
 import {
@@ -440,7 +440,7 @@ export default function DispatcherPage() {
   const hasMapKey = Boolean(mapApiKey);
 
   const { headers: authHeaders, hasCredentials } = useMemo(
-    () => resolveAdminAuthHeaders(username, password),
+    () => resolveAdminRequestHeaders(username, password),
     [username, password]
   );
   const isAuthenticated = hasCredentials;

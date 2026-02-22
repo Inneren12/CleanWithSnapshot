@@ -11,6 +11,11 @@ CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
 CSRF_FORM_FIELD = "csrf_token"
 SAFE_METHODS: set[str] = {"GET", "HEAD", "OPTIONS", "TRACE"}
+COOKIE_AUTH_NAMES: tuple[str, ...] = ("client_session", "worker_session", "saas_session")
+CSRF_EXEMPT_PATHS: set[str] = {
+    "/v1/payments/stripe/webhook",
+    "/stripe/webhook",
+}
 
 
 def _new_token() -> str:
@@ -92,3 +97,18 @@ async def require_csrf(request: Request) -> None:
     from app.settings import settings  # Local import to avoid circular dependency
 
     await validate_csrf(request, settings)
+
+
+def should_enforce_csrf(request: Request) -> bool:
+    if request.method in SAFE_METHODS:
+        return False
+
+    path = request.url.path.rstrip("/") or "/"
+    if path in CSRF_EXEMPT_PATHS:
+        return False
+
+    # Explicit bearer/basic auth requests are treated as non-cookie auth flows.
+    if request.headers.get("Authorization"):
+        return False
+
+    return any(request.cookies.get(cookie_name) for cookie_name in COOKIE_AUTH_NAMES)

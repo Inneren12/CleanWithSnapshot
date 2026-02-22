@@ -16,6 +16,13 @@ def _csrf_cookie_attributes(response) -> list[str]:
     return [part.strip().lower() for part in header.split(";")[1:]]
 
 
+def _csrf_cookie_value(response) -> str:
+    for key, value in response.cookies.items():
+        if key == "csrf_token":
+            return value
+    raise AssertionError("Missing csrf_token cookie")
+
+
 @pytest.mark.anyio
 async def test_csrf_enforced_when_testing_disabled(client):
     original = {
@@ -43,6 +50,40 @@ async def test_csrf_enforced_when_testing_disabled(client):
             follow_redirects=False,
         )
         assert post_resp.status_code == 403
+    finally:
+        settings.testing = original["testing"]
+        settings.admin_basic_username = original["admin_basic_username"]
+        settings.admin_basic_password = original["admin_basic_password"]
+
+
+@pytest.mark.anyio
+async def test_csrf_allows_valid_double_submit_token(client):
+    original = {
+        "testing": settings.testing,
+        "admin_basic_username": settings.admin_basic_username,
+        "admin_basic_password": settings.admin_basic_password,
+    }
+    settings.testing = False
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+
+    try:
+        headers = _basic_auth("admin", "secret")
+        get_resp = client.get("/v1/admin/ui/workers", headers=headers)
+        assert get_resp.status_code == 200
+        csrf_token = _csrf_cookie_value(get_resp)
+
+        post_resp = client.post(
+            "/v1/admin/ui/workers/new",
+            headers={**headers, "X-CSRF-Token": csrf_token},
+            data={
+                "name": "CSRF Allowed Worker",
+                "phone": "+1 555-0001",
+                "team_id": 1,
+            },
+            follow_redirects=False,
+        )
+        assert post_resp.status_code != 403
     finally:
         settings.testing = original["testing"]
         settings.admin_basic_username = original["admin_basic_username"]
