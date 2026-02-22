@@ -126,3 +126,22 @@ async def test_expired_session_rejected(async_session_maker, client):
 
     resp = client.get("/v1/auth/org-context", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_login_failure_does_not_leak_email_in_response(async_session_maker, client):
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "PII Org")
+        user = await saas_service.create_user(session, "pii.user@example.com", "secret")
+        await saas_service.create_membership(session, org, user, MembershipRole.ADMIN)
+        await session.commit()
+
+    response = client.post(
+        "/v1/auth/login",
+        json={"email": "pii.user@example.com", "password": "wrong-password", "org_id": str(org.org_id)},
+    )
+
+    assert response.status_code == 401
+    body = response.text.lower()
+    assert "pii.user@example.com" not in body
+    assert "invalid credentials" in body

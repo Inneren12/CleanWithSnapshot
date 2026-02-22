@@ -1,4 +1,5 @@
 import uuid
+import logging
 from datetime import datetime
 
 import sqlalchemy as sa
@@ -18,6 +19,42 @@ from app.infra.totp import verify_totp_code
 from app.settings import settings
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
+
+
+def _resolve_request_id(request: Request) -> str | None:
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
+    if request_id:
+        request.state.request_id = request_id
+        return str(request_id)
+    return None
+
+
+def _log_saas_auth_failure(request: Request, *, flow: str, reason: str, status_code: int) -> None:
+    logger.warning(
+        "saas_auth_failed",
+        extra={
+            "extra": {
+                "event": "saas_auth_attempt",
+                "event_id": str(uuid.uuid4()),
+                "flow": flow,
+                "outcome": "failure",
+                "failure_reason": reason,
+                "status_code": status_code,
+                "path": request.url.path,
+                "method": request.method,
+                "request_id": _resolve_request_id(request),
+                "correlation_id": request.headers.get("X-Correlation-ID"),
+            }
+        },
+    )
+
+
+def _raise_invalid_credentials(request: Request, *, flow: str, reason: str) -> None:
+    status_code = status.HTTP_401_UNAUTHORIZED
+    metrics.record_auth_failure("saas", reason)
+    _log_saas_auth_failure(request, flow=flow, reason=reason, status_code=status_code)
+    raise HTTPException(status_code=status_code, detail="Invalid credentials")
 
 
 def _requires_admin_mfa(role: MembershipRole) -> bool:
@@ -86,8 +123,7 @@ async def login(
     try:
         user, membership = await saas_service.authenticate_user(session, payload.email, payload.password, payload.org_id)
     except ValueError as exc:  # noqa: BLE001
-        metrics.record_auth_failure("saas", str(exc))
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+        _raise_invalid_credentials(request, flow="login", reason=str(exc))
     requires_mfa = _requires_admin_mfa(membership.role)
     mfa_verified = False
     if requires_mfa and user.totp_enabled:
@@ -133,8 +169,7 @@ async def refresh_tokens(
             session, payload.refresh_token
         )
     except ValueError as exc:  # noqa: BLE001
-        metrics.record_auth_failure("saas", str(exc))
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+        _raise_invalid_credentials(request, flow="refresh", reason=str(exc))
     user = await session.get(User, membership.user_id)
     requires_mfa = _requires_admin_mfa(membership.role)
     mfa_verified = bool(getattr(token_session, "mfa_verified", False))
