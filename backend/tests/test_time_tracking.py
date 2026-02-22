@@ -1,11 +1,13 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy import select
 
 from app.domain.bookings.db_models import Booking
 from app.domain.time_tracking.db_models import WorkTimeEntry
 from app.domain.time_tracking import service as time_service
+from app.main import app
 from app.settings import settings
 
 
@@ -145,3 +147,42 @@ def test_time_tracking_endpoints(client):
     assert admin_resp.status_code == 200
     bookings = {item["booking_id"] for item in admin_resp.json()}
     assert booking_id in bookings
+
+
+def test_admin_time_tracking_list_uses_bounded_queries(client):
+    settings.admin_basic_username = "admin"
+    settings.admin_basic_password = "secret"
+    auth = (settings.admin_basic_username, settings.admin_basic_password)
+
+    lead_id = _create_lead(client)
+    for idx in range(6):
+        start = datetime(2024, 5, 1, 15, 0, tzinfo=timezone.utc) + timedelta(days=idx)
+        response = client.post(
+            "/v1/bookings",
+            json={"starts_at": start.isoformat(), "time_on_site_hours": 1.0, "lead_id": lead_id},
+        )
+        assert response.status_code == 201
+        booking_id = response.json()["booking_id"]
+        assert client.post(f"/v1/orders/{booking_id}/time/start", auth=auth).status_code == 200
+
+    sync_engine = app.state.db_session_factory.kw["bind"].sync_engine
+    statements: list[str] = []
+
+    def _capture_sql(_conn, _cursor, statement, _parameters, _context, _executemany):
+        normalized = statement.upper()
+        if "FROM BOOKINGS" in normalized or "FROM WORK_TIME_ENTRIES" in normalized:
+            statements.append(statement)
+
+    sa.event.listen(sync_engine, "before_cursor_execute", _capture_sql)
+    try:
+        response = client.get("/v1/admin/orders/time?limit=6", auth=auth)
+        assert response.status_code == 200
+        assert len(response.json()) >= 6
+    finally:
+        sa.event.remove(sync_engine, "before_cursor_execute", _capture_sql)
+
+    booking_queries = [stmt for stmt in statements if "FROM bookings" in stmt]
+    work_time_queries = [stmt for stmt in statements if "work_time_entries" in stmt]
+
+    assert len(booking_queries) == 2
+    assert len(work_time_queries) == 1

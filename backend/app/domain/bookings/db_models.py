@@ -31,6 +31,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.domain.workers.db_models import WorkerNote, WorkerReview
     from app.domain.invoices.db_models import Invoice
     from app.domain.clients.db_models import ClientFeedback
+    from app.domain.time_tracking.db_models import WorkTimeEntry
 
 
 class Team(Base):
@@ -214,6 +215,12 @@ class Booking(Base):
         back_populates="booking",
         cascade="all, delete-orphan",
         order_by="CheckoutAttempt.created_at",
+    )
+
+    time_entry: Mapped["WorkTimeEntry | None"] = relationship(
+        "WorkTimeEntry",
+        back_populates="booking",
+        uselist=False,
     )
 
     __table_args__ = (
