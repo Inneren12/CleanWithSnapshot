@@ -45,6 +45,7 @@ class StripeClient:
         product_name: str = "Cleaning deposit",
         payment_intent_metadata: dict[str, str] | None = None,
         customer_email: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Any:
         if not self.secret_key:
             raise ValueError("Stripe secret key not configured")
@@ -71,7 +72,10 @@ class StripeClient:
             payload["payment_intent_data"] = {"metadata": payment_intent_metadata}
         if customer_email:
             payload["customer_email"] = customer_email
-        return await self._call(lambda: self.stripe.checkout.Session.create(**payload))
+        extra: dict[str, Any] = {}
+        if idempotency_key:
+            extra["idempotency_key"] = idempotency_key
+        return await self._call(lambda: self.stripe.checkout.Session.create(**payload, **extra))
 
     async def create_subscription_checkout_session(
         self,
@@ -84,6 +88,7 @@ class StripeClient:
         customer: str | None = None,
         price_id: str | None = None,
         plan_name: str = "SaaS Subscription",
+        idempotency_key: str | None = None,
     ) -> Any:
         if not self.secret_key:
             raise ValueError("Stripe secret key not configured")
@@ -111,9 +116,12 @@ class StripeClient:
         }
         if customer:
             payload["customer"] = customer
-        return await self._call(lambda: self.stripe.checkout.Session.create(**payload))
+        extra: dict[str, Any] = {}
+        if idempotency_key:
+            extra["idempotency_key"] = idempotency_key
+        return await self._call(lambda: self.stripe.checkout.Session.create(**payload, **extra))
 
-    async def cancel_checkout_session(self, session_id: str) -> Any:
+    async def cancel_checkout_session(self, session_id: str, *, idempotency_key: str | None = None) -> Any:
         """Best-effort expire (cancel) of a Stripe Checkout Session.
 
         Stripe uses ``Session.expire`` to prevent further payment collection on
@@ -122,8 +130,20 @@ class StripeClient:
         if not self.secret_key:
             raise ValueError("Stripe secret key not configured")
         self.stripe.api_key = self.secret_key
+        extra: dict[str, Any] = {}
+        if idempotency_key:
+            extra["idempotency_key"] = idempotency_key
         return await self._call(
-            lambda: self.stripe.checkout.Session.expire(session_id)
+            lambda: self.stripe.checkout.Session.expire(session_id, **extra)
+        )
+
+    async def retrieve_checkout_session(self, session_id: str) -> Any:
+        """Retrieve an existing Stripe Checkout Session by ID."""
+        if not self.secret_key:
+            raise ValueError("Stripe secret key not configured")
+        self.stripe.api_key = self.secret_key
+        return await self._call(
+            lambda: self.stripe.checkout.Session.retrieve(session_id)
         )
 
     async def create_billing_portal_session(
@@ -131,15 +151,20 @@ class StripeClient:
         *,
         customer_id: str,
         return_url: str,
+        idempotency_key: str | None = None,
     ) -> Any:
         if not self.secret_key:
             raise ValueError("Stripe secret key not configured")
 
         self.stripe.api_key = self.secret_key
+        extra: dict[str, Any] = {}
+        if idempotency_key:
+            extra["idempotency_key"] = idempotency_key
         return await self._call(
             lambda: self.stripe.billing_portal.Session.create(
                 customer=customer_id,
                 return_url=return_url,
+                **extra,
             )
         )
 

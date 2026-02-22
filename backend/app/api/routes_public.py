@@ -28,6 +28,7 @@ from app.infra.db import get_db_session
 from app.infra.email import resolve_app_email_adapter
 from app.infra.storage import resolve_storage_backend
 from app.infra import stripe as stripe_infra
+from app.infra.stripe_idempotency import make_stripe_idempotency_key
 from app.settings import settings
 
 router = APIRouter(include_in_schema=False)
@@ -658,6 +659,12 @@ async def create_invoice_payment(
 
     lead = await invoice_service.fetch_customer(session, invoice)
     stripe_client = _stripe_client(http_request)
+    public_invoice_idempotency_key = make_stripe_idempotency_key(
+        "pub_inv_checkout",
+        amount_cents=outstanding,
+        currency=invoice.currency.lower(),
+        extra={"invoice_id": invoice.invoice_id},
+    )
     checkout_session = await stripe_infra.create_checkout_session(
         stripe_client=stripe_client,
         secret_key=settings.stripe_secret_key,
@@ -669,6 +676,7 @@ async def create_invoice_payment(
         payment_intent_metadata={"invoice_id": invoice.invoice_id, "invoice_number": invoice.invoice_number},
         product_name=f"Invoice {invoice.invoice_number}",
         customer_email=getattr(lead, "email", None),
+        idempotency_key=public_invoice_idempotency_key,
     )
     checkout_url = getattr(checkout_session, "url", None) or checkout_session.get("url")
     logger.info(
