@@ -470,7 +470,7 @@ async def create_booking(
                 await stripe_infra.call_stripe_client_method(
                     stripe_client,
                     "cancel_checkout_session",
-                    stripe_checkout_session.id,
+                    session_id=stripe_checkout_session.id,
                 )
             except Exception as cancel_exc:  # noqa: BLE001
                 logger.warning(
@@ -479,6 +479,7 @@ async def create_booking(
                         "extra": {
                             "event": "compensation_failed",
                             "booking_id": pending_booking_id,
+                            "lead_id": request.lead_id,
                             "stripe_session_id": stripe_checkout_session.id,
                             "reason": type(cancel_exc).__name__,
                         }
@@ -493,7 +494,7 @@ async def create_booking(
                 await stripe_infra.call_stripe_client_method(
                     stripe_client,
                     "cancel_checkout_session",
-                    stripe_checkout_session.id,
+                    session_id=stripe_checkout_session.id,
                 )
             except Exception as cancel_exc:  # noqa: BLE001
                 logger.warning(
@@ -502,6 +503,7 @@ async def create_booking(
                         "extra": {
                             "event": "compensation_failed",
                             "booking_id": pending_booking_id,
+                            "lead_id": request.lead_id,
                             "stripe_session_id": stripe_checkout_session.id,
                             "reason": type(cancel_exc).__name__,
                         }

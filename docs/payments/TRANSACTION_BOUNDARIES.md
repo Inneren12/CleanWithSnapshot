@@ -1,35 +1,42 @@
 # Payment Transaction Boundaries
 
 ## Rule
-Never perform external I/O (Stripe HTTP calls) while a DB transaction is open.
+**No external network I/O inside DB transactions.**
 
-## Booking flow (two-phase)
-1. **Phase 1 (outside transaction):**
+For Stripe-backed booking deposits, this means zero Stripe HTTP calls may happen while `session.begin()` / `begin_nested()` is active.
+
+## Two-phase booking pattern
+1. **Phase 1 (outside transaction)**
    - Pre-generate `pending_booking_id`.
-   - If deposit is required, create Stripe Checkout Session using that booking id in metadata.
-   - If Stripe creation fails, downgrade deposit policy and continue booking creation without deposit.
-2. **Phase 2 (inside transaction):**
-   - Create booking with `booking_id=pending_booking_id`.
-   - If checkout session exists, attach `stripe_checkout_session_id` and `stripe_payment_intent_id`.
-   - Commit.
+   - If a deposit is required, call Stripe `create_checkout_session` with metadata containing `booking_id` (and `lead_id` when present).
+   - If Stripe creation fails, downgrade to a non-deposit booking path and continue.
 
-## Compensation
-If Phase 2 fails after Stripe session creation:
-- Best-effort call Stripe Checkout Session expire (`cancel_checkout_session` wrapper).
-- If compensation fails, log structured warning:
-  - event: `stripe_session_cancel_failed`
-  - include `booking_id`, `stripe_session_id`, `reason`
-- Re-raise the original error (do not mask 409 slot conflicts or other handlers).
+2. **Phase 2 (inside transaction)**
+   - Open DB transaction.
+   - Create booking row using `pending_booking_id`.
+   - Attach Stripe identifiers (`stripe_checkout_session_id`, `stripe_payment_intent_id`) if Phase 1 succeeded.
+   - Commit transaction.
 
-## Stripe wrapper
-Use a **single** cancel/expire surface: `StripeClient.cancel_checkout_session` via
-`app.infra.stripe_client.call_stripe_client_method(...)`.
+## Compensation on Phase 2 failure
+If Stripe session creation succeeded but DB write/commit fails:
+- Perform best-effort compensation by expiring the checkout session via `cancel_checkout_session(session_id=...)`.
+- Log structured failure details if compensation itself fails, including `booking_id`, `stripe_session_id`, and `lead_id` when available.
+- Re-raise the original DB failure so endpoint behavior remains unchanged.
 
-## Epic 2 (not in this PR)
-Outbox/idempotency and crash-safe reconciliation are intentionally deferred.
+## Non-goals (Epic 2)
+The following are intentionally out of scope for this refactor:
+- Outbox/event-driven reconciliation.
+- Cross-request idempotency keys and replay safety.
+- Crash-recovery workflows for process death between Stripe create and DB rollback.
 
-## Tests
-`backend/tests/test_stripe_transaction_boundaries.py` covers:
-- Happy path
-- Stripe create failure + deposit downgrade
-- DB failure after Stripe success + compensation
+These are scheduled for Epic 2.
+
+## How to verify
+Run:
+- `pytest backend/tests/test_stripe_transaction_boundaries.py -q`
+
+The suite verifies:
+- Happy path (Stripe create + DB commit).
+- Stripe create failure fallback (booking still created, no checkout URL).
+- DB failure after Stripe success triggers compensation and no persisted booking/session linkage.
+- Stripe create executes outside transaction boundaries.
