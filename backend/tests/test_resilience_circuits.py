@@ -273,13 +273,16 @@ async def test_stripe_client_fails_without_any_config(monkeypatch):
 
     client = StripeClient(secret_key=None, webhook_secret=None, stripe_sdk=_FakeStripe())
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Stripe secret key not configured"):
         await client.create_checkout_session(
             amount_cents=1000,
             currency="usd",
             success_url="https://success",
             cancel_url="https://cancel",
         )
+
+    with pytest.raises(ValueError, match="Stripe secret key not configured"):
+        await client.cancel_checkout_session("cs_test")
 
 
 @pytest.mark.anyio
