@@ -196,13 +196,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable):
         if should_enforce_csrf(request):
-            try:
-                await require_csrf(request)
-            except HTTPException as exc:
-                handler = request.app.exception_handlers.get(HTTPException)
-                if handler is not None:
-                    return await handler(request, exc)
-                raise
+            await require_csrf(request)
         return await call_next(request)
 
 class MetricsMiddleware(BaseHTTPMiddleware):
