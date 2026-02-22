@@ -57,9 +57,11 @@ async def _booking_exists_with_checkout(async_session_maker, session_id: str) ->
         return row is not None
 
 
-def _stripe_method_dispatch(create_mock: AsyncMock, cancel_mock: AsyncMock):
+def _stripe_method_dispatch(create_mock: AsyncMock, cancel_mock: AsyncMock, *, in_txn_ref: dict[str, bool] | None = None):
     async def _call(_client, method_name: str, /, *args, **kwargs):
         if method_name == "create_checkout_session":
+            if in_txn_ref is not None:
+                assert in_txn_ref["value"] is False
             return await create_mock(*args, **kwargs)
         if method_name == "cancel_checkout_session":
             return await cancel_mock(*args, **kwargs)
@@ -87,9 +89,26 @@ async def test_happy_path_stripe_and_db_succeed(client, async_session_maker, mon
     )
     create_mock = AsyncMock(return_value=checkout_session)
     cancel_mock = AsyncMock()
+    in_txn = {"value": False}
+
+    from app.api import routes_bookings
+
+    original_create_booking = routes_bookings.booking_service.create_booking
+
+    async def _wrapped_create_booking(*args, **kwargs):
+        in_txn["value"] = True
+        try:
+            return await original_create_booking(*args, **kwargs)
+        finally:
+            in_txn["value"] = False
+
+    monkeypatch.setattr(
+        "app.api.routes_bookings.booking_service.create_booking",
+        _wrapped_create_booking,
+    )
     monkeypatch.setattr(
         "app.api.routes_bookings.stripe_infra.call_stripe_client_method",
-        _stripe_method_dispatch(create_mock, cancel_mock),
+        _stripe_method_dispatch(create_mock, cancel_mock, in_txn_ref=in_txn),
     )
 
     response = client.post(
@@ -159,12 +178,18 @@ async def test_db_failure_after_stripe_success_triggers_compensation(
         AsyncMock(side_effect=RuntimeError("db fail")),
     )
 
-    response = client.post(
-        "/v1/bookings",
-        json={"starts_at": _future_slot(), "time_on_site_hours": 2.0, "lead_id": lead_id},
-    )
+    response = None
+    try:
+        response = client.post(
+            "/v1/bookings",
+            json={"starts_at": _future_slot(), "time_on_site_hours": 2.0, "lead_id": lead_id},
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "db fail"
 
-    assert response.status_code == 500, response.text
+    if response is not None:
+        assert response.status_code == 500, response.text
     cancel_mock.assert_awaited_once()
-    assert cancel_mock.await_args.args == ("cs_test_db_fail",)
+    assert cancel_mock.await_args.args == ()
+    assert cancel_mock.await_args.kwargs == {"session_id": "cs_test_db_fail"}
     assert not await _booking_exists_with_checkout(async_session_maker, "cs_test_db_fail")
