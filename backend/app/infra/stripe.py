@@ -29,6 +29,7 @@ async def create_checkout_session(
     product_name: str = "Cleaning deposit",
     payment_intent_metadata: dict[str, str] | None = None,
     customer_email: str | None = None,
+    idempotency_key: str | None = None,
 ):
     stripe_client.api_key = secret_key
     payload = {
@@ -52,10 +53,13 @@ async def create_checkout_session(
         payload["payment_intent_data"] = {"metadata": payment_intent_metadata}
     if customer_email:
         payload["customer_email"] = customer_email
+    extra: dict[str, Any] = {}
+    if idempotency_key:
+        extra["idempotency_key"] = idempotency_key
 
     try:
         return await stripe_circuit.call(
-            lambda: anyio.to_thread.run_sync(lambda: stripe_client.checkout.Session.create(**payload))
+            lambda: anyio.to_thread.run_sync(lambda: stripe_client.checkout.Session.create(**payload, **extra))
         )
     except CircuitBreakerOpenError:
         raise

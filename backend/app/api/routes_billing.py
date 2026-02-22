@@ -15,6 +15,7 @@ from app.domain.saas import billing_service
 from app.domain.saas.plans import get_plan
 from app.infra import stripe_client as stripe_infra
 from app.infra.db import get_db_session
+from app.infra.stripe_idempotency import make_stripe_idempotency_key
 from app.shared.circuit_breaker import CircuitBreakerOpenError
 from app.settings import settings
 
@@ -114,6 +115,11 @@ async def create_billing_checkout(
 
     billing = await billing_service.get_or_create_billing(session, identity.org_id)
     metadata = {"org_id": str(identity.org_id), "plan_id": plan.plan_id}
+    subscription_idempotency_key = make_stripe_idempotency_key(
+        "sub_checkout",
+        org_id=str(identity.org_id),
+        extra={"plan_id": plan.plan_id},
+    )
     try:
         checkout_session = await stripe_infra.call_stripe_client_method(
             stripe_client,
@@ -126,6 +132,7 @@ async def create_billing_checkout(
             customer=billing.stripe_customer_id,
             price_id=plan.stripe_price_id,
             plan_name=plan.name,
+            idempotency_key=subscription_idempotency_key,
         )
     except CircuitBreakerOpenError as exc:
         raise HTTPException(
@@ -159,12 +166,18 @@ async def billing_portal(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Billing not initialized")
 
     stripe_client = _stripe_client(http_request)
+    portal_idempotency_key = make_stripe_idempotency_key(
+        "portal",
+        org_id=str(identity.org_id),
+        extra={"customer_id": billing.stripe_customer_id},
+    )
     try:
         portal = await stripe_infra.call_stripe_client_method(
             stripe_client,
             "create_billing_portal_session",
             customer_id=billing.stripe_customer_id,
             return_url=settings.stripe_billing_portal_return_url,
+            idempotency_key=portal_idempotency_key,
         )
     except CircuitBreakerOpenError as exc:
         raise HTTPException(

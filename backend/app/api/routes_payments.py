@@ -28,6 +28,7 @@ from app.domain.disputes.db_models import Dispute
 from app.infra.email import resolve_app_email_adapter
 from app.infra import stripe_client as stripe_infra
 from app.infra.db import get_db_session
+from app.infra.stripe_idempotency import make_stripe_idempotency_key
 from app.infra.metrics import metrics
 from app.shared.circuit_breaker import CircuitBreakerOpenError
 from app.settings import settings
@@ -804,6 +805,37 @@ async def create_deposit_checkout(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stripe not configured")
 
     stripe_client = _stripe_client(http_request)
+
+    # Anti-duplicate: if a non-failed checkout session already exists in DB,
+    # retrieve and return it rather than creating a second Stripe session.
+    _active_deposit_statuses = {"pending", "paid"}
+    if booking.stripe_checkout_session_id and booking.deposit_status in _active_deposit_statuses:
+        try:
+            existing_session = await stripe_infra.call_stripe_client_method(
+                stripe_client,
+                "retrieve_checkout_session",
+                session_id=booking.stripe_checkout_session_id,
+            )
+            existing_url = (
+                getattr(existing_session, "url", None)
+                or (existing_session.get("url") if isinstance(existing_session, dict) else None)
+            )
+            if existing_url:
+                return {
+                    "checkout_url": existing_url,
+                    "provider": "stripe",
+                    "booking_id": booking.booking_id,
+                }
+        except Exception:  # noqa: BLE001
+            # Session may be expired or unretrievable; fall through to create a new one.
+            pass
+
+    idempotency_key = make_stripe_idempotency_key(
+        "deposit_checkout",
+        booking_id=booking.booking_id,
+        amount_cents=int(booking.deposit_cents),
+        currency=settings.deposit_currency,
+    )
     metadata = {"booking_id": booking.booking_id}
     try:
         checkout_session = await stripe_infra.call_stripe_client_method(
@@ -814,6 +846,7 @@ async def create_deposit_checkout(
             success_url=settings.stripe_success_url.replace("{CHECKOUT_SESSION_ID}", "{CHECKOUT_SESSION_ID}"),
             cancel_url=settings.stripe_cancel_url,
             metadata=metadata,
+            idempotency_key=idempotency_key,
         )
     except CircuitBreakerOpenError as exc:
         logger.warning(
@@ -884,6 +917,12 @@ async def create_invoice_payment_checkout(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invoice already paid")
 
     stripe_client = _stripe_client(http_request)
+    invoice_idempotency_key = make_stripe_idempotency_key(
+        "invoice_checkout",
+        amount_cents=outstanding,
+        currency=invoice.currency.lower(),
+        extra={"invoice_id": invoice.invoice_id},
+    )
     try:
         checkout_session = await stripe_infra.call_stripe_client_method(
             stripe_client,
@@ -895,6 +934,7 @@ async def create_invoice_payment_checkout(
             metadata={"invoice_id": invoice.invoice_id, "invoice_number": invoice.invoice_number},
             payment_intent_metadata={"invoice_id": invoice.invoice_id, "invoice_number": invoice.invoice_number},
             product_name=f"Invoice {invoice.invoice_number}",
+            idempotency_key=invoice_idempotency_key,
         )
     except CircuitBreakerOpenError as exc:
         logger.warning(

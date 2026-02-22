@@ -26,6 +26,7 @@ from app.domain.leads.db_models import Lead
 from app.domain.clients import service as client_service
 from app.domain.notifications import email_service
 from app.infra import stripe_client as stripe_infra
+from app.infra.stripe_idempotency import make_stripe_idempotency_key
 from app.infra.captcha import log_captcha_event, log_captcha_unavailable, verify_turnstile
 from app.infra.email import resolve_app_email_adapter
 from app.settings import settings
@@ -365,6 +366,12 @@ async def create_booking(
         metadata: dict[str, str] = {"booking_id": pending_booking_id}
         if request.lead_id:
             metadata["lead_id"] = request.lead_id
+        deposit_idempotency_key = make_stripe_idempotency_key(
+            "deposit_checkout",
+            booking_id=pending_booking_id,
+            amount_cents=deposit_decision.deposit_cents,
+            currency=settings.deposit_currency,
+        )
         try:
             stripe_checkout_session = await stripe_infra.call_stripe_client_method(
                 stripe_client,
@@ -374,6 +381,7 @@ async def create_booking(
                 success_url=settings.stripe_success_url.replace("{BOOKING_ID}", pending_booking_id),
                 cancel_url=settings.stripe_cancel_url.replace("{BOOKING_ID}", pending_booking_id),
                 metadata=metadata,
+                idempotency_key=deposit_idempotency_key,
             )
         except Exception as exc:  # noqa: BLE001
             deposit_decision = booking_service.downgrade_deposit_requirement(
