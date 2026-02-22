@@ -476,14 +476,16 @@ async def list_data_exports(
     session: AsyncSession = Depends(get_db_session),
     lead_id: str | None = Query(None),
     email: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    page_size: int = Query(50, ge=1, le=200),
+    cursor: str | None = Query(None),
+    offset: int | None = Query(None, ge=0, deprecated=True),
 ) -> data_rights_schemas.DataRightsExportListResponse:
     client_identity = await _get_client_identity(request)
     saas_identity = await _get_saas_identity(request)
     if not client_identity and not saas_identity:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     org_id = entitlements.resolve_org_id(request)
+    _ = offset  # deprecated backward-compatible parameter
 
     subject_email = None
     subject_id = None
@@ -495,13 +497,13 @@ async def list_data_exports(
         subject_id = lead_id or None
         subject_email = email.lower() if email else None
 
-    items, total = await data_rights_service.list_data_export_requests(
+    items, total, next_cursor, prev_cursor = await data_rights_service.list_data_export_requests(
         session,
         org_id=org_id,
         subject_email=subject_email,
         subject_id=subject_id,
-        limit=limit,
-        offset=offset,
+        limit=page_size,
+        cursor=cursor,
     )
     return data_rights_schemas.DataRightsExportListResponse(
         items=[
@@ -516,6 +518,8 @@ async def list_data_exports(
             for item in items
         ],
         total=total,
+        next_cursor=next_cursor,
+        prev_cursor=prev_cursor,
     )
 
 

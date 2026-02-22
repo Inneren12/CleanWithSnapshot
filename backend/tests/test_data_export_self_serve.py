@@ -1,6 +1,7 @@
 import uuid
 
 import pytest
+import sqlalchemy as sa
 from app.domain.clients.db_models import ClientUser
 from app.domain.clients import service as client_service
 from app.domain.data_rights.db_models import DataExportRequest
@@ -193,3 +194,108 @@ async def test_cross_org_export_download_forbidden(async_session_maker, client):
         assert response.status_code == 404
     finally:
         client.app.state.storage_backend = original_storage
+
+
+@pytest.mark.anyio
+async def test_data_rights_exports_cursor_pagination_is_stable(async_session_maker, client):
+    async with async_session_maker() as session:
+        lead = await _seed_lead(session, org_id=settings.default_org_id, email="cursor@example.com")
+        client_user = await _seed_client(session, org_id=settings.default_org_id, email=lead.email)
+        for idx in range(55):
+            await data_rights_service.create_data_export_request(
+                session,
+                org_id=settings.default_org_id,
+                subject_id=client_user.client_id,
+                subject_type="client",
+                subject_email=client_user.email,
+                requested_by=f"requester-{idx}@example.com",
+                requested_by_type="client",
+                request_id=f"req-{idx}",
+            )
+        await session.commit()
+
+    token = client_service.issue_magic_token(
+        email=client_user.email,
+        client_id=client_user.client_id,
+        secret=settings.client_portal_secret,
+        ttl_minutes=settings.client_portal_token_ttl_minutes,
+        org_id=settings.default_org_id,
+    )
+
+    statements: list[str] = []
+
+    async with async_session_maker() as session:
+        sync_engine = session.bind.sync_engine
+
+    def _capture_sql(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "data_export_requests" in statement:
+            statements.append(statement)
+
+    sa.event.listen(sync_engine, "before_cursor_execute", _capture_sql)
+    try:
+        cursor = None
+        seen_ids: set[str] = set()
+        fetched = 0
+        page_count = 0
+        while True:
+            query = "/v1/data-rights/exports?page_size=10"
+            if cursor:
+                query += f"&cursor={cursor}"
+            response = client.get(query, headers=_client_auth_header(token))
+            assert response.status_code == 200
+            payload = response.json()
+            items = payload["items"]
+            page_count += 1
+            for item in items:
+                assert item["export_id"] not in seen_ids
+                seen_ids.add(item["export_id"])
+            fetched += len(items)
+
+            if payload["next_cursor"] is None:
+                assert fetched == 55
+                break
+            cursor = payload["next_cursor"]
+
+        assert page_count >= 6
+    finally:
+        sa.event.remove(sync_engine, "before_cursor_execute", _capture_sql)
+
+    export_selects = [stmt for stmt in statements if "SELECT" in stmt.upper() and "FROM data_export_requests" in stmt]
+    assert export_selects
+    assert all(" OFFSET " not in stmt.upper() for stmt in export_selects)
+
+
+@pytest.mark.anyio
+async def test_data_rights_exports_offset_param_is_backward_compatible(async_session_maker, client):
+    async with async_session_maker() as session:
+        lead = await _seed_lead(session, org_id=settings.default_org_id, email="compat@example.com")
+        client_user = await _seed_client(session, org_id=settings.default_org_id, email=lead.email)
+        for idx in range(3):
+            await data_rights_service.create_data_export_request(
+                session,
+                org_id=settings.default_org_id,
+                subject_id=client_user.client_id,
+                subject_type="client",
+                subject_email=client_user.email,
+                requested_by=f"compat-{idx}@example.com",
+                requested_by_type="client",
+                request_id=f"compat-{idx}",
+            )
+        await session.commit()
+
+    token = client_service.issue_magic_token(
+        email=client_user.email,
+        client_id=client_user.client_id,
+        secret=settings.client_portal_secret,
+        ttl_minutes=settings.client_portal_token_ttl_minutes,
+        org_id=settings.default_org_id,
+    )
+
+    response = client.get(
+        "/v1/data-rights/exports?page_size=2&offset=1000",
+        headers=_client_auth_header(token),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 2
+    assert payload["next_cursor"] is not None
