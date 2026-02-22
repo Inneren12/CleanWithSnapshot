@@ -157,7 +157,7 @@ async def test_stripe_create_fails_booking_created_without_deposit(client, async
 
 
 async def test_db_failure_after_stripe_success_triggers_compensation(
-    client, async_session_maker, monkeypatch
+    client_no_raise, async_session_maker, monkeypatch
 ):
     _set_payment_settings(monkeypatch)
     lead_id = await _seed_lead_with_estimate(async_session_maker)
@@ -178,17 +178,13 @@ async def test_db_failure_after_stripe_success_triggers_compensation(
         AsyncMock(side_effect=RuntimeError("db fail")),
     )
 
-    response = None
-    try:
-        response = client.post(
-            "/v1/bookings",
-            json={"starts_at": _future_slot(), "time_on_site_hours": 2.0, "lead_id": lead_id},
-        )
-    except RuntimeError as exc:
-        assert str(exc) == "db fail"
+    response = client_no_raise.post(
+        "/v1/bookings",
+        json={"starts_at": _future_slot(), "time_on_site_hours": 2.0, "lead_id": lead_id},
+    )
 
-    if response is not None:
-        assert response.status_code == 500, response.text
+    assert response.status_code == 500, response.text
+    create_mock.assert_awaited_once()
     cancel_mock.assert_awaited_once()
     assert cancel_mock.await_args.args == ()
     assert cancel_mock.await_args.kwargs == {"session_id": "cs_test_db_fail"}
