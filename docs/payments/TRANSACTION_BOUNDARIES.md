@@ -40,3 +40,7 @@ The suite verifies:
 - Stripe create failure fallback (booking still created, no checkout URL).
 - DB failure after Stripe success triggers compensation and no persisted booking/session linkage.
 - Stripe create executes outside transaction boundaries.
+
+Verification:
+- `grep -n "create_checkout_session" backend/app/api/routes_bookings.py`
+- Ensure the Stripe create call appears before `async with transaction_ctx`.

@@ -216,6 +216,8 @@ def test_resolve_client_populates_secret_key_from_app_settings(monkeypatch):
 
     client = infra.stripe_client.resolve_client(app_state)
 
+    # Resolution order is app_settings -> global settings fallback, and existing
+    # non-empty keys on a resolved client are never overwritten.
     assert client.secret_key == "sk_test_app_state"
     assert client.webhook_secret == "whsec_app_state"
 
@@ -265,6 +267,22 @@ def test_resolve_client_populates_empty_keys_from_app_settings(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_stripe_client_fails_without_any_config(monkeypatch):
+    monkeypatch.setattr(settings, "stripe_secret_key", None)
+    monkeypatch.setattr(settings, "stripe_webhook_secret", None)
+
+    client = StripeClient(secret_key=None, webhook_secret=None, stripe_sdk=_FakeStripe())
+
+    with pytest.raises(ValueError):
+        await client.create_checkout_session(
+            amount_cents=1000,
+            currency="usd",
+            success_url="https://success",
+            cancel_url="https://cancel",
+        )
+
+
+@pytest.mark.anyio
 async def test_stripe_client_create_and_cancel_use_settings_secret(monkeypatch):
     monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_settings_runtime")
 
@@ -304,3 +322,56 @@ async def test_stripe_client_create_and_cancel_use_settings_secret(monkeypatch):
     assert expired["status"] == "expired"
     assert calls["expire"] == "cs_test"
     assert fake_stripe.api_key == "sk_test_settings_runtime"
+
+
+def test_resolve_client_does_not_overwrite_non_empty_existing_client_keys(monkeypatch):
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_global")
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_global")
+
+    existing = StripeClient(secret_key="sk_existing", webhook_secret="whsec_existing", stripe_sdk=_FakeStripe())
+    app_state = type(
+        "AppState",
+        (),
+        {
+            "stripe_client": existing,
+            "app_settings": type(
+                "Cfg",
+                (),
+                {"stripe_secret_key": "sk_test_app_state", "stripe_webhook_secret": "whsec_app_state"},
+            )(),
+        },
+    )()
+
+    resolved = infra.stripe_client.resolve_client(app_state)
+
+    assert resolved is existing
+    assert resolved.secret_key == "sk_existing"
+    assert resolved.webhook_secret == "whsec_existing"
+
+
+def test_resolve_client_populates_empty_keys_preferring_app_settings_then_global(monkeypatch):
+    monkeypatch.setattr(settings, "stripe_secret_key", None)
+    monkeypatch.setattr(settings, "stripe_webhook_secret", None)
+
+    existing = StripeClient(secret_key=None, webhook_secret=None, stripe_sdk=_FakeStripe())
+
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_global")
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_global")
+    app_state = type(
+        "AppState",
+        (),
+        {
+            "stripe_client": existing,
+            "app_settings": type(
+                "Cfg",
+                (),
+                {"stripe_secret_key": "sk_test_app_state", "stripe_webhook_secret": "whsec_app_state"},
+            )(),
+        },
+    )()
+
+    resolved = infra.stripe_client.resolve_client(app_state)
+
+    assert resolved is existing
+    assert resolved.secret_key == "sk_test_app_state"
+    assert resolved.webhook_secret == "whsec_app_state"
