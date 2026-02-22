@@ -274,3 +274,26 @@ class TestRateLimiterKeyBehavior:
         # Same source IP (10.0.0.1), different XFF → same bucket → limited
         r2 = client.get("/test", headers={"x-forwarded-for": "2.2.2.2"})
         assert r2.status_code == 429
+
+    def test_trusted_proxy_ips_also_enable_forwarded_resolution(self):
+        """Middleware and resolve_client_key must share trust semantics."""
+        limiter = InMemoryRateLimiter(requests_per_minute=1)
+        app_settings = _RateLimitTestSettings(trusted_cidrs=[])
+        app_settings.trusted_proxy_ips = ["10.0.0.1"]
+
+        app = FastAPI()
+        app.add_middleware(RateLimitMiddleware, limiter=limiter, app_settings=app_settings)
+        app.add_middleware(_ForceClientIPMiddleware, client_ip="10.0.0.1")
+
+        @app.get("/test")
+        def test_route():
+            return {"ok": True}
+
+        client = TestClient(app)
+
+        r1 = client.get("/test", headers={"x-forwarded-for": "203.0.113.5"})
+        assert r1.status_code == 200
+
+        r2 = client.get("/test", headers={"x-forwarded-for": "203.0.113.5"})
+        assert r2.status_code == 429
+
