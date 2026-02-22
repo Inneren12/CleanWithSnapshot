@@ -173,3 +173,70 @@ async def test_s3_circuit_breaker_guards_failures():
 
     content = await backend.read(key="file.txt")
     assert content == b"ok"
+
+
+def test_stripe_client_uses_settings_secret_key_when_not_provided(monkeypatch):
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_settings")
+    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_settings")
+
+    client = StripeClient(secret_key=None, webhook_secret=None, stripe_sdk=_FakeStripe())
+
+    assert client.secret_key == "sk_test_settings"
+    assert client.webhook_secret == "whsec_settings"
+
+
+def test_resolve_client_populates_secret_key_from_app_settings(monkeypatch):
+    monkeypatch.setattr(settings, "stripe_secret_key", None)
+    monkeypatch.setattr(settings, "stripe_webhook_secret", None)
+
+    app_state = type("AppState", (), {"app_settings": type("Cfg", (), {
+        "stripe_secret_key": "sk_test_app_state",
+        "stripe_webhook_secret": "whsec_app_state",
+    })()})()
+
+    client = infra.stripe_client.resolve_client(app_state)
+
+    assert client.secret_key == "sk_test_app_state"
+    assert client.webhook_secret == "whsec_app_state"
+
+
+@pytest.mark.anyio
+async def test_stripe_client_create_and_cancel_use_settings_secret(monkeypatch):
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_settings_runtime")
+
+    calls: dict[str, object] = {}
+
+    class _CheckoutSession:
+        @staticmethod
+        def create(**kwargs):  # noqa: ANN001, ANN201
+            calls["create"] = kwargs
+            return {"id": "cs_test"}
+
+        @staticmethod
+        def expire(session_id):  # noqa: ANN001, ANN201
+            calls["expire"] = session_id
+            return {"id": session_id, "status": "expired"}
+
+    fake_stripe = type(
+        "FakeStripe",
+        (),
+        {
+            "api_key": None,
+            "checkout": type("Checkout", (), {"Session": _CheckoutSession})(),
+        },
+    )()
+
+    client = StripeClient(secret_key=None, webhook_secret=None, stripe_sdk=fake_stripe)
+
+    created = await client.create_checkout_session(
+        amount_cents=2500,
+        currency="usd",
+        success_url="https://success",
+        cancel_url="https://cancel",
+    )
+    expired = await client.cancel_checkout_session("cs_test")
+
+    assert created["id"] == "cs_test"
+    assert expired["status"] == "expired"
+    assert calls["expire"] == "cs_test"
+    assert fake_stripe.api_key == "sk_test_settings_runtime"

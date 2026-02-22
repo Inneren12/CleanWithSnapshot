@@ -21,8 +21,8 @@ class StripeClient:
             import stripe as stripe_sdk  # type: ignore
 
         self.stripe = stripe_sdk
-        self.secret_key = secret_key
-        self.webhook_secret = webhook_secret
+        self.secret_key = secret_key or settings.stripe_secret_key
+        self.webhook_secret = webhook_secret or settings.stripe_webhook_secret
 
     async def _call(self, fn: Callable[[], Any]) -> Any:
         return await stripe_circuit.call(lambda: anyio.to_thread.run_sync(fn))
@@ -149,18 +149,31 @@ class StripeClient:
 
 
 def resolve_client(app_state: Any) -> StripeClient:
-    services = getattr(getattr(app_state, "state", app_state), "services", None)
+    state = getattr(app_state, "state", app_state)
+    services = getattr(state, "services", None)
     if services is not None:
         client = getattr(services, "stripe_client", None)
         if client is not None:
             return client
-    client = getattr(app_state, "stripe_client", None)
+    client = getattr(state, "stripe_client", None)
+    app_settings = getattr(state, "app_settings", None)
+    resolved_secret_key = (
+        getattr(app_settings, "stripe_secret_key", None)
+        or settings.stripe_secret_key
+    )
+    resolved_webhook_secret = (
+        getattr(app_settings, "stripe_webhook_secret", None)
+        or settings.stripe_webhook_secret
+    )
+    if isinstance(client, StripeClient):
+        client.secret_key = client.secret_key or resolved_secret_key
+        client.webhook_secret = client.webhook_secret or resolved_webhook_secret
     if client is None:
         client = StripeClient(
-            secret_key=settings.stripe_secret_key,
-            webhook_secret=settings.stripe_webhook_secret,
+            secret_key=resolved_secret_key,
+            webhook_secret=resolved_webhook_secret,
         )
-        app_state.stripe_client = client
+        state.stripe_client = client
     return client
 
 
