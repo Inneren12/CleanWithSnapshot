@@ -42,8 +42,8 @@ def _basic_auth_header(username: str, password: str) -> dict[str, str]:
     return {"Authorization": f"Basic {token}", "X-Auth-MFA": "true"}
 
 
-async def _create_order_with_consent(session_maker) -> str:
-    """Seed a confirmed order (Booking model) with photo consent enabled."""
+async def _create_booking_with_consent(session_maker) -> str:
+    """Seed a confirmed booking used as {order_id} by /v1/orders/{order_id}/photos."""
     async with session_maker() as session:
         lead = Lead(
             name="Epic1 Smoke Lead",
@@ -171,17 +171,15 @@ def admin_headers():
 async def test_epic1_upload_size_cap_returns_413(client, async_session_maker, upload_root, admin_headers):
     """Epic 1 / PR-01: An upload whose size exceeds ORDER_PHOTO_MAX_BYTES is
     rejected with HTTP 413 without loading the payload into server memory."""
-    order_id = await _create_order_with_consent(async_session_maker)
+    booking_id = await _create_booking_with_consent(async_session_maker)
 
     original_max = settings.order_photo_max_bytes
     settings.order_photo_max_bytes = 100  # deliberately tiny cap
     try:
-        from app.main import app
-
-        transport = httpx.ASGITransport(app=app)
+        transport = httpx.ASGITransport(app=client.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
             response = await async_client.post(
-                f"/v1/orders/{order_id}/photos",
+                f"/v1/orders/{booking_id}/photos",
                 data={"phase": "AFTER"},
                 files={"file": ("oversized.jpg", b"X" * 200, "image/jpeg")},
                 headers=admin_headers,
@@ -272,7 +270,7 @@ def test_epic1_spoofed_xff_from_untrusted_source_is_ignored():
 @pytest.mark.anyio
 @pytest.mark.epic1
 async def test_epic1_stripe_called_outside_db_transaction(
-    async_session_maker, monkeypatch
+    client, async_session_maker, monkeypatch
 ):
     """Epic 1 / PR-02: Structural assertion that Stripe create_checkout_session
     executes BEFORE any DB transaction opens (Phase 1 before Phase 2 per the
@@ -332,9 +330,7 @@ async def test_epic1_stripe_called_outside_db_transaction(
         _mock_stripe,
     )
 
-    from app.main import app
-
-    transport = httpx.ASGITransport(app=app)
+    transport = httpx.ASGITransport(app=client.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
         response = await async_client.post(
             "/v1/bookings",
