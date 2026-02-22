@@ -67,6 +67,7 @@ from app.infra.metrics import configure_metrics, metrics
 from app.infra.security import RateLimiter, resolve_client_key
 from app.infra.tracing import configure_tracing, instrument_fastapi
 from app.infra.environment import SECURE_ENVIRONMENTS
+from app.infra.csrf import require_csrf, should_enforce_csrf
 from app.settings import settings
 from app.services import build_app_services
 
@@ -189,6 +190,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         return response
 
+
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: Callable):
+        if should_enforce_csrf(request):
+            await require_csrf(request)
+        return await call_next(request)
 
 class MetricsMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: FastAPI, metrics_client) -> None:
@@ -418,6 +427,7 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
     app.add_middleware(AdminSafetyMiddleware, app_settings=app_settings)
     app.add_middleware(PasswordChangeGateMiddleware)
     app.add_middleware(AdminMfaMiddleware, app_settings=app_settings)
+    app.add_middleware(CSRFMiddleware)
     # Last-added middleware runs first; keep TenantSessionMiddleware outermost so AdminMfaMiddleware
     # sees the populated request.state.saas_identity.
     app.add_middleware(TenantSessionMiddleware)
