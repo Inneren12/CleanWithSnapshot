@@ -696,10 +696,7 @@ def _build_chunked_query(model: Any, key_column: Any, filters: list[Any], *, lim
 def _parse_chunk_cursor_value(key_column: Any, cursor: str) -> str | uuid.UUID:
     column_type = getattr(key_column, "type", None)
     if _is_uuid_key_column(column_type):
-        try:
-            return uuid.UUID(cursor)
-        except (ValueError, AttributeError, TypeError):
-            return cursor
+        return uuid.UUID(cursor)
     return cursor
 
 
