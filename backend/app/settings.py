@@ -265,6 +265,7 @@ class Settings(BaseSettings):
     stripe_circuit_recovery_seconds: float = Field(30.0)
     stripe_circuit_window_seconds: float = Field(60.0)
     stripe_circuit_half_open_max_calls: int = Field(2)
+    stripe_circuit_timeout_seconds: float = Field(10.0)
     client_portal_secret: SecretStr = Field(
         validation_alias=AliasChoices("CLIENT_PORTAL_SECRET", "client_portal_secret")
     )
