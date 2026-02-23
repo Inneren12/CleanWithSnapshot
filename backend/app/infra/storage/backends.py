@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
 import hmac
+import queue
 import shutil
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from io import UnsupportedOperation
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 from urllib.parse import parse_qsl, urlparse
@@ -294,17 +296,88 @@ class S3StorageBackend(StorageBackend):
     async def put(
         self, *, key: str, body: AsyncIterator[bytes], content_type: str
     ) -> StoredObject:
-        buffer = bytearray()
-        async for chunk in body:
-            buffer.extend(chunk)
-            if self.max_payload_bytes and len(buffer) > self.max_payload_bytes:
-                raise ValueError("Payload exceeds configured upload limit")
-        data = bytes(buffer)
+        class _AsyncIteratorFileObj:
+            def __init__(
+                self,
+                iterator: AsyncIterator[bytes],
+                loop: asyncio.AbstractEventLoop,
+                max_payload_bytes: int | None,
+            ) -> None:
+                self._iterator = iterator
+                self._loop = loop
+                self._max_payload_bytes = max_payload_bytes
+                self._queue: queue.Queue[bytes | object] = queue.Queue(maxsize=16)
+                self._sentinel = object()
+                self._error: Exception | None = None
+                self.size = 0
+                self._buffer = bytearray()
+                self._eof = False
+                self._producer_future = asyncio.run_coroutine_threadsafe(self._produce(), loop)
+
+            async def _produce(self) -> None:
+                try:
+                    async for chunk in self._iterator:
+                        if not chunk:
+                            continue
+                        self.size += len(chunk)
+                        if self._max_payload_bytes and self.size > self._max_payload_bytes:
+                            raise ValueError("Payload exceeds configured upload limit")
+                        await asyncio.to_thread(self._queue.put, chunk)
+                except Exception as exc:  # noqa: BLE001
+                    self._error = exc
+                finally:
+                    await asyncio.to_thread(self._queue.put, self._sentinel)
+
+            def read(self, size: int = -1) -> bytes:
+                if self._error:
+                    raise self._error
+
+                if size == 0:
+                    return b""
+
+                if self._eof and not self._buffer:
+                    return b""
+
+                while size < 0 or len(self._buffer) < size:
+                    item = self._queue.get()
+                    if item is self._sentinel:
+                        self._eof = True
+                        break
+                    self._buffer.extend(item)
+
+                if size < 0:
+                    data = bytes(self._buffer)
+                    self._buffer.clear()
+                else:
+                    data = bytes(self._buffer[:size])
+                    del self._buffer[:size]
+
+                if self._error:
+                    raise self._error
+                return data
+
+            def seekable(self) -> bool:
+                return False
+
+            def tell(self) -> int:
+                raise UnsupportedOperation("stream is not seekable")
+
+            def seek(self, offset: int, whence: int = 0) -> int:
+                raise UnsupportedOperation("stream is not seekable")
+
+            def close(self) -> None:
+                self._producer_future.result()
+
+        reader = _AsyncIteratorFileObj(body, asyncio.get_running_loop(), self.max_payload_bytes)
 
         def _upload() -> None:
-            self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
-        await self._run_with_circuit(lambda: asyncio.to_thread(_upload))
-        return StoredObject(key=key, size=len(data), content_type=content_type)
+            self.client.put_object(Bucket=self.bucket, Key=key, Body=reader, ContentType=content_type)
+
+        try:
+            await self._run_with_circuit(lambda: asyncio.to_thread(_upload))
+        finally:
+            await asyncio.to_thread(reader.close)
+        return StoredObject(key=key, size=reader.size, content_type=content_type)
 
     async def read(self, *, key: str) -> bytes:
         def _download() -> bytes:
@@ -425,21 +498,40 @@ class CloudflareImagesStorageBackend(StorageBackend):
     async def put(
         self, *, key: str, body: AsyncIterator[bytes], content_type: str
     ) -> StoredObject:
-        buffer = bytearray()
-        async for chunk in body:
-            buffer.extend(chunk)
-            if self.max_payload_bytes and len(buffer) > self.max_payload_bytes:
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail="File too large",
-                )
-        payload = bytes(buffer)
+        boundary = f"cleanwithsnapshot-{int(time.time() * 1000)}-{Path(key).name}"
+        filename = Path(key).name or "upload"
+        size = 0
+
+        async def _multipart_stream() -> AsyncIterator[bytes]:
+            nonlocal size
+            opening = (
+                f"--{boundary}\r\n"
+                "Content-Disposition: form-data; name=\"requireSignedURLs\"\r\n\r\n"
+                "true\r\n"
+                f"--{boundary}\r\n"
+                f"Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+                f"Content-Type: {content_type}\r\n\r\n"
+            ).encode()
+            yield opening
+
+            async for chunk in body:
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if self.max_payload_bytes and size > self.max_payload_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="File too large",
+                    )
+                yield chunk
+
+            yield f"\r\n--{boundary}--\r\n".encode()
 
         try:
             response = await self.client.post(
                 f"/client/v4/accounts/{self.account_id}/images/v1",
-                data={"requireSignedURLs": "true"},
-                files={"file": (Path(key).name or "upload", payload, content_type)},
+                content=_multipart_stream(),
+                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
             )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
@@ -472,7 +564,7 @@ class CloudflareImagesStorageBackend(StorageBackend):
                 detail="Cloudflare Images upload failed",
             )
 
-        return StoredObject(key=str(image_id), size=len(payload), content_type=content_type)
+        return StoredObject(key=str(image_id), size=size, content_type=content_type)
 
     async def read(self, *, key: str) -> bytes:
         raise HTTPException(

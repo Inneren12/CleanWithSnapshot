@@ -9,9 +9,15 @@ import asyncio
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
-from app.infra.storage.backends import LocalStorageBackend, InMemoryStorageBackend
+from app.infra.storage.backends import (
+    CloudflareImagesStorageBackend,
+    InMemoryStorageBackend,
+    LocalStorageBackend,
+    S3StorageBackend,
+)
 
 
 class TestLocalStorageBackendSignedUrls:
@@ -222,3 +228,83 @@ class TestInMemoryStorageBackendSignedUrls:
             assert read_content == content
 
         asyncio.run(workflow())
+
+
+class _NoUnboundedReadStream:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> bytes:
+        if not self._chunks:
+            raise StopAsyncIteration
+        return self._chunks.pop(0)
+
+
+def test_s3_put_streams_body_without_full_buffering():
+    class FakeS3Client:
+        def __init__(self) -> None:
+            self.payload = bytearray()
+            self.read_sizes: list[int] = []
+
+        def put_object(self, Bucket: str, Key: str, Body, ContentType: str):
+            assert not isinstance(Body, (bytes, bytearray))
+            while True:
+                chunk = Body.read(5)
+                self.read_sizes.append(5)
+                if not chunk:
+                    break
+                self.payload.extend(chunk)
+
+    backend = S3StorageBackend(
+        bucket="uploads",
+        access_key="ak",
+        secret_key="sk",
+        client=FakeS3Client(),
+        enable_circuit_breaker=False,
+    )
+
+    async def _body():
+        source = _NoUnboundedReadStream([b"abc", b"def", b"ghi"])
+        async for chunk in source:
+            yield chunk
+
+    stored = asyncio.run(backend.put(key="orders/1/photo.jpg", body=_body(), content_type="image/jpeg"))
+
+    assert bytes(backend.client.payload) == b"abcdefghi"
+    assert stored.size == 9
+
+
+def test_cloudflare_images_put_streams_multipart_request_body():
+    collected = bytearray()
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["content-type"].startswith("multipart/form-data; boundary=")
+        for part in request.stream:
+            collected.extend(part)
+        return httpx.Response(200, json={"success": True, "result": {"id": "img-stream"}})
+
+    backend = CloudflareImagesStorageBackend(
+        account_id="acct",
+        api_token="token",
+        account_hash="hash",
+        default_variant="public",
+        max_payload_bytes=1024,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(_handler), base_url="https://api.cloudflare.com"),
+    )
+
+    async def _body():
+        source = _NoUnboundedReadStream([b"chunk-1", b"chunk-2"])
+        async for chunk in source:
+            yield chunk
+
+    stored = asyncio.run(backend.put(key="folder/photo.jpg", body=_body(), content_type="image/jpeg"))
+    asyncio.run(backend.client.aclose())
+
+    payload = bytes(collected)
+    assert b"name=\"requireSignedURLs\"" in payload
+    assert b"chunk-1chunk-2" in payload
+    assert stored.key == "img-stream"
+    assert stored.size == len(b"chunk-1chunk-2")
