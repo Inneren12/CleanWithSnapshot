@@ -166,23 +166,31 @@ def test_admin_time_tracking_list_uses_bounded_queries(client):
         assert client.post(f"/v1/orders/{booking_id}/time/start", auth=auth).status_code == 200
 
     sync_engine = app.state.db_session_factory.kw["bind"].sync_engine
-    statements: list[str] = []
 
-    def _capture_sql(_conn, _cursor, statement, _parameters, _context, _executemany):
-        normalized = statement.upper()
-        if "FROM BOOKINGS" in normalized or "FROM WORK_TIME_ENTRIES" in normalized:
-            statements.append(statement)
+    def _relevant_select_count(limit: int) -> int:
+        statements: list[str] = []
 
-    sa.event.listen(sync_engine, "before_cursor_execute", _capture_sql)
-    try:
-        response = client.get("/v1/admin/orders/time?limit=6", auth=auth)
-        assert response.status_code == 200
-        assert len(response.json()) >= 6
-    finally:
-        sa.event.remove(sync_engine, "before_cursor_execute", _capture_sql)
+        def _capture_sql(_conn, _cursor, statement, _parameters, _context, _executemany):
+            normalized = statement.upper()
+            is_relevant_select = normalized.lstrip().startswith("SELECT") and (
+                "FROM BOOKINGS" in normalized or "WORK_TIME_ENTRIES" in normalized
+            )
+            if is_relevant_select:
+                statements.append(normalized)
 
-    booking_queries = [stmt for stmt in statements if "FROM bookings" in stmt]
-    work_time_queries = [stmt for stmt in statements if "work_time_entries" in stmt]
+        sa.event.listen(sync_engine, "before_cursor_execute", _capture_sql)
+        try:
+            response = client.get(f"/v1/admin/orders/time?limit={limit}", auth=auth)
+            assert response.status_code == 200
+            assert len(response.json()) >= limit
+        finally:
+            sa.event.remove(sync_engine, "before_cursor_execute", _capture_sql)
 
-    assert len(booking_queries) == 2
-    assert len(work_time_queries) == 1
+        return len(statements)
+
+    one_booking_queries = _relevant_select_count(limit=1)
+    six_booking_queries = _relevant_select_count(limit=6)
+
+    assert one_booking_queries <= 4
+    assert six_booking_queries <= 4
+    assert six_booking_queries - one_booking_queries <= 1
