@@ -28,6 +28,7 @@ def upgrade() -> None:
         ALTER TABLE bookings
         ADD CONSTRAINT {EXCLUSION_CONSTRAINT_NAME}
         EXCLUDE USING gist (
+            org_id WITH =,
             team_id WITH =,
             tstzrange(
                 starts_at,

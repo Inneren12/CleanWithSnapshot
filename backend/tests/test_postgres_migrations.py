@@ -85,7 +85,7 @@ def _assert_exclusion_constraint(engine: sa.Engine, table: str, name: str) -> No
             ),
             {"name": name, "table": table},
         ).scalar()
-    assert exists == 1, f"Expected exclusion constraint {name} on {table}"
+    assert bool(exists), f"Expected exclusion constraint {name} on {table}"
 def _assert_unique_constraint(inspector: sa.Inspector, table: str, name: str, columns: set[str]):
     constraints = inspector.get_unique_constraints(table)
     assert any(

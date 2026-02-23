@@ -64,3 +64,10 @@ def test_is_active_slot_conflict_does_not_match_unrelated_postgres_unique_violat
     exc = IntegrityError("insert", {}, _PgError(constraint_name=None, sqlstate="23505", message=message))
 
     assert is_active_slot_conflict(exc) is False
+def test_is_booking_overlap_integrity_error_detects_sqlite_unique_fallback():
+    exc = IntegrityError(
+        "insert",
+        {},
+        Exception("UNIQUE constraint failed: bookings.org_id, bookings.team_id, bookings.starts_at"),
+    )
+    assert is_booking_overlap_integrity_error(exc) is True
