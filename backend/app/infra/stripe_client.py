@@ -53,8 +53,29 @@ class StripeClient:
         self.secret_key = secret_key or settings.stripe_secret_key
         self.webhook_secret = webhook_secret or settings.stripe_webhook_secret
 
-    async def _call(self, fn: Callable[[], Any]) -> Any:
-        return await stripe_circuit.call(lambda: anyio.to_thread.run_sync(fn))
+    def _stripe_request_timeout(self) -> float:
+        timeout = stripe_circuit.timeout_seconds
+        if timeout is None:
+            return 10.0
+        return max(0.01, timeout)
+
+    async def _call(self, fn: Callable[..., Any], /, *args, **kwargs) -> Any:
+        request_kwargs = dict(kwargs)
+        try:
+            signature = inspect.signature(fn)
+            supports_timeout = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD or name == "timeout"
+                for name, parameter in signature.parameters.items()
+            )
+        except (TypeError, ValueError):
+            supports_timeout = True
+        if supports_timeout:
+            request_kwargs.setdefault("timeout", self._stripe_request_timeout())
+
+        def _sync_call() -> Any:
+            return fn(*args, **request_kwargs)
+
+        return await stripe_circuit.call(lambda: anyio.to_thread.run_sync(_sync_call))
 
     async def create_checkout_session(
         self,
@@ -97,7 +118,7 @@ class StripeClient:
         extra: dict[str, Any] = {}
         if idempotency_key:
             extra["idempotency_key"] = idempotency_key
-        return await self._call(lambda: self.stripe.checkout.Session.create(**payload, **extra))
+        return await self._call(self.stripe.checkout.Session.create, **payload, **extra)
 
     async def create_subscription_checkout_session(
         self,
@@ -141,7 +162,7 @@ class StripeClient:
         extra: dict[str, Any] = {}
         if idempotency_key:
             extra["idempotency_key"] = idempotency_key
-        return await self._call(lambda: self.stripe.checkout.Session.create(**payload, **extra))
+        return await self._call(self.stripe.checkout.Session.create, **payload, **extra)
 
     async def cancel_checkout_session(self, session_id: str, *, idempotency_key: str | None = None) -> Any:
         """Best-effort expire (cancel) of a Stripe Checkout Session.
@@ -155,18 +176,14 @@ class StripeClient:
         extra: dict[str, Any] = {}
         if idempotency_key:
             extra["idempotency_key"] = idempotency_key
-        return await self._call(
-            lambda: self.stripe.checkout.Session.expire(session_id, **extra)
-        )
+        return await self._call(self.stripe.checkout.Session.expire, session_id, **extra)
 
     async def retrieve_checkout_session(self, session_id: str) -> Any:
         """Retrieve an existing Stripe Checkout Session by ID."""
         if not self.secret_key:
             raise ValueError("Stripe secret key not configured")
         self.stripe.api_key = self.secret_key
-        return await self._call(
-            lambda: self.stripe.checkout.Session.retrieve(session_id)
-        )
+        return await self._call(self.stripe.checkout.Session.retrieve, session_id)
 
     async def create_billing_portal_session(
         self,
@@ -183,11 +200,10 @@ class StripeClient:
         if idempotency_key:
             extra["idempotency_key"] = idempotency_key
         return await self._call(
-            lambda: self.stripe.billing_portal.Session.create(
-                customer=customer_id,
-                return_url=return_url,
-                **extra,
-            )
+            self.stripe.billing_portal.Session.create,
+            customer=customer_id,
+            return_url=return_url,
+            **extra,
         )
 
     async def verify_webhook(self, payload: bytes, signature: str | None) -> Any:
@@ -196,9 +212,10 @@ class StripeClient:
         if not signature:
             raise ValueError("Missing Stripe signature header")
         return await self._call(
-            lambda: self.stripe.Webhook.construct_event(
-                payload=payload, sig_header=signature, secret=self.webhook_secret
-            )
+            self.stripe.Webhook.construct_event,
+            payload=payload,
+            sig_header=signature,
+            secret=self.webhook_secret,
         )
 
 

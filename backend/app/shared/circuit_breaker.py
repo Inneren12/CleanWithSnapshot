@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections import deque
@@ -53,7 +54,7 @@ class CircuitBreaker(Generic[T]):
         timeout = self.timeout_seconds if timeout_seconds is None else max(0.01, timeout_seconds)
         try:
             result = fn(*args, **kwargs)
-            if asyncio.iscoroutine(result):
+            if inspect.isawaitable(result):
                 if timeout is None:
                     result = await result
                 else:
