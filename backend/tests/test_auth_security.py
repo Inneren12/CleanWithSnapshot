@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -129,13 +130,14 @@ async def test_expired_session_rejected(async_session_maker, client):
 
 
 @pytest.mark.anyio
-async def test_login_failure_does_not_leak_email_in_response(async_session_maker, client):
+async def test_login_failure_does_not_leak_email_in_response_or_logs(async_session_maker, client, caplog):
     async with async_session_maker() as session:
         org = await saas_service.create_organization(session, "PII Org")
         user = await saas_service.create_user(session, "pii.user@example.com", "secret")
         await saas_service.create_membership(session, org, user, MembershipRole.ADMIN)
         await session.commit()
 
+    caplog.set_level(logging.WARNING)
     response = client.post(
         "/v1/auth/login",
         json={"email": "pii.user@example.com", "password": "wrong-password", "org_id": str(org.org_id)},
@@ -145,3 +147,19 @@ async def test_login_failure_does_not_leak_email_in_response(async_session_maker
     body = response.text.lower()
     assert "pii.user@example.com" not in body
     assert "invalid credentials" in body
+
+    full_log_text = "\n".join(
+        [caplog.text] + [record.getMessage() + " " + str(record.__dict__) for record in caplog.records]
+    )
+    assert "pii.user@example.com" not in full_log_text
+
+    auth_failure_records = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "saas_auth_failed" and getattr(record, "extra", {}).get("flow") == "login"
+    ]
+    assert auth_failure_records
+    auth_failure_payload = auth_failure_records[-1].extra
+    assert auth_failure_payload.get("failure_code") == "invalid_credentials"
+    assert "failure_reason" not in auth_failure_payload
+    assert "wrong-password" not in full_log_text
