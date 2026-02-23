@@ -1,3 +1,5 @@
+import time
+
 import anyio
 import pytest
 
@@ -34,3 +36,21 @@ async def test_circuit_half_open_allows_success_and_closes():
 
     assert result == "success"
     assert breaker.state == "closed"
+
+
+@pytest.mark.anyio
+async def test_circuit_timeout_marks_failure_and_opens():
+    breaker = CircuitBreaker(
+        name="stripe-timeout",
+        failure_threshold=1,
+        recovery_time=1.0,
+        window_seconds=10,
+        timeout_seconds=0.01,
+    )
+
+    with pytest.raises(TimeoutError):
+        await breaker.call(lambda: anyio.to_thread.run_sync(lambda: time.sleep(0.05)))
+
+    assert breaker.state == "open"
+    with pytest.raises(CircuitBreakerOpenError):
+        await breaker.call(lambda: "ok")

@@ -61,6 +61,29 @@ class _FakeStripe:
         return {"url": "https://example.com/portal", **kwargs}
 
 
+
+
+class _SlowStripeCheckoutSession:
+    @staticmethod
+    def create(**kwargs):  # noqa: ANN001, ANN201
+        import time
+
+        time.sleep(0.05)
+        return {"id": "sess_slow", **kwargs}
+
+
+class _SlowStripe:
+    def __init__(self) -> None:
+        self.checkout = type("Checkout", (), {"Session": _SlowStripeCheckoutSession})()
+        self.billing_portal = type(
+            "BillingPortal",
+            (),
+            {"Session": type("Session", (), {"create": staticmethod(lambda **kwargs: {"url": "u", **kwargs})})},
+        )()
+        self.Webhook = _FakeStripeWebhook
+        self.api_key = None
+
+
 class _FakeS3Client:
     def __init__(self) -> None:
         self.fail = True
@@ -378,3 +401,27 @@ def test_resolve_client_populates_empty_keys_preferring_app_settings_then_global
     assert resolved is existing
     assert resolved.secret_key == "sk_test_app_state"
     assert resolved.webhook_secret == "whsec_app_state"
+
+
+@pytest.mark.anyio
+async def test_stripe_circuit_timeout_opens(monkeypatch):
+    monkeypatch.setattr(
+        stripe_resilience,
+        "stripe_circuit",
+        CircuitBreaker(
+            name="stripe-timeout",
+            failure_threshold=1,
+            recovery_time=1.0,
+            window_seconds=1.0,
+            timeout_seconds=0.01,
+        ),
+    )
+    monkeypatch.setattr(infra.stripe_client, "stripe_circuit", stripe_resilience.stripe_circuit)
+
+    client = StripeClient(secret_key="sk_test", webhook_secret="whsec_test", stripe_sdk=_SlowStripe())
+
+    with pytest.raises(TimeoutError):
+        await client.create_checkout_session(amount_cents=1000, currency="usd", success_url="s", cancel_url="c")
+
+    with pytest.raises(CircuitBreakerOpenError):
+        await client.create_checkout_session(amount_cents=1000, currency="usd", success_url="s", cancel_url="c")

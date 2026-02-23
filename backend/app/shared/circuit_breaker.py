@@ -27,12 +27,14 @@ class CircuitBreaker(Generic[T]):
         recovery_time: float = 30.0,
         window_seconds: float = 60.0,
         half_open_max_calls: int = 1,
+        timeout_seconds: float | None = None,
     ) -> None:
         self.name = name
         self.failure_threshold = max(1, failure_threshold)
         self.recovery_time = max(0.01, recovery_time)
         self.window_seconds = max(0.01, window_seconds)
         self.half_open_max_calls = max(1, half_open_max_calls)
+        self.timeout_seconds = None if timeout_seconds is None else max(0.01, timeout_seconds)
         self._state: str = "closed"
         self._opened_at: float = 0.0
         self._failures: Deque[float] = deque()
@@ -40,15 +42,28 @@ class CircuitBreaker(Generic[T]):
         self._lock = asyncio.Lock()
         metrics.record_circuit_state(self.name, self._state)
 
-    async def call(self, fn: Callable[..., T | Awaitable[T]], *args, **kwargs) -> T:
+    async def call(
+        self,
+        fn: Callable[..., T | Awaitable[T]],
+        *args,
+        timeout_seconds: float | None = None,
+        **kwargs,
+    ) -> T:
         await self._ensure_available()
+        timeout = self.timeout_seconds if timeout_seconds is None else max(0.01, timeout_seconds)
         try:
             result = fn(*args, **kwargs)
             if asyncio.iscoroutine(result):
-                result = await result
+                if timeout is None:
+                    result = await result
+                else:
+                    result = await asyncio.wait_for(result, timeout=timeout)
         except Exception as exc:  # noqa: BLE001
             await self._record_failure()
-            logger.warning("circuit_failure", extra={"extra": {"name": self.name, "state": self._state}})
+            logger.warning(
+                "circuit_failure",
+                extra={"extra": {"name": self.name, "state": self._state, "error": type(exc).__name__}},
+            )
             raise
         await self._record_success()
         return result  # type: ignore[return-value]
