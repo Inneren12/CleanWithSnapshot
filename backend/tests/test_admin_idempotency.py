@@ -5,9 +5,10 @@ import base64
 import uuid
 
 import sqlalchemy as sa
+from fastapi import Request
 from httpx import Response as HTTPXResponse, Request as HTTPXRequest
 
-from app.api.idempotency import _request_fingerprint
+from app.api.idempotency import _request_fingerprint, require_idempotency
 from app.domain.admin_idempotency import AdminIdempotency
 from app.domain.bookings.db_models import EmailEvent
 from app.domain.export_events.db_models import ExportEvent
@@ -300,3 +301,106 @@ def test_resend_email_event_pending_key_returns_409(client, async_session_maker,
     assert response.status_code == 409
     assert response.headers.get("retry-after") == "1"
     assert called is False
+
+
+def test_resend_email_event_failed_key_replays_failure_not_pending(client, async_session_maker, monkeypatch):
+    settings.dispatcher_basic_username = "admin"
+    settings.dispatcher_basic_password = "secret"
+
+    async def _seed_failed() -> str:
+        async with async_session_maker() as session:
+            event = EmailEvent(
+                org_id=settings.default_org_id,
+                email_type="booking_pending",
+                recipient="idem-failed@example.com",
+                subject="Test",
+                body="Hello",
+                dedupe_key=f"test-{uuid.uuid4()}",
+            )
+            session.add(event)
+            await session.flush()
+            path = f"/v1/admin/messaging/events/{event.event_id}/resend"
+            request = HTTPXRequest("POST", f"http://testserver{path}")
+            request_hash = _request_fingerprint(request, "")
+            failed = AdminIdempotency(
+                org_id=settings.default_org_id,
+                key="failed-resend",
+                endpoint="resend_email_event",
+                request_hash=request_hash,
+                response_status=AdminIdempotency.STATUS_FAILED,
+                response_body_json={
+                    "detail": "Request processing failed",
+                    "status": 500,
+                    "title": "Internal Server Error",
+                },
+            )
+            session.add(failed)
+            await session.commit()
+            return event.event_id
+
+    event_id = asyncio.run(_seed_failed())
+    headers = _auth_headers("admin", "secret")
+
+    called = False
+
+    async def _unexpected_call(*args, **kwargs):  # noqa: ARG001
+        nonlocal called
+        called = True
+        return {"event_id": event_id, "status": "delivered"}
+
+    monkeypatch.setattr(ops_service, "resend_email_event", _unexpected_call)
+
+    response = client.post(
+        f"/v1/admin/messaging/events/{event_id}/resend",
+        headers={**headers, "Idempotency-Key": "failed-resend"},
+    )
+    assert response.status_code == 500
+    assert response.headers.get("retry-after") is None
+    assert response.json() == {
+        "detail": "Request processing failed",
+        "status": 500,
+        "title": "Internal Server Error",
+    }
+    assert called is False
+
+
+def test_require_idempotency_uses_get_bind_when_bind_is_none(async_session_maker):
+    async def _run() -> None:
+        async with async_session_maker() as session:
+            class SessionProxy:
+                bind = None
+
+                def __init__(self, wrapped):
+                    self._wrapped = wrapped
+                    self.get_bind_called = False
+
+                def get_bind(self):
+                    self.get_bind_called = True
+                    return self._wrapped.get_bind()
+
+                async def execute(self, *args, **kwargs):
+                    return await self._wrapped.execute(*args, **kwargs)
+
+            proxy = SessionProxy(session)
+            org_id = settings.default_org_id
+            scope = {
+                "type": "http",
+                "method": "POST",
+                "path": "/v1/admin/messaging/events/abc/resend",
+                "headers": [(b"idempotency-key", b"proxy-bind")],
+                "query_string": b"",
+                "scheme": "http",
+                "server": ("testserver", 80),
+                "client": ("testclient", 50000),
+            }
+
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            request = Request(scope, receive)
+            result = await require_idempotency(request, proxy, org_id, "resend_email_event")
+            assert proxy.get_bind_called is True
+            assert hasattr(result, "claimed_record")
+            assert getattr(result, "existing_response", None) is None
+
+    asyncio.run(_run())
