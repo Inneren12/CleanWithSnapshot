@@ -228,6 +228,8 @@ class Settings(BaseSettings):
         7, validation_alias="FLAG_RETIRE_RECENT_EVALUATION_DAYS"
     )
     chat_enabled: bool = Field(False)
+    bot_messages_default_limit: int = Field(200, ge=1)
+    bot_handoff_context_limit: int = Field(200, ge=1)
     promos_enabled: bool = Field(False)
     default_worker_hourly_rate_cents: int = Field(2500)
     worker_alert_inactive_days: int = Field(30)

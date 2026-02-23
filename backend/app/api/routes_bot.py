@@ -276,7 +276,10 @@ async def post_message(
 
     if decision.should_handoff:
         conversation = await store.get_conversation(request.conversation_id)
-        messages = await store.list_messages(request.conversation_id)
+        messages = await store.list_messages(
+            request.conversation_id,
+            limit=settings.bot_handoff_context_limit,
+        )
         case_payload = build_case_payload(
             decision=decision,
             conversation=conversation,
@@ -335,7 +338,7 @@ async def list_messages(
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     _assert_conversation_access(http_request=http_request, conversation=conversation)
-    return await store.list_messages(conversation_key)
+    return await store.list_messages(conversation_key, limit=settings.bot_messages_default_limit)
 
 
 @router.get("/bot/session/{conversation_id}", response_model=ConversationRecord)

@@ -36,7 +36,12 @@ class BotStore(Protocol):
 
     async def append_message(self, conversation_id: str, payload: MessagePayload) -> MessageRecord: ...
 
-    async def list_messages(self, conversation_id: str) -> List[MessageRecord]: ...
+    async def list_messages(
+        self,
+        conversation_id: str,
+        *,
+        limit: int | None = None,
+    ) -> List[MessageRecord]: ...
 
     async def create_lead(self, payload: LeadPayload) -> LeadRecord: ...
 
@@ -113,9 +118,19 @@ class InMemoryBotStore(BotStore):
             self._messages.setdefault(conversation_id, []).append(record)
             return record
 
-    async def list_messages(self, conversation_id: str) -> List[MessageRecord]:
+    async def list_messages(
+        self,
+        conversation_id: str,
+        *,
+        limit: int | None = None,
+    ) -> List[MessageRecord]:
         async with self._lock:
-            return list(self._messages.get(conversation_id, []))
+            messages = self._messages.get(conversation_id, [])
+            if limit is None:
+                return list(messages)
+            if limit <= 0:
+                return []
+            return list(messages[-limit:])
 
     async def create_lead(self, payload: LeadPayload) -> LeadRecord:
         async with self._lock:
