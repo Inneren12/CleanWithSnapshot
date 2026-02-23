@@ -17,6 +17,17 @@ async def require_org_context(
 ) -> uuid.UUID:
     admin_identity: AdminIdentity | None = getattr(request.state, "admin_identity", None)
     if admin_identity:
+        # In test/dev mode, allow X-Test-Org to override the admin org, mirroring
+        # the _resolve_admin_org helper used by routes_admin.py admin endpoints.
+        test_org_header = request.headers.get("X-Test-Org")
+        if test_org_header and (settings.testing or settings.app_env == "dev"):
+            try:
+                org_uuid = uuid.UUID(test_org_header)
+                request.state.current_org_id = org_uuid
+                set_current_org_id(org_uuid)
+                return org_uuid
+            except (ValueError, AttributeError):
+                pass
         request.state.current_org_id = admin_identity.org_id
         set_current_org_id(admin_identity.org_id)
         return admin_identity.org_id
