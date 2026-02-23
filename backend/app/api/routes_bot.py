@@ -1,7 +1,8 @@
 import logging
+import uuid
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from app.bot.faq.formatter import clarification_prompt, format_matches
 from app.bot.faq.matcher import match_faq
@@ -33,26 +34,29 @@ from app.domain.bot.schemas import (
     SessionCreateResponse,
 )
 from app.infra.bot_store import BotStore
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 FLOW_INTENTS = {Intent.booking, Intent.price, Intent.scope, Intent.reschedule}
-ANON_SESSION_COOKIE_KEYS = ("anon_session_id", "anon_id", "client_session")
+CANONICAL_ANON_SESSION_COOKIE = "anon_session_id"
+ANON_SESSION_COOKIE_KEYS = (CANONICAL_ANON_SESSION_COOKIE, "anon_id")
+TEST_USER_ID_HEADER = "X-Test-User-Id"
 
 
-def _resolve_current_user_id(http_request: Request, request_user_id: Optional[str] = None) -> Optional[str]:
-    if request_user_id:
-        return request_user_id
+def _resolve_current_user_id(http_request: Request) -> Optional[str]:
     saas_identity = getattr(http_request.state, "saas_identity", None)
     if saas_identity and getattr(saas_identity, "user_id", None):
         return str(saas_identity.user_id)
+    if settings.testing:
+        test_user_id = http_request.headers.get(TEST_USER_ID_HEADER)
+        if test_user_id:
+            return test_user_id
     return None
 
 
-def _resolve_current_anon_id(http_request: Request, request_anon_id: Optional[str] = None) -> Optional[str]:
-    if request_anon_id:
-        return request_anon_id
+def _resolve_current_anon_id(http_request: Request) -> Optional[str]:
     for cookie_key in ANON_SESSION_COOKIE_KEYS:
         cookie_value = http_request.cookies.get(cookie_key)
         if cookie_value:
@@ -68,15 +72,22 @@ def _assert_conversation_access(
     request_anon_id: Optional[str] = None,
 ) -> None:
     if conversation.user_id:
-        current_user_id = _resolve_current_user_id(http_request, request_user_id)
+        current_user_id = _resolve_current_user_id(http_request)
+        if request_user_id and request_user_id != current_user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
         if current_user_id != conversation.user_id:
             raise HTTPException(status_code=403, detail="Forbidden")
         return
 
     if conversation.anon_id:
-        current_anon_id = _resolve_current_anon_id(http_request, request_anon_id)
+        current_anon_id = _resolve_current_anon_id(http_request)
+        if request_anon_id and request_anon_id != current_anon_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
         if current_anon_id != conversation.anon_id:
             raise HTTPException(status_code=403, detail="Forbidden")
+        return
+
+    raise HTTPException(status_code=403, detail="Forbidden")
 
 
 def _fsm_step_for_intent(intent: Intent) -> FsmStep:
@@ -95,12 +106,31 @@ def _fsm_step_for_intent(intent: Intent) -> FsmStep:
 
 
 @router.post("/bot/session", response_model=SessionCreateResponse, status_code=201)
-async def create_session(request: SessionCreateRequest, store: BotStore = Depends(get_bot_store)) -> SessionCreateResponse:
+async def create_session(
+    request: SessionCreateRequest,
+    http_request: Request,
+    response: Response,
+    store: BotStore = Depends(get_bot_store),
+) -> SessionCreateResponse:
+    current_user_id = _resolve_current_user_id(http_request)
+    current_anon_id = None
+    if not current_user_id:
+        current_anon_id = _resolve_current_anon_id(http_request)
+        if not current_anon_id:
+            current_anon_id = str(uuid.uuid4())
+            response.set_cookie(
+                key=CANONICAL_ANON_SESSION_COOKIE,
+                value=current_anon_id,
+                httponly=True,
+                samesite="lax",
+                secure=http_request.url.scheme == "https",
+            )
+
     conversation = await store.create_conversation(
         ConversationCreate(
             channel=request.channel,
-            user_id=request.user_id,
-            anon_id=request.anon_id,
+            user_id=current_user_id,
+            anon_id=current_anon_id,
             state=ConversationState(),
         )
     )
