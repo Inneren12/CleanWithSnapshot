@@ -1,7 +1,7 @@
 """add data export ordering index
 
 Revision ID: 2b4c6d8e0f1a
-Revises: 1a2b3c4d5e70
+Revises: 53b6a386be3c
 Create Date: 2026-03-02 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision = "2b4c6d8e0f1a"
-down_revision = "1a2b3c4d5e70"
+down_revision = "53b6a386be3c"
 branch_labels = None
 depends_on = None
 
