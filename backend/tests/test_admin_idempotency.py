@@ -12,6 +12,7 @@ from app.api.idempotency import _request_fingerprint, require_idempotency
 from app.domain.admin_idempotency import AdminIdempotency
 from app.domain.bookings.db_models import EmailEvent
 from app.domain.export_events.db_models import ExportEvent
+from app.domain.invoices import service as invoice_service
 from app.domain.invoices import statuses as invoice_statuses
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.ops import service as ops_service
@@ -146,11 +147,14 @@ def test_resend_email_event_idempotent(client, async_session_maker):
     assert len(client.app.state.email_adapter.sent) == 1
 
 
-def test_replay_rate_limit_triggers(client, async_session_maker):
+def test_replay_rate_limit_triggers(client, async_session_maker, monkeypatch):
     original_limiter = client.app.state.action_rate_limiter
     client.app.state.action_rate_limiter = InMemoryRateLimiter(1)
     settings.admin_basic_username = "admin"
     settings.admin_basic_password = "secret"
+    # Disable private-IP blocking so DNS resolution is skipped; the test
+    # environment has no outbound DNS and example.com would fail lookup.
+    monkeypatch.setattr(settings, "export_webhook_block_private_ips", False)
 
     async def _seed_event() -> ExportEvent:
         async with async_session_maker() as session:
@@ -404,3 +408,78 @@ def test_require_idempotency_uses_get_bind_when_bind_is_none(async_session_maker
             assert getattr(result, "existing_response", None) is None
 
     asyncio.run(_run())
+
+
+def test_record_payment_concurrent_same_key_executes_once(client, async_session_maker, monkeypatch):
+    """Two concurrent requests with the same idempotency key must not double-charge.
+
+    The claim-first INSERT ... ON CONFLICT DO NOTHING guarantees that only the
+    request that wins the atomic INSERT will execute the side-effect (payment
+    creation).  The losing request receives a 201 replay once the first
+    completes.  In both cases exactly one Payment row must exist.
+
+    The blocking technique (release_first.wait) pins the asyncio event loop to
+    Thread 1, so Thread 2's request is only processed after Thread 1 fully
+    commits.  This sidesteps SQLite StaticPool's single-connection limitation
+    while still exercising the claim-first idempotency guarantee.
+    """
+    invoice_id = _bootstrap_invoice(async_session_maker)
+    admin_headers = _auth_headers("admin", "secret")
+
+    lock = threading.Lock()
+    call_count = 0
+    first_started = threading.Event()
+    release_first = threading.Event()
+
+    real_record = invoice_service.record_manual_payment
+
+    async def _slow_record_manual_payment(**kwargs):
+        nonlocal call_count
+        with lock:
+            call_count += 1
+            current_call = call_count
+        payment = await real_record(**kwargs)
+        if current_call == 1:
+            first_started.set()
+            release_first.wait(timeout=2)  # block event loop; Thread 2 queued
+        return payment
+
+    monkeypatch.setattr(invoice_service, "record_manual_payment", _slow_record_manual_payment)
+
+    responses: list[int] = []
+
+    def _send() -> None:
+        r = client.post(
+            f"/v1/admin/invoices/{invoice_id}/record-payment",
+            headers={**admin_headers, "Idempotency-Key": "pay-concurrent-charge"},
+            json={"amount_cents": 500, "method": "cash"},
+        )
+        responses.append(r.status_code)
+
+    t1 = threading.Thread(target=_send)
+    t2 = threading.Thread(target=_send)
+
+    t1.start()
+    assert first_started.wait(timeout=5), "Thread 1 never reached slow payment handler"
+    t2.start()
+    release_first.set()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert call_count == 1, f"Payment handler called {call_count} times; expected 1"
+    assert len(responses) == 2
+    statuses = sorted(responses)
+    # Thread 1 (winner) returns 201.  Thread 2 (loser) sees the PENDING record
+    # while Thread 1 is still in-flight, so it gets 409 Retry-After; once
+    # Thread 1 commits and Thread 2 retries, it would receive 201 replay.
+    assert statuses in ([201, 201], [201, 409]), f"Unexpected status codes: {statuses}"
+
+    async def _count_payments() -> int:
+        async with async_session_maker() as session:
+            result = await session.execute(
+                sa.select(sa.func.count()).select_from(Payment).where(Payment.invoice_id == invoice_id)
+            )
+            return int(result.scalar_one())
+
+    payment_count = asyncio.run(_count_payments())
+    assert payment_count == 1, f"Expected exactly 1 payment, found {payment_count}"
