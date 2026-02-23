@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from botocore.stub import ANY, Stubber
 
 from app.infra.storage.backends import (
@@ -277,6 +278,33 @@ def test_s3_put_streams_body_without_full_buffering():
     assert bytes(backend.client.payload) == b"abcdefghi"
     assert stored.size == 9
 
+
+def test_s3_put_rejects_payload_over_limit_without_buffering():
+    class FakeS3Client:
+        def put_object(self, Bucket: str, Key: str, Body, ContentType: str):
+            while True:
+                chunk = Body.read(4)
+                if not chunk:
+                    break
+
+    backend = S3StorageBackend(
+        bucket="uploads",
+        access_key="ak",
+        secret_key="sk",
+        max_payload_bytes=8,
+        client=FakeS3Client(),
+        enable_circuit_breaker=False,
+    )
+
+    async def _body():
+        source = _NoUnboundedReadStream([b"abcd", b"efgh", b"ij"])
+        async for chunk in source:
+            yield chunk
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(backend.put(key="orders/1/photo.jpg", body=_body(), content_type="image/jpeg"))
+
+    assert exc_info.value.status_code == 413
 
 def test_s3_put_streams_with_real_botocore_stubber_non_seekable_body():
     backend = S3StorageBackend(
