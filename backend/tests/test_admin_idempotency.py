@@ -446,7 +446,7 @@ def test_record_payment_concurrent_same_key_executes_once(client, async_session_
 
     monkeypatch.setattr(invoice_service, "record_manual_payment", _slow_record_manual_payment)
 
-    responses: list[int] = []
+    responses: list[tuple[int, dict | None, dict]] = []
 
     def _send() -> None:
         r = client.post(
@@ -454,7 +454,8 @@ def test_record_payment_concurrent_same_key_executes_once(client, async_session_
             headers={**admin_headers, "Idempotency-Key": "pay-concurrent-charge"},
             json={"amount_cents": 500, "method": "cash"},
         )
-        responses.append(r.status_code)
+        body = r.json() if r.headers.get("content-type", "").startswith("application/json") else None
+        responses.append((r.status_code, body, dict(r.headers)))
 
     t1 = threading.Thread(target=_send)
     t2 = threading.Thread(target=_send)
@@ -468,11 +469,82 @@ def test_record_payment_concurrent_same_key_executes_once(client, async_session_
 
     assert call_count == 1, f"Payment handler called {call_count} times; expected 1"
     assert len(responses) == 2
-    statuses = sorted(responses)
-    # Thread 1 (winner) returns 201.  Thread 2 (loser) sees the PENDING record
-    # while Thread 1 is still in-flight, so it gets 409 Retry-After; once
-    # Thread 1 commits and Thread 2 retries, it would receive 201 replay.
+    statuses = sorted(status for status, _body, _headers in responses)
     assert statuses in ([201, 201], [201, 409]), f"Unexpected status codes: {statuses}"
+
+    success_response = next(body for status, body, _headers in responses if status == 201)
+    assert success_response is not None
+    if 409 in statuses:
+        replay = client.post(
+            f"/v1/admin/invoices/{invoice_id}/record-payment",
+            headers={**admin_headers, "Idempotency-Key": "pay-concurrent-charge"},
+            json={"amount_cents": 500, "method": "cash"},
+        )
+        assert replay.status_code == 201
+        assert replay.json() == success_response
+
+    async def _fetch_payment_and_idempotency_state() -> tuple[int, int, int]:
+        async with async_session_maker() as session:
+            payment_result = await session.execute(
+                sa.select(sa.func.count()).select_from(Payment).where(Payment.invoice_id == invoice_id)
+            )
+            idempotency_result = await session.execute(
+                sa.select(AdminIdempotency.response_status).where(
+                    AdminIdempotency.org_id == settings.default_org_id,
+                    AdminIdempotency.key == "pay-concurrent-charge",
+                    AdminIdempotency.endpoint == "record_payment",
+                )
+            )
+            status_code = int(idempotency_result.scalar_one())
+            pending_count_result = await session.execute(
+                sa.select(sa.func.count()).select_from(AdminIdempotency).where(
+                    AdminIdempotency.org_id == settings.default_org_id,
+                    AdminIdempotency.key == "pay-concurrent-charge",
+                    AdminIdempotency.endpoint == "record_payment",
+                    AdminIdempotency.response_status == AdminIdempotency.STATUS_PENDING,
+                )
+            )
+            return (
+                int(payment_result.scalar_one()),
+                status_code,
+                int(pending_count_result.scalar_one()),
+            )
+
+    payment_count, idempotency_status, pending_count = asyncio.run(_fetch_payment_and_idempotency_state())
+    assert payment_count == 1, f"Expected exactly 1 payment, found {payment_count}"
+    assert idempotency_status == 201
+    assert pending_count == 0
+
+
+def test_record_payment_replay_does_not_reexecute_handler(client, async_session_maker, monkeypatch):
+    invoice_id = _bootstrap_invoice(async_session_maker)
+    admin_headers = _auth_headers("admin", "secret")
+
+    call_count = 0
+    real_record = invoice_service.record_manual_payment
+
+    async def _counted_record_manual_payment(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        return await real_record(**kwargs)
+
+    monkeypatch.setattr(invoice_service, "record_manual_payment", _counted_record_manual_payment)
+
+    first = client.post(
+        f"/v1/admin/invoices/{invoice_id}/record-payment",
+        headers={**admin_headers, "Idempotency-Key": "pay-replay-no-reexec"},
+        json={"amount_cents": 500, "method": "cash"},
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        f"/v1/admin/invoices/{invoice_id}/record-payment",
+        headers={**admin_headers, "Idempotency-Key": "pay-replay-no-reexec"},
+        json={"amount_cents": 500, "method": "cash"},
+    )
+    assert second.status_code == 201
+    assert second.json() == first.json()
+    assert call_count == 1
 
     async def _count_payments() -> int:
         async with async_session_maker() as session:
@@ -482,4 +554,53 @@ def test_record_payment_concurrent_same_key_executes_once(client, async_session_
             return int(result.scalar_one())
 
     payment_count = asyncio.run(_count_payments())
-    assert payment_count == 1, f"Expected exactly 1 payment, found {payment_count}"
+    assert payment_count == 1
+
+
+def test_record_payment_failed_key_replays_failure_not_pending(client, async_session_maker, monkeypatch):
+    invoice_id = _bootstrap_invoice(async_session_maker)
+    admin_headers = _auth_headers("admin", "secret")
+
+    async def _seed_failed() -> None:
+        async with async_session_maker() as session:
+            path = f"/v1/admin/invoices/{invoice_id}/record-payment"
+            request = HTTPXRequest("POST", f"http://testserver{path}")
+            request_hash = _request_fingerprint(request, '{"amount_cents":500,"method":"cash"}')
+            failed = AdminIdempotency(
+                org_id=settings.default_org_id,
+                key="pay-failed-replay",
+                endpoint="record_payment",
+                request_hash=request_hash,
+                response_status=AdminIdempotency.STATUS_FAILED,
+                response_body_json={
+                    "detail": "Request processing failed",
+                    "status": 500,
+                    "title": "Internal Server Error",
+                },
+            )
+            session.add(failed)
+            await session.commit()
+
+    asyncio.run(_seed_failed())
+
+    called = False
+
+    async def _unexpected_call(*args, **kwargs):  # noqa: ARG001
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(invoice_service, "record_manual_payment", _unexpected_call)
+
+    response = client.post(
+        f"/v1/admin/invoices/{invoice_id}/record-payment",
+        headers={**admin_headers, "Idempotency-Key": "pay-failed-replay"},
+        json={"amount_cents": 500, "method": "cash"},
+    )
+    assert response.status_code == 500
+    assert response.headers.get("retry-after") is None
+    assert response.json() == {
+        "detail": "Request processing failed",
+        "status": 500,
+        "title": "Internal Server Error",
+    }
+    assert called is False
