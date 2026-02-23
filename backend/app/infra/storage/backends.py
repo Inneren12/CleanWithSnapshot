@@ -333,25 +333,31 @@ class S3StorageBackend(StorageBackend):
                 if self._error:
                     raise self._error
 
+                if size < 0:
+                    # Refuse unbounded reads to prevent full-file RAM buffering.
+                    # botocore with payload_signing_enabled=False always calls
+                    # read(N) with a concrete size, so this path must never be
+                    # reached in normal operation.
+                    raise UnsupportedOperation(
+                        "unbounded read() not supported on streaming upload body; "
+                        "ensure payload_signing_enabled=False is set in the S3 client config"
+                    )
+
                 if size == 0:
                     return b""
 
                 if self._eof and not self._buffer:
                     return b""
 
-                while size < 0 or len(self._buffer) < size:
+                while len(self._buffer) < size:
                     item = self._queue.get()
                     if item is self._sentinel:
                         self._eof = True
                         break
                     self._buffer.extend(item)
 
-                if size < 0:
-                    data = bytes(self._buffer)
-                    self._buffer.clear()
-                else:
-                    data = bytes(self._buffer[:size])
-                    del self._buffer[:size]
+                data = bytes(self._buffer[:size])
+                del self._buffer[:size]
 
                 if self._error:
                     raise self._error

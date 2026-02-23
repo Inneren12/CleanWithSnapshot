@@ -314,6 +314,32 @@ def test_s3_put_streams_with_real_botocore_stubber_non_seekable_body():
     assert stored.size == 9
 
 
+def test_s3_streaming_adapter_rejects_unbounded_read():
+    """read() without a size must raise UnsupportedOperation to prevent OOM buffering."""
+    from io import UnsupportedOperation as _UnsupportedOp
+
+    class _RecordingClient:
+        """Calls read() with no size argument to simulate a misconfigured caller."""
+
+        def put_object(self, Bucket: str, Key: str, Body, ContentType: str):
+            Body.read()  # unbounded — must raise
+
+    backend = S3StorageBackend(
+        bucket="uploads",
+        access_key="ak",
+        secret_key="sk",
+        client=_RecordingClient(),
+        enable_circuit_breaker=False,
+    )
+
+    async def _body():
+        yield b"hello"
+        yield b"world"
+
+    with pytest.raises(_UnsupportedOp):
+        asyncio.run(backend.put(key="orders/1/photo.jpg", body=_body(), content_type="image/jpeg"))
+
+
 def test_cloudflare_images_put_streams_multipart_request_body():
     collected = bytearray()
 
