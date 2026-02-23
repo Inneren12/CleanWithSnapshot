@@ -271,12 +271,15 @@ async def test_data_rights_exports_cursor_pagination_is_stable(async_session_mak
     cursor_page_selects = [
         stmt
         for stmt in cursor_mode_statements
-        if "SELECT" in stmt.upper()
-        and "FROM data_export_requests" in stmt
-        and "ORDER BY data_export_requests.created_at DESC" in stmt
+        if "SELECT" in stmt.upper() and "FROM data_export_requests" in stmt and "ORDER BY" in stmt.upper()
     ]
     assert cursor_page_selects
-    assert all(re.search(r"\bOFFSET\s+[1-9]\d*\b", stmt.upper()) is None for stmt in cursor_page_selects)
+    for stmt in cursor_page_selects:
+        upper_stmt = stmt.upper()
+        assert "ORDER BY" in upper_stmt
+        assert "CREATED_AT" in upper_stmt
+        assert "EXPORT_ID" in upper_stmt
+        assert re.search(r"\bOFFSET\s+[1-9]\d*\b", upper_stmt) is None
 
 
 @pytest.mark.anyio
@@ -337,11 +340,14 @@ async def test_data_rights_exports_offset_param_is_backward_compatible(async_ses
     offset_selects = [
         stmt
         for stmt in statements
-        if "SELECT" in stmt.upper()
-        and "FROM data_export_requests" in stmt
-        and "ORDER BY data_export_requests.created_at DESC" in stmt
+        if "SELECT" in stmt.upper() and "FROM data_export_requests" in stmt and "ORDER BY" in stmt.upper()
     ]
     assert offset_selects
+    for stmt in offset_selects:
+        upper_stmt = stmt.upper()
+        assert "ORDER BY" in upper_stmt
+        assert "CREATED_AT" in upper_stmt
+        assert "EXPORT_ID" in upper_stmt
     assert any("OFFSET" in stmt.upper() for stmt in offset_selects)
 
 
