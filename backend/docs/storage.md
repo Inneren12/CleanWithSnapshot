@@ -3,6 +3,7 @@
 This service can store order photos locally for development or in an S3-compatible bucket (AWS S3, Cloudflare R2, etc.) for production.
 
 Upload writes to S3-compatible backends and Cloudflare Images are streamed from the request body; the storage layer does not assemble the entire file in memory before sending.
+For S3/R2 streaming uploads, the S3 client uses SigV4 `UNSIGNED-PAYLOAD` (payload signing disabled) so non-seekable request bodies can be uploaded without buffering.
 
 ## Configuration
 

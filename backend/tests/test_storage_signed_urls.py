@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from botocore.stub import ANY, Stubber
 
 from app.infra.storage.backends import (
     CloudflareImagesStorageBackend,
@@ -274,6 +275,42 @@ def test_s3_put_streams_body_without_full_buffering():
     stored = asyncio.run(backend.put(key="orders/1/photo.jpg", body=_body(), content_type="image/jpeg"))
 
     assert bytes(backend.client.payload) == b"abcdefghi"
+    assert stored.size == 9
+
+
+def test_s3_put_streams_with_real_botocore_stubber_non_seekable_body():
+    backend = S3StorageBackend(
+        bucket="uploads",
+        access_key="ak",
+        secret_key="sk",
+        region="us-east-1",
+        endpoint="https://s3.test.invalid",
+        enable_circuit_breaker=False,
+    )
+
+    assert backend.client.meta.config.s3.get("payload_signing_enabled") is False
+
+    with Stubber(backend.client) as stubber:
+        stubber.add_response(
+            "put_object",
+            {"ETag": '"abc123"'},
+            {
+                "Bucket": "uploads",
+                "Key": "orders/1/photo.jpg",
+                "Body": ANY,
+                "ContentType": "image/jpeg",
+            },
+        )
+
+        async def _body():
+            source = _NoUnboundedReadStream([b"abc", b"def", b"ghi"])
+            async for chunk in source:
+                yield chunk
+
+        stored = asyncio.run(
+            backend.put(key="orders/1/photo.jpg", body=_body(), content_type="image/jpeg")
+        )
+
     assert stored.size == 9
 
 
