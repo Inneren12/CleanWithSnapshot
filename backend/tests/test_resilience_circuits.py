@@ -1,6 +1,8 @@
+import time
+from types import SimpleNamespace
+
 import anyio
 import pytest
-from types import SimpleNamespace
 
 from app import infra
 from app.infra import stripe_resilience
@@ -22,6 +24,7 @@ class _FakeStripeCheckoutSession:
         self._parent = parent
 
     def create(self, **kwargs):  # noqa: ANN001, ANN201
+        self._parent.last_checkout_kwargs = kwargs
         if self._parent.fail:
             raise RuntimeError("checkout_fail")
         return {"id": "sess_test", "url": "https://example.com/checkout", **kwargs}
@@ -54,6 +57,7 @@ class _FakeStripe:
         )()
         self.Webhook = _FakeStripeWebhook
         self.api_key = None
+        self.last_checkout_kwargs = None
 
     def _create_portal(self, **kwargs):  # noqa: ANN001, ANN201
         if self.fail:
@@ -61,13 +65,48 @@ class _FakeStripe:
         return {"url": "https://example.com/portal", **kwargs}
 
 
+class _TimeoutAwareStripeCheckoutSession:
+    def __init__(self, parent):
+        self._parent = parent
+
+    def create(self, **kwargs):  # noqa: ANN001, ANN201
+        self._parent.last_checkout_kwargs = kwargs
+        timeout = kwargs.get("timeout")
+        sleep_for = 0.05
+        if timeout is not None:
+            sleep_for = min(sleep_for, max(0.0, timeout + 0.001))
+        time.sleep(sleep_for)
+        raise TimeoutError("stripe_request_timeout")
+
+
+class _TimeoutAwareStripe:
+    def __init__(self) -> None:
+        self.checkout = type(
+            "Checkout",
+            (),
+            {
+                "Session": type(
+                    "Session",
+                    (),
+                    {"create": staticmethod(lambda **kwargs: _TimeoutAwareStripeCheckoutSession(self).create(**kwargs))},
+                )
+            },
+        )()
+        self.billing_portal = type(
+            "BillingPortal",
+            (),
+            {"Session": type("Session", (), {"create": staticmethod(lambda **kwargs: {"url": "u", **kwargs})})},
+        )()
+        self.Webhook = _FakeStripeWebhook
+        self.api_key = None
+        self.last_checkout_kwargs = None
+
+
 
 
 class _SlowStripeCheckoutSession:
     @staticmethod
     def create(**kwargs):  # noqa: ANN001, ANN201
-        import time
-
         time.sleep(0.05)
         return {"id": "sess_slow", **kwargs}
 
@@ -82,7 +121,6 @@ class _SlowStripe:
         )()
         self.Webhook = _FakeStripeWebhook
         self.api_key = None
-
 
 class _FakeS3Client:
     def __init__(self) -> None:
@@ -168,6 +206,48 @@ async def test_stripe_circuit_breaker_opens_and_closes(monkeypatch):
         cancel_url="c",
     )
     assert checkout["id"] == "sess_test"
+
+
+@pytest.mark.anyio
+async def test_stripe_client_passes_timeout_to_sdk_calls(monkeypatch):
+    fake_stripe = _FakeStripe()
+    fake_stripe.fail = False
+    monkeypatch.setattr(
+        stripe_resilience,
+        "stripe_circuit",
+        CircuitBreaker(name="stripe-timeout-wire", timeout_seconds=0.02),
+    )
+    monkeypatch.setattr(infra.stripe_client, "stripe_circuit", stripe_resilience.stripe_circuit)
+
+    client = StripeClient(secret_key="sk_test", webhook_secret="whsec_test", stripe_sdk=fake_stripe)
+
+    await client.create_checkout_session(amount_cents=1000, currency="usd", success_url="s", cancel_url="c")
+
+    assert fake_stripe.last_checkout_kwargs is not None
+    assert fake_stripe.last_checkout_kwargs["timeout"] == pytest.approx(0.02)
+
+
+@pytest.mark.anyio
+async def test_stripe_client_timeout_prevents_long_hanging_call(monkeypatch):
+    fake_stripe = _TimeoutAwareStripe()
+    monkeypatch.setattr(
+        stripe_resilience,
+        "stripe_circuit",
+        CircuitBreaker(name="stripe-timeout-limit", failure_threshold=1, timeout_seconds=0.01),
+    )
+    monkeypatch.setattr(infra.stripe_client, "stripe_circuit", stripe_resilience.stripe_circuit)
+
+    client = StripeClient(secret_key="sk_test", webhook_secret="whsec_test", stripe_sdk=fake_stripe)
+
+    start = time.perf_counter()
+    with pytest.raises(TimeoutError):
+        await client.create_checkout_session(amount_cents=1000, currency="usd", success_url="s", cancel_url="c")
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 0.1
+    assert fake_stripe.last_checkout_kwargs is not None
+    assert fake_stripe.last_checkout_kwargs["timeout"] == pytest.approx(0.01)
+    assert stripe_resilience.stripe_circuit.state == "open"
 
 
 @pytest.mark.anyio

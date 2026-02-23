@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 import anyio
@@ -54,3 +55,40 @@ async def test_circuit_timeout_marks_failure_and_opens():
     assert breaker.state == "open"
     with pytest.raises(CircuitBreakerOpenError):
         await breaker.call(lambda: "ok")
+
+
+@pytest.mark.anyio
+async def test_circuit_timeout_applies_to_task_returned_by_function():
+    breaker = CircuitBreaker(
+        name="stripe-task-timeout",
+        failure_threshold=1,
+        recovery_time=1.0,
+        window_seconds=10,
+        timeout_seconds=0.01,
+    )
+
+    task = asyncio.create_task(anyio.sleep(0.05))
+
+    with pytest.raises(TimeoutError):
+        await breaker.call(lambda: task)
+
+    assert breaker.state == "open"
+
+
+@pytest.mark.anyio
+async def test_circuit_timeout_applies_to_future_returned_by_function():
+    breaker = CircuitBreaker(
+        name="stripe-future-timeout",
+        failure_threshold=1,
+        recovery_time=1.0,
+        window_seconds=10,
+        timeout_seconds=0.01,
+    )
+
+    loop = asyncio.get_running_loop()
+    future = loop.run_in_executor(None, time.sleep, 0.05)
+
+    with pytest.raises(TimeoutError):
+        await breaker.call(lambda: future)
+
+    assert breaker.state == "open"
