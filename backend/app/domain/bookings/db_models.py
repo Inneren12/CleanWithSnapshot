@@ -232,15 +232,6 @@ class Booking(Base):
         Index("ix_bookings_status", "status"),
         Index("ix_bookings_archived_at", "archived_at"),
         Index("ix_bookings_checkout_session", "stripe_checkout_session_id"),
-        Index(
-            "uq_bookings_active_slot",
-            "org_id",
-            "team_id",
-            "starts_at",
-            unique=True,
-            postgresql_where=sa.text("status IN ('PENDING', 'CONFIRMED')"),
-            sqlite_where=sa.text("status IN ('PENDING', 'CONFIRMED')"),
-        ),
         UniqueConstraint("subscription_id", "scheduled_date", name="uq_bookings_subscription_schedule"),
     )
 

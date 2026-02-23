@@ -49,24 +49,40 @@ LOCAL_TZ = ZoneInfo("America/Edmonton")
 DEFAULT_TEAM_NAME = "Default Team"
 MIN_SLOTS_SUGGESTED = 2
 MAX_SLOTS_SUGGESTED = 3
-BOOKING_OVERLAP_CONSTRAINTS = {
-    "uq_bookings_active_slot",
-    "bookings_team_time_no_overlap",
-}
+SQLITE_ACTIVE_SLOT_UNIQUE_COLUMNS = "bookings.org_id, bookings.team_id, bookings.starts_at"
+
+
+def is_active_slot_conflict(exc: IntegrityError) -> bool:
+    original = getattr(exc, "orig", None)
+    constraint_name = getattr(getattr(original, "diag", None), "constraint_name", None)
+    sql_state = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    message = str(original or exc)
+
+    if constraint_name == "uq_bookings_active_slot":
+        return True
+    if sql_state == "23505" and (
+        constraint_name == "uq_bookings_active_slot" or "uq_bookings_active_slot" in message
+    ):
+        return True
+
+    if "UNIQUE constraint failed" in message and SQLITE_ACTIVE_SLOT_UNIQUE_COLUMNS in message:
+        return True
+
+    return False
 
 
 def is_booking_overlap_integrity_error(exc: IntegrityError) -> bool:
+    if is_active_slot_conflict(exc):
+        return True
+
     message = str(exc)
-    if any(name in message for name in BOOKING_OVERLAP_CONSTRAINTS):
+    if "bookings_team_time_no_overlap" in message:
         return True
 
     original = getattr(exc, "orig", None)
     constraint_name = getattr(getattr(original, "diag", None), "constraint_name", None)
     sql_state = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
-    return bool(
-        constraint_name in BOOKING_OVERLAP_CONSTRAINTS
-        or (sql_state == "23P01" and constraint_name == "bookings_team_time_no_overlap")
-    )
+    return bool(sql_state == "23P01" and constraint_name == "bookings_team_time_no_overlap")
 
 
 @dataclass(frozen=True)
@@ -1041,7 +1057,7 @@ async def create_booking(
         try:
             await session.flush()
         except IntegrityError as exc:
-            if is_booking_overlap_integrity_error(exc):
+            if is_active_slot_conflict(exc):
                 raise ValueError("Requested slot is no longer available") from exc
             raise
         await session.refresh(booking)

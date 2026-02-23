@@ -2,6 +2,7 @@ import asyncio
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import anyio
 import httpx
 import pytest
 
@@ -217,19 +218,22 @@ async def test_booking_endpoint_prevents_double_booking_under_concurrency(monkey
         assert slots_response.status_code == 200
         chosen_slot = slots_response.json()["slots"][0]
 
-        ready = asyncio.Event()
+        statuses: list[int] = []
+        start = anyio.Event()
 
-        async def attempt_booking() -> int:
-            await ready.wait()
+        async def attempt_booking() -> None:
+            await start.wait()
+            await anyio.sleep(0)
             response = await async_client.post(
                 "/v1/bookings",
                 json={"starts_at": chosen_slot, "time_on_site_hours": 2},
             )
-            return response.status_code
+            statuses.append(response.status_code)
 
-        tasks = [asyncio.create_task(attempt_booking()) for _ in range(5)]
-        ready.set()
-        statuses = await asyncio.gather(*tasks)
+        async with anyio.create_task_group() as tg:
+            for _ in range(5):
+                tg.start_soon(attempt_booking)
+            start.set()
 
     assert statuses.count(201) == 1
     assert statuses.count(409) == 4
