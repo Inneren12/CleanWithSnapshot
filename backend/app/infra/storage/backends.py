@@ -27,6 +27,94 @@ class StoredObject:
     content_type: str
 
 
+class _AsyncIteratorFileObj:
+    """Thread-safe, non-seekable adapter from AsyncIterator[bytes] to file-like reads."""
+
+    _sentinel = object()
+
+    def __init__(
+        self,
+        iterator: AsyncIterator[bytes],
+        loop: asyncio.AbstractEventLoop,
+        max_payload_bytes: int | None,
+    ) -> None:
+        self._iterator = iterator
+        self._max_payload_bytes = max_payload_bytes
+        self._queue: queue.Queue[bytes | object] = queue.Queue(maxsize=16)
+        self._error: Exception | None = None
+        self._chunk = b""
+        self._chunk_offset = 0
+        self._eof = False
+        self.size = 0
+        self._producer_future = asyncio.run_coroutine_threadsafe(self._produce(), loop)
+
+    async def _produce(self) -> None:
+        try:
+            async for chunk in self._iterator:
+                if not chunk:
+                    continue
+                self.size += len(chunk)
+                if self._max_payload_bytes and self.size > self._max_payload_bytes:
+                    raise ValueError("Payload exceeds configured upload limit")
+                await asyncio.to_thread(self._queue.put, chunk)
+        except Exception as exc:  # noqa: BLE001
+            self._error = exc
+        finally:
+            await asyncio.to_thread(self._queue.put, self._sentinel)
+
+    def _ensure_chunk(self) -> bool:
+        while self._chunk_offset >= len(self._chunk):
+            item = self._queue.get()
+            if item is self._sentinel:
+                self._eof = True
+                self._chunk = b""
+                self._chunk_offset = 0
+                return False
+            self._chunk = item
+            self._chunk_offset = 0
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        if self._error:
+            raise self._error
+        if size == 0:
+            return b""
+        if self._eof:
+            return b""
+
+        if size < 0:
+            if not self._ensure_chunk():
+                return b""
+            data = self._chunk[self._chunk_offset :]
+            self._chunk_offset = len(self._chunk)
+            return data
+
+        out = bytearray()
+        while len(out) < size:
+            if not self._ensure_chunk():
+                break
+            remaining = size - len(out)
+            chunk_part = self._chunk[self._chunk_offset : self._chunk_offset + remaining]
+            out.extend(chunk_part)
+            self._chunk_offset += len(chunk_part)
+
+        if self._error:
+            raise self._error
+        return bytes(out)
+
+    def seekable(self) -> bool:
+        return False
+
+    def tell(self) -> int:
+        raise UnsupportedOperation("stream is not seekable")
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        raise UnsupportedOperation("stream is not seekable")
+
+    def close(self) -> None:
+        self._producer_future.result()
+
+
 class StorageBackend(ABC):
     """Abstract interface for object storage."""
 
@@ -297,78 +385,6 @@ class S3StorageBackend(StorageBackend):
     async def put(
         self, *, key: str, body: AsyncIterator[bytes], content_type: str
     ) -> StoredObject:
-        class _AsyncIteratorFileObj:
-            def __init__(
-                self,
-                iterator: AsyncIterator[bytes],
-                loop: asyncio.AbstractEventLoop,
-                max_payload_bytes: int | None,
-            ) -> None:
-                self._iterator = iterator
-                self._loop = loop
-                self._max_payload_bytes = max_payload_bytes
-                self._queue: queue.Queue[bytes | object] = queue.Queue(maxsize=16)
-                self._sentinel = object()
-                self._error: Exception | None = None
-                self.size = 0
-                self._buffer = bytearray()
-                self._eof = False
-                self._producer_future = asyncio.run_coroutine_threadsafe(self._produce(), loop)
-
-            async def _produce(self) -> None:
-                try:
-                    async for chunk in self._iterator:
-                        if not chunk:
-                            continue
-                        self.size += len(chunk)
-                        if self._max_payload_bytes and self.size > self._max_payload_bytes:
-                            raise ValueError("Payload exceeds configured upload limit")
-                        await asyncio.to_thread(self._queue.put, chunk)
-                except Exception as exc:  # noqa: BLE001
-                    self._error = exc
-                finally:
-                    await asyncio.to_thread(self._queue.put, self._sentinel)
-
-            def read(self, size: int = -1) -> bytes:
-                if self._error:
-                    raise self._error
-
-                if size == 0:
-                    return b""
-
-                if self._eof and not self._buffer:
-                    return b""
-
-                while size < 0 or len(self._buffer) < size:
-                    item = self._queue.get()
-                    if item is self._sentinel:
-                        self._eof = True
-                        break
-                    self._buffer.extend(item)
-
-                if size < 0:
-                    data = bytes(self._buffer)
-                    self._buffer.clear()
-                else:
-                    data = bytes(self._buffer[:size])
-                    del self._buffer[:size]
-
-                if self._error:
-                    raise self._error
-                return data
-
-            def seekable(self) -> bool:
-                return False
-
-            def tell(self) -> int:
-                raise UnsupportedOperation("stream is not seekable")
-
-            def seek(self, offset: int, whence: int = 0) -> int:
-                raise UnsupportedOperation("stream is not seekable")
-
-            def close(self) -> None:
-                self._producer_future.result()
-
         reader = _AsyncIteratorFileObj(body, asyncio.get_running_loop(), self.max_payload_bytes)
 
         def _upload() -> None:
@@ -376,6 +392,11 @@ class S3StorageBackend(StorageBackend):
 
         try:
             await self._run_with_circuit(lambda: asyncio.to_thread(_upload))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="File too large",
+            ) from exc
         finally:
             await asyncio.to_thread(reader.close)
         return StoredObject(key=key, size=reader.size, content_type=content_type)
