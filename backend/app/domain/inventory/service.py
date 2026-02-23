@@ -6,7 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import case, func, select, or_, desc
+from sqlalchemy import case, func, select, or_, desc, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -785,6 +785,7 @@ async def mark_purchase_order_received(
             db_models.PurchaseOrder.org_id == org_id,
             db_models.PurchaseOrder.po_id == po_id,
         )
+        .with_for_update()
         .options(selectinload(db_models.PurchaseOrder.items))
     )
     result = await session.execute(stmt)
@@ -797,14 +798,18 @@ async def mark_purchase_order_received(
     if purchase_order.status != schemas.PurchaseOrderStatus.ordered.value:
         raise ValueError("Only ordered purchase orders can be marked as received")
 
-    item_ids = {item.item_id for item in purchase_order.items}
-    item_map = await _load_inventory_items(session, org_id, item_ids)
-    if len(item_map) != len(item_ids):
-        raise ValueError("One or more inventory items not found")
-
     for po_item in purchase_order.items:
-        inventory_item = item_map[po_item.item_id]
-        inventory_item.current_qty = inventory_item.current_qty + po_item.qty
+        update_stmt = (
+            update(db_models.InventoryItem)
+            .where(
+                db_models.InventoryItem.org_id == org_id,
+                db_models.InventoryItem.item_id == po_item.item_id,
+            )
+            .values(current_qty=db_models.InventoryItem.current_qty + po_item.qty)
+        )
+        update_result = await session.execute(update_stmt)
+        if update_result.rowcount != 1:
+            raise ValueError("One or more inventory items not found")
 
     purchase_order.status = schemas.PurchaseOrderStatus.received.value
     purchase_order.received_at = datetime.now(timezone.utc)
