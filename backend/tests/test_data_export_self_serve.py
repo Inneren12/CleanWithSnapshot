@@ -227,6 +227,7 @@ async def test_data_rights_exports_cursor_pagination_is_stable(async_session_mak
     )
 
     statements: list[str] = []
+    cursor_mode_statements: list[str] = []
 
     async with async_session_maker() as session:
         sync_engine = session.bind.sync_engine
@@ -245,8 +246,10 @@ async def test_data_rights_exports_cursor_pagination_is_stable(async_session_mak
             query = "/v1/data-rights/exports?page_size=10"
             if cursor:
                 query += f"&cursor={cursor}"
+            before_count = len(statements)
             response = client.get(query, headers=_client_auth_header(token))
             assert response.status_code == 200
+            cursor_mode_statements.extend(statements[before_count:])
             payload = response.json()
             items = payload["items"]
             page_count += 1
@@ -267,7 +270,7 @@ async def test_data_rights_exports_cursor_pagination_is_stable(async_session_mak
 
     cursor_page_selects = [
         stmt
-        for stmt in statements
+        for stmt in cursor_mode_statements
         if "SELECT" in stmt.upper()
         and "FROM data_export_requests" in stmt
         and "ORDER BY data_export_requests.created_at DESC" in stmt
@@ -306,18 +309,40 @@ async def test_data_rights_exports_offset_param_is_backward_compatible(async_ses
         org_id=settings.default_org_id,
     )
 
-    response = client.get(
-        "/v1/data-rights/exports?page_size=10&offset=10",
-        headers=_client_auth_header(token),
-    )
-    assert response.status_code == 200
-    payload = response.json()
+    statements: list[str] = []
+    async with async_session_maker() as session:
+        sync_engine = session.bind.sync_engine
+
+    def _capture_sql(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "data_export_requests" in statement:
+            statements.append(statement)
+
+    sa.event.listen(sync_engine, "before_cursor_execute", _capture_sql)
+    try:
+        response = client.get(
+            "/v1/data-rights/exports?page_size=10&offset=10",
+            headers=_client_auth_header(token),
+        )
+        assert response.status_code == 200
+        payload = response.json()
+    finally:
+        sa.event.remove(sync_engine, "before_cursor_execute", _capture_sql)
     returned_ids = [item["export_id"] for item in payload["items"]]
 
     expected_sorted = list(reversed(created_export_ids))
     assert returned_ids == expected_sorted[10:20]
     assert payload["next_cursor"] is None
     assert payload["prev_cursor"] is None
+
+    offset_selects = [
+        stmt
+        for stmt in statements
+        if "SELECT" in stmt.upper()
+        and "FROM data_export_requests" in stmt
+        and "ORDER BY data_export_requests.created_at DESC" in stmt
+    ]
+    assert offset_selects
+    assert any("OFFSET" in stmt.upper() for stmt in offset_selects)
 
 
 @pytest.mark.anyio
@@ -340,3 +365,52 @@ async def test_data_rights_exports_invalid_cursor_returns_422(async_session_make
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "invalid_cursor"
+
+
+@pytest.mark.anyio
+async def test_data_rights_exports_cursor_pagination_tie_breaker_is_stable(async_session_maker, client):
+    async with async_session_maker() as session:
+        lead = await _seed_lead(session, org_id=settings.default_org_id, email="tie-breaker@example.com")
+        client_user = await _seed_client(session, org_id=settings.default_org_id, email=lead.email)
+        shared_created_at = datetime(2024, 1, 3, tzinfo=timezone.utc)
+        created_export_ids: list[str] = []
+        for idx in range(12):
+            record = await data_rights_service.create_data_export_request(
+                session,
+                org_id=settings.default_org_id,
+                subject_id=client_user.client_id,
+                subject_type="client",
+                subject_email=client_user.email,
+                requested_by=f"tie-{idx}@example.com",
+                requested_by_type="client",
+                request_id=f"tie-{idx}",
+            )
+            record.created_at = shared_created_at
+            created_export_ids.append(str(record.export_id))
+        await session.commit()
+
+    token = client_service.issue_magic_token(
+        email=client_user.email,
+        client_id=client_user.client_id,
+        secret=settings.client_portal_secret.get_secret_value(),
+        ttl_minutes=settings.client_portal_token_ttl_minutes,
+        org_id=settings.default_org_id,
+    )
+
+    seen_ids: list[str] = []
+    cursor = None
+    while True:
+        query = "/v1/data-rights/exports?page_size=5"
+        if cursor:
+            query += f"&cursor={cursor}"
+        response = client.get(query, headers=_client_auth_header(token))
+        assert response.status_code == 200
+        payload = response.json()
+        items = payload["items"]
+        seen_ids.extend(item["export_id"] for item in items)
+        cursor = payload["next_cursor"]
+        if cursor is None:
+            break
+
+    assert len(seen_ids) == len(created_export_ids)
+    assert len(set(seen_ids)) == len(created_export_ids)

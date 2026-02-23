@@ -48,7 +48,7 @@ def decode_data_export_cursor_strict(cursor: str) -> tuple[datetime, uuid.UUID]:
 
 
 def _apply_data_export_cursor(stmt: Any, cursor: str | None) -> Any:
-    parsed = decode_data_export_cursor(cursor) if cursor else None
+    parsed = decode_data_export_cursor_strict(cursor) if cursor else None
     if not parsed:
         return stmt
     created_at, export_id = parsed

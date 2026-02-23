@@ -502,15 +502,18 @@ async def list_data_exports(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_cursor") from exc
 
-    items, total, next_cursor, prev_cursor = await data_rights_service.list_data_export_requests(
-        session,
-        org_id=org_id,
-        subject_email=subject_email,
-        subject_id=subject_id,
-        limit=page_size,
-        cursor=cursor,
-        offset=offset,
-    )
+    try:
+        items, total, next_cursor, prev_cursor = await data_rights_service.list_data_export_requests(
+            session,
+            org_id=org_id,
+            subject_email=subject_email,
+            subject_id=subject_id,
+            limit=page_size,
+            cursor=cursor,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_cursor") from exc
     return data_rights_schemas.DataRightsExportListResponse(
         items=[
             data_rights_schemas.DataRightsExportListItem(
