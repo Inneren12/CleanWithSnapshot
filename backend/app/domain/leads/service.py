@@ -103,13 +103,20 @@ async def grant_referral_credit(session: AsyncSession, referred_lead: Lead | Non
     )
     referrer = result.scalar_one_or_none()
     if referrer is None:
+        cross_org_referrer_exists = await session.scalar(
+            select(Lead.lead_id).where(Lead.referral_code == referred_lead.referred_by_code).limit(1)
+        )
+        log_event = (
+            "referral_referrer_cross_org_blocked"
+            if cross_org_referrer_exists is not None
+            else "referral_referrer_missing"
+        )
         logger.warning(
-            "referral_referrer_missing_or_cross_org_blocked",
+            log_event,
             extra={
                 "extra": {
                     "referred_lead_id": referred_lead.lead_id,
                     "referred_lead_org_id": str(referred_lead.org_id),
-                    "referred_by_code": referred_lead.referred_by_code,
                 }
             },
         )
