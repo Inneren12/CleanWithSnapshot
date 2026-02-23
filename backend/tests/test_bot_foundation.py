@@ -8,11 +8,13 @@ def test_create_conversation(client):
     assert response.status_code == 201
     data = response.json()
     conversation_id = data["conversationId"]
+    anon_cookie = response.cookies.get("anon_session_id")
+    assert anon_cookie
 
     stored = anyio.run(app.state.bot_store.get_conversation, conversation_id)
     assert stored is not None
     assert stored.channel == "web"
-    assert stored.anon_id == "anon-1"
+    assert stored.anon_id == anon_cookie
 
 
 def test_post_message_updates_state(client):
