@@ -115,3 +115,45 @@ def test_rejects_unknown_request_fields(client):
         },
     )
     assert bad_lead.status_code == 422
+
+
+def test_list_messages_uses_default_limit_and_returns_latest_in_order(client, monkeypatch):
+    monkeypatch.setattr("app.api.routes_bot.settings.bot_messages_default_limit", 3)
+    conversation_id = client.post("/api/bot/session", json={"channel": "web"}).json()["conversationId"]
+
+    for idx in range(4):
+        client.post(
+            "/api/bot/message",
+            json={"conversationId": conversation_id, "text": f"message {idx}"},
+        )
+
+    response = client.get("/api/bot/messages", params={"conversationId": conversation_id})
+    assert response.status_code == 200
+
+    messages = response.json()
+    assert len(messages) == 3
+    assert [m["role"] for m in messages] == ["bot", "user", "bot"]
+    assert [m["text"] for m in messages] == [
+        "I want to make sure I answer correctly. Which topic fits best?",
+        "message 3",
+        "I want to make sure I answer correctly. Which topic fits best?",
+    ]
+
+
+def test_store_list_messages_limit_returns_latest_in_order():
+    from app.domain.bot.schemas import ConversationCreate, ConversationState, MessagePayload, MessageRole
+    from app.infra.bot_store import InMemoryBotStore
+
+    async def _run() -> None:
+        store = InMemoryBotStore()
+        conversation = await store.create_conversation(ConversationCreate(channel="web", state=ConversationState()))
+        for idx in range(5):
+            await store.append_message(
+                conversation.conversation_id,
+                MessagePayload(role=MessageRole.user, text=f"msg-{idx}"),
+            )
+
+        limited = await store.list_messages(conversation.conversation_id, limit=2)
+        assert [m.text for m in limited] == ["msg-3", "msg-4"]
+
+    anyio.run(_run)
