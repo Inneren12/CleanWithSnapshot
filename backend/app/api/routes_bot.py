@@ -49,7 +49,7 @@ def _resolve_current_user_id(http_request: Request) -> Optional[str]:
     saas_identity = getattr(http_request.state, "saas_identity", None)
     if saas_identity and getattr(saas_identity, "user_id", None):
         return str(saas_identity.user_id)
-    if settings.testing:
+    if getattr(settings, "testing", False):
         test_user_id = http_request.headers.get(TEST_USER_ID_HEADER)
         if test_user_id:
             return test_user_id
