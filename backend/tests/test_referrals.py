@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from app.domain.bookings import service as booking_service
+from app.domain.leads import service as leads_service
 from app.domain.leads.db_models import Lead, ReferralCredit
 from app.domain.org_settings import service as org_settings_service
 from app.domain.saas.db_models import Organization
@@ -144,6 +145,101 @@ def test_invalid_referral_code_rejected(client):
 
     response = client.post("/v1/leads", json=payload)
     assert response.status_code == 400
+
+
+def test_referral_credit_granted_for_same_org(async_session_maker):
+    org_id = uuid.uuid4()
+
+    async def _exercise() -> int:
+        async with async_session_maker() as session:
+            session.add(Organization(org_id=org_id, name="Referral Org"))
+            await session.flush()
+
+            referrer = Lead(
+                org_id=org_id,
+                name="Scoped Referrer",
+                phone="780-555-5100",
+                structured_inputs={"beds": 2, "baths": 2, "cleaning_type": "deep"},
+                estimate_snapshot={
+                    "total_cents": 10000,
+                    "pricing_config_version": "test",
+                    "config_hash": "hash",
+                },
+                pricing_config_version="test",
+                config_hash="hash",
+            )
+            referred = Lead(
+                org_id=org_id,
+                name="Scoped Referred",
+                phone="780-555-5101",
+                structured_inputs={"beds": 2, "baths": 2, "cleaning_type": "deep"},
+                estimate_snapshot={
+                    "total_cents": 12000,
+                    "pricing_config_version": "test",
+                    "config_hash": "hash",
+                },
+                pricing_config_version="test",
+                config_hash="hash",
+                referred_by_code=referrer.referral_code,
+            )
+            session.add_all([referrer, referred])
+            await session.flush()
+
+            await leads_service.grant_referral_credit(session, referred)
+            await session.commit()
+            return await session.scalar(select(func.count()).select_from(ReferralCredit))
+
+    assert asyncio.run(_exercise()) == 1
+
+
+def test_referral_credit_blocked_for_cross_org(async_session_maker):
+    org_a, org_b = uuid.uuid4(), uuid.uuid4()
+
+    async def _exercise() -> int:
+        async with async_session_maker() as session:
+            session.add_all(
+                [
+                    Organization(org_id=org_a, name="Org A"),
+                    Organization(org_id=org_b, name="Org B"),
+                ]
+            )
+            await session.flush()
+
+            referrer = Lead(
+                org_id=org_a,
+                name="Cross Org Referrer",
+                phone="780-555-5200",
+                structured_inputs={"beds": 2, "baths": 2, "cleaning_type": "deep"},
+                estimate_snapshot={
+                    "total_cents": 10000,
+                    "pricing_config_version": "test",
+                    "config_hash": "hash",
+                },
+                pricing_config_version="test",
+                config_hash="hash",
+            )
+            referred = Lead(
+                org_id=org_b,
+                name="Cross Org Referred",
+                phone="780-555-5201",
+                structured_inputs={"beds": 2, "baths": 2, "cleaning_type": "deep"},
+                estimate_snapshot={
+                    "total_cents": 12000,
+                    "pricing_config_version": "test",
+                    "config_hash": "hash",
+                },
+                pricing_config_version="test",
+                config_hash="hash",
+                referred_by_code=referrer.referral_code,
+            )
+            session.add_all([referrer, referred])
+            await session.flush()
+
+            await leads_service.grant_referral_credit(session, referred)
+            await session.commit()
+            return await session.scalar(select(func.count()).select_from(ReferralCredit))
+
+    assert asyncio.run(_exercise()) == 0
 
 
 def test_referral_credit_created_on_deposit_paid(client, async_session_maker):
