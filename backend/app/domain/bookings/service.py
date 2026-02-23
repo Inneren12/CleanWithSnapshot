@@ -57,13 +57,21 @@ def is_active_slot_conflict(exc: IntegrityError) -> bool:
     constraint_name = getattr(getattr(original, "diag", None), "constraint_name", None)
     sql_state = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
     message = str(original or exc)
+    message_lower = message.lower()
 
     if constraint_name == "uq_bookings_active_slot":
         return True
-    if sql_state == "23505" and (
-        constraint_name == "uq_bookings_active_slot" or "uq_bookings_active_slot" in message
-    ):
-        return True
+    if sql_state == "23505":
+        if constraint_name == "uq_bookings_active_slot" or "uq_bookings_active_slot" in message:
+            return True
+
+        has_expected_composite_key = (
+            "(org_id, team_id, starts_at)" in message_lower
+            or "key (org_id, team_id, starts_at)=" in message_lower
+            or all(column in message_lower for column in ("org_id", "team_id", "starts_at"))
+        )
+        if has_expected_composite_key:
+            return True
 
     if "UNIQUE constraint failed" in message and SQLITE_ACTIVE_SLOT_UNIQUE_COLUMNS in message:
         return True
