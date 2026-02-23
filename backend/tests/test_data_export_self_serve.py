@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -10,7 +11,7 @@ from app.domain.data_rights import service as data_rights_service
 from app.domain.leads.db_models import Lead
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import MembershipRole, Organization
-from app.infra.storage.backends import InMemoryStorageBackend
+from app.infra.storage.backends import InMemoryStorageBackend, StoredObject
 from app.jobs import data_export
 from app.settings import settings
 
@@ -415,3 +416,66 @@ async def test_data_rights_exports_cursor_pagination_tie_breaker_is_stable(async
 
     assert len(seen_ids) == len(created_export_ids)
     assert len(set(seen_ids)) == len(created_export_ids)
+
+
+class RecordingStreamingStorageBackend(InMemoryStorageBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.chunk_sizes: list[int] = []
+
+    async def put(self, *, key: str, body, content_type: str) -> StoredObject:
+        payload = bytearray()
+        async for chunk in body:
+            self.chunk_sizes.append(len(chunk))
+            payload.extend(chunk)
+        encoded = bytes(payload)
+        self._objects[key] = (encoded, content_type)
+        return StoredObject(key=key, size=len(encoded), content_type=content_type)
+
+
+@pytest.mark.anyio
+async def test_export_job_streams_json_payload_in_chunks(async_session_maker):
+    storage = RecordingStreamingStorageBackend()
+    subject_email = "streaming-export@example.com"
+
+    async with async_session_maker() as session:
+        for idx in range(1200):
+            lead = Lead(
+                org_id=settings.default_org_id,
+                name=f"Bulk Lead {idx}",
+                phone="123",
+                email=subject_email,
+                preferred_dates=[],
+                structured_inputs={"sequence": idx, "access_token": f"token-{idx}"},
+                estimate_snapshot={"total": idx},
+                pricing_config_version="test",
+                config_hash=f"hash-{idx}",
+            )
+            session.add(lead)
+
+        record = await data_rights_service.create_data_export_request(
+            session,
+            org_id=settings.default_org_id,
+            subject_id=subject_email,
+            subject_type="email",
+            subject_email=subject_email,
+            requested_by="admin@example.com",
+            requested_by_type="admin",
+            request_id="req-streaming",
+        )
+        await session.commit()
+
+        result = await data_export.run_pending_data_exports(session, storage_backend=storage)
+        assert result["completed"] == 1
+
+        await session.refresh(record)
+        payload_bytes = await storage.read(key=record.storage_key)
+
+    assert len(storage.chunk_sizes) > 2
+    assert max(storage.chunk_sizes) < len(payload_bytes)
+
+    payload = json.loads(payload_bytes)
+    assert payload["subject_type"] == "email"
+    assert len(payload["data"]["leads"]) == 1200
+    assert payload["data"]["bookings"] == []
+    assert payload["data"]["leads"][0]["structured_inputs"]["access_token"] == "[REDACTED]"

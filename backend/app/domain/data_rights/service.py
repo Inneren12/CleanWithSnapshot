@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from time import perf_counter
+from typing import Any, AsyncIterator, Callable
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,13 @@ from app.domain.leads.db_models import Lead
 from app.domain.leads.service import export_payload_from_lead
 from app.infra.storage import StorageBackend, new_storage_backend
 from app.settings import settings
+
+
+logger = logging.getLogger(__name__)
+_EXPORT_QUERY_BATCH_SIZE = 500
+_ExportQueryBuilder = Callable[[int, str | None], Any]
+_ExportSerializer = Callable[[Any], dict[str, Any]]
+_ExportCursorGetter = Callable[[Any], str]
 
 
 def encode_data_export_cursor(created_at: datetime, export_id: uuid.UUID) -> str:
@@ -505,33 +514,150 @@ async def generate_data_export_bundle(
     if export_request.subject_type == "email":
         email = export_request.subject_id
 
-    try:
-        bundle = await export_client_data(
-            session,
-            export_request.org_id,
-            lead_id=lead_id,
-            email=email,
-        )
-    except DomainError as exc:
+    lead_filters = [Lead.org_id == export_request.org_id]
+    if lead_id:
+        lead_filters.append(Lead.lead_id == lead_id)
+    if email:
+        lead_filters.append(Lead.email == email)
+
+    lead_exists_stmt = select(Lead.lead_id).where(*lead_filters).limit(1)
+    lead_exists = await session.execute(lead_exists_stmt)
+    if lead_exists.scalar_one_or_none() is None:
         export_request.status = "failed"
-        export_request.error_code = exc.detail
+        export_request.error_code = "lead_not_found"
         await session.flush()
         return export_request
 
-    sanitized_bundle = _redact_sensitive_fields(bundle)
-    payload = {
-        "export_id": str(export_request.export_id),
-        "org_id": str(export_request.org_id),
-        "subject_id": export_request.subject_id,
-        "subject_type": export_request.subject_type,
-        "subject_email": export_request.subject_email,
-        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
-        "data": sanitized_bundle,
-    }
-    data_bytes = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    lead_id_subquery = select(Lead.lead_id).where(*lead_filters)
+    booking_id_subquery = select(Booking.booking_id).where(
+        Booking.org_id == export_request.org_id,
+        Booking.lead_id.in_(lead_id_subquery),
+    )
 
-    async def _stream() -> Any:
-        yield data_bytes
+    invoice_id_subquery = select(Invoice.invoice_id).where(
+        Invoice.org_id == export_request.org_id,
+        (Invoice.customer_id.in_(lead_id_subquery)) | (Invoice.order_id.in_(booking_id_subquery)),
+    )
+
+    sections: list[tuple[str, _ExportQueryBuilder, _ExportSerializer, _ExportCursorGetter]] = [
+        (
+            "leads",
+            lambda limit, cursor: _build_chunked_query(
+                Lead,
+                Lead.lead_id,
+                [*lead_filters],
+                limit=limit,
+                cursor=cursor,
+            ),
+            export_payload_from_lead,
+            lambda lead: str(lead.lead_id),
+        ),
+        (
+            "bookings",
+            lambda limit, cursor: _build_chunked_query(
+                Booking,
+                Booking.booking_id,
+                [Booking.org_id == export_request.org_id, Booking.lead_id.in_(lead_id_subquery)],
+                limit=limit,
+                cursor=cursor,
+            ),
+            _sanitize_booking,
+            lambda booking: str(booking.booking_id),
+        ),
+        (
+            "invoices",
+            lambda limit, cursor: _build_chunked_query(
+                Invoice,
+                Invoice.invoice_id,
+                [
+                    Invoice.org_id == export_request.org_id,
+                    (Invoice.customer_id.in_(lead_id_subquery)) | (Invoice.order_id.in_(booking_id_subquery)),
+                ],
+                limit=limit,
+                cursor=cursor,
+            ),
+            _sanitize_invoice,
+            lambda invoice: str(invoice.invoice_id),
+        ),
+        (
+            "payments",
+            lambda limit, cursor: _build_chunked_query(
+                Payment,
+                Payment.payment_id,
+                [
+                    Payment.org_id == export_request.org_id,
+                    (Payment.invoice_id.in_(invoice_id_subquery))
+                    | (Payment.booking_id.in_(booking_id_subquery)),
+                ],
+                limit=limit,
+                cursor=cursor,
+            ),
+            _sanitize_payment,
+            lambda payment: str(payment.payment_id),
+        ),
+        (
+            "photos",
+            lambda limit, cursor: _build_chunked_query(
+                OrderPhoto,
+                OrderPhoto.photo_id,
+                [OrderPhoto.org_id == export_request.org_id, OrderPhoto.order_id.in_(booking_id_subquery)],
+                limit=limit,
+                cursor=cursor,
+            ),
+            _photo_reference,
+            lambda photo: str(photo.photo_id),
+        ),
+    ]
+
+    export_started_at = datetime.now(tz=timezone.utc)
+    started = perf_counter()
+    section_counts: dict[str, int] = {name: 0 for name, *_ in sections}
+
+    async def _stream() -> AsyncIterator[bytes]:
+        yield b"{"
+        metadata = {
+            "export_id": str(export_request.export_id),
+            "org_id": str(export_request.org_id),
+            "subject_id": export_request.subject_id,
+            "subject_type": export_request.subject_type,
+            "subject_email": export_request.subject_email,
+            "generated_at": export_started_at.isoformat(),
+        }
+        for index, (key, value) in enumerate(metadata.items()):
+            if index:
+                yield b","
+            key_bytes = json.dumps(key, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            value_bytes = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            yield key_bytes + b":" + value_bytes
+
+        yield b',"data":{'
+        for section_index, (section_name, build_stmt, serializer, get_cursor) in enumerate(sections):
+            if section_index:
+                yield b","
+            yield json.dumps(section_name, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b":["
+
+            first_record = True
+            cursor: str | None = None
+            while True:
+                stmt = build_stmt(_EXPORT_QUERY_BATCH_SIZE, cursor)
+                result = await session.execute(stmt)
+                chunk = list(result.scalars().all())
+                if not chunk:
+                    break
+
+                for item in chunk:
+                    if not first_record:
+                        yield b","
+                    record = _redact_sensitive_fields(serializer(item))
+                    yield json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                    first_record = False
+                    section_counts[section_name] += 1
+                cursor = get_cursor(chunk[-1])
+                if len(chunk) < _EXPORT_QUERY_BATCH_SIZE:
+                    break
+
+            yield b"]"
+        yield b"}}"
 
     key = f"data-exports/{export_request.org_id}/{export_request.export_id}.json"
     stored = await storage.put(
@@ -545,8 +671,24 @@ async def generate_data_export_bundle(
     export_request.status = "completed"
     export_request.completed_at = datetime.now(tz=timezone.utc)
     export_request.error_code = None
+    duration_ms = int((perf_counter() - started) * 1000)
+    logger.info(
+        "data_export_completed export_id=%s org_id=%s bytes=%s duration_ms=%s counts=%s",
+        export_request.export_id,
+        export_request.org_id,
+        stored.size,
+        duration_ms,
+        section_counts,
+    )
     await session.flush()
     return export_request
+
+
+def _build_chunked_query(model: Any, key_column: Any, filters: list[Any], *, limit: int, cursor: str | None) -> Any:
+    stmt = select(model).where(*filters)
+    if cursor is not None:
+        stmt = stmt.where(key_column > cursor)
+    return stmt.order_by(key_column).limit(limit)
 
 
 async def purge_expired_exports(
