@@ -276,6 +276,7 @@ class S3StorageBackend(StorageBackend):
                 aws_secret_access_key=secret_key,
                 config=Config(
                     signature_version="s3v4",
+                    s3={"payload_signing_enabled": False},
                     connect_timeout=connect_timeout,
                     read_timeout=read_timeout,
                     retries={"mode": "standard", "max_attempts": max(1, max_attempts)},
