@@ -1,4 +1,6 @@
+import re
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import sqlalchemy as sa
@@ -53,7 +55,7 @@ async def test_export_request_creates_record(async_session_maker, client):
     token = client_service.issue_magic_token(
         email=client_user.email,
         client_id=client_user.client_id,
-        secret=settings.client_portal_secret,
+        secret=settings.client_portal_secret.get_secret_value(),
         ttl_minutes=settings.client_portal_token_ttl_minutes,
         org_id=settings.default_org_id,
     )
@@ -133,7 +135,7 @@ async def test_download_scoped_to_subject_and_admin(async_session_maker, client)
         token = client_service.issue_magic_token(
             email=client_user.email,
             client_id=client_user.client_id,
-            secret=settings.client_portal_secret,
+            secret=settings.client_portal_secret.get_secret_value(),
             ttl_minutes=settings.client_portal_token_ttl_minutes,
             org_id=settings.default_org_id,
         )
@@ -183,7 +185,7 @@ async def test_cross_org_export_download_forbidden(async_session_maker, client):
         token = client_service.issue_magic_token(
             email="other@example.com",
             client_id=str(uuid.uuid4()),
-            secret=settings.client_portal_secret,
+            secret=settings.client_portal_secret.get_secret_value(),
             ttl_minutes=settings.client_portal_token_ttl_minutes,
             org_id=settings.default_org_id,
         )
@@ -201,8 +203,9 @@ async def test_data_rights_exports_cursor_pagination_is_stable(async_session_mak
     async with async_session_maker() as session:
         lead = await _seed_lead(session, org_id=settings.default_org_id, email="cursor@example.com")
         client_user = await _seed_client(session, org_id=settings.default_org_id, email=lead.email)
+        base_created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
         for idx in range(55):
-            await data_rights_service.create_data_export_request(
+            record = await data_rights_service.create_data_export_request(
                 session,
                 org_id=settings.default_org_id,
                 subject_id=client_user.client_id,
@@ -212,12 +215,13 @@ async def test_data_rights_exports_cursor_pagination_is_stable(async_session_mak
                 requested_by_type="client",
                 request_id=f"req-{idx}",
             )
+            record.created_at = base_created_at + timedelta(seconds=idx)
         await session.commit()
 
     token = client_service.issue_magic_token(
         email=client_user.email,
         client_id=client_user.client_id,
-        secret=settings.client_portal_secret,
+        secret=settings.client_portal_secret.get_secret_value(),
         ttl_minutes=settings.client_portal_token_ttl_minutes,
         org_id=settings.default_org_id,
     )
@@ -246,6 +250,7 @@ async def test_data_rights_exports_cursor_pagination_is_stable(async_session_mak
             payload = response.json()
             items = payload["items"]
             page_count += 1
+            assert payload["prev_cursor"] is None
             for item in items:
                 assert item["export_id"] not in seen_ids
                 seen_ids.add(item["export_id"])
@@ -260,9 +265,15 @@ async def test_data_rights_exports_cursor_pagination_is_stable(async_session_mak
     finally:
         sa.event.remove(sync_engine, "before_cursor_execute", _capture_sql)
 
-    export_selects = [stmt for stmt in statements if "SELECT" in stmt.upper() and "FROM data_export_requests" in stmt]
-    assert export_selects
-    assert all(" OFFSET " not in stmt.upper() for stmt in export_selects)
+    cursor_page_selects = [
+        stmt
+        for stmt in statements
+        if "SELECT" in stmt.upper()
+        and "FROM data_export_requests" in stmt
+        and "ORDER BY data_export_requests.created_at DESC" in stmt
+    ]
+    assert cursor_page_selects
+    assert all(re.search(r"\bOFFSET\s+[1-9]\d*\b", stmt.upper()) is None for stmt in cursor_page_selects)
 
 
 @pytest.mark.anyio
@@ -270,8 +281,10 @@ async def test_data_rights_exports_offset_param_is_backward_compatible(async_ses
     async with async_session_maker() as session:
         lead = await _seed_lead(session, org_id=settings.default_org_id, email="compat@example.com")
         client_user = await _seed_client(session, org_id=settings.default_org_id, email=lead.email)
-        for idx in range(3):
-            await data_rights_service.create_data_export_request(
+        base_created_at = datetime(2024, 1, 2, tzinfo=timezone.utc)
+        created_export_ids: list[str] = []
+        for idx in range(25):
+            record = await data_rights_service.create_data_export_request(
                 session,
                 org_id=settings.default_org_id,
                 subject_id=client_user.client_id,
@@ -281,21 +294,49 @@ async def test_data_rights_exports_offset_param_is_backward_compatible(async_ses
                 requested_by_type="client",
                 request_id=f"compat-{idx}",
             )
+            record.created_at = base_created_at + timedelta(seconds=idx)
+            created_export_ids.append(str(record.export_id))
         await session.commit()
 
     token = client_service.issue_magic_token(
         email=client_user.email,
         client_id=client_user.client_id,
-        secret=settings.client_portal_secret,
+        secret=settings.client_portal_secret.get_secret_value(),
         ttl_minutes=settings.client_portal_token_ttl_minutes,
         org_id=settings.default_org_id,
     )
 
     response = client.get(
-        "/v1/data-rights/exports?page_size=2&offset=1000",
+        "/v1/data-rights/exports?page_size=10&offset=10",
         headers=_client_auth_header(token),
     )
     assert response.status_code == 200
     payload = response.json()
-    assert len(payload["items"]) == 2
-    assert payload["next_cursor"] is not None
+    returned_ids = [item["export_id"] for item in payload["items"]]
+
+    expected_sorted = list(reversed(created_export_ids))
+    assert returned_ids == expected_sorted[10:20]
+    assert payload["next_cursor"] is None
+    assert payload["prev_cursor"] is None
+
+
+@pytest.mark.anyio
+async def test_data_rights_exports_invalid_cursor_returns_422(async_session_maker, client):
+    async with async_session_maker() as session:
+        lead = await _seed_lead(session, org_id=settings.default_org_id, email="invalid-cursor@example.com")
+        client_user = await _seed_client(session, org_id=settings.default_org_id, email=lead.email)
+
+    token = client_service.issue_magic_token(
+        email=client_user.email,
+        client_id=client_user.client_id,
+        secret=settings.client_portal_secret.get_secret_value(),
+        ttl_minutes=settings.client_portal_token_ttl_minutes,
+        org_id=settings.default_org_id,
+    )
+
+    response = client.get(
+        "/v1/data-rights/exports?page_size=10&cursor=not-a-real-cursor",
+        headers=_client_auth_header(token),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "invalid_cursor"
