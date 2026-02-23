@@ -11,6 +11,9 @@ from app.infra.db import Base, UUID_TYPE
 class AdminIdempotency(Base):
     __tablename__ = "admin_idempotency"
 
+    STATUS_PENDING = 0
+    STATUS_FAILED = -1
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID_TYPE, ForeignKey("organizations.org_id", ondelete="CASCADE"), nullable=False

@@ -9,6 +9,8 @@ import uuid
 from fastapi import Request, status
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.problem_details import (
@@ -23,10 +25,15 @@ from app.infra.security import RateLimiter
 from app.infra.metrics import metrics
 from app.settings import settings
 
+IDEMPOTENCY_PENDING_STATUS = AdminIdempotency.STATUS_PENDING
+
 
 def _build_response(record: AdminIdempotency) -> Response:
-    if record.response_body_json is None:
-        response: Response = Response(status_code=record.response_status)
+    if record.response_status <= IDEMPOTENCY_PENDING_STATUS:
+        response: Response = Response(status_code=status.HTTP_409_CONFLICT)
+        response.headers["Retry-After"] = "1"
+    elif record.response_body_json is None:
+        response = Response(status_code=record.response_status)
     else:
         response = JSONResponse(content=record.response_body_json, status_code=record.response_status)
     response.headers["Idempotency-Key"] = record.key
@@ -53,26 +60,25 @@ class IdempotencyContext:
     org_id: uuid.UUID
     endpoint_id: str
     request_hash: str
-    existing_record: AdminIdempotency | None = None
+    claimed_record: AdminIdempotency
     existing_response: Response | None = None
 
     async def save_response(
         self, session: AsyncSession, *, status_code: int, body: dict | list | None
     ) -> None:
-        if self.existing_record is not None:
+        if self.existing_response is not None:
             return
 
-        record = AdminIdempotency(
-            org_id=self.org_id,
-            key=self.key,
-            endpoint=self.endpoint_id,
-            request_hash=self.request_hash,
-            response_status=status_code,
-            response_body_json=body if isinstance(body, (dict, list)) else None,
-        )
-        session.add(record)
-        self.existing_record = record
-        self.existing_response = _build_response(record)
+        self.claimed_record.response_status = status_code
+        self.claimed_record.response_body_json = body if isinstance(body, (dict, list)) else None
+        await session.flush()
+
+    async def mark_failed(self, session: AsyncSession) -> None:
+        if self.existing_response is not None:
+            return
+        self.claimed_record.response_status = AdminIdempotency.STATUS_FAILED
+        self.claimed_record.response_body_json = None
+        await session.flush()
 
 
 async def require_idempotency(
@@ -91,30 +97,53 @@ async def require_idempotency(
     normalized_body = await _normalized_body(request)
     fingerprint = _request_fingerprint(request, normalized_body)
 
+    insert_values = dict(
+        org_id=org_id,
+        key=key,
+        endpoint=endpoint_id,
+        request_hash=fingerprint,
+        response_status=IDEMPOTENCY_PENDING_STATUS,
+        response_body_json=None,
+    )
+    dialect_name = session.bind.dialect.name if session.bind is not None else ""
+    if dialect_name == "postgresql":
+        claim_stmt = pg_insert(AdminIdempotency).values(**insert_values).on_conflict_do_nothing(
+            index_elements=["org_id", "key", "endpoint"]
+        )
+    else:
+        claim_stmt = sqlite_insert(AdminIdempotency).values(**insert_values).on_conflict_do_nothing(
+            index_elements=["org_id", "key", "endpoint"]
+        )
+    claim_result = await session.execute(claim_stmt)
+    claimed = claim_result.rowcount == 1
+
     stmt = select(AdminIdempotency).where(
         AdminIdempotency.org_id == org_id,
         AdminIdempotency.key == key,
         AdminIdempotency.endpoint == endpoint_id,
     )
     result = await session.execute(stmt)
-    record = result.scalar_one_or_none()
-    if record:
-        if record.request_hash != fingerprint:
-            return problem_details(
-                request=request,
-                status=status.HTTP_409_CONFLICT,
-                title="Idempotency conflict",
-                detail="Idempotency-Key has already been used with a different payload",
-                type_=PROBLEM_TYPE_DOMAIN,
-            )
-        return _build_response(record)
+    record = result.scalar_one()
 
-    return IdempotencyContext(
-        key=key,
-        org_id=org_id,
-        endpoint_id=endpoint_id,
-        request_hash=fingerprint,
-    )
+    if record.request_hash != fingerprint:
+        return problem_details(
+            request=request,
+            status=status.HTTP_409_CONFLICT,
+            title="Idempotency conflict",
+            detail="Idempotency-Key has already been used with a different payload",
+            type_=PROBLEM_TYPE_DOMAIN,
+        )
+
+    if claimed:
+        return IdempotencyContext(
+            key=key,
+            org_id=org_id,
+            endpoint_id=endpoint_id,
+            request_hash=fingerprint,
+            claimed_record=record,
+        )
+
+    return _build_response(record)
 
 
 async def enforce_org_action_rate_limit(
