@@ -3,6 +3,9 @@
 Revision ID: d9e8f7a6b5c4
 Revises: 6e1f9a2b3c4d
 Create Date: 2026-02-23 00:00:00.000000
+
+This migration must depend on merge head 6e1f9a2b3c4d.
+If merge head changes, update down_revision accordingly.
 """
 
 from __future__ import annotations
