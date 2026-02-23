@@ -61,6 +61,7 @@ class StripeClient:
 
     async def _call(self, fn: Callable[..., Any], /, *args, **kwargs) -> Any:
         request_kwargs = dict(kwargs)
+        request_timeout = self._stripe_request_timeout()
         try:
             signature = inspect.signature(fn)
             supports_timeout = any(
@@ -70,12 +71,15 @@ class StripeClient:
         except (TypeError, ValueError):
             supports_timeout = True
         if supports_timeout:
-            request_kwargs.setdefault("timeout", self._stripe_request_timeout())
+            request_kwargs.setdefault("timeout", request_timeout)
 
         def _sync_call() -> Any:
             return fn(*args, **request_kwargs)
 
-        return await stripe_circuit.call(lambda: anyio.to_thread.run_sync(_sync_call))
+        return await stripe_circuit.call(
+            lambda: anyio.to_thread.run_sync(_sync_call),
+            timeout_seconds=request_timeout,
+        )
 
     async def create_checkout_session(
         self,
