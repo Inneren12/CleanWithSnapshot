@@ -35,3 +35,12 @@ def test_is_booking_overlap_integrity_error_uses_pg_diagnostics(
 def test_is_booking_overlap_integrity_error_uses_message_fallback():
     exc = IntegrityError("insert", {}, Exception("violates constraint uq_bookings_active_slot"))
     assert is_booking_overlap_integrity_error(exc) is True
+
+
+def test_is_booking_overlap_integrity_error_detects_sqlite_unique_fallback():
+    exc = IntegrityError(
+        "insert",
+        {},
+        Exception("UNIQUE constraint failed: bookings.org_id, bookings.team_id, bookings.starts_at"),
+    )
+    assert is_booking_overlap_integrity_error(exc) is True
