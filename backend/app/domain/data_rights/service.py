@@ -8,7 +8,9 @@ from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import Any, AsyncIterator, Callable
 
+import sqlalchemy as sa
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.bookings import photos_service
@@ -687,8 +689,25 @@ async def generate_data_export_bundle(
 def _build_chunked_query(model: Any, key_column: Any, filters: list[Any], *, limit: int, cursor: str | None) -> Any:
     stmt = select(model).where(*filters)
     if cursor is not None:
-        stmt = stmt.where(key_column > cursor)
+        stmt = stmt.where(key_column > _parse_chunk_cursor_value(key_column, cursor))
     return stmt.order_by(key_column).limit(limit)
+
+
+def _parse_chunk_cursor_value(key_column: Any, cursor: str) -> str | uuid.UUID:
+    column_type = getattr(key_column, "type", None)
+    if _is_uuid_key_column(column_type):
+        try:
+            return uuid.UUID(cursor)
+        except (ValueError, AttributeError, TypeError):
+            return cursor
+    return cursor
+
+
+def _is_uuid_key_column(column_type: Any) -> bool:
+    if isinstance(column_type, (sa.Uuid, PG_UUID)):
+        return True
+    python_type = getattr(column_type, "python_type", None)
+    return python_type is uuid.UUID
 
 
 async def purge_expired_exports(
