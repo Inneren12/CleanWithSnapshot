@@ -34,6 +34,47 @@ def test_alembic_has_single_head():
     assert len(heads) == 1, f"Expected 1 Alembic head, found {heads}"
 
 
+def test_merge_revision_matches_actual_pre_merge_heads():
+    config = _alembic_config()
+    script_directory = ScriptDirectory.from_config(config)
+
+    merge_revision = "6e1f9a2b3c4d"
+    revisions = {rev.revision: rev for rev in script_directory.walk_revisions()}
+    assert merge_revision in revisions, f"Expected merge revision {merge_revision} to exist"
+
+    children: dict[str, set[str]] = {revision: set() for revision in revisions}
+    for revision, script in revisions.items():
+        down_revision = script.down_revision
+        if isinstance(down_revision, tuple):
+            parents = [parent for parent in down_revision if parent]
+        elif isinstance(down_revision, str):
+            parents = [down_revision]
+        else:
+            parents = []
+        for parent in parents:
+            if parent in children and revision != merge_revision:
+                children[parent].add(revision)
+
+    pre_merge_heads = {
+        revision
+        for revision, direct_children in children.items()
+        if revision != merge_revision and not direct_children
+    }
+
+    merge_down_revision = revisions[merge_revision].down_revision
+    if isinstance(merge_down_revision, tuple):
+        merge_parents = {parent for parent in merge_down_revision if parent}
+    elif isinstance(merge_down_revision, str):
+        merge_parents = {merge_down_revision}
+    else:
+        merge_parents = set()
+
+    assert merge_parents == pre_merge_heads, (
+        "Merge revision parents must match actual pre-merge heads. "
+        f"Expected {sorted(pre_merge_heads)}, found {sorted(merge_parents)}"
+    )
+
+
 def test_alembic_upgrade_head(tmp_path):
     db_path = tmp_path / "test.db"
     config = _alembic_config()
