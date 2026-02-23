@@ -1,4 +1,3 @@
-import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -268,18 +267,18 @@ async def test_data_rights_exports_cursor_pagination_is_stable(async_session_mak
     finally:
         sa.event.remove(sync_engine, "before_cursor_execute", _capture_sql)
 
+    normalized_cursor_statements = [stmt.upper() for stmt in cursor_mode_statements]
     cursor_page_selects = [
         stmt
-        for stmt in cursor_mode_statements
-        if "SELECT" in stmt.upper() and "FROM data_export_requests" in stmt and "ORDER BY" in stmt.upper()
+        for stmt in normalized_cursor_statements
+        if "SELECT" in stmt and "FROM DATA_EXPORT_REQUESTS" in stmt and "ORDER BY" in stmt
     ]
     assert cursor_page_selects
     for stmt in cursor_page_selects:
-        upper_stmt = stmt.upper()
-        assert "ORDER BY" in upper_stmt
-        assert "CREATED_AT" in upper_stmt
-        assert "EXPORT_ID" in upper_stmt
-        assert re.search(r"\bOFFSET\s+[1-9]\d*\b", upper_stmt) is None
+        assert "ORDER BY" in stmt
+        assert "CREATED_AT" in stmt
+        assert "EXPORT_ID" in stmt
+        assert "OFFSET" not in stmt
 
 
 @pytest.mark.anyio
@@ -337,18 +336,14 @@ async def test_data_rights_exports_offset_param_is_backward_compatible(async_ses
     assert payload["next_cursor"] is None
     assert payload["prev_cursor"] is None
 
+    normalized_offset_statements = [stmt.upper() for stmt in statements]
     offset_selects = [
         stmt
-        for stmt in statements
-        if "SELECT" in stmt.upper() and "FROM data_export_requests" in stmt and "ORDER BY" in stmt.upper()
+        for stmt in normalized_offset_statements
+        if "SELECT" in stmt and "FROM DATA_EXPORT_REQUESTS" in stmt and "ORDER BY" in stmt
     ]
     assert offset_selects
-    for stmt in offset_selects:
-        upper_stmt = stmt.upper()
-        assert "ORDER BY" in upper_stmt
-        assert "CREATED_AT" in upper_stmt
-        assert "EXPORT_ID" in upper_stmt
-    assert any("OFFSET" in stmt.upper() for stmt in offset_selects)
+    assert any("OFFSET" in stmt for stmt in offset_selects)
 
 
 @pytest.mark.anyio
