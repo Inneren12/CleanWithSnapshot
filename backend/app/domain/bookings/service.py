@@ -60,6 +60,14 @@ def is_booking_overlap_integrity_error(exc: IntegrityError) -> bool:
     if any(name in message for name in BOOKING_OVERLAP_CONSTRAINTS):
         return True
 
+    if (
+        "UNIQUE constraint failed" in message
+        and "bookings.org_id" in message
+        and "bookings.team_id" in message
+        and "bookings.starts_at" in message
+    ):
+        return True
+
     original = getattr(exc, "orig", None)
     constraint_name = getattr(getattr(original, "diag", None), "constraint_name", None)
     sql_state = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
