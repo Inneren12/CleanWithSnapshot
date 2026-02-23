@@ -40,6 +40,13 @@ def decode_data_export_cursor(cursor: str) -> tuple[datetime, uuid.UUID] | None:
     return created_at, export_id
 
 
+def decode_data_export_cursor_strict(cursor: str) -> tuple[datetime, uuid.UUID]:
+    parsed = decode_data_export_cursor(cursor)
+    if not parsed:
+        raise ValueError("invalid_cursor")
+    return parsed
+
+
 def _apply_data_export_cursor(stmt: Any, cursor: str | None) -> Any:
     parsed = decode_data_export_cursor(cursor) if cursor else None
     if not parsed:
@@ -443,6 +450,7 @@ async def list_data_export_requests(
     subject_id: str | None = None,
     limit: int = 50,
     cursor: str | None = None,
+    offset: int | None = None,
 ) -> tuple[list[DataExportRequest], int, str | None, str | None]:
     stmt = select(DataExportRequest).where(DataExportRequest.org_id == org_id)
     if subject_email and subject_id:
@@ -460,24 +468,25 @@ async def list_data_export_requests(
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await session.execute(count_stmt)).scalar_one()
 
-    scoped_stmt = _apply_data_export_cursor(stmt, cursor)
-    paged_stmt = scoped_stmt.order_by(
+    order_by = (
         DataExportRequest.created_at.desc(),
         DataExportRequest.export_id.desc(),
-    ).limit(limit)
+    )
+    use_offset_pagination = offset is not None and cursor is None
+    if use_offset_pagination:
+        paged_stmt = stmt.order_by(*order_by).limit(limit).offset(offset)
+    else:
+        scoped_stmt = _apply_data_export_cursor(stmt, cursor)
+        paged_stmt = scoped_stmt.order_by(*order_by).limit(limit)
     result = await session.execute(paged_stmt)
     items = list(result.scalars().all())
 
     next_cursor = None
-    if items and len(items) == limit:
+    if not use_offset_pagination and items and len(items) == limit:
         tail = items[-1]
         next_cursor = encode_data_export_cursor(tail.created_at, tail.export_id)
 
     prev_cursor = None
-    if items:
-        head = items[0]
-        prev_cursor = encode_data_export_cursor(head.created_at, head.export_id)
-
     return items, total, next_cursor, prev_cursor
 
 

@@ -485,7 +485,6 @@ async def list_data_exports(
     if not client_identity and not saas_identity:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     org_id = entitlements.resolve_org_id(request)
-    _ = offset  # deprecated backward-compatible parameter
 
     subject_email = None
     subject_id = None
@@ -497,6 +496,12 @@ async def list_data_exports(
         subject_id = lead_id or None
         subject_email = email.lower() if email else None
 
+    if cursor is not None:
+        try:
+            data_rights_service.decode_data_export_cursor_strict(cursor)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_cursor") from exc
+
     items, total, next_cursor, prev_cursor = await data_rights_service.list_data_export_requests(
         session,
         org_id=org_id,
@@ -504,6 +509,7 @@ async def list_data_exports(
         subject_id=subject_id,
         limit=page_size,
         cursor=cursor,
+        offset=offset,
     )
     return data_rights_schemas.DataRightsExportListResponse(
         items=[
