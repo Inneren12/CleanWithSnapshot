@@ -13,3 +13,14 @@ Authentication responses returned to clients **must not include PII** (email add
 - Normalize auth errors before returning them to the client.
 - Emit structured logs for failed auth attempts using sanitized fields only.
 - Continue recording auth failure metrics by internal reason.
+
+## Auth Failure Reason Codes
+Use stable, non-PII auth failure codes in logs and metrics for SaaS auth flows:
+- `invalid_credentials`
+- `mfa_required`
+- `mfa_invalid`
+- `refresh_invalid`
+- `refresh_expired`
+- `membership_not_found`
+- `org_not_found`
+- `unknown`

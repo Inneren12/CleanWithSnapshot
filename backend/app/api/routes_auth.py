@@ -30,7 +30,24 @@ def _resolve_request_id(request: Request) -> str | None:
     return None
 
 
-def _log_saas_auth_failure(request: Request, *, flow: str, reason: str, status_code: int) -> None:
+def _auth_failure_reason_code(exc: Exception, *, flow: str) -> str:
+    normalized = str(exc).strip().lower()
+    if flow == "login":
+        if normalized == "membership_not_found":
+            return "membership_not_found"
+        return "invalid_credentials"
+    if flow == "refresh":
+        if normalized == "expired":
+            return "refresh_expired"
+        if normalized in {"invalid_refresh", "revoked", "invalid_refresh_state"}:
+            return "refresh_invalid"
+        return "invalid_credentials"
+    if normalized in {"mfa_required", "mfa_invalid", "org_not_found"}:
+        return normalized
+    return "unknown"
+
+
+def _log_saas_auth_failure(request: Request, *, flow: str, reason_code: str, status_code: int) -> None:
     logger.warning(
         "saas_auth_failed",
         extra={
@@ -39,7 +56,7 @@ def _log_saas_auth_failure(request: Request, *, flow: str, reason: str, status_c
                 "event_id": str(uuid.uuid4()),
                 "flow": flow,
                 "outcome": "failure",
-                "failure_reason": reason,
+                "failure_code": reason_code,
                 "status_code": status_code,
                 "path": request.url.path,
                 "method": request.method,
@@ -50,10 +67,10 @@ def _log_saas_auth_failure(request: Request, *, flow: str, reason: str, status_c
     )
 
 
-def _raise_invalid_credentials(request: Request, *, flow: str, reason: str) -> None:
+def _raise_invalid_credentials(request: Request, *, flow: str, reason_code: str) -> None:
     status_code = status.HTTP_401_UNAUTHORIZED
-    metrics.record_auth_failure("saas", reason)
-    _log_saas_auth_failure(request, flow=flow, reason=reason, status_code=status_code)
+    metrics.record_auth_failure("saas", reason_code)
+    _log_saas_auth_failure(request, flow=flow, reason_code=reason_code, status_code=status_code)
     raise HTTPException(status_code=status_code, detail="Invalid credentials")
 
 
@@ -123,7 +140,11 @@ async def login(
     try:
         user, membership = await saas_service.authenticate_user(session, payload.email, payload.password, payload.org_id)
     except ValueError as exc:  # noqa: BLE001
-        _raise_invalid_credentials(request, flow="login", reason=str(exc))
+        _raise_invalid_credentials(
+            request,
+            flow="login",
+            reason_code=_auth_failure_reason_code(exc, flow="login"),
+        )
     requires_mfa = _requires_admin_mfa(membership.role)
     mfa_verified = False
     if requires_mfa and user.totp_enabled:
@@ -169,7 +190,11 @@ async def refresh_tokens(
             session, payload.refresh_token
         )
     except ValueError as exc:  # noqa: BLE001
-        _raise_invalid_credentials(request, flow="refresh", reason=str(exc))
+        _raise_invalid_credentials(
+            request,
+            flow="refresh",
+            reason_code=_auth_failure_reason_code(exc, flow="refresh"),
+        )
     user = await session.get(User, membership.user_id)
     requires_mfa = _requires_admin_mfa(membership.role)
     mfa_verified = bool(getattr(token_session, "mfa_verified", False))
