@@ -6,6 +6,7 @@ import anyio
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.sql.dml import Update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.inventory import service as inventory_service
@@ -369,19 +370,23 @@ async def test_receiving_purchase_order_executes_sql_atomic_increment(
     db_session.add(purchase_order)
     await db_session.commit()
 
-    real_update = inventory_service.update
-    update_called = False
+    real_execute = db_session.execute
+    captured_update_stmt: Update | None = None
 
-    def _spy_update(*args, **kwargs):
-        nonlocal update_called
-        update_called = True
-        return real_update(*args, **kwargs)
+    async def _spy_execute(statement, *args, **kwargs):
+        nonlocal captured_update_stmt
+        if isinstance(statement, Update) and statement.table.name == "inventory_items":
+            captured_update_stmt = statement
+        return await real_execute(statement, *args, **kwargs)
 
-    monkeypatch.setattr(inventory_service, "update", _spy_update)
+    monkeypatch.setattr(db_session, "execute", _spy_execute)
 
     await inventory_service.mark_purchase_order_received(db_session, org_a.org_id, purchase_order.po_id)
     await db_session.commit()
 
     await db_session.refresh(item_a)
-    assert update_called is True
+    assert captured_update_stmt is not None
+    compiled_stmt = str(captured_update_stmt)
+    assert "UPDATE inventory_items" in compiled_stmt
+    assert "current_qty=(inventory_items.current_qty +" in compiled_stmt
     assert item_a.current_qty == Decimal("14")
