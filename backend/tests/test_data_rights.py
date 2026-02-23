@@ -6,6 +6,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.domain.bookings.db_models import Booking, OrderPhoto
+from app.domain.data_rights import service as data_rights_service
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.leads.db_models import Lead
 from app.domain.saas.db_models import Organization
@@ -212,3 +213,31 @@ async def test_deletion_workflow_anonymizes_but_keeps_ledger(async_session_maker
             sa.select(OrderPhoto).where(OrderPhoto.order_id == booking.booking_id)
         )).scalars().all()
         assert len(photos) == 0
+
+
+def test_build_chunked_query_parses_uuid_cursor_for_uuid_keys():
+    cursor = str(uuid.uuid4())
+
+    stmt = data_rights_service._build_chunked_query(
+        Lead,
+        Lead.lead_id,
+        [Lead.org_id == uuid.uuid4()],
+        limit=10,
+        cursor=cursor,
+    )
+
+    params = stmt.compile().params
+    assert any(isinstance(value, uuid.UUID) for value in params.values())
+
+
+def test_build_chunked_query_keeps_string_cursor_for_non_uuid_keys():
+    stmt = data_rights_service._build_chunked_query(
+        Booking,
+        Booking.team_id,
+        [Booking.org_id == uuid.uuid4()],
+        limit=10,
+        cursor="123",
+    )
+
+    params = stmt.compile().params
+    assert "123" in params.values()
