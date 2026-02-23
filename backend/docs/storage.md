@@ -2,6 +2,8 @@
 
 This service can store order photos locally for development or in an S3-compatible bucket (AWS S3, Cloudflare R2, etc.) for production.
 
+Upload writes to S3-compatible backends and Cloudflare Images are streamed from the request body; the storage layer does not assemble the entire file in memory before sending.
+
 ## Configuration
 
 Set the storage backend via environment variables:
