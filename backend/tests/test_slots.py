@@ -219,6 +219,7 @@ async def test_booking_endpoint_prevents_double_booking_under_concurrency(monkey
         chosen_slot = slots_response.json()["slots"][0]
 
         statuses: list[int] = []
+        statuses_lock = anyio.Lock()
         start = anyio.Event()
 
         async def attempt_booking() -> None:
@@ -228,7 +229,8 @@ async def test_booking_endpoint_prevents_double_booking_under_concurrency(monkey
                 "/v1/bookings",
                 json={"starts_at": chosen_slot, "time_on_site_hours": 2},
             )
-            statuses.append(response.status_code)
+            async with statuses_lock:
+                statuses.append(response.status_code)
 
         async with anyio.create_task_group() as tg:
             for _ in range(5):
