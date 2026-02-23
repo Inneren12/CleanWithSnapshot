@@ -142,7 +142,18 @@ def test_postgres_migration_invariants():
         _assert_unique_constraint(
             inspector, "unsubscribe", "uq_unsubscribe_recipient_scope", {"org_id", "recipient", "scope"}
         )
+        _assert_unique_constraint(
+            inspector, "work_time_entries", "uq_work_time_booking", {"booking_id"}
+        )
         _assert_exclusion_constraint(engine, "bookings", "bookings_team_time_no_overlap")
+
+        work_time_fks = inspector.get_foreign_keys("work_time_entries")
+        assert any(
+            set(fk.get("constrained_columns", ())) == {"booking_id"}
+            and fk.get("referred_table") == "bookings"
+            and set(fk.get("referred_columns", ())) == {"booking_id"}
+            for fk in work_time_fks
+        ), "work_time_entries.booking_id should reference bookings.booking_id"
 
         with engine.connect() as conn:
             extension_present = conn.execute(
