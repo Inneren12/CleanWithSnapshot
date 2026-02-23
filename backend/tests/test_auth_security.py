@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import sqlalchemy as sa
 
+from app.api.routes_auth import _auth_failure_reason_code
 from app.domain.saas import service as saas_service
 from app.domain.saas.db_models import MembershipRole, Organization, SaaSSession, TokenEvent, User
 from app.settings import settings
@@ -137,7 +138,7 @@ async def test_login_failure_does_not_leak_email_in_response_or_logs(async_sessi
         await saas_service.create_membership(session, org, user, MembershipRole.ADMIN)
         await session.commit()
 
-    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.WARNING, logger="app.api.routes_auth")
     response = client.post(
         "/v1/auth/login",
         json={"email": "pii.user@example.com", "password": "wrong-password", "org_id": str(org.org_id)},
@@ -153,13 +154,23 @@ async def test_login_failure_does_not_leak_email_in_response_or_logs(async_sessi
     )
     assert "pii.user@example.com" not in full_log_text
 
-    auth_failure_records = [
-        record
-        for record in caplog.records
-        if record.getMessage() == "saas_auth_failed" and getattr(record, "extra", {}).get("flow") == "login"
-    ]
+    auth_failure_records = []
+    for record in caplog.records:
+        if record.getMessage() != "saas_auth_failed":
+            continue
+        wrapper = getattr(record, "extra", None)
+        payload = wrapper.get("extra") if isinstance(wrapper, dict) else None
+        if isinstance(payload, dict) and payload.get("flow") == "login":
+            auth_failure_records.append(payload)
+
     assert auth_failure_records
-    auth_failure_payload = auth_failure_records[-1].extra
+    auth_failure_payload = auth_failure_records[-1]
     assert auth_failure_payload.get("failure_code") == "invalid_credentials"
     assert "failure_reason" not in auth_failure_payload
     assert "wrong-password" not in full_log_text
+
+
+def test_auth_failure_reason_code_login_sanitizes_unknown_values():
+    reason_code = _auth_failure_reason_code(ValueError("User not found: pii.user@example.com"), flow="login")
+
+    assert reason_code == "invalid_credentials"
