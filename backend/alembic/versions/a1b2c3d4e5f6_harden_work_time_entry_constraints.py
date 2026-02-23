@@ -1,7 +1,7 @@
 """harden work_time_entries constraints and index
 
-Revision ID: a1b2c3d4e5f6
-Revises: 9d3e4f5a6b7c
+Revision ID: d9e8f7a6b5c4
+Revises: 6e1f9a2b3c4d
 Create Date: 2026-02-23 00:00:00.000000
 """
 
@@ -10,8 +10,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "a1b2c3d4e5f6"
-down_revision = "9d3e4f5a6b7c"
+revision = "d9e8f7a6b5c4"
+down_revision = "6e1f9a2b3c4d"
 branch_labels = None
 depends_on = None
 
@@ -57,6 +57,7 @@ def upgrade() -> None:
             "bookings",
             ["booking_id"],
             ["booking_id"],
+            ondelete="CASCADE",
         )
 
     if not _has_booking_unique(inspector):
