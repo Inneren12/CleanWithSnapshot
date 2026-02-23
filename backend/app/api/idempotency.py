@@ -26,12 +26,19 @@ from app.infra.metrics import metrics
 from app.settings import settings
 
 IDEMPOTENCY_PENDING_STATUS = AdminIdempotency.STATUS_PENDING
+IDEMPOTENCY_FAILURE_STATUS = status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
 def _build_response(record: AdminIdempotency) -> Response:
-    if record.response_status <= IDEMPOTENCY_PENDING_STATUS:
+    if record.response_status == IDEMPOTENCY_PENDING_STATUS:
         response: Response = Response(status_code=status.HTTP_409_CONFLICT)
         response.headers["Retry-After"] = "1"
+    elif record.response_status <= 0:
+        response_status = IDEMPOTENCY_FAILURE_STATUS
+        if record.response_body_json is None:
+            response = Response(status_code=response_status)
+        else:
+            response = JSONResponse(content=record.response_body_json, status_code=response_status)
     elif record.response_body_json is None:
         response = Response(status_code=record.response_status)
     else:
@@ -76,8 +83,12 @@ class IdempotencyContext:
     async def mark_failed(self, session: AsyncSession) -> None:
         if self.existing_response is not None:
             return
-        self.claimed_record.response_status = AdminIdempotency.STATUS_FAILED
-        self.claimed_record.response_body_json = None
+        self.claimed_record.response_status = IDEMPOTENCY_FAILURE_STATUS
+        self.claimed_record.response_body_json = {
+            "detail": "Request processing failed",
+            "status": IDEMPOTENCY_FAILURE_STATUS,
+            "title": "Internal Server Error",
+        }
         await session.flush()
 
 
@@ -105,7 +116,8 @@ async def require_idempotency(
         response_status=IDEMPOTENCY_PENDING_STATUS,
         response_body_json=None,
     )
-    dialect_name = session.bind.dialect.name if session.bind is not None else ""
+    bind = session.get_bind()
+    dialect_name = bind.dialect.name
     if dialect_name == "postgresql":
         claim_stmt = pg_insert(AdminIdempotency).values(**insert_values).on_conflict_do_nothing(
             index_elements=["org_id", "key", "endpoint"]
