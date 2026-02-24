@@ -174,6 +174,29 @@ services:
     labels:
       - "promtail=true"
 
+  wal-sync:
+    image: amazon/aws-cli
+    entrypoint: ["/bin/bash", "/app/ops/wal_sync_daemon.sh"]
+    restart: unless-stopped
+    volumes:
+      - ./ops:/app/ops
+      - pg_wal_archive:/wal_archive:ro
+    environment:
+      WAL_SYNC_TARGET: ${WAL_SYNC_TARGET} # e.g. s3://my-bucket/wal-archive/
+      WAL_SOURCE_PATH: /wal_archive
+      WAL_SYNC_INTERVAL_SECONDS: 300
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
 volumes:
   pg_data:
   pg_wal_archive:   # WAL archive for Point-in-Time Recovery - sync offsite

@@ -52,6 +52,8 @@ class AdminAuditLog(Base):
     context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -59,6 +61,7 @@ class AdminAuditLog(Base):
         Index("ix_admin_audit_logs_org_created", "org_id", "created_at"),
         Index("ix_admin_audit_logs_action_type", "action_type"),
         Index("ix_admin_audit_logs_resource_type", "resource_type"),
+        Index("ix_admin_audit_logs_hash", "hash", unique=True),
     )
 
 

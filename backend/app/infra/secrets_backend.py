@@ -125,6 +125,9 @@ def _parse_json_payload(payload: str, source: str) -> dict[str, Any]:
 
 
 def _maybe_skip_backend(app_env: str, message: str) -> dict[str, Any]:
+    # Security: Always fail hard in secure environments, even if misconfigured as dev
+    if app_env in SECURE_ENVIRONMENTS:
+        raise ValueError(message)
     if app_env in DEV_DEFAULT_ENVIRONMENTS:
         logger.warning(message)
         return {}

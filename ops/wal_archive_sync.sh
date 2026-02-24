@@ -29,14 +29,19 @@ STATE_DIR=${STATE_DIR:-"$SCRIPT_DIR/state"}
 WAL_SYNC_TARGET=${WAL_SYNC_TARGET:-}
 WAL_SYNC_DELETE=${WAL_SYNC_DELETE:-false}
 
-# Get WAL archive path from Docker volume
-compose_project=${COMPOSE_PROJECT_NAME:-cleanwithsnapshot}
-pg_wal_archive_vol="${compose_project}_pg_wal_archive"
-wal_source=$(docker volume inspect "$pg_wal_archive_vol" --format '{{.Mountpoint}}' 2>/dev/null || echo "")
+# Get WAL archive path from env or Docker volume
+wal_source=${WAL_SOURCE_PATH:-}
 
 if [[ -z "$wal_source" ]]; then
-    echo "[wal-sync] ERROR: Could not find WAL archive volume: $pg_wal_archive_vol" >&2
-    echo "[wal-sync] Is PostgreSQL running with WAL archiving enabled?" >&2
+    # Fallback to docker volume inspect if not provided explicitly
+    compose_project=${COMPOSE_PROJECT_NAME:-cleanwithsnapshot}
+    pg_wal_archive_vol="${compose_project}_pg_wal_archive"
+    wal_source=$(docker volume inspect "$pg_wal_archive_vol" --format '{{.Mountpoint}}' 2>/dev/null || echo "")
+fi
+
+if [[ -z "$wal_source" ]]; then
+    echo "[wal-sync] ERROR: Could not resolve WAL archive path." >&2
+    echo "[wal-sync] Set WAL_SOURCE_PATH or ensure Docker volume exists." >&2
     exit 1
 fi
 

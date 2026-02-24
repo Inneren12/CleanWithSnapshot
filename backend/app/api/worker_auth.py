@@ -18,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.domain.workers.db_models import Worker
 from app.infra.auth import verify_password
 from app.infra.db import get_db_session
+from app.infra.encryption import blind_hash
 from app.settings import settings
 from app.infra.logging import update_log_context
 from app.infra.org_context import set_current_org_id
@@ -197,7 +198,9 @@ async def _authenticate_worker_db(
     password = credentials.password
 
     # Look up worker by phone
-    stmt = select(Worker).where(Worker.phone == phone, Worker.is_active == True)  # noqa: E712
+    # Note: Worker.phone is encrypted, so we use the blind index
+    phone_hash = blind_hash(phone)
+    stmt = select(Worker).where(Worker.phone_blind_index == phone_hash, Worker.is_active == True)  # noqa: E712
     result = await session.execute(stmt)
     worker = result.scalar_one_or_none()
 

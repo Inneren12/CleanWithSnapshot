@@ -11,6 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.clients.db_models import ClientUser
+from app.infra.encryption import blind_hash
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -159,7 +160,8 @@ async def get_or_create_client(
     session: AsyncSession, email: str, name: str | None = None, commit: bool = True
 ) -> ClientUser:
     normalized = email.lower().strip()
-    stmt = select(ClientUser).where(func.lower(ClientUser.email) == normalized)
+    bidx = blind_hash(normalized)
+    stmt = select(ClientUser).where(ClientUser.email_blind_index == bidx)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
     if user:

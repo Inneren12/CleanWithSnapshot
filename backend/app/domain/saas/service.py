@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
 
+import redis.asyncio as redis
 import sqlalchemy as sa
 from sqlalchemy import event
 from sqlalchemy.dialects import postgresql, sqlite
@@ -31,7 +32,7 @@ from app.api.admin_auth import AdminIdentity
 from app.infra.metrics import metrics
 from app.infra.auth import create_access_token, hash_api_token, hash_password, verify_password
 from app.infra.org_context import org_id_context
-from app.infra.totp import build_otpauth_uri, generate_totp_code, generate_totp_secret, verify_totp_code
+from app.infra.totp import build_otpauth_uri, generate_totp_code, generate_totp_secret, verify_totp_code, generate_backup_codes
 from app.settings import settings
 
 DEFAULT_ORG_NAME = "Default Org"
@@ -408,27 +409,68 @@ async def set_new_password(session: AsyncSession, user: User, new_password: str)
     await session.flush()
 
 
-async def enroll_totp(session: AsyncSession, user: User) -> tuple[str, str]:
+async def enroll_totp(session: AsyncSession, user: User) -> tuple[str, str, list[str]]:
     secret = generate_totp_secret()
     user.totp_secret_base32 = secret
     user.totp_enabled = False
     user.totp_enrolled_at = datetime.now(timezone.utc)
+    backup_codes = generate_backup_codes()
+    user.backup_codes = backup_codes
     session.add(user)
     await session.flush()
     label = f"{settings.app_name}:{user.email}" if user.email else settings.app_name
     uri = build_otpauth_uri(label, secret, issuer=settings.app_name)
-    return secret, uri
+    return secret, uri, backup_codes
+
+
+async def _check_totp_replay(user_id: uuid.UUID, counter: int) -> bool:
+    if not settings.redis_url:
+        return False
+
+    try:
+        client = redis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
+        key = f"totp:used:{user_id}:{counter}"
+        # setnx: set if not exists. Returns True if set (not replay).
+        is_fresh = await client.set(key, "1", ex=90, nx=True)
+        await client.aclose()
+        return not is_fresh
+    except Exception:
+        logger.warning("totp_replay_check_failed", exc_info=True)
+        return False  # Fail open if redis down, to avoid lockout? Or fail closed? SOC2 usually implies fail closed for security.
+        # But for availability, fail open might be better. Let's fail open but log.
 
 
 async def verify_totp(session: AsyncSession, user: User, code: str) -> bool:
+    # Check backup codes first
+    if user.backup_codes and code in user.backup_codes:
+        new_codes = [c for c in user.backup_codes if c != code]
+        user.backup_codes = new_codes
+        session.add(user)
+        # Enable MFA if this was first use (unlikely for backup code but good safety)
+        if not user.totp_enabled:
+            user.totp_enabled = True
+            user.totp_enrolled_at = datetime.now(timezone.utc)
+            await revoke_user_sessions(session, user.user_id, reason="mfa_enabled")
+        await session.flush()
+        return True
+
     if not user.totp_secret_base32:
         return False
-    if not verify_totp_code(user.totp_secret_base32, code):
+
+    counter = verify_totp_code(user.totp_secret_base32, code)
+    if counter is None:
         return False
-    user.totp_enabled = True
-    user.totp_enrolled_at = datetime.now(timezone.utc)
+
+    if await _check_totp_replay(user.user_id, counter):
+        logger.warning("totp_replay_detected", extra={"user_id": str(user.user_id)})
+        return False
+
+    if not user.totp_enabled:
+        user.totp_enabled = True
+        user.totp_enrolled_at = datetime.now(timezone.utc)
+        await revoke_user_sessions(session, user.user_id, reason="mfa_enabled")
+
     session.add(user)
-    await revoke_user_sessions(session, user.user_id, reason="mfa_enabled")
     await session.flush()
     return True
 
@@ -436,11 +478,14 @@ async def verify_totp(session: AsyncSession, user: User, code: str) -> bool:
 async def disable_totp(session: AsyncSession, user: User, *, code: str) -> bool:
     if not user.totp_secret_base32:
         return False
-    if not verify_totp_code(user.totp_secret_base32, code):
+    counter = verify_totp_code(user.totp_secret_base32, code)
+    if counter is None:
         return False
+
     user.totp_enabled = False
     user.totp_secret_base32 = None
     user.totp_enrolled_at = None
+    user.backup_codes = []
     session.add(user)
     await revoke_user_sessions(session, user.user_id, reason="mfa_disabled")
     await session.flush()

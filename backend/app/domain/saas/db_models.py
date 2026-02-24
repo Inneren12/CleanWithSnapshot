@@ -51,6 +51,7 @@ class User(Base):
     totp_secret_base32: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(sa.Boolean, default=False, server_default=sa.false())
     totp_enrolled_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    backup_codes: Mapped[list[str]] = mapped_column(sa.JSON(), nullable=False, default=list, server_default=sa.text("'[]'"))
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
