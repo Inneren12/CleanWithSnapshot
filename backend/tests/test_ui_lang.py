@@ -33,7 +33,7 @@ def test_worker_page_renders_lang_toggle(client):
     settings.worker_portal_secret = "test-worker-secret"
 
     try:
-        client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+        client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
 
         response = client.get("/worker")
 

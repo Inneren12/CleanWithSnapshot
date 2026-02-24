@@ -33,9 +33,11 @@ from app.api.problem_details import problem_details
 from app.api.worker_auth import (
     SESSION_COOKIE_NAME,
     WorkerIdentity,
+    WorkerLoginRequest,
     _session_token,
     _session_token_v2,
     get_worker_identity,
+    get_worker_login_identity,
     require_worker,
 )
 from app.dependencies import get_db_session
@@ -844,7 +846,11 @@ async def _audit_transition(
 
 
 @router.post("/worker/login")
-async def worker_login(request: Request, identity: WorkerIdentity = Depends(get_worker_identity)) -> JSONResponse:
+async def worker_login(
+    request: Request,
+    _login_request: WorkerLoginRequest,
+    identity: WorkerIdentity = Depends(get_worker_login_identity),
+) -> JSONResponse:
     try:
         if identity.worker_id is not None:
             token = _session_token_v2(

@@ -11,6 +11,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.security.utils import get_authorization_scheme_param
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -52,6 +53,10 @@ class _ConfiguredWorker:
 
 
 security = HTTPBasic(auto_error=False)
+
+
+class WorkerLoginRequest(BaseModel):
+    org_id: uuid.UUID
 
 
 def _configured_workers() -> list[_ConfiguredWorker]:
@@ -188,7 +193,7 @@ def _authenticate_credentials(credentials: HTTPBasicCredentials | None) -> Worke
 
 
 async def _authenticate_worker_db(
-    session: AsyncSession, credentials: HTTPBasicCredentials | None
+    session: AsyncSession, credentials: HTTPBasicCredentials | None, org_id: uuid.UUID
 ) -> WorkerIdentity:
     """Authenticate worker using database phone + password."""
     if not credentials:
@@ -197,40 +202,11 @@ async def _authenticate_worker_db(
     phone = credentials.username
     password = credentials.password
 
-    # Look up worker by phone
-    # Note: Worker.phone is encrypted, so we use the blind index
-    # IMPORTANT: We don't have org_id yet, so we must search across orgs OR iterate if collisions possible.
-    # Since blind_hash now requires org_id, this lookup pattern is tricky.
-    # However, worker login usually implies we check valid credentials first.
-    # If phone is unique per org, we might match multiple.
-    # But since blind_hash output depends on org_id, we can't search without it.
-    # Solution: We must iterate all known orgs or rely on a global lookup if allowed.
-    # Given the constraint: "blind_hash depends on org_id", we cannot look up by phone globally anymore.
-    # We must require org_id in credentials or guess it?
-    # Actually, worker login might be scoped.
-    # IF NOT: This is a breaking change.
-    # Fallback: Compute hash for all orgs? Infeasible.
-    # Alternative: Store a global phone index?
-    # REVISIT: The audit finding says "client_users uniqueness must be (org_id, email_blind_index)".
-    # For workers, if they log in via phone/password globally, we have a problem.
-    # Assuming for this fix that we can try matching against known orgs or the default org if not specified.
-    # But wait, credentials don't include org_id usually.
-    # FIX: We'll assume the worker provides org_id or we try the default.
-    # If this breaks multi-org worker login, that's an architecture issue to solve separately.
-    # For now, let's try matching against default_org_id as a best effort,
-    # OR scan if we can list orgs.
-    # ACTUALLY, let's see if we can get org_id from request/context?
-    # _authenticate_worker_db doesn't take org_id.
-    # HACK: If we must support global login, we'd need a non-salted index.
-    # But we are mandated to salt it.
-    # We will try the default org first.
-
-    target_org_id = settings.default_org_id
-    phone_hash = blind_hash(phone, org_id=target_org_id)
+    phone_hash = blind_hash(phone, org_id=org_id)
     stmt = select(Worker).where(
         Worker.phone_blind_index == phone_hash,
-        Worker.org_id == target_org_id,
-        Worker.is_active == True
+        Worker.org_id == org_id,
+        Worker.is_active == True,
     )
     result = await session.execute(stmt)
     worker = result.scalar_one_or_none()
@@ -292,7 +268,10 @@ async def get_worker_identity(
             identity = _authenticate_credentials(credentials)
         except HTTPException:
             # If env-based auth fails, try database auth
-            identity = await _authenticate_worker_db(session, credentials)
+            org_id = getattr(request.state, "current_org_id", None)
+            if org_id is None:
+                raise _build_auth_exception("Invalid phone or password")
+            identity = await _authenticate_worker_db(session, credentials, org_id=org_id)
     else:
         token = request.cookies.get(SESSION_COOKIE_NAME)
         identity = _parse_session_token(token)
@@ -301,6 +280,25 @@ async def get_worker_identity(
     request.state.current_org_id = getattr(request.state, "current_org_id", None) or identity.org_id
     set_current_org_id(request.state.current_org_id)
     update_log_context(org_id=str(request.state.current_org_id), user_id=str(identity.username), role=identity.role)
+    return identity
+
+
+async def get_worker_login_identity(
+    request: Request,
+    login_request: WorkerLoginRequest,
+    credentials: HTTPBasicCredentials | None = Depends(security),
+    session: AsyncSession = Depends(get_db_session),
+) -> WorkerIdentity:
+    request.state.current_org_id = login_request.org_id
+    set_current_org_id(login_request.org_id)
+
+    try:
+        identity = _authenticate_credentials(credentials)
+    except HTTPException:
+        identity = await _authenticate_worker_db(session, credentials, org_id=login_request.org_id)
+
+    request.state.worker_identity = identity
+    update_log_context(org_id=str(login_request.org_id), user_id=str(identity.username), role=identity.role)
     return identity
 
 
@@ -314,6 +312,8 @@ class WorkerAccessMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         if not request.url.path.startswith("/worker"):
             return await call_next(request)
+        if request.url.path == "/worker/login":
+            return await call_next(request)
 
         try:
             credentials = _credentials_from_header(request)
@@ -325,7 +325,10 @@ class WorkerAccessMiddleware(BaseHTTPMiddleware):
                     if session_factory is None:
                         raise
                     async with session_factory() as session:
-                        identity = await _authenticate_worker_db(session, credentials)
+                        org_id = getattr(request.state, "current_org_id", None)
+                        if org_id is None:
+                            raise _build_auth_exception("Invalid phone or password")
+                        identity = await _authenticate_worker_db(session, credentials, org_id=org_id)
             else:
                 identity = _parse_session_token(request.cookies.get(SESSION_COOKIE_NAME))
             request.state.worker_identity = identity

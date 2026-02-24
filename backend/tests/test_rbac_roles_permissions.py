@@ -66,7 +66,7 @@ async def test_worker_only_sees_assigned_jobs(async_session_maker, client):
         booking_b = await _seed_booking(session, org_id=org_id, worker_id=worker_b.worker_id)
         await session.commit()
 
-    login = client.post("/worker/login", auth=("555-0001", "secret"))
+    login = client.post("/worker/login", auth=("555-0001", "secret"), json={"org_id": str(org_id)})
     assert login.status_code == 200
 
     own_job = client.get(f"/worker/jobs/{booking_a.booking_id}")
