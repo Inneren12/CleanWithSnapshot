@@ -65,9 +65,15 @@ def decrypt_value(token: str) -> str:
     return _CIPHER_SUITE.decrypt(token.encode("utf-8")).decode("utf-8")
 
 
-def blind_hash(value: str | None) -> str | None:
+def blind_hash(value: str | None, org_id: str | uuid.UUID | None = None) -> str | None:
     if not value:
         return None
     normalized = value.strip().lower()
     secret = settings.auth_secret_key.get_secret_value().encode("utf-8")
-    return hmac.new(secret, normalized.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    # Mix in org_id if provided to enforce isolation
+    payload = normalized.encode("utf-8")
+    if org_id:
+        payload = f"{str(org_id)}:{normalized}".encode("utf-8")
+
+    return hmac.new(secret, payload, hashlib.sha256).hexdigest()

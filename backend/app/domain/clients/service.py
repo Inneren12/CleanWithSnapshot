@@ -160,14 +160,22 @@ async def get_or_create_client(
     session: AsyncSession, email: str, name: str | None = None, commit: bool = True
 ) -> ClientUser:
     normalized = email.lower().strip()
-    bidx = blind_hash(normalized)
-    stmt = select(ClientUser).where(ClientUser.email_blind_index == bidx)
+    # Assuming org context is set or default; we need org_id to compute hash
+    # get_or_create implies active context.
+    from app.infra.org_context import get_current_org_id
+    org_id = get_current_org_id() or settings.default_org_id
+
+    bidx = blind_hash(normalized, org_id=org_id)
+    stmt = select(ClientUser).where(
+        ClientUser.email_blind_index == bidx,
+        ClientUser.org_id == org_id
+    )
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
     if user:
         return user
 
-    user = ClientUser(email=normalized, name=name)
+    user = ClientUser(email=normalized, name=name, org_id=org_id)
     session.add(user)
     if commit:
         await session.commit()

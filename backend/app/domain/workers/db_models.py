@@ -98,8 +98,9 @@ class Worker(Base):
     __table_args__ = (
         Index("ix_workers_org_id", "org_id"),
         Index("ix_workers_org_active", "org_id", "is_active"),
-        Index("ix_workers_phone", "phone"),
+        Index("ix_workers_phone_idx", "phone_blind_index"),
         Index("ix_workers_archived_at", "archived_at"),
+        sa.UniqueConstraint("org_id", "phone_blind_index", name="uq_workers_org_phone"),
     )
 
 
@@ -264,6 +265,6 @@ class WorkerCertificate(Base):
 @event.listens_for(Worker, "before_update")
 def _set_worker_blind_index(mapper, connection, target) -> None:
     if target.email:
-        target.email_blind_index = blind_hash(target.email)
+        target.email_blind_index = blind_hash(target.email, org_id=target.org_id)
     if target.phone:
-        target.phone_blind_index = blind_hash(target.phone)
+        target.phone_blind_index = blind_hash(target.phone, org_id=target.org_id)

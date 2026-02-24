@@ -69,7 +69,7 @@ class ClientUser(Base):
         default=lambda: settings.default_org_id,
     )
     email: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
-    email_blind_index: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    email_blind_index: Mapped[str | None] = mapped_column(String(64), index=True)
     name: Mapped[str | None] = mapped_column(EncryptedString())
     phone: Mapped[str | None] = mapped_column(EncryptedString())
     address: Mapped[str | None] = mapped_column(String(500))
@@ -91,7 +91,10 @@ class ClientUser(Base):
         nullable=False,
     )
 
-    __table_args__ = (Index("ix_client_users_org_id", "org_id"),)
+    __table_args__ = (
+        Index("ix_client_users_org_id", "org_id"),
+        UniqueConstraint("org_id", "email_blind_index", name="uq_client_users_org_email"),
+    )
 
 
 class ClientNote(Base):
@@ -214,4 +217,4 @@ class ClientFeedback(Base):
 @event.listens_for(ClientUser, "before_update")
 def _set_client_blind_index(mapper, connection, target) -> None:
     if target.email:
-        target.email_blind_index = blind_hash(target.email)
+        target.email_blind_index = blind_hash(target.email, org_id=target.org_id)
