@@ -6,6 +6,7 @@ for the LocalStorageBackend.
 """
 
 import asyncio
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
@@ -366,6 +367,41 @@ def test_s3_put_does_not_hang_on_abort_during_upload():
                 future.result(timeout=1)
         except FuturesTimeoutError as exc:  # pragma: no cover - regression guard
             pytest.fail(f"backend.put hung after abort: {exc}")
+
+
+def test_s3_put_does_not_hang_when_upload_aborts_before_first_read():
+    class UploadAbortedError(RuntimeError):
+        pass
+
+    class FakeS3Client:
+        def put_object(self, Bucket: str, Key: str, Body, ContentType: str):  # noqa: N802, ANN001, ANN201
+            raise UploadAbortedError("client aborted upload before read")
+
+    backend = S3StorageBackend(
+        bucket="uploads",
+        access_key="ak",
+        secret_key="sk",
+        client=FakeS3Client(),
+        enable_circuit_breaker=False,
+    )
+
+    async def _body():
+        while True:
+            yield b"x" * 1024
+
+    before_threads = len([thread for thread in threading.enumerate() if thread.is_alive()])
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            asyncio.run,
+            backend.put(key="orders/1/photo.jpg", body=_body(), content_type="image/jpeg"),
+        )
+        try:
+            with pytest.raises(UploadAbortedError):
+                future.result(timeout=1)
+        except FuturesTimeoutError as exc:  # pragma: no cover - regression guard
+            pytest.fail(f"backend.put hung after early abort: {exc}")
+    after_threads = len([thread for thread in threading.enumerate() if thread.is_alive()])
+    assert after_threads <= before_threads + 1
 
 def test_s3_put_streams_with_real_botocore_stubber_non_seekable_body():
     backend = S3StorageBackend(

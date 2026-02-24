@@ -223,6 +223,7 @@ async def test_stripe_client_passes_timeout_to_sdk_calls(monkeypatch):
 
     await client.create_checkout_session(amount_cents=1000, currency="usd", success_url="s", cancel_url="c")
 
+    assert client._stripe_request_timeout() == pytest.approx(stripe_resilience.stripe_circuit.timeout_seconds)
     assert fake_stripe.last_checkout_kwargs is not None
     assert fake_stripe.last_checkout_kwargs["timeout"] == pytest.approx(0.02)
 

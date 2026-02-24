@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import TimeoutError as FutureTimeoutError
 import hashlib
 import hmac
@@ -85,7 +86,17 @@ class _AsyncIteratorFileObj:
 
     def _ensure_chunk(self) -> bool:
         while self._chunk_offset >= len(self._chunk):
-            item = self._queue.get()
+            if self._error:
+                raise self._error
+            if self._closed.is_set() and self._queue.empty():
+                self._eof = True
+                self._chunk = b""
+                self._chunk_offset = 0
+                return False
+            try:
+                item = self._queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
             if item is self._sentinel:
                 self._eof = True
                 self._chunk = b""
@@ -139,9 +150,21 @@ class _AsyncIteratorFileObj:
     def close(self) -> None:
         try:
             self._producer_future.result(timeout=0.2)
+            return
         except FutureTimeoutError:
             self._closed.set()
-            self._producer_future.result()
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
+            self._producer_future.cancel()
+            try:
+                self._producer_future.result(timeout=0.2)
+            except (FutureCancelledError, FutureTimeoutError):
+                pass
+        except FutureCancelledError:
+            pass
 
 
 class StorageBackend(ABC):

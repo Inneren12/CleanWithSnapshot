@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import logging
 import time
@@ -54,7 +55,13 @@ class CircuitBreaker(Generic[T]):
         timeout = self.timeout_seconds if timeout_seconds is None else max(0.01, timeout_seconds)
         try:
             result = fn(*args, **kwargs)
-            if inspect.isawaitable(result):
+            if isinstance(result, concurrent.futures.Future):
+                wrapped_result = asyncio.wrap_future(result)
+                if timeout is None:
+                    result = await wrapped_result
+                else:
+                    result = await asyncio.wait_for(wrapped_result, timeout=timeout)
+            elif inspect.isawaitable(result):
                 if timeout is None:
                     result = await result
                 else:

@@ -388,5 +388,7 @@ async def test_receiving_purchase_order_executes_sql_atomic_increment(
     assert captured_update_stmt is not None
     compiled_stmt = str(captured_update_stmt)
     assert "UPDATE inventory_items" in compiled_stmt
+    assert "inventory_items.org_id" in compiled_stmt
+    assert "inventory_items.item_id" in compiled_stmt
     assert "current_qty=(inventory_items.current_qty +" in compiled_stmt
     assert item_a.current_qty == Decimal("14")
