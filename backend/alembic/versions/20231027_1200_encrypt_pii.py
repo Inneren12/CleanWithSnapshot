@@ -27,11 +27,19 @@ branch_labels = None
 depends_on = None
 
 
-def _get_secret_key() -> str:
+def _get_auth_secret() -> str:
     key = os.getenv("AUTH_SECRET_KEY")
     if not key:
         raise ValueError("AUTH_SECRET_KEY must be set (env var)")
     return key
+
+
+def _get_encryption_key() -> str:
+    return os.getenv("PII_ENCRYPTION_KEY") or _get_auth_secret()
+
+
+def _get_blind_index_key() -> str:
+    return os.getenv("PII_BLIND_INDEX_KEY") or _get_auth_secret()
 
 
 def _derive_fernet_key(secret: str) -> bytes:
@@ -46,7 +54,7 @@ _CIPHER_SUITE = None
 def _get_cipher() -> Fernet:
     global _CIPHER_SUITE
     if _CIPHER_SUITE is None:
-        key = _derive_fernet_key(_get_secret_key())
+        key = _derive_fernet_key(_get_encryption_key())
         _CIPHER_SUITE = Fernet(key)
     return _CIPHER_SUITE
 
@@ -61,7 +69,7 @@ def blind_hash(value: str | None) -> str | None:
     if not value:
         return None
     normalized = value.strip().lower()
-    secret = _get_secret_key().encode("utf-8")
+    secret = _get_blind_index_key().encode("utf-8")
     return hmac.new(secret, normalized.encode("utf-8"), hashlib.sha256).hexdigest()
 
 

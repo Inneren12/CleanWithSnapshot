@@ -37,6 +37,14 @@ def get_auth_secret() -> str:
     raise ValueError("AUTH_SECRET_KEY must be set (env var)")
 
 
+def get_encryption_key() -> str:
+    return os.getenv("PII_ENCRYPTION_KEY") or get_auth_secret()
+
+
+def get_blind_index_key() -> str:
+    return os.getenv("PII_BLIND_INDEX_KEY") or get_auth_secret()
+
+
 def get_fernet_key(secret: str) -> bytes:
     # Match app.infra.encryption._derive_key logic
     salt = b"cleaning-bot-static-salt"
@@ -84,9 +92,11 @@ def compute_blind_hash(value: Optional[str], org_id: Optional[uuid.UUID], secret
 
 def upgrade():
     # 0. Setup crypto
-    auth_secret = get_auth_secret()
-    fernet_key = get_fernet_key(auth_secret)
+    encryption_key = get_encryption_key()
+    fernet_key = get_fernet_key(encryption_key)
     cipher = Fernet(fernet_key)
+
+    blind_index_key = get_blind_index_key()
 
     bind = op.get_bind()
     session = Session(bind=bind)
@@ -137,7 +147,7 @@ def upgrade():
 
             try:
                 email = decrypt_value(email_enc, cipher)
-                new_hash = compute_blind_hash(email, org_id, auth_secret)
+                new_hash = compute_blind_hash(email, org_id, blind_index_key)
 
                 session.execute(
                     sa.text("UPDATE client_users SET email_blind_index=:bidx WHERE client_id=:cid"),
@@ -166,10 +176,10 @@ def upgrade():
 
             try:
                 email = decrypt_value(email_enc, cipher)
-                email_hash = compute_blind_hash(email, org_id, auth_secret)
+                email_hash = compute_blind_hash(email, org_id, blind_index_key)
 
                 phone = decrypt_value(phone_enc, cipher)
-                phone_hash = compute_blind_hash(phone, org_id, auth_secret)
+                phone_hash = compute_blind_hash(phone, org_id, blind_index_key)
 
                 session.execute(
                     sa.text("UPDATE workers SET email_blind_index=:bidx, phone_blind_index=:pbidx WHERE worker_id=:wid"),
