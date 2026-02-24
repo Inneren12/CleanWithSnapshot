@@ -4,6 +4,8 @@ Revision ID: 20231027_1400_rekey_blind_indexes
 Revises: 20231027_1300_fix_missing_cols
 Create Date: 2023-10-27 14:00:00.000000
 
+REQUIRED ENV VARS:
+  AUTH_SECRET_KEY (mandatory)
 """
 import base64
 import hashlib
@@ -32,13 +34,7 @@ def get_auth_secret() -> str:
     if secret:
         return secret
 
-    # 2. Check APP_ENV for dev defaults
-    app_env = os.getenv("APP_ENV", "prod")
-    dev_envs = {"dev", "local", "test", "ci", "e2e"}
-    if app_env in dev_envs:
-        return "dev-auth-secret"
-
-    raise ValueError("AUTH_SECRET_KEY must be set in secure environments")
+    raise ValueError("AUTH_SECRET_KEY must be set (env var)")
 
 
 def get_fernet_key(secret: str) -> bytes:
