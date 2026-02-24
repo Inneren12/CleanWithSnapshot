@@ -108,3 +108,45 @@ async def test_totp_replay_redis_flow():
 
         is_replay = await saas_service._check_totp_replay(uuid.uuid4(), 123)
         assert is_replay is True
+
+@pytest.mark.asyncio
+async def test_backup_codes_constant_time_comparison(db_session):
+    user = User(user_id=uuid.uuid4(), email="test-time@example.com", is_active=True)
+    db_session.add(user)
+    await db_session.flush()
+
+    _, _, codes = await saas_service.enroll_totp(db_session, user)
+    valid_code = codes[0]
+
+    # Patch hmac.compare_digest in app.domain.saas.service
+    # Since we imported hmac in service.py, we patch where it is used
+    with patch("app.domain.saas.service.hmac.compare_digest", side_effect=lambda a, b: a == b) as mock_compare:
+        await saas_service.verify_totp(db_session, user, valid_code)
+
+        # It should be called for each backup code (10) to ensure constant time
+        assert mock_compare.call_count == len(codes)
+
+@pytest.mark.asyncio
+async def test_regenerate_backup_codes(db_session):
+    user = User(user_id=uuid.uuid4(), email="test-regen@example.com", is_active=True)
+    db_session.add(user)
+    await db_session.flush()
+
+    # Enroll
+    _, _, old_codes = await saas_service.enroll_totp(db_session, user)
+
+    # Verify an old code works
+    assert await saas_service.verify_totp(db_session, user, old_codes[0]) is True
+
+    # Regenerate
+    # Note: verify_totp consumed old_codes[0]
+    new_codes = await saas_service.regenerate_backup_codes(db_session, user)
+
+    # Verify different
+    assert set(new_codes) != set(old_codes)
+
+    # Verify old codes don't work (try second one which wasn't used)
+    assert await saas_service.verify_totp(db_session, user, old_codes[1]) is False
+
+    # Verify new codes work
+    assert await saas_service.verify_totp(db_session, user, new_codes[0]) is True

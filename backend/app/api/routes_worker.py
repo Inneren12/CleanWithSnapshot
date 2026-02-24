@@ -848,7 +848,7 @@ async def _audit_transition(
 @router.post("/worker/login")
 async def worker_login(
     request: Request,
-    _login_request: WorkerLoginRequest,
+    login_request: WorkerLoginRequest,
     identity: WorkerIdentity = Depends(get_worker_login_identity),
 ) -> JSONResponse:
     try:

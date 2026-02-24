@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import secrets
 import string
 import uuid
@@ -456,17 +457,25 @@ async def verify_totp(session: AsyncSession, user: User, code: str) -> bool:
     # Check backup codes first
     if user.backup_codes:
         hashed_input = blind_hash(code, org_id=user.user_id)
-        if hashed_input and hashed_input in user.backup_codes:
-            new_codes = [c for c in user.backup_codes if c != hashed_input]
-            user.backup_codes = new_codes
-            session.add(user)
-            # Enable MFA if this was first use (unlikely for backup code but good safety)
-            if not user.totp_enabled:
-                user.totp_enabled = True
-                user.totp_enrolled_at = datetime.now(timezone.utc)
-                await revoke_user_sessions(session, user.user_id, reason="mfa_enabled")
-            await session.flush()
-            return True
+        if hashed_input:
+            match_index = -1
+            for idx, stored_hash in enumerate(user.backup_codes):
+                if hmac.compare_digest(hashed_input, stored_hash):
+                    match_index = idx
+                    # Do not break to maintain consistent timing, though list is small (10)
+
+            if match_index != -1:
+                # Remove used code by value to be safe, or by index since we have it
+                new_codes = [c for i, c in enumerate(user.backup_codes) if i != match_index]
+                user.backup_codes = new_codes
+                session.add(user)
+                # Enable MFA if this was first use (unlikely for backup code but good safety)
+                if not user.totp_enabled:
+                    user.totp_enabled = True
+                    user.totp_enrolled_at = datetime.now(timezone.utc)
+                    await revoke_user_sessions(session, user.user_id, reason="mfa_enabled")
+                await session.flush()
+                return True
 
     if not user.totp_secret_base32:
         return False
@@ -504,6 +513,26 @@ async def disable_totp(session: AsyncSession, user: User, *, code: str) -> bool:
     await revoke_user_sessions(session, user.user_id, reason="mfa_disabled")
     await session.flush()
     return True
+
+
+async def regenerate_backup_codes(session: AsyncSession, user: User) -> list[str]:
+    """Regenerate backup codes for a user with TOTP enrolled.
+
+    This revokes all previous backup codes.
+    """
+    plaintext_codes = generate_backup_codes()
+    hashed_codes = []
+    for code in plaintext_codes:
+        hashed = blind_hash(code, org_id=user.user_id)
+        if hashed:
+            hashed_codes.append(hashed)
+
+    user.backup_codes = hashed_codes
+    session.add(user)
+    # Revoke sessions as a security precaution when backup codes are regenerated
+    await revoke_user_sessions(session, user.user_id, reason="backup_codes_regenerated")
+    await session.flush()
+    return plaintext_codes
 
 
 def build_access_token(user: User, membership: Membership) -> str:
