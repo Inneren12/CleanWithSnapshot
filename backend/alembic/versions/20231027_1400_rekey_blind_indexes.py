@@ -81,15 +81,15 @@ def decrypt_value(
         cipher_prefix = value[:16]
         print(
             "Decryption failed during blind-index rekey "
-            f"(table={table}, {pk_name}={pk_value}, ciphertext_prefix={cipher_prefix}): {exc}"
+            f"(table={table}, {pk_name}={pk_value}, ciphertext_prefix={cipher_prefix}, exc_type={type(exc).__name__})"
         )
-        raise exc
+        raise
 
 
 def best_effort_drop_index(table_name: str, index_name: str) -> None:
     names_to_try = [index_name]
     convention_name = op.f(index_name)
-    if convention_name != index_name:
+    if convention_name and convention_name != index_name:
         names_to_try.append(convention_name)
 
     for name in names_to_try:
@@ -103,7 +103,7 @@ def best_effort_drop_index(table_name: str, index_name: str) -> None:
 def best_effort_drop_constraint(table_name: str, constraint_name: str, constraint_type: str = "unique") -> None:
     names_to_try = [constraint_name]
     convention_name = op.f(constraint_name)
-    if convention_name != constraint_name:
+    if convention_name and convention_name != constraint_name:
         names_to_try.append(convention_name)
 
     for name in names_to_try:
