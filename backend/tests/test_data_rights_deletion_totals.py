@@ -11,6 +11,7 @@ from app.domain.leads.db_models import Lead
 from app.domain.bookings.db_models import Booking, OrderPhoto
 from app.domain.invoices.db_models import Invoice
 from app.domain.admin_audit.db_models import AdminAuditLog
+from app.domain.data_rights.db_models import DataDeletionRequest
 # Make sure iam_roles table is loaded for foreign keys
 import app.domain.iam.db_models
 import app.domain.addons.db_models # For addon_definitions
@@ -149,3 +150,96 @@ async def test_deletion_totals_aggregation(db_session):
     assert log.context["leads_deleted"] == 2
     assert log.context["photos_deleted"] == 2
     assert log.context["invoices_detached"] == 1
+
+
+@pytest.mark.asyncio
+async def test_deletion_request_with_zero_matching_leads_is_processed(db_session):
+    req = DataDeletionRequest(
+        org_id=settings.default_org_id,
+        email="nobody@example.com",
+        status="pending",
+    )
+    db_session.add(req)
+    await db_session.commit()
+
+    stats = await data_rights_service.process_pending_deletions(db_session)
+
+    assert stats["processed"] == 1
+    refreshed = await db_session.get(DataDeletionRequest, req.request_id)
+    assert refreshed is not None
+    assert refreshed.status == "processed"
+    assert refreshed.processed_at is not None
+
+    stmt = select(AdminAuditLog).where(AdminAuditLog.resource_id == str(req.request_id))
+    result = await db_session.execute(stmt)
+    log = result.scalar_one()
+    assert log.context["leads_deleted"] == 0
+    assert log.context["photos_deleted"] == 0
+    assert log.context["invoices_detached"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fk_integrity_error_falls_back_to_anonymization(db_session):
+    org_id = settings.default_org_id
+    referrer = Lead(
+        org_id=org_id,
+        name="Referrer",
+        phone="555-0109",
+        email="referrer@example.com",
+        structured_inputs={},
+        estimate_snapshot={},
+        pricing_config_version="v1",
+        config_hash="aaa",
+    )
+    referred = Lead(
+        org_id=org_id,
+        name="Target",
+        phone="555-0110",
+        email="target@example.com",
+        structured_inputs={},
+        estimate_snapshot={},
+        pricing_config_version="v1",
+        config_hash="bbb",
+    )
+    db_session.add_all([referrer, referred])
+    await db_session.flush()
+
+    from app.domain.leads.db_models import ReferralCredit
+
+    credit = ReferralCredit(
+        referrer_lead_id=referrer.lead_id,
+        referred_lead_id=referred.lead_id,
+        applied_code=referrer.referral_code,
+    )
+    db_session.add(credit)
+
+    req, _ = await data_rights_service.request_data_deletion(
+        db_session,
+        org_id=org_id,
+        lead_id=referred.lead_id,
+        email=None,
+        reason="gdpr",
+        requested_by="tester",
+    )
+    await db_session.commit()
+
+    stats = await data_rights_service.process_pending_deletions(db_session)
+    assert stats["processed"] == 1
+    assert stats["leads_anonymized"] == 1
+
+    still_exists = await db_session.get(Lead, referred.lead_id)
+    assert still_exists is not None
+    assert still_exists.name == "[deleted]"
+    assert still_exists.phone == "[deleted]"
+    assert still_exists.email is None
+    assert still_exists.pending_deletion is False
+    assert still_exists.deleted_at is not None
+
+    processed_req = await db_session.get(DataDeletionRequest, req.request_id)
+    assert processed_req is not None
+    assert "anonymize_fallback_fk" in (processed_req.processed_notes or "")
+
+    stmt = select(AdminAuditLog).where(AdminAuditLog.resource_id == str(req.request_id))
+    result = await db_session.execute(stmt)
+    log = result.scalar_one()
+    assert "anonymize_fallback_fk" in log.context["deletion_modes"]

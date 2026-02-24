@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator, Callable
 import sqlalchemy as sa
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.admin_audit import service as admin_audit_service
@@ -245,7 +246,7 @@ async def _anonymize_lead(
     lead: Lead,
     *,
     storage: StorageBackend,
-) -> tuple[int, int]:
+) -> tuple[int, int, str]:
     booking_result = await session.execute(
         select(Booking).where(Booking.lead_id == lead.lead_id, Booking.org_id == lead.org_id)
     )
@@ -295,11 +296,32 @@ async def _anonymize_lead(
         )
         invoices_detached = detach.rowcount or 0
 
-    # Hard delete the lead to break the link between ID and PII
-    lead_id = lead.lead_id
-    await session.delete(lead)
+    deletion_mode = "hard_delete"
+    try:
+        async with session.begin_nested():
+            await session.delete(lead)
+            await session.flush()
+    except IntegrityError:
+        deletion_mode = "anonymize_fallback_fk"
+        lead.name = "[deleted]"
+        lead.phone = "[deleted]"
+        lead.email = None
+        lead.postal_code = None
+        lead.address = None
+        lead.preferred_dates = []
+        lead.access_notes = None
+        lead.parking = None
+        lead.pets = None
+        lead.allergies = None
+        lead.notes = None
+        lead.structured_inputs = {}
+        lead.estimate_snapshot = {}
+        lead.pending_deletion = False
+        lead.deleted_at = datetime.now(tz=timezone.utc)
+        session.add(lead)
+        await session.flush()
 
-    return photo_count, invoices_detached
+    return photo_count, invoices_detached, deletion_mode
 
 
 async def process_pending_deletions(
@@ -328,18 +350,21 @@ async def process_pending_deletions(
 
         request_photos_deleted = 0
         request_invoices_detached = 0
+        request_deletion_modes: set[str] = set()
 
         for lead in leads:
-            cnt, det = await _anonymize_lead(session, lead, storage=storage)
+            cnt, det, deletion_mode = await _anonymize_lead(session, lead, storage=storage)
             leads_anonymized += 1
             request_photos_deleted += cnt
             request_invoices_detached += det
+            request_deletion_modes.add(deletion_mode)
             photos_deleted += cnt
             invoices_detached += det
 
         request.status = "processed"
         request.processed_at = datetime.now(tz=timezone.utc)
-        request.processed_notes = f"anonymized:{len(leads)}"
+        modes_suffix = ",".join(sorted(request_deletion_modes)) if request_deletion_modes else "none"
+        request.processed_notes = f"anonymized:{len(leads)}|modes:{modes_suffix}"
         processed += 1
 
         # Log the deletion event
@@ -353,6 +378,7 @@ async def process_pending_deletions(
                 "leads_deleted": len(leads),
                 "photos_deleted": request_photos_deleted,
                 "invoices_detached": request_invoices_detached,
+                "deletion_modes": sorted(request_deletion_modes),
             }
         )
 

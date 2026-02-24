@@ -27,6 +27,8 @@ async def test_enroll_and_verify_enables_totp(async_session_maker, client):
     enroll = client.post("/v1/auth/2fa/enroll", headers={"Authorization": f"Bearer {token}"})
     assert enroll.status_code == 200
     payload = enroll.json()
+    assert isinstance(payload["backup_codes"], list)
+    assert payload["backup_codes"]
     secret = payload["secret"]
     code = saas_service.generate_totp_code(secret)
 

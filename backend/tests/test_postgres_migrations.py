@@ -147,6 +147,13 @@ def test_postgres_migration_invariants():
         )
         _assert_exclusion_constraint(engine, "bookings", "bookings_team_time_no_overlap")
 
+        admin_audit_columns = {column["name"] for column in inspector.get_columns("admin_audit_logs")}
+        assert "prev_hash" in admin_audit_columns, "admin_audit_logs.prev_hash should exist"
+        assert "hash" in admin_audit_columns, "admin_audit_logs.hash should exist"
+
+        admin_audit_indexes = {index.get("name") for index in inspector.get_indexes("admin_audit_logs")}
+        assert "ix_admin_audit_logs_hash" in admin_audit_indexes, "admin_audit_logs hash index should exist"
+
         work_time_fks = inspector.get_foreign_keys("work_time_entries")
         assert any(
             set(fk.get("constrained_columns", ())) == {"booking_id"}
