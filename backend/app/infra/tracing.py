@@ -14,6 +14,16 @@ from opentelemetry.sdk.resources import DEPLOYMENT_ENVIRONMENT, SERVICE_NAME, SE
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+try:
+    from opentelemetry.instrumentation.requests import RequestsInstrumentor
+except ImportError:
+    RequestsInstrumentor = None
+
+try:
+    from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
+except ImportError:
+    BotocoreInstrumentor = None
+
 _TRACING_CONFIGURED = False
 _HTTPX_CONFIGURED = False
 _SQLALCHEMY_ENGINES: set[int] = set()
@@ -111,6 +121,10 @@ def configure_tracing(*, service_name: str | None = None) -> None:
             tracer_provider=tracer_provider,
             request_hook=_httpx_request_hook,
         )
+        if RequestsInstrumentor:
+            RequestsInstrumentor().instrument(tracer_provider=tracer_provider)
+        if BotocoreInstrumentor:
+            BotocoreInstrumentor().instrument(tracer_provider=tracer_provider)
         _HTTPX_CONFIGURED = True
 
     _TRACING_CONFIGURED = True

@@ -89,6 +89,19 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     return _get_session_factory()
 
 
+def get_db_pool_stats() -> dict[str, int]:
+    global _engine
+    if _engine is None:
+        return {}
+    pool = _engine.sync_engine.pool
+    return {
+        "size": pool.size(),
+        "checkedin": pool.checkedin(),
+        "checkedout": pool.checkedout(),
+        "overflow": pool.overflow(),
+    }
+
+
 def _configure_logging(engine, is_postgres: bool) -> None:
     @event.listens_for(engine.sync_engine, "handle_error")
     def receive_error(context):  # noqa: ANN001

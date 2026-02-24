@@ -73,7 +73,32 @@ class Metrics:
             self.feature_flags_stale_total = None
             self.break_glass_grants_total = None
             self.break_glass_active = None
+            self.db_pool_size = None
+            self.db_pool_checkedin = None
+            self.db_pool_checkedout = None
+            self.db_pool_overflow = None
             return
+
+        self.db_pool_size = Gauge(
+            "db_pool_size",
+            "Database connection pool size limit.",
+            registry=self.registry,
+        )
+        self.db_pool_checkedin = Gauge(
+            "db_pool_checkedin",
+            "Database connections checked in (idle).",
+            registry=self.registry,
+        )
+        self.db_pool_checkedout = Gauge(
+            "db_pool_checkedout",
+            "Database connections checked out (active).",
+            registry=self.registry,
+        )
+        self.db_pool_overflow = Gauge(
+            "db_pool_overflow",
+            "Database connections in overflow.",
+            registry=self.registry,
+        )
 
         self.webhook_events = Counter(
             "webhook_events_total",
@@ -742,6 +767,18 @@ class Metrics:
         if not self.enabled or self.break_glass_active is None:
             return
         self.break_glass_active.set(max(0, int(count)))
+
+    def record_db_pool_stats(self, stats: dict[str, int]) -> None:
+        if not self.enabled:
+            return
+        if self.db_pool_size:
+            self.db_pool_size.set(stats.get("size", 0))
+        if self.db_pool_checkedin:
+            self.db_pool_checkedin.set(stats.get("checkedin", 0))
+        if self.db_pool_checkedout:
+            self.db_pool_checkedout.set(stats.get("checkedout", 0))
+        if self.db_pool_overflow:
+            self.db_pool_overflow.set(stats.get("overflow", 0))
 
     def render(self) -> tuple[bytes, str]:
         if not self.enabled:

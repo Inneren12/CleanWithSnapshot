@@ -60,7 +60,8 @@ from app.api.problem_details import (
 from app.api.mfa import AdminMfaMiddleware
 from app.api.saas_auth import PasswordChangeGateMiddleware, TenantSessionMiddleware
 from app.domain.errors import DomainError
-from app.infra.db import dispose_engine, get_session_factory
+import asyncio
+from app.infra.db import dispose_engine, get_session_factory, get_db_pool_stats
 from app.infra.email import EmailAdapter
 from app.infra.logging import clear_log_context, configure_logging, update_log_context
 from app.infra.metrics import configure_metrics, metrics
@@ -427,7 +428,25 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
             getattr(app.state, "communication_adapter", None) or state_services.communication_adapter
         )
         app.state.stripe_client = getattr(app.state, "stripe_client", None) or state_services.stripe_client
+
+        async def _monitor_db_pool() -> None:
+            while True:
+                try:
+                    stats = get_db_pool_stats()
+                    if stats:
+                        state_services.metrics.record_db_pool_stats(stats)
+                except Exception:
+                    logger.warning("db_pool_metrics_failed", exc_info=True)
+                await asyncio.sleep(15)
+
+        monitor_task = asyncio.create_task(_monitor_db_pool())
         yield
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
+
         await app.state.rate_limiter.close()
         await app.state.action_rate_limiter.close()
         data_export_limiters = getattr(app.state, "data_export_rate_limiters", None)

@@ -31,3 +31,5 @@ opentelemetry-instrumentation-fastapi==0.50b0
 opentelemetry-instrumentation-sqlalchemy==0.50b0
 opentelemetry-instrumentation-httpx==0.50b0
 cryptography==42.0.5
+opentelemetry-instrumentation-requests
+opentelemetry-instrumentation-botocore
