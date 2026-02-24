@@ -64,6 +64,7 @@ from app.infra.db import dispose_engine, get_session_factory
 from app.infra.email import EmailAdapter
 from app.infra.logging import clear_log_context, configure_logging, update_log_context
 from app.infra.metrics import configure_metrics, metrics
+from app.infra.redis import close_redis_client
 from app.infra.security import RateLimiter, resolve_client_key
 from app.infra.tracing import configure_tracing, instrument_fastapi
 from app.infra.environment import SECURE_ENVIRONMENTS
@@ -434,6 +435,7 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
             for limiter in data_export_limiters.values():
                 await limiter.close()
         await dispose_engine()
+        await close_redis_client()
 
     app = FastAPI(title="Cleaning Economy Bot", version="1.0.0", lifespan=lifespan)
 
