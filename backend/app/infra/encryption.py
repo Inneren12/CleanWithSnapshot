@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import os
 from typing import Any
 
@@ -31,6 +32,7 @@ def _derive_key() -> bytes:
 
 
 _CIPHER_SUITE = Fernet(_derive_key())
+logger = logging.getLogger(__name__)
 
 
 class EncryptedString(TypeDecorator):
@@ -59,13 +61,19 @@ class EncryptedString(TypeDecorator):
             return _CIPHER_SUITE.decrypt(value.encode("utf-8")).decode("utf-8")
         except Exception as exc:
             from app.infra.environment import SECURE_ENVIRONMENTS
+
             # In secure environments, we must fail closed to prevent data corruption or leaks.
             # In dev/test, we allow fallback for ease of debugging or partial migrations.
             if settings.app_env in SECURE_ENVIRONMENTS:
                 raise ValueError("Decryption failed in secure environment") from exc
 
             # Fallback for dev/test
-            return value
+            logger.warning(
+                "Decryption failed in non-secure environment (%s). Returning None instead of ciphertext. Error: %s",
+                settings.app_env,
+                exc,
+            )
+            return None
 
 
 def encrypt_value(value: str) -> str:
