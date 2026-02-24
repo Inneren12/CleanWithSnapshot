@@ -151,7 +151,7 @@ def test_invalid_referral_code_rejected(client):
 def test_referral_credit_granted_for_same_org(async_session_maker):
     org_id = uuid.uuid4()
 
-    async def _exercise() -> int:
+    async def _exercise() -> tuple[int, str, str]:
         async with async_session_maker() as session:
             session.add(Organization(org_id=org_id, name="Referral Org"))
             await session.flush()
@@ -188,9 +188,49 @@ def test_referral_credit_granted_for_same_org(async_session_maker):
 
             await leads_service.grant_referral_credit(session, referred)
             await session.commit()
+
+            credit_count = await session.scalar(select(func.count()).select_from(ReferralCredit))
+            credit = (await session.execute(select(ReferralCredit))).scalars().one()
+            return credit_count, credit.referrer_lead_id, credit.referred_lead_id
+
+    credit_count, referrer_lead_id, referred_lead_id = asyncio.run(_exercise())
+    assert credit_count == 1
+    assert referrer_lead_id != referred_lead_id
+
+
+def test_referral_credit_blocked_for_self_referral(async_session_maker, caplog):
+    org_id = uuid.uuid4()
+    caplog.set_level(logging.WARNING, logger="app.domain.leads.service")
+
+    async def _exercise() -> int:
+        async with async_session_maker() as session:
+            session.add(Organization(org_id=org_id, name="Self Referral Org"))
+            await session.flush()
+
+            referred = Lead(
+                org_id=org_id,
+                name="Self Referred",
+                phone="780-555-5301",
+                structured_inputs={"beds": 2, "baths": 2, "cleaning_type": "deep"},
+                estimate_snapshot={
+                    "total_cents": 12000,
+                    "pricing_config_version": "test",
+                    "config_hash": "hash",
+                },
+                pricing_config_version="test",
+                config_hash="hash",
+            )
+            session.add(referred)
+            await session.flush()
+
+            referred.referred_by_code = referred.referral_code
+            await leads_service.grant_referral_credit(session, referred)
+            await session.commit()
             return await session.scalar(select(func.count()).select_from(ReferralCredit))
 
-    assert asyncio.run(_exercise()) == 1
+    assert asyncio.run(_exercise()) == 0
+    missing_logs = [record for record in caplog.records if record.message == "referral_referrer_missing"]
+    assert missing_logs
 
 
 def test_referral_credit_blocked_for_cross_org(async_session_maker, caplog):

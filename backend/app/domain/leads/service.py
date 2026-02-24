@@ -97,7 +97,10 @@ async def grant_referral_credit(session: AsyncSession, referred_lead: Lead | Non
 
     result = await session.execute(
         select(Lead.lead_id, Lead.org_id, Lead.referral_code)
-        .where(Lead.referral_code == referred_lead.referred_by_code)
+        .where(
+            Lead.referral_code == referred_lead.referred_by_code,
+            Lead.lead_id != referred_lead.lead_id,
+        )
         .order_by(
             case((Lead.org_id == referred_lead.org_id, 0), else_=1),
             Lead.created_at.asc(),
