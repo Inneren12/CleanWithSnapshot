@@ -15,6 +15,7 @@ branch_labels = None
 depends_on = None
 
 EXCLUSION_CONSTRAINT_NAME = "bookings_team_time_no_overlap"
+FUNCTION_NAME = "bookings_add_minutes"
 
 
 def upgrade() -> None:
@@ -23,6 +24,19 @@ def upgrade() -> None:
         return
 
     op.execute("CREATE EXTENSION IF NOT EXISTS btree_gist")
+
+    # Define an IMMUTABLE function to wrap the time addition.
+    # Postgres considers 'timestamptz + interval' STABLE (not IMMUTABLE) because
+    # intervals like '1 day' can vary based on timezone (DST).
+    # However, adding minutes is deterministic for UTC timestamps, so we mark it IMMUTABLE.
+    op.execute(
+        f"""
+        CREATE OR REPLACE FUNCTION {FUNCTION_NAME}(ts timestamptz, mins integer)
+        RETURNS timestamptz LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
+        $$ SELECT ts + (mins * INTERVAL '1 minute') $$;
+        """
+    )
+
     op.execute(
         f"""
         ALTER TABLE bookings
@@ -32,7 +46,7 @@ def upgrade() -> None:
             team_id WITH =,
             tstzrange(
                 starts_at,
-                starts_at + (duration_minutes * INTERVAL '1 minute'),
+                {FUNCTION_NAME}(starts_at, duration_minutes),
                 '[)'
             ) WITH &&
         )
@@ -49,3 +63,4 @@ def downgrade() -> None:
     op.execute(
         f"ALTER TABLE bookings DROP CONSTRAINT IF EXISTS {EXCLUSION_CONSTRAINT_NAME}"
     )
+    op.execute(f"DROP FUNCTION IF EXISTS {FUNCTION_NAME}(timestamptz, integer)")
