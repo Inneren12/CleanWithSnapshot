@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -192,8 +193,9 @@ def test_referral_credit_granted_for_same_org(async_session_maker):
     assert asyncio.run(_exercise()) == 1
 
 
-def test_referral_credit_blocked_for_cross_org(async_session_maker):
+def test_referral_credit_blocked_for_cross_org(async_session_maker, caplog):
     org_a, org_b = uuid.uuid4(), uuid.uuid4()
+    caplog.set_level(logging.WARNING, logger="app.domain.leads.service")
 
     async def _exercise() -> int:
         async with async_session_maker() as session:
@@ -240,6 +242,13 @@ def test_referral_credit_blocked_for_cross_org(async_session_maker):
             return await session.scalar(select(func.count()).select_from(ReferralCredit))
 
     assert asyncio.run(_exercise()) == 0
+    blocked_logs = [record for record in caplog.records if record.message == "referral_referrer_cross_org_blocked"]
+    assert blocked_logs
+    for record in blocked_logs:
+        extra_payload = getattr(record, "extra", {}) or {}
+        assert "referred_lead_id" in extra_payload
+        assert "referred_lead_org_id" in extra_payload
+        assert "referral_code" not in extra_payload
 
 
 def test_referral_credit_created_on_deposit_paid(client, async_session_maker):

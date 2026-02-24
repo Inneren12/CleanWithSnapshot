@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,21 +96,31 @@ async def grant_referral_credit(session: AsyncSession, referred_lead: Lead | Non
         return
 
     result = await session.execute(
-        select(Lead).where(
-            Lead.referral_code == referred_lead.referred_by_code,
-            Lead.org_id == referred_lead.org_id,
+        select(Lead.lead_id, Lead.org_id, Lead.referral_code)
+        .where(Lead.referral_code == referred_lead.referred_by_code)
+        .order_by(
+            case((Lead.org_id == referred_lead.org_id, 0), else_=1),
+            Lead.created_at.asc(),
         )
+        .limit(1)
     )
-    referrer = result.scalar_one_or_none()
+    referrer = result.first()
     if referrer is None:
-        cross_org_referrer_exists = await session.scalar(
-            select(Lead.lead_id).where(Lead.referral_code == referred_lead.referred_by_code).limit(1)
+        log_event = "referral_referrer_missing"
+        logger.warning(
+            log_event,
+            extra={
+                "extra": {
+                    "referred_lead_id": referred_lead.lead_id,
+                    "referred_lead_org_id": str(referred_lead.org_id),
+                }
+            },
         )
-        log_event = (
-            "referral_referrer_cross_org_blocked"
-            if cross_org_referrer_exists is not None
-            else "referral_referrer_missing"
-        )
+        return
+
+    referrer_lead_id, referrer_org_id, referrer_code = referrer
+    if referrer_org_id != referred_lead.org_id:
+        log_event = "referral_referrer_cross_org_blocked"
         logger.warning(
             log_event,
             extra={
@@ -123,9 +133,9 @@ async def grant_referral_credit(session: AsyncSession, referred_lead: Lead | Non
         return
 
     credit = ReferralCredit(
-        referrer_lead_id=referrer.lead_id,
+        referrer_lead_id=referrer_lead_id,
         referred_lead_id=referred_lead.lead_id,
-        applied_code=referrer.referral_code,
+        applied_code=referrer_code,
     )
 
     savepoint = await session.begin_nested()
@@ -142,7 +152,8 @@ async def grant_referral_credit(session: AsyncSession, referred_lead: Lead | Non
         "referral_credit_details",
         extra={
             "extra": {
-                "referrer_lead_id": referrer.lead_id,
+                "referrer_lead_id": referrer_lead_id,
+                "referrer_org_id": str(referrer_org_id),
                 "referred_lead_id": referred_lead.lead_id,
             }
         },
