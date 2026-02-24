@@ -6,7 +6,9 @@ import os
 # production configs at import time, requiring secrets that aren't available in tests.
 os.environ["APP_ENV"] = "dev"
 os.environ["TESTING"] = "true"
-os.environ["AUTH_SECRET_KEY"] = "dev-auth-secret"
+# Required by Alembic PII migrations (encrypt/rekey).
+# Must match the key used by app encryption during tests.
+os.environ["AUTH_SECRET_KEY"] = "test-auth-secret"
 
 import asyncio
 import atexit
