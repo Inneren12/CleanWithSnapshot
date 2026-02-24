@@ -7,6 +7,7 @@ for the LocalStorageBackend.
 
 import asyncio
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 
 import httpx
@@ -305,6 +306,66 @@ def test_s3_put_rejects_payload_over_limit_without_buffering():
         asyncio.run(backend.put(key="orders/1/photo.jpg", body=_body(), content_type="image/jpeg"))
 
     assert exc_info.value.status_code == 413
+
+
+def test_s3_put_supports_unbounded_read_to_eof():
+    class FakeS3Client:
+        def __init__(self) -> None:
+            self.payload = b""
+
+        def put_object(self, Bucket: str, Key: str, Body, ContentType: str):
+            self.payload = Body.read(-1)
+
+    backend = S3StorageBackend(
+        bucket="uploads",
+        access_key="ak",
+        secret_key="sk",
+        client=FakeS3Client(),
+        enable_circuit_breaker=False,
+    )
+
+    async def _body():
+        source = _NoUnboundedReadStream([b"abc", b"def", b"ghi"])
+        async for chunk in source:
+            yield chunk
+
+    stored = asyncio.run(backend.put(key="orders/1/photo.jpg", body=_body(), content_type="image/jpeg"))
+
+    assert backend.client.payload == b"abcdefghi"
+    assert stored.size == 9
+
+
+def test_s3_put_does_not_hang_on_abort_during_upload():
+    class UploadAbortedError(RuntimeError):
+        pass
+
+    class FakeS3Client:
+        def put_object(self, Bucket: str, Key: str, Body, ContentType: str):
+            _ = Body.read(1)
+            raise UploadAbortedError("client aborted upload")
+
+    backend = S3StorageBackend(
+        bucket="uploads",
+        access_key="ak",
+        secret_key="sk",
+        client=FakeS3Client(),
+        enable_circuit_breaker=False,
+    )
+
+    async def _body():
+        for _ in range(512):
+            yield b"x" * 1024
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            asyncio.run,
+            backend.put(key="orders/1/photo.jpg", body=_body(), content_type="image/jpeg"),
+        )
+        try:
+            with pytest.raises(UploadAbortedError):
+                future.result(timeout=1)
+        except FuturesTimeoutError as exc:  # pragma: no cover - regression guard
+            pytest.fail(f"backend.put hung after abort: {exc}")
 
 def test_s3_put_streams_with_real_botocore_stubber_non_seekable_body():
     backend = S3StorageBackend(

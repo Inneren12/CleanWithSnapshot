@@ -1,8 +1,10 @@
 import asyncio
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import hashlib
 import hmac
 import queue
 import shutil
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -42,6 +44,7 @@ class _AsyncIteratorFileObj:
         self._max_payload_bytes = max_payload_bytes
         self._queue: queue.Queue[bytes | object] = queue.Queue(maxsize=16)
         self._error: Exception | None = None
+        self._closed = threading.Event()
         self._chunk = b""
         self._chunk_offset = 0
         self._eof = False
@@ -51,16 +54,34 @@ class _AsyncIteratorFileObj:
     async def _produce(self) -> None:
         try:
             async for chunk in self._iterator:
+                if self._closed.is_set():
+                    break
                 if not chunk:
                     continue
                 self.size += len(chunk)
                 if self._max_payload_bytes and self.size > self._max_payload_bytes:
                     raise ValueError("Payload exceeds configured upload limit")
-                await asyncio.to_thread(self._queue.put, chunk)
+                while not self._closed.is_set():
+                    try:
+                        await asyncio.to_thread(self._queue.put, chunk, True, 0.05)
+                        break
+                    except queue.Full:
+                        continue
         except Exception as exc:  # noqa: BLE001
             self._error = exc
         finally:
-            await asyncio.to_thread(self._queue.put, self._sentinel)
+            while True:
+                if self._closed.is_set():
+                    try:
+                        self._queue.put_nowait(self._sentinel)
+                    except queue.Full:
+                        pass
+                    break
+                try:
+                    await asyncio.to_thread(self._queue.put, self._sentinel, True, 0.05)
+                    break
+                except queue.Full:
+                    continue
 
     def _ensure_chunk(self) -> bool:
         while self._chunk_offset >= len(self._chunk):
@@ -83,11 +104,15 @@ class _AsyncIteratorFileObj:
             return b""
 
         if size < 0:
-            if not self._ensure_chunk():
-                return b""
-            data = self._chunk[self._chunk_offset :]
-            self._chunk_offset = len(self._chunk)
-            return data
+            out = bytearray()
+            while True:
+                if not self._ensure_chunk():
+                    break
+                out.extend(self._chunk[self._chunk_offset :])
+                self._chunk_offset = len(self._chunk)
+            if self._error:
+                raise self._error
+            return bytes(out)
 
         out = bytearray()
         while len(out) < size:
@@ -112,7 +137,11 @@ class _AsyncIteratorFileObj:
         raise UnsupportedOperation("stream is not seekable")
 
     def close(self) -> None:
-        self._producer_future.result()
+        try:
+            self._producer_future.result(timeout=0.2)
+        except FutureTimeoutError:
+            self._closed.set()
+            self._producer_future.result()
 
 
 class StorageBackend(ABC):
