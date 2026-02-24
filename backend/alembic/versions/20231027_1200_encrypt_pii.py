@@ -170,15 +170,17 @@ def upgrade() -> None:
         _backfill_client_users(session, batch_size=1000)
         _backfill_workers(session, batch_size=1000)
 
-        insp = sa.inspect(bind)
-        unique_constraints = [c["name"] for c in insp.get_unique_constraints("client_users")]
-        indexes = [i["name"] for i in insp.get_indexes("client_users")]
-
-        with op.batch_alter_table("client_users") as batch_op:
-            if "uq_client_users_email" in unique_constraints:
+        try:
+            with op.batch_alter_table("client_users") as batch_op:
                 batch_op.drop_constraint("uq_client_users_email", type_="unique")
-            if "email" in indexes:
+        except Exception:
+            pass
+
+        try:
+            with op.batch_alter_table("client_users") as batch_op:
                 batch_op.drop_index("email")
+        except Exception:
+            pass
     except Exception:
         session.rollback()
         raise
