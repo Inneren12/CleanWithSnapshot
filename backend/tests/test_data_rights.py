@@ -292,3 +292,49 @@ async def test_generate_data_export_bundle_marks_failed_on_invalid_cursor(async_
 
         assert updated.status == "failed"
         assert updated.error_code == "invalid_cursor"
+
+
+@pytest.mark.anyio
+async def test_generate_data_export_bundle_marks_failed_when_query_builder_raises_value_error(
+    async_session_maker,
+    monkeypatch,
+):
+    class _TrackingStorage(InMemoryStorageBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.called = False
+
+        async def put(self, *, key: str, body, content_type: str):  # noqa: ANN001, ANN201
+            self.called = True
+            return await super().put(key=key, body=body, content_type=content_type)
+
+    async with async_session_maker() as session:
+        lead = await _seed_lead(session, org_id=settings.default_org_id, email="invalid-build-cursor@example.com")
+
+        record = await data_rights_service.create_data_export_request(
+            session,
+            org_id=settings.default_org_id,
+            subject_id=lead.lead_id,
+            subject_type="lead",
+            subject_email=lead.email,
+            requested_by="qa@example.com",
+            requested_by_type="admin",
+            request_id="req-invalid-build-cursor",
+        )
+        await session.commit()
+
+        def _raise_immediately(*_args, **_kwargs):
+            raise ValueError("invalid_cursor")
+
+        storage = _TrackingStorage()
+        monkeypatch.setattr(data_rights_service, "_build_chunked_query", _raise_immediately)
+
+        updated = await data_rights_service.generate_data_export_bundle(
+            session,
+            export_request=record,
+            storage_backend=storage,
+        )
+
+        assert updated.status == "failed"
+        assert updated.error_code == "invalid_cursor"
+        assert storage.called is False

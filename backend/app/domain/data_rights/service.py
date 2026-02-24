@@ -613,56 +613,57 @@ async def generate_data_export_bundle(
 
     export_started_at = datetime.now(tz=timezone.utc)
     started = perf_counter()
-    section_counts: dict[str, int] = {name: 0 for name, *_ in sections}
 
-    async def _stream() -> AsyncIterator[bytes]:
-        yield b"{"
-        metadata = {
-            "export_id": str(export_request.export_id),
-            "org_id": str(export_request.org_id),
-            "subject_id": export_request.subject_id,
-            "subject_type": export_request.subject_type,
-            "subject_email": export_request.subject_email,
-            "generated_at": export_started_at.isoformat(),
-        }
-        for index, (key, value) in enumerate(metadata.items()):
-            if index:
-                yield b","
-            key_bytes = json.dumps(key, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            value_bytes = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            yield key_bytes + b":" + value_bytes
-
-        yield b',"data":{'
-        for section_index, (section_name, build_stmt, serializer, get_cursor) in enumerate(sections):
-            if section_index:
-                yield b","
-            yield json.dumps(section_name, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b":["
-
-            first_record = True
-            cursor: str | None = None
-            while True:
-                stmt = build_stmt(_EXPORT_QUERY_BATCH_SIZE, cursor)
-                result = await session.execute(stmt)
-                chunk = list(result.scalars().all())
-                if not chunk:
-                    break
-
-                for item in chunk:
-                    if not first_record:
-                        yield b","
-                    record = _redact_sensitive_fields(serializer(item))
-                    yield json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-                    first_record = False
-                    section_counts[section_name] += 1
-                cursor = get_cursor(chunk[-1])
-                if len(chunk) < _EXPORT_QUERY_BATCH_SIZE:
-                    break
-
-            yield b"]"
-        yield b"}}"
-
-    key = f"data-exports/{export_request.org_id}/{export_request.export_id}.json"
     try:
+        section_counts: dict[str, int] = {name: 0 for name, *_ in sections}
+
+        async def _stream() -> AsyncIterator[bytes]:
+            yield b"{"
+            metadata = {
+                "export_id": str(export_request.export_id),
+                "org_id": str(export_request.org_id),
+                "subject_id": export_request.subject_id,
+                "subject_type": export_request.subject_type,
+                "subject_email": export_request.subject_email,
+                "generated_at": export_started_at.isoformat(),
+            }
+            for index, (key, value) in enumerate(metadata.items()):
+                if index:
+                    yield b","
+                key_bytes = json.dumps(key, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                value_bytes = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                yield key_bytes + b":" + value_bytes
+
+            yield b',"data":{'
+            for section_index, (section_name, build_stmt, serializer, get_cursor) in enumerate(sections):
+                if section_index:
+                    yield b","
+                yield json.dumps(section_name, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b":["
+
+                first_record = True
+                cursor: str | None = None
+                while True:
+                    stmt = build_stmt(_EXPORT_QUERY_BATCH_SIZE, cursor)
+                    result = await session.execute(stmt)
+                    chunk = list(result.scalars().all())
+                    if not chunk:
+                        break
+
+                    for item in chunk:
+                        if not first_record:
+                            yield b","
+                        record = _redact_sensitive_fields(serializer(item))
+                        yield json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                        first_record = False
+                        section_counts[section_name] += 1
+                    cursor = get_cursor(chunk[-1])
+                    if len(chunk) < _EXPORT_QUERY_BATCH_SIZE:
+                        break
+
+                yield b"]"
+            yield b"}}"
+
+        key = f"data-exports/{export_request.org_id}/{export_request.export_id}.json"
         stored = await storage.put(
             key=key,
             body=_stream(),
