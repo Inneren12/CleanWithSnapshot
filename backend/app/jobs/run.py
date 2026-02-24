@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 import httpx
+from opentelemetry import trace
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.infra.communication import resolve_communication_adapter
@@ -49,6 +50,8 @@ _ADAPTER: EmailAdapter | None = None
 _STORAGE: object | None = None
 _COMMUNICATION: object | None = None
 
+tracer = trace.get_tracer(__name__)
+
 
 async def _run_job(
     name: str,
@@ -57,14 +60,15 @@ async def _run_job(
     *,
     runner_id: str | None = None,
 ) -> None:
-    try:
-        async with session_factory() as session:
-            result = await runner(session)
-        logger.info("job_complete", extra={"extra": {"job": name, **result}})
-        _record_email_job_metrics(name, result)
-        await _record_job_result(session_factory, name, success=True, runner_id=runner_id)
-    finally:
-        clear_log_context()
+    with tracer.start_as_current_span(name=f"job.run.{name}", attributes={"job.name": name}):
+        try:
+            async with session_factory() as session:
+                result = await runner(session)
+            logger.info("job_complete", extra={"extra": {"job": name, **result}})
+            _record_email_job_metrics(name, result)
+            await _record_job_result(session_factory, name, success=True, runner_id=runner_id)
+        finally:
+            clear_log_context()
 
 
 def _record_email_job_metrics(job: str, result: dict[str, int]) -> None:
