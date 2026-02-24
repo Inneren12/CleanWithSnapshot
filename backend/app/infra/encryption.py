@@ -49,11 +49,22 @@ class EncryptedString(TypeDecorator):
     def process_result_value(self, value: Any, dialect: Dialect) -> Any:
         if value is None:
             return None
+
+        # Heuristic: Fernet tokens are URL-safe base64 and start with gAAAA
+        # If it doesn't look like a token, assume plaintext (transitional support)
+        if not str(value).startswith("gAAAA"):
+            return value
+
         try:
             return _CIPHER_SUITE.decrypt(value.encode("utf-8")).decode("utf-8")
-        except Exception:
-            # Fallback if decryption fails (e.g. data was not encrypted yet)
-            # This helps during migration or if key rotates without re-encryption
+        except Exception as exc:
+            from app.infra.environment import SECURE_ENVIRONMENTS
+            # In secure environments, we must fail closed to prevent data corruption or leaks.
+            # In dev/test, we allow fallback for ease of debugging or partial migrations.
+            if settings.app_env in SECURE_ENVIRONMENTS:
+                raise ValueError("Decryption failed in secure environment") from exc
+
+            # Fallback for dev/test
             return value
 
 
