@@ -34,6 +34,7 @@ class _AsyncIteratorFileObj:
     """Thread-safe, non-seekable adapter from AsyncIterator[bytes] to file-like reads."""
 
     _sentinel = object()
+    _CLOSE_SENTINEL_ATTEMPTS = 4
 
     def __init__(
         self,
@@ -148,16 +149,25 @@ class _AsyncIteratorFileObj:
         raise UnsupportedOperation("stream is not seekable")
 
     def close(self) -> None:
+        self._closed.set()
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+        for _ in range(self._CLOSE_SENTINEL_ATTEMPTS):
+            try:
+                self._queue.put_nowait(self._sentinel)
+                break
+            except queue.Full:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    pass
         try:
             self._producer_future.result(timeout=0.2)
             return
         except FutureTimeoutError:
-            self._closed.set()
-            while True:
-                try:
-                    self._queue.get_nowait()
-                except queue.Empty:
-                    break
             self._producer_future.cancel()
             try:
                 self._producer_future.result(timeout=0.2)
