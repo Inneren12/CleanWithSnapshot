@@ -505,6 +505,77 @@ jobs:
         working-directory: web
         run: node -e "require.resolve('@playwright/test')"
 
+      - name: E2E admin auth wiretap (evidence)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== E2E admin auth wiretap (evidence) ==="
+          now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          from="$(date -u -d '7 days ago' +"%Y-%m-%dT%H:%M:%SZ")"
+
+          urls=(
+            "http://127.0.0.1:3000/v1/admin/profile"
+            "http://127.0.0.1:3000/v1/admin/settings/features"
+            "http://127.0.0.1:3000/v1/admin/users/me/ui_prefs"
+            "http://127.0.0.1:3000/v1/admin/outbox/dead-letter?limit=1"
+            "http://127.0.0.1:3000/v1/admin/metrics?from=${from}&to=${now}"
+          )
+
+          request_ids=()
+
+          for url in "${urls[@]}"; do
+            echo "== ${url} =="
+            headers="$(mktemp)"
+            body="$(mktemp)"
+            if ! curl -sS -D "$headers" -o "$body" "$url"; then
+              echo "curl failed for ${url}"
+            fi
+
+            status_line="$(head -n 1 "$headers" | tr -d '\r')"
+            request_id="$(awk 'BEGIN{IGNORECASE=1} /^x-request-id:/{sub(/\r$/, "", $2); print $2}' "$headers" | tail -n 1)"
+            auth_fail="$(awk 'BEGIN{IGNORECASE=1} /^x-admin-auth-fail-reason:/{sub(/\r$/, "", $2); print $2}' "$headers" | tail -n 1)"
+            content_type="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/, "", $2); print $2}' "$headers" | tail -n 1)"
+
+            echo "${status_line:-HTTP status: <missing>}"
+            echo "X-Request-Id: ${request_id:-<missing>}"
+            if [ -n "$auth_fail" ]; then
+              echo "X-Admin-Auth-Fail-Reason: ${auth_fail}"
+            else
+              echo "X-Admin-Auth-Fail-Reason: <missing>"
+            fi
+            echo "Content-Type: ${content_type:-<missing>}"
+            echo "Body (first 200 bytes):"
+            head -c 200 "$body" || true
+            echo ""
+            echo ""
+
+            if [ -n "$request_id" ]; then
+              request_ids+=("$request_id")
+            fi
+
+            rm -f "$headers" "$body"
+          done
+
+          echo "=== Admin proxy env presence (caddy) ==="
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T caddy sh -lc 'for v in ADMIN_PROXY_AUTH_SECRET ADMIN_PROXY_AUTH_USER ADMIN_PROXY_AUTH_EMAIL ADMIN_PROXY_AUTH_ROLES ADMIN_PROXY_AUTH_MFA ADMIN_PROXY_AUTH_E2E_USER ADMIN_PROXY_AUTH_E2E_EMAIL ADMIN_PROXY_AUTH_E2E_ROLES ADMIN_PROXY_AUTH_E2E_SECRET; do val="${!v-}"; if [ -n "$val" ]; then echo "$v=SET"; else echo "$v=EMPTY"; fi; done'
+          echo ""
+          echo "=== Admin proxy env presence (api) ==="
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T api sh -lc 'for v in ADMIN_PROXY_AUTH_SECRET ADMIN_PROXY_AUTH_USER ADMIN_PROXY_AUTH_EMAIL ADMIN_PROXY_AUTH_ROLES ADMIN_PROXY_AUTH_MFA ADMIN_PROXY_AUTH_E2E_USER ADMIN_PROXY_AUTH_E2E_EMAIL ADMIN_PROXY_AUTH_E2E_ROLES ADMIN_PROXY_AUTH_E2E_SECRET; do val="${!v-}"; if [ -n "$val" ]; then echo "$v=SET"; else echo "$v=EMPTY"; fi; done'
+          echo ""
+
+          if [ "${#request_ids[@]}" -eq 0 ]; then
+            echo "No request_ids captured for correlation."
+          else
+            for request_id in "${request_ids[@]}"; do
+              echo "=== Backend logs for request_id: ${request_id} ==="
+              docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color --tail=2000 api \
+                | rg -n -C 5 "${request_id}|admin_auth|proxy|untrusted|forbidden|ui_prefs|features|metrics|dead-letter" \
+                || true
+              echo ""
+            done
+          fi
+
       - name: Run Playwright tests
         working-directory: web
         env:
