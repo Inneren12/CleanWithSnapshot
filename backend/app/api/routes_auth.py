@@ -125,6 +125,10 @@ class TOTPEnrollResponse(BaseModel):
     backup_codes: list[str]
 
 
+class BackupCodesResponse(BaseModel):
+    backup_codes: list[str]
+
+
 class TOTPVerifyRequest(BaseModel):
     code: str
 
@@ -333,6 +337,27 @@ async def verify_totp(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA code")
     await session.commit()
     return {"status": "enabled"}
+
+
+@router.post("/2fa/backup-codes/regenerate", response_model=BackupCodesResponse)
+async def regenerate_backup_codes(
+    payload: TOTPVerifyRequest,
+    identity=Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+    session: AsyncSession = Depends(get_db_session),
+) -> BackupCodesResponse:
+    user = await session.get(User, identity.user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    if not user.totp_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA not enrolled")
+
+    verified = await saas_service.verify_totp(session, user, payload.code)
+    if not verified:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA code")
+
+    codes = await saas_service.regenerate_backup_codes(session, user)
+    await session.commit()
+    return BackupCodesResponse(backup_codes=codes)
 
 
 @router.post("/2fa/disable")
