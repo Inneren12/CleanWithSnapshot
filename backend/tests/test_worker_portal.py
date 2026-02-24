@@ -93,7 +93,7 @@ async def test_worker_portal_dashboard_lists_jobs(client, async_session_maker):
     settings.worker_team_id = 1
     booking_id = await _seed_booking(async_session_maker, team_id=1)
 
-    login = client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    login = client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
     assert login.status_code == 200
 
     resp = client.get("/worker")
@@ -116,7 +116,7 @@ async def test_worker_portal_renders_russian_labels(client, async_session_maker)
     settings.worker_team_id = 1
     booking_id = await _seed_booking(async_session_maker, team_id=1)
 
-    login = client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    login = client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
     assert login.status_code == 200
 
     client.cookies.set("ui_lang", "ru")
@@ -136,7 +136,7 @@ async def test_worker_job_invoice_text_stays_english_with_ru(client, async_sessi
     settings.worker_team_id = 1
     booking_id = await _seed_booking(async_session_maker, team_id=1)
 
-    login = client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    login = client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
     assert login.status_code == 200
 
     client.cookies.set("ui_lang", "ru")
@@ -154,7 +154,7 @@ async def test_worker_cannot_view_other_team(client, async_session_maker):
     settings.worker_team_id = 1
     other_booking = await _seed_booking(async_session_maker, team_id=2)
 
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
     detail = client.get(f"/worker/jobs/{other_booking}")
     assert detail.status_code == 404
 
@@ -179,7 +179,7 @@ async def test_worker_tracks_time_with_reasons(client, async_session_maker):
     settings.worker_team_id = 1
     booking_id = await _seed_booking(async_session_maker, team_id=1)
 
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
 
     start = client.post(f"/worker/jobs/{booking_id}/start")
     assert start.status_code == 200
@@ -231,7 +231,7 @@ async def test_worker_cannot_finish_without_start(client, async_session_maker):
     settings.worker_team_id = 1
     booking_id = await _seed_booking(async_session_maker, team_id=1)
 
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
     finish = client.post(f"/worker/jobs/{booking_id}/finish")
     assert finish.status_code == 400
 
@@ -243,7 +243,7 @@ async def test_worker_cannot_mutate_other_team_job(client, async_session_maker):
     settings.worker_team_id = 1
     other_booking = await _seed_booking(async_session_maker, team_id=2)
 
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
     resp = client.post(f"/worker/jobs/{other_booking}/start")
     assert resp.status_code == 404
 
@@ -317,7 +317,7 @@ async def test_worker_addons_update_invoice_totals(client, async_session_maker):
         addon_id = addon.addon_id
         invoice_id = invoice.invoice_id
 
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
     resp = client.post(
         f"/worker/jobs/{booking_id}/addons",
         data={"addon_id": addon_id, "qty": 1},
@@ -360,7 +360,7 @@ async def test_worker_cannot_add_addons_to_other_team(client, async_session_make
         booking_id = booking.booking_id
         addon_id = addon.addon_id
 
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
     resp = client.post(
         f"/worker/jobs/{booking_id}/addons", data={"addon_id": addon_id, "qty": 1}
     )
@@ -374,7 +374,7 @@ async def test_worker_price_adjust_requires_note(client, async_session_maker):
     settings.worker_team_id = 1
     booking_id = await _seed_booking(async_session_maker, team_id=1)
 
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
     client.post(f"/worker/jobs/{booking_id}/start")
     resp = client.post(
         f"/worker/jobs/{booking_id}/finish",

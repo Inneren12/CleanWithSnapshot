@@ -95,7 +95,7 @@ async def test_worker_checklist_photos_and_dispute_flow(client, async_session_ma
     assert template_resp.status_code == status.HTTP_201_CREATED
 
     booking_id = await _seed_booking(async_session_maker, consent=True)
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
 
     checklist = client.get(f"/worker/jobs/{booking_id}/checklist")
     assert checklist.status_code == status.HTTP_200_OK
@@ -150,7 +150,7 @@ async def test_photo_review_feedback_visible_to_worker(client, async_session_mak
 
     booking_id = await _seed_booking(async_session_maker, consent=True)
 
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
 
     upload = client.post(
         f"/worker/jobs/{booking_id}/photos",
@@ -195,7 +195,7 @@ async def test_worker_restricted_to_team_for_quality(client, async_session_maker
     settings.worker_team_id = 1
 
     booking_id = await _seed_booking(async_session_maker, team_id=2, consent=True)
-    client.post("/worker/login", headers=_basic_auth("worker", "secret"))
+    client.post("/worker/login", headers=_basic_auth("worker", "secret"), json={"org_id": str(settings.default_org_id)})
 
     assert client.get(f"/worker/jobs/{booking_id}/checklist").status_code == status.HTTP_404_NOT_FOUND
     assert (
