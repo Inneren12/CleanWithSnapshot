@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import entitlements, saas_auth
 from app.api.admin_auth import AdminIdentity
-from app.api.problem_details import PROBLEM_TYPE_RATE_LIMIT, problem_details
+from app.api.problem_details import PROBLEM_TYPE_RATE_LIMIT, PROBLEM_TYPE_VALIDATION, problem_details
 from app.domain.clients import schemas as client_schemas
 from app.domain.clients import service as client_service
 from app.domain.data_rights.audit import (
@@ -499,8 +499,14 @@ async def list_data_exports(
     if cursor is not None:
         try:
             data_rights_service.decode_data_export_cursor_strict(cursor)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_cursor") from exc
+        except ValueError:
+            return problem_details(
+                request=request,
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                title="Invalid cursor",
+                detail="invalid_cursor",
+                type_=PROBLEM_TYPE_VALIDATION,
+            )
 
     try:
         items, total, next_cursor, prev_cursor = await data_rights_service.list_data_export_requests(
@@ -512,8 +518,14 @@ async def list_data_exports(
             cursor=cursor,
             offset=offset,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_cursor") from exc
+    except ValueError:
+        return problem_details(
+            request=request,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            title="Invalid cursor",
+            detail="invalid_cursor",
+            type_=PROBLEM_TYPE_VALIDATION,
+        )
     return data_rights_schemas.DataRightsExportListResponse(
         items=[
             data_rights_schemas.DataRightsExportListItem(

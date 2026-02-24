@@ -662,11 +662,23 @@ async def generate_data_export_bundle(
         yield b"}}"
 
     key = f"data-exports/{export_request.org_id}/{export_request.export_id}.json"
-    stored = await storage.put(
-        key=key,
-        body=_stream(),
-        content_type="application/json",
-    )
+    try:
+        stored = await storage.put(
+            key=key,
+            body=_stream(),
+            content_type="application/json",
+        )
+    except ValueError:
+        export_request.status = "failed"
+        export_request.error_code = "invalid_cursor"
+        logger.warning(
+            "data_export_invalid_cursor export_id=%s org_id=%s",
+            export_request.export_id,
+            export_request.org_id,
+        )
+        await session.flush()
+        return export_request
+
     export_request.storage_key = stored.key
     export_request.content_type = stored.content_type
     export_request.size_bytes = stored.size

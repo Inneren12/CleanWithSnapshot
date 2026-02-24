@@ -11,6 +11,7 @@ from app.domain.data_rights.db_models import DataExportRequest
 from app.domain.invoices.db_models import Invoice, Payment
 from app.domain.leads.db_models import Lead
 from app.domain.saas.db_models import Organization
+from app.infra.storage.backends import InMemoryStorageBackend
 from app.settings import settings
 
 
@@ -253,3 +254,41 @@ def test_build_chunked_query_keeps_string_cursor_for_non_uuid_keys():
 
     params = stmt.compile().params
     assert "123" in params.values()
+
+
+@pytest.mark.anyio
+async def test_generate_data_export_bundle_marks_failed_on_invalid_cursor(async_session_maker, monkeypatch):
+    async with async_session_maker() as session:
+        lead = await _seed_lead(session, org_id=settings.default_org_id, email="invalid-job-cursor@example.com")
+        await _seed_booking_invoice_payment(session, lead)
+
+        record = await data_rights_service.create_data_export_request(
+            session,
+            org_id=settings.default_org_id,
+            subject_id=lead.lead_id,
+            subject_type="lead",
+            subject_email=lead.email,
+            requested_by="qa@example.com",
+            requested_by_type="admin",
+            request_id="req-invalid-cursor",
+        )
+        await session.commit()
+
+        original_parse = data_rights_service._parse_chunk_cursor_value
+
+        def _raise_on_followup_cursor(key_column, cursor):
+            if cursor is not None:
+                raise ValueError("invalid_cursor")
+            return original_parse(key_column, cursor)
+
+        monkeypatch.setattr(data_rights_service, "_EXPORT_QUERY_BATCH_SIZE", 1)
+        monkeypatch.setattr(data_rights_service, "_parse_chunk_cursor_value", _raise_on_followup_cursor)
+
+        updated = await data_rights_service.generate_data_export_bundle(
+            session,
+            export_request=record,
+            storage_backend=InMemoryStorageBackend(),
+        )
+
+        assert updated.status == "failed"
+        assert updated.error_code == "invalid_cursor"
