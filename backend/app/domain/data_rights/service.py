@@ -325,11 +325,17 @@ async def process_pending_deletions(
 
         lead_result = await session.execute(select(Lead).where(*lead_filters))
         leads = list(lead_result.scalars().all())
+
+        request_photos_deleted = 0
+        request_invoices_detached = 0
+
         for lead in leads:
-            photo_count, detached = await _anonymize_lead(session, lead, storage=storage)
+            cnt, det = await _anonymize_lead(session, lead, storage=storage)
             leads_anonymized += 1
-            photos_deleted += photo_count
-            invoices_detached += detached
+            request_photos_deleted += cnt
+            request_invoices_detached += det
+            photos_deleted += cnt
+            invoices_detached += det
 
         request.status = "processed"
         request.processed_at = datetime.now(tz=timezone.utc)
@@ -342,11 +348,11 @@ async def process_pending_deletions(
             org_id=request.org_id,
             action="gdpr_deletion_processed",
             resource_type="data_deletion_request",
-            resource_id=request.request_id,
+            resource_id=str(request.request_id),
             context={
                 "leads_deleted": len(leads),
-                "photos_deleted": photo_count,
-                "invoices_detached": detached,
+                "photos_deleted": request_photos_deleted,
+                "invoices_detached": request_invoices_detached,
             }
         )
 

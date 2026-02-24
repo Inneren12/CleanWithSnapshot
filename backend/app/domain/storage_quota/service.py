@@ -11,7 +11,15 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity, AdminRole
-from app.domain.admin_audit import service as admin_audit_service
+# Lazy import to avoid cycle:
+# storage_quota.service -> admin_audit.service -> admin_audit.db_models -> infra.db -> infra.models -> storage_quota.db_models -> storage_quota.service
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.domain.admin_audit import service as admin_audit_service
+else:
+    # We will import inside function
+    pass
+
 from app.domain.org_settings import service as org_settings_service
 from app.domain.org_settings.db_models import OrganizationSettings
 from app.domain.storage_quota.db_models import OrgStorageReservation
@@ -185,6 +193,7 @@ async def reserve_bytes(
     pending = await _pending_bytes(session, org_id, now)
 
     if record.max_storage_bytes is not None and used + pending + bytes_requested > record.max_storage_bytes:
+        from app.domain.admin_audit import service as admin_audit_service
         snapshot = await get_org_storage_quota_snapshot(session, org_id)
         identity = audit_identity or _system_identity(org_id)
         await admin_audit_service.record_action(
@@ -276,6 +285,7 @@ async def extend_reservation(
     pending = await _pending_bytes(session, reservation.org_id, now)
     used = int(record.storage_bytes_used or 0)
     if record.max_storage_bytes is not None and used + pending + bytes_delta > record.max_storage_bytes:
+        from app.domain.admin_audit import service as admin_audit_service
         snapshot = await get_org_storage_quota_snapshot(session, reservation.org_id)
         identity = audit_identity or _system_identity(reservation.org_id)
         await admin_audit_service.record_action(
@@ -368,6 +378,7 @@ async def finalize_reservation(
     projected_total = total_used + (pending_now - pending_released) + actual_bytes
 
     if record.max_storage_bytes is not None and projected_total > record.max_storage_bytes:
+        from app.domain.admin_audit import service as admin_audit_service
         snapshot = _snapshot(
             reservation.org_id,
             storage_bytes_used=total_used,
@@ -425,6 +436,7 @@ async def finalize_reservation(
     )
 
     if reservation.bytes_reserved != actual_bytes:
+        from app.domain.admin_audit import service as admin_audit_service
         identity = audit_identity or _system_identity(reservation.org_id)
         await admin_audit_service.record_action(
             session,
@@ -487,6 +499,7 @@ async def release_reservation(
     reservation.released_at = now
     await session.flush()
 
+    from app.domain.admin_audit import service as admin_audit_service
     identity = audit_identity or _system_identity(reservation.org_id)
     await admin_audit_service.record_action(
         session,
@@ -531,6 +544,7 @@ async def decrement_storage_usage(
     record.storage_bytes_used = new_used
 
     if used < bytes_to_release:
+        from app.domain.admin_audit import service as admin_audit_service
         identity = audit_identity or _system_identity(org_id)
         await admin_audit_service.record_action(
             session,

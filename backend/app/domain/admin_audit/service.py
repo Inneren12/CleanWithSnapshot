@@ -11,10 +11,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity
+# db_models imported later or partially to avoid cycle if necessary
+# Note: we need to break the cycle. service -> db_models -> service is bad.
+# But here service imports db_models.
+# And db_models imports infra.db -> infra.models -> break_glass -> service -> admin_audit.service
+# Cycle: admin_audit.service -> admin_audit.db_models -> infra.db -> infra.models -> break_glass -> admin_audit.service
+# To fix: admin_audit.service should NOT be imported by break_glass at top level if possible, or use TYPE_CHECKING.
+# Let's inspect break_glass/service.py
 from app.domain.admin_audit.db_models import (
-    AdminAuditActionType,
     AdminAuditLog,
     AdminAuditSensitivity,
+    AdminAuditActionType,
 )
 from app.infra.logging import redact_pii
 from app.settings import settings

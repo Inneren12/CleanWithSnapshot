@@ -8,6 +8,15 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+# Lazy import or TYPE_CHECKING if possible, but AdminAuditLog is needed at runtime.
+# The cycle is:
+# admin_audit.db_models -> infra.db -> infra.models -> audit_retention.db_models -> audit_retention.service -> admin_audit.db_models
+# We need to break this cycle.
+# Move audit retention service imports inside function or use string references if possible?
+# No, we need class objects.
+# The issue is infra.models importing audit_retention.db_models
+# audit_retention.db_models does NOT import service.
+# Let's check why audit_retention/__init__.py imports service.
 from app.domain.admin_audit.db_models import AdminAuditLog
 from app.domain.audit_retention.db_models import AuditLegalHold, AuditLogScope, AuditPurgeEvent
 from app.domain.config_audit.db_models import ConfigAuditLog

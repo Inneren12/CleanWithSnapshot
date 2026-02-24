@@ -2,6 +2,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING
 import uuid
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, func, event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON

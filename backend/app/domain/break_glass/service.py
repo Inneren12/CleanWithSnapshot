@@ -8,7 +8,17 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.admin_audit import service as audit_service
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.domain.admin_audit import service as audit_service
+else:
+    # Lazy import to avoid circular dependency loop:
+    # admin_audit.service -> admin_audit.db_models -> infra.db -> infra.models -> break_glass.db_models -> break_glass.service -> admin_audit.service
+    import sys
+    # We will import it inside functions or lazily
+    pass
+
 from app.domain.break_glass.db_models import BreakGlassScope, BreakGlassSession, BreakGlassStatus
 from app.infra.metrics import metrics
 from app.settings import settings
@@ -105,6 +115,7 @@ async def review_session(
     review_notes: str,
     request_id: str | None = None,
 ) -> BreakGlassSession:
+    from app.domain.admin_audit import service as audit_service
     record.reviewed_at = datetime.now(timezone.utc)
     record.reviewed_by = reviewed_by
     record.review_notes = review_notes
@@ -130,6 +141,7 @@ async def expire_session_if_needed(
     record: BreakGlassSession,
     request_id: str | None = None,
 ) -> None:
+    from app.domain.admin_audit import service as audit_service
     now = datetime.now(timezone.utc)
     expires_at = record.expires_at
     if expires_at.tzinfo is None:
