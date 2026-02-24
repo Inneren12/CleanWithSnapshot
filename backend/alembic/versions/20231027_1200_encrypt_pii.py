@@ -30,7 +30,11 @@ depends_on = None
 def _get_auth_secret() -> str:
     key = os.getenv("AUTH_SECRET_KEY")
     if not key:
-        raise ValueError("AUTH_SECRET_KEY must be set (env var)")
+        raise ValueError(
+            "AUTH_SECRET_KEY must be set to run this migration. "
+            "This migration encrypts/decrypts PII and recomputes blind indexes. "
+            "Ensure AUTH_SECRET_KEY matches the application configuration."
+        )
     return key
 
 

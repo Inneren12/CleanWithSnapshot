@@ -33,7 +33,11 @@ def get_auth_secret() -> str:
     if secret:
         return secret
 
-    raise ValueError("AUTH_SECRET_KEY must be set to rekey blind indexes (required for all environments).")
+    raise ValueError(
+        "AUTH_SECRET_KEY must be set to run this migration. "
+        "This migration encrypts/decrypts PII and recomputes blind indexes. "
+        "Ensure AUTH_SECRET_KEY matches the application configuration."
+    )
 
 
 def get_encryption_key() -> str:
