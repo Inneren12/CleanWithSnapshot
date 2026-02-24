@@ -96,3 +96,4 @@ def test_blind_hash_uses_pii_key():
 
     finally:
         settings.pii_blind_index_key = original_blind_key
+        importlib.reload(encryption)
