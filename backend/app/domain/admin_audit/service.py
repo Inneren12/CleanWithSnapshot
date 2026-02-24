@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity
@@ -118,11 +118,73 @@ def _calculate_entry_hash(entry: AdminAuditLog, prev_hash: str | None) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-async def _get_last_hash(session: AsyncSession) -> str | None:
-    stmt = select(AdminAuditLog.hash).order_by(
+async def _acquire_org_lock(session: AsyncSession, org_id: uuid.UUID) -> None:
+    """
+    Acquire a Postgres advisory transaction lock for the organization.
+    This ensures that concurrent audit log insertions for the same org are serialized,
+    preventing hash chain forks.
+
+    Safe to call on SQLite (no-op).
+    """
+    # Check for Postgres dialect
+    if session.bind and session.bind.dialect.name != "postgresql":
+        return
+
+    # Use hashtext to derive a lock key from the org_id UUID string.
+    # pg_advisory_xact_lock will hold the lock until the transaction ends.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:org_id))"),
+        {"org_id": str(org_id)}
+    )
+
+
+async def _get_last_hash(session: AsyncSession, org_id: uuid.UUID) -> str | None:
+    stmt = select(AdminAuditLog.hash).where(
+        AdminAuditLog.org_id == org_id
+    ).order_by(
         AdminAuditLog.created_at.desc(), AdminAuditLog.audit_id.desc()
     ).limit(1)
     return await session.scalar(stmt)
+
+
+async def verify_chain(session: AsyncSession, org_id: uuid.UUID, limit: int = 100) -> bool:
+    """
+    Verify the integrity of the audit log hash chain for an organization.
+
+    Checks:
+    1. Each entry's prev_hash matches the hash of the preceding entry.
+    2. Each entry's hash matches the recomputed hash of its content.
+    """
+    stmt = select(AdminAuditLog).where(
+        AdminAuditLog.org_id == org_id
+    ).order_by(
+        AdminAuditLog.created_at.desc(),
+        AdminAuditLog.audit_id.desc()
+    ).limit(limit)
+
+    result = await session.execute(stmt)
+    rows = list(result.scalars().all())
+
+    # Process in chronological order (oldest to newest)
+    rows.reverse()
+
+    for i, entry in enumerate(rows):
+        # 1. Verify internal hash integrity
+        # Fix for SQLite (tests) where datetime might be returned as naive
+        if entry.created_at and entry.created_at.tzinfo is None:
+            entry.created_at = entry.created_at.replace(tzinfo=timezone.utc)
+
+        recomputed = _calculate_entry_hash(entry, entry.prev_hash)
+        if recomputed != entry.hash:
+            return False
+
+        # 2. Verify link to previous entry in this batch
+        if i > 0:
+            prev_entry = rows[i-1]
+            if entry.prev_hash != prev_entry.hash:
+                return False
+
+    return True
 
 
 async def audit_admin_action(
@@ -175,8 +237,11 @@ async def audit_admin_action(
         created_at=datetime.now(timezone.utc),  # Explicit timestamp for hash consistency
     )
 
+    # Acquire lock to ensure chain linearity
+    await _acquire_org_lock(session, resolved_org_id)
+
     # Calculate hash chain
-    prev_hash = await _get_last_hash(session)
+    prev_hash = await _get_last_hash(session, resolved_org_id)
     log.prev_hash = prev_hash
     log.hash = _calculate_entry_hash(log, prev_hash)
 
@@ -251,8 +316,11 @@ async def record_system_action(
         created_at=datetime.now(timezone.utc),
     )
 
+    # Acquire lock to ensure chain linearity
+    await _acquire_org_lock(session, org_id)
+
     # Calculate hash chain
-    prev_hash = await _get_last_hash(session)
+    prev_hash = await _get_last_hash(session, org_id)
     log.prev_hash = prev_hash
     log.hash = _calculate_entry_hash(log, prev_hash)
 
