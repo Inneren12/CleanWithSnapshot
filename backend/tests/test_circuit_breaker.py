@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import time
 
 import anyio
@@ -90,5 +91,39 @@ async def test_circuit_timeout_applies_to_future_returned_by_function():
 
     with pytest.raises(TimeoutError):
         await breaker.call(lambda: future)
+
+    assert breaker.state == "open"
+
+
+@pytest.mark.anyio
+async def test_circuit_timeout_override_takes_precedence_over_default_timeout():
+    breaker = CircuitBreaker(
+        name="stripe-timeout-override",
+        failure_threshold=1,
+        recovery_time=1.0,
+        window_seconds=10,
+        timeout_seconds=0.5,
+    )
+
+    with pytest.raises(TimeoutError):
+        await breaker.call(lambda: anyio.sleep(0.05), timeout_seconds=0.01)
+
+    assert breaker.state == "open"
+
+
+@pytest.mark.anyio
+async def test_circuit_timeout_applies_to_concurrent_futures_future():
+    breaker = CircuitBreaker(
+        name="stripe-concurrent-future-timeout",
+        failure_threshold=1,
+        recovery_time=1.0,
+        window_seconds=10,
+        timeout_seconds=0.01,
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(time.sleep, 0.05)
+        with pytest.raises(TimeoutError):
+            await breaker.call(lambda: future)
 
     assert breaker.state == "open"

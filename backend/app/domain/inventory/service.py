@@ -799,6 +799,9 @@ async def mark_purchase_order_received(
         raise ValueError("Only ordered purchase orders can be marked as received")
 
     for po_item in purchase_order.items:
+        # Use an atomic in-place increment to avoid the read-modify-write race
+        # and reduce lock contention versus a separate SELECT ... FOR UPDATE on
+        # inventory_items for each line item.
         update_stmt = (
             update(db_models.InventoryItem)
             .where(
@@ -809,7 +812,9 @@ async def mark_purchase_order_received(
         )
         update_result = await session.execute(update_stmt)
         if update_result.rowcount != 1:
-            raise ValueError("One or more inventory items not found")
+            raise ValueError(
+                f"Atomic inventory update expected 1 row, got {update_result.rowcount}"
+            )
 
     purchase_order.status = schemas.PurchaseOrderStatus.received.value
     purchase_order.received_at = datetime.now(timezone.utc)
