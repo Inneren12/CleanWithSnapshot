@@ -4,6 +4,8 @@ Revision ID: 20231027_1200_encrypt_pii
 Revises: ff1a2b3c4d5e
 Create Date: 2023-10-27 12:00:00.000000
 
+REQUIRED ENV VARS:
+  AUTH_SECRET_KEY (mandatory)
 """
 
 import base64
@@ -28,10 +30,7 @@ depends_on = None
 def _get_secret_key() -> str:
     key = os.getenv("AUTH_SECRET_KEY")
     if not key:
-        app_env = os.getenv("APP_ENV", "dev")
-        if app_env in ("dev", "local", "test"):
-            return "dev-auth-secret"
-        raise ValueError("AUTH_SECRET_KEY must be set for production migration")
+        raise ValueError("AUTH_SECRET_KEY must be set (env var)")
     return key
 
 
