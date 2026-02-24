@@ -102,13 +102,19 @@ def _system_actor_payload() -> dict[str, str]:
     }
 
 
-def _calculate_entry_hash(entry: AdminAuditLog, prev_hash: str | None) -> str:
+def _calculate_entry_hash(
+    entry: AdminAuditLog,
+    prev_hash: str | None,
+    *,
+    created_at_override: datetime | None = None,
+) -> str:
+    created_at = created_at_override if created_at_override is not None else entry.created_at
     payload = {
         "audit_id": str(entry.audit_id),
         "org_id": str(entry.org_id),
         "action": entry.action,
         "actor": entry.actor,
-        "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        "created_at": created_at.isoformat() if created_at else None,
         "prev_hash": prev_hash,
         "before": entry.before,
         "after": entry.after,
@@ -126,8 +132,7 @@ async def _acquire_org_lock(session: AsyncSession, org_id: uuid.UUID) -> None:
 
     Safe to call on SQLite (no-op).
     """
-    # Check for Postgres dialect
-    if session.bind and session.bind.dialect.name != "postgresql":
+    if not session.bind or session.bind.dialect.name != "postgresql":
         return
 
     # Use hashtext to derive a lock key from the org_id UUID string.
@@ -169,12 +174,16 @@ async def verify_chain(session: AsyncSession, org_id: uuid.UUID, limit: int = 10
     rows.reverse()
 
     for i, entry in enumerate(rows):
-        # 1. Verify internal hash integrity
-        # Fix for SQLite (tests) where datetime might be returned as naive
-        if entry.created_at and entry.created_at.tzinfo is None:
-            entry.created_at = entry.created_at.replace(tzinfo=timezone.utc)
+        # 1. Verify internal hash integrity without mutating ORM state
+        created_at_norm = entry.created_at
+        if created_at_norm and created_at_norm.tzinfo is None:
+            created_at_norm = created_at_norm.replace(tzinfo=timezone.utc)
 
-        recomputed = _calculate_entry_hash(entry, entry.prev_hash)
+        recomputed = _calculate_entry_hash(
+            entry,
+            entry.prev_hash,
+            created_at_override=created_at_norm,
+        )
         if recomputed != entry.hash:
             return False
 

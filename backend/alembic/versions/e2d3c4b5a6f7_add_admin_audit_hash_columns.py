@@ -1,6 +1,8 @@
 """add admin audit hash columns
 
-Revision ID: b1c2d3e4f5a6
+This migration supersedes a prior local draft before merge.
+
+Revision ID: e2d3c4b5a6f7
 Revises: c0e1f2a3b4c5
 Create Date: 2026-02-24 00:00:00.000000
 """
