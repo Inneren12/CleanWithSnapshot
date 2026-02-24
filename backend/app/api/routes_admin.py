@@ -12124,16 +12124,6 @@ def _worker_availability_indicator(
     return f"🟢 {html.escape(tr(lang, 'admin.workers.free_now'))}"
 
 
-_DANGEROUS_CSV_PREFIXES = ("=", "+", "-", "@", "\t")
-
-
-def _safe_csv_value(value: object) -> str:
-    text = "" if value is None else str(value)
-    if not text:
-        return ""
-    if text.startswith(_DANGEROUS_CSV_PREFIXES):
-        return f"'{text}"
-    return text
 
 
 def _resolve_worker_filters(
@@ -12362,7 +12352,7 @@ def _workers_csv_response(workers: list[Worker], filename: str) -> Response:
             ", ".join(worker.skills or []),
             worker.created_at.isoformat() if worker.created_at else "",
         ]
-        writer.writerow([_safe_csv_value(value) for value in row_values])
+        writer.writerow([ops_service.safe_csv_value(value) for value in row_values])
     csv_content = csv_buffer.getvalue()
     return Response(
         content=csv_content,
@@ -15811,7 +15801,7 @@ async def admin_worker_export(
             booking.base_charge_cents if booking else "",
             booking_client,
         ]
-        writer.writerow([_safe_csv_value(value) for value in row_values])
+        writer.writerow([ops_service.safe_csv_value(value) for value in row_values])
     csv_content = csv_buffer.getvalue()
     return Response(content=csv_content, media_type="text/csv")
 
