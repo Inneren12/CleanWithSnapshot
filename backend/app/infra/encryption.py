@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import os
 from typing import Any
 
@@ -9,7 +10,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from sqlalchemy.engine.interfaces import Dialect
-from sqlalchemy.types import String, TypeDecorator
+from sqlalchemy.types import Text, TypeDecorator
 
 from app.settings import settings
 
@@ -35,7 +36,7 @@ _CIPHER_SUITE = Fernet(_derive_key())
 class EncryptedString(TypeDecorator):
     """Encrypts string values using Fernet (symmetric encryption)."""
 
-    impl = String
+    impl = Text
     cache_ok = True
 
     def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
@@ -68,4 +69,5 @@ def blind_hash(value: str | None) -> str | None:
     if not value:
         return None
     normalized = value.strip().lower()
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    secret = settings.auth_secret_key.get_secret_value().encode("utf-8")
+    return hmac.new(secret, normalized.encode("utf-8"), hashlib.sha256).hexdigest()

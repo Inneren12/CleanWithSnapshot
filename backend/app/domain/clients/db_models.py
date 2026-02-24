@@ -68,10 +68,10 @@ class ClientUser(Base):
         nullable=False,
         default=lambda: settings.default_org_id,
     )
-    email: Mapped[str] = mapped_column(EncryptedString(255), nullable=False)
+    email: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
     email_blind_index: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
-    name: Mapped[str | None] = mapped_column(EncryptedString(255))
-    phone: Mapped[str | None] = mapped_column(EncryptedString(50))
+    name: Mapped[str | None] = mapped_column(EncryptedString())
+    phone: Mapped[str | None] = mapped_column(EncryptedString())
     address: Mapped[str | None] = mapped_column(String(500))
     notes: Mapped[str | None] = mapped_column(Text())
     is_active: Mapped[bool] = mapped_column(

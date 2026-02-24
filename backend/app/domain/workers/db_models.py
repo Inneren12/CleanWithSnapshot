@@ -29,11 +29,11 @@ class Worker(Base):
         ForeignKey("teams.team_id", use_alter=True, name="fk_workers_team_id"),
         nullable=False,
     )
-    name: Mapped[str] = mapped_column(EncryptedString(120), nullable=False)
-    phone: Mapped[str] = mapped_column(EncryptedString(50), nullable=False)
+    name: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
+    phone: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
     phone_blind_index: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     password_hash: Mapped[str | None] = mapped_column(String(255))
-    email: Mapped[str | None] = mapped_column(EncryptedString(255))
+    email: Mapped[str | None] = mapped_column(EncryptedString())
     email_blind_index: Mapped[str | None] = mapped_column(String(64), index=True)
     role: Mapped[str | None] = mapped_column(String(80))
     hourly_rate_cents: Mapped[int | None] = mapped_column(Integer)

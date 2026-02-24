@@ -15,17 +15,13 @@ import os
 # Add project root to path for imports
 sys.path.append(os.getcwd())
 
-from app.infra.encryption import encrypt_value
+from app.infra.encryption import encrypt_value, blind_hash
 
 # revision identifiers, used by Alembic.
 revision = '20231027_1200_encrypt_pii'
 down_revision = '0089_checkout_attempt'
 branch_labels = None
 depends_on = None
-
-def blind_hash(val):
-    if not val: return None
-    return hashlib.sha256(val.strip().lower().encode()).hexdigest()
 
 def upgrade():
     # 1. Add blind index columns
@@ -36,6 +32,18 @@ def upgrade():
     op.create_index(op.f('ix_client_users_email_blind_index'), 'client_users', ['email_blind_index'], unique=True)
     op.create_index(op.f('ix_workers_email_blind_index'), 'workers', ['email_blind_index'], unique=False)
     op.create_index(op.f('ix_workers_phone_blind_index'), 'workers', ['phone_blind_index'], unique=False)
+
+    # 1.5 Alter columns to TEXT to accommodate ciphertext (Fernet expands size)
+    # Using batch mode for SQLite compatibility
+    with op.batch_alter_table('client_users') as batch_op:
+        batch_op.alter_column('email', type_=sa.Text(), existing_type=sa.String(255))
+        batch_op.alter_column('name', type_=sa.Text(), existing_type=sa.String(255))
+        batch_op.alter_column('phone', type_=sa.Text(), existing_type=sa.String(50))
+
+    with op.batch_alter_table('workers') as batch_op:
+        batch_op.alter_column('email', type_=sa.Text(), existing_type=sa.String(255))
+        batch_op.alter_column('name', type_=sa.Text(), existing_type=sa.String(120))
+        batch_op.alter_column('phone', type_=sa.Text(), existing_type=sa.String(50))
 
     # 2. Data Migration
     bind = op.get_bind()
