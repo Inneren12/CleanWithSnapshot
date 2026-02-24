@@ -67,11 +67,12 @@ class EncryptedString(TypeDecorator):
             if settings.app_env in SECURE_ENVIRONMENTS:
                 raise ValueError("Decryption failed in secure environment") from exc
 
-            # Fallback for dev/test
+            # Fallback for dev/test: return None to avoid ciphertext-as-plaintext poisoning.
+            # Corrupted/mismatched encrypted rows may therefore surface as None and must be handled by callers/tests.
             logger.warning(
-                "Decryption failed in non-secure environment (%s). Returning None instead of ciphertext. Error: %s",
+                "Decryption failed in non-secure environment (%s). Returning None instead of ciphertext. exc_type=%s",
                 settings.app_env,
-                exc,
+                type(exc).__name__,
             )
             return None
 

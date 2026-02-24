@@ -21,6 +21,7 @@ def test_decrypt_fail_dev_returns_none(caplog):
         # Verify log message
         assert "Decryption failed in non-secure environment" in caplog.text
         assert "Returning None instead of ciphertext" in caplog.text
+        assert "exc_type=" in caplog.text
 
 def test_decrypt_fail_prod_raises():
     """
