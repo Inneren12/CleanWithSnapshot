@@ -1,4 +1,6 @@
 import secrets
+import hmac
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Tuple
 
@@ -6,13 +8,28 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.admin_audit import service as audit_service
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.domain.admin_audit import service as audit_service
+else:
+    # Lazy import to avoid circular dependency loop:
+    # admin_audit.service -> admin_audit.db_models -> infra.db -> infra.models -> break_glass.db_models -> break_glass.service -> admin_audit.service
+    import sys
+    # We will import it inside functions or lazily
+    pass
+
 from app.domain.break_glass.db_models import BreakGlassScope, BreakGlassSession, BreakGlassStatus
-from app.infra.auth import hash_api_token
 from app.infra.metrics import metrics
 from app.settings import settings
 
 DEFAULT_TTL_MINUTES = 30
+
+
+def _hash_token(token: str) -> str:
+    """Secure deterministic hash using HMAC-SHA256 with system secret."""
+    key = settings.auth_secret_key.get_secret_value().encode()
+    return hmac.new(key, token.encode(), hashlib.sha256).hexdigest()
 
 
 def _normalize_ttl(ttl_minutes: int | None) -> int:
@@ -51,7 +68,7 @@ async def create_session(
 ) -> Tuple[str, BreakGlassSession]:
     ttl = _normalize_ttl(ttl_minutes)
     token = secrets.token_urlsafe(32)
-    token_hash = hash_api_token(token)
+    token_hash = _hash_token(token)
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=ttl)
 
@@ -98,6 +115,7 @@ async def review_session(
     review_notes: str,
     request_id: str | None = None,
 ) -> BreakGlassSession:
+    from app.domain.admin_audit import service as audit_service
     record.reviewed_at = datetime.now(timezone.utc)
     record.reviewed_by = reviewed_by
     record.review_notes = review_notes
@@ -123,6 +141,7 @@ async def expire_session_if_needed(
     record: BreakGlassSession,
     request_id: str | None = None,
 ) -> None:
+    from app.domain.admin_audit import service as audit_service
     now = datetime.now(timezone.utc)
     expires_at = record.expires_at
     if expires_at.tzinfo is None:
@@ -151,7 +170,7 @@ async def expire_session_if_needed(
 async def get_valid_session(
     session: AsyncSession, *, org_id, token: str, request_id: str | None = None
 ) -> BreakGlassSession | None:
-    token_hash = hash_api_token(token)
+    token_hash = _hash_token(token)
     result = await session.execute(
         select(BreakGlassSession).where(
             BreakGlassSession.token_hash == token_hash,

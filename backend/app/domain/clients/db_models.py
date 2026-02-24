@@ -16,9 +16,11 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy import event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infra.db import UUID_TYPE, Base
+from app.infra.encryption import EncryptedString, blind_hash
 from app.settings import settings
 
 
@@ -66,9 +68,10 @@ class ClientUser(Base):
         nullable=False,
         default=lambda: settings.default_org_id,
     )
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    name: Mapped[str | None] = mapped_column(String(255))
-    phone: Mapped[str | None] = mapped_column(String(50))
+    email: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
+    email_blind_index: Mapped[str | None] = mapped_column(String(64), index=True)
+    name: Mapped[str | None] = mapped_column(EncryptedString())
+    phone: Mapped[str | None] = mapped_column(EncryptedString())
     address: Mapped[str | None] = mapped_column(String(500))
     notes: Mapped[str | None] = mapped_column(Text())
     is_active: Mapped[bool] = mapped_column(
@@ -88,7 +91,10 @@ class ClientUser(Base):
         nullable=False,
     )
 
-    __table_args__ = (Index("ix_client_users_org_id", "org_id"),)
+    __table_args__ = (
+        Index("ix_client_users_org_id", "org_id"),
+        UniqueConstraint("org_id", "email_blind_index", name="uq_client_users_org_email"),
+    )
 
 
 class ClientNote(Base):
@@ -205,3 +211,10 @@ class ClientFeedback(Base):
         Index("ix_client_feedback_org_client_created", "org_id", "client_id", "created_at"),
         UniqueConstraint("org_id", "booking_id", name="uq_client_feedback_org_booking"),
     )
+
+
+@event.listens_for(ClientUser, "before_insert")
+@event.listens_for(ClientUser, "before_update")
+def _set_client_blind_index(mapper, connection, target) -> None:
+    if target.email:
+        target.email_blind_index = blind_hash(target.email, org_id=target.org_id)

@@ -122,6 +122,7 @@ class MeResponse(BaseModel):
 class TOTPEnrollResponse(BaseModel):
     secret: str
     otpauth_uri: str
+    backup_codes: list[str]
 
 
 class TOTPVerifyRequest(BaseModel):
@@ -313,9 +314,9 @@ async def enroll_totp(
     user = await session.get(User, identity.user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-    secret, uri = await saas_service.enroll_totp(session, user)
+    secret, uri, backup_codes = await saas_service.enroll_totp(session, user)
     await session.commit()
-    return TOTPEnrollResponse(secret=secret, otpauth_uri=uri)
+    return TOTPEnrollResponse(secret=secret, otpauth_uri=uri, backup_codes=backup_codes)
 
 
 @router.post("/2fa/verify")

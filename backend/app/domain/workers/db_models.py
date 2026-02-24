@@ -2,12 +2,14 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING
 import uuid
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, func
+import sqlalchemy as sa
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, func, event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
 from app.infra.db import UUID_TYPE
 from app.infra.db import Base
+from app.infra.encryption import EncryptedString, blind_hash
 from app.settings import settings
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -28,10 +30,12 @@ class Worker(Base):
         ForeignKey("teams.team_id", use_alter=True, name="fk_workers_team_id"),
         nullable=False,
     )
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
-    phone: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
+    phone: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
+    phone_blind_index: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     password_hash: Mapped[str | None] = mapped_column(String(255))
-    email: Mapped[str | None] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(EncryptedString())
+    email_blind_index: Mapped[str | None] = mapped_column(String(64), index=True)
     role: Mapped[str | None] = mapped_column(String(80))
     hourly_rate_cents: Mapped[int | None] = mapped_column(Integer)
     rating_avg: Mapped[float | None] = mapped_column(Float)
@@ -95,8 +99,9 @@ class Worker(Base):
     __table_args__ = (
         Index("ix_workers_org_id", "org_id"),
         Index("ix_workers_org_active", "org_id", "is_active"),
-        Index("ix_workers_phone", "phone"),
+        Index("ix_workers_phone_idx", "phone_blind_index"),
         Index("ix_workers_archived_at", "archived_at"),
+        sa.UniqueConstraint("org_id", "phone_blind_index", name="uq_workers_org_phone"),
     )
 
 
@@ -255,3 +260,12 @@ class WorkerCertificate(Base):
         Index("ix_worker_certificates_status", "status"),
         Index("ix_worker_certificates_expires_at", "expires_at"),
     )
+
+
+@event.listens_for(Worker, "before_insert")
+@event.listens_for(Worker, "before_update")
+def _set_worker_blind_index(mapper, connection, target) -> None:
+    if target.email:
+        target.email_blind_index = blind_hash(target.email, org_id=target.org_id)
+    if target.phone:
+        target.phone_blind_index = blind_hash(target.phone, org_id=target.org_id)

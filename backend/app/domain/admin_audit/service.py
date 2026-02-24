@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 import uuid
 
@@ -9,10 +11,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity
+# db_models imported later or partially to avoid cycle if necessary
+# Note: we need to break the cycle. service -> db_models -> service is bad.
+# But here service imports db_models.
+# And db_models imports infra.db -> infra.models -> break_glass -> service -> admin_audit.service
+# Cycle: admin_audit.service -> admin_audit.db_models -> infra.db -> infra.models -> break_glass -> admin_audit.service
+# To fix: admin_audit.service should NOT be imported by break_glass at top level if possible, or use TYPE_CHECKING.
+# Let's inspect break_glass/service.py
 from app.domain.admin_audit.db_models import (
-    AdminAuditActionType,
     AdminAuditLog,
     AdminAuditSensitivity,
+    AdminAuditActionType,
 )
 from app.infra.logging import redact_pii
 from app.settings import settings
@@ -93,6 +102,29 @@ def _system_actor_payload() -> dict[str, str]:
     }
 
 
+def _calculate_entry_hash(entry: AdminAuditLog, prev_hash: str | None) -> str:
+    payload = {
+        "audit_id": str(entry.audit_id),
+        "org_id": str(entry.org_id),
+        "action": entry.action,
+        "actor": entry.actor,
+        "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        "prev_hash": prev_hash,
+        "before": entry.before,
+        "after": entry.after,
+        "context": entry.context,
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+async def _get_last_hash(session: AsyncSession) -> str | None:
+    stmt = select(AdminAuditLog.hash).order_by(
+        AdminAuditLog.created_at.desc(), AdminAuditLog.audit_id.desc()
+    ).limit(1)
+    return await session.scalar(stmt)
+
+
 async def audit_admin_action(
     session: AsyncSession,
     *,
@@ -126,6 +158,7 @@ async def audit_admin_action(
         sanitized_after = _sanitize_payload(after)
 
     log = AdminAuditLog(
+        audit_id=str(uuid.uuid4()),
         org_id=resolved_org_id,
         admin_id=resolved_admin_id,
         action=action,
@@ -139,7 +172,14 @@ async def audit_admin_action(
         context=sanitized_context,
         before=sanitized_before,
         after=sanitized_after,
+        created_at=datetime.now(timezone.utc),  # Explicit timestamp for hash consistency
     )
+
+    # Calculate hash chain
+    prev_hash = await _get_last_hash(session)
+    log.prev_hash = prev_hash
+    log.hash = _calculate_entry_hash(log, prev_hash)
+
     session.add(log)
     return log
 
@@ -194,6 +234,7 @@ async def record_system_action(
     resolved_action_type = action_type or AdminAuditActionType.WRITE
     resolved_sensitivity = sensitivity_level or AdminAuditSensitivity.NORMAL
     log = AdminAuditLog(
+        audit_id=str(uuid.uuid4()),
         org_id=org_id,
         admin_id=None,
         action=action,
@@ -207,7 +248,14 @@ async def record_system_action(
         context=_sanitize_payload(context) if context else None,
         before=_sanitize_payload(before),
         after=_sanitize_payload(after),
+        created_at=datetime.now(timezone.utc),
     )
+
+    # Calculate hash chain
+    prev_hash = await _get_last_hash(session)
+    log.prev_hash = prev_hash
+    log.hash = _calculate_entry_hash(log, prev_hash)
+
     session.add(log)
     return log
 

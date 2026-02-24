@@ -41,20 +41,30 @@ def generate_totp_code(secret_base32: str, *, for_time: datetime | None = None) 
     return _hotp(secret, counter)
 
 
-def verify_totp_code(secret_base32: str, code: str, *, window: int = 1, now: datetime | None = None) -> bool:
+def generate_backup_codes(count: int = 10, length: int = 10) -> list[str]:
+    codes = []
+    alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"  # Exclude similar chars
+    for _ in range(count):
+        codes.append("".join(secrets.choice(alphabet) for _ in range(length)))
+    return codes
+
+
+def verify_totp_code(secret_base32: str, code: str, *, window: int = 1, now: datetime | None = None) -> int | None:
+    """Returns the time counter if valid, None otherwise."""
     if not code or len(code) != DIGITS or not code.isdigit():
-        return False
+        return None
     try:
         secret = _decode_secret(secret_base32)
     except Exception:  # noqa: BLE001
-        return False
+        return None
     timestamp = int((now or datetime.now(timezone.utc)).timestamp())
     current_counter = timestamp // TIME_STEP_SECONDS
     for offset in range(-window, window + 1):
-        candidate = _hotp(secret, current_counter + offset)
+        counter = current_counter + offset
+        candidate = _hotp(secret, counter)
         if hmac.compare_digest(candidate, code):
-            return True
-    return False
+            return counter
+    return None
 
 
 def build_otpauth_uri(label: str, secret_base32: str, *, issuer: str | None = None) -> str:

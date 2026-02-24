@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.admin_audit import service as admin_audit_service
 from app.domain.bookings import photos_service
 from app.domain.bookings.db_models import Booking, OrderPhoto
 from app.domain.data_rights.db_models import DataDeletionRequest, DataExportRequest
@@ -294,21 +295,9 @@ async def _anonymize_lead(
         )
         invoices_detached = detach.rowcount or 0
 
-    lead.name = "Deleted contact"
-    lead.phone = "deleted"
-    lead.email = None
-    lead.postal_code = None
-    lead.address = None
-    lead.access_notes = None
-    lead.parking = None
-    lead.pets = None
-    lead.allergies = None
-    lead.notes = None
-    lead.structured_inputs = {}
-    lead.estimate_snapshot = {}
-    lead.preferred_dates = []
-    lead.pending_deletion = False
-    lead.deleted_at = datetime.now(tz=timezone.utc)
+    # Hard delete the lead to break the link between ID and PII
+    lead_id = lead.lead_id
+    await session.delete(lead)
 
     return photo_count, invoices_detached
 
@@ -336,16 +325,36 @@ async def process_pending_deletions(
 
         lead_result = await session.execute(select(Lead).where(*lead_filters))
         leads = list(lead_result.scalars().all())
+
+        request_photos_deleted = 0
+        request_invoices_detached = 0
+
         for lead in leads:
-            photo_count, detached = await _anonymize_lead(session, lead, storage=storage)
+            cnt, det = await _anonymize_lead(session, lead, storage=storage)
             leads_anonymized += 1
-            photos_deleted += photo_count
-            invoices_detached += detached
+            request_photos_deleted += cnt
+            request_invoices_detached += det
+            photos_deleted += cnt
+            invoices_detached += det
 
         request.status = "processed"
         request.processed_at = datetime.now(tz=timezone.utc)
         request.processed_notes = f"anonymized:{len(leads)}"
         processed += 1
+
+        # Log the deletion event
+        await admin_audit_service.record_system_action(
+            session,
+            org_id=request.org_id,
+            action="gdpr_deletion_processed",
+            resource_type="data_deletion_request",
+            resource_id=str(request.request_id),
+            context={
+                "leads_deleted": len(leads),
+                "photos_deleted": request_photos_deleted,
+                "invoices_detached": request_invoices_detached,
+            }
+        )
 
     await session.commit()
     return {
