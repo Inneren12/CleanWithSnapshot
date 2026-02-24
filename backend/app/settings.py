@@ -156,6 +156,7 @@ class Settings(BaseSettings):
     password_hash_argon2_memory_cost: int = Field(65536)
     password_hash_argon2_parallelism: int = Field(2)
     password_hash_bcrypt_cost: int = Field(12)
+    password_hash_legacy_sha256_iterations: int = Field(600000)
     session_ttl_minutes_worker: int = Field(60 * 12)
     session_ttl_minutes_client: int = Field(60 * 24 * 7)
     session_rotation_grace_minutes: int = Field(5)

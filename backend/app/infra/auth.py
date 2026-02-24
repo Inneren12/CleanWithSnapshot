@@ -27,6 +27,7 @@ class PasswordHasher:
     argon2_memory_cost: int = 65536
     argon2_parallelism: int = 2
     bcrypt_cost: int = 12
+    legacy_sha256_iterations: int = 600000
 
     def __post_init__(self) -> None:
         self._argon2 = Argon2Hasher(
@@ -43,6 +44,32 @@ class PasswordHasher:
         if self.default_scheme == "bcrypt":
             return self._hash_bcrypt(password)
         return self._hash_argon2(password)
+
+    def harden_legacy_hash(self, stored_hash: str) -> str | None:
+        """Harden an existing weak SHA256 hash using PBKDF2 wrapping (Outer PBKDF2).
+
+        This can be performed without knowing the original password.
+        """
+        if not stored_hash.startswith(LEGACY_SHA256_PREFIX):
+            return None
+        raw_content = stored_hash.removeprefix(LEGACY_SHA256_PREFIX)
+        parts = raw_content.split("$")
+        if len(parts) < 2 or parts[0] == "pbkdf2":
+            # Already hardened or invalid
+            return None
+
+        # Format: sha256$salt$digest
+        digest = parts[-1]
+        salt = "$".join(parts[:-1])
+
+        hardened_digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            digest.encode(),
+            salt.encode(),
+            self.legacy_sha256_iterations,
+        ).hex()
+
+        return f"{LEGACY_SHA256_PREFIX}pbkdf2${self.legacy_sha256_iterations}${salt}${hardened_digest}"
 
     def verify(self, password: str, stored_hash: str) -> tuple[bool, str | None]:
         if not stored_hash:
@@ -95,15 +122,55 @@ class PasswordHasher:
         return True, None
 
     def _verify_legacy_sha256(self, password: str, stored_hash: str) -> tuple[bool, str | None]:
+        """Verify legacy SHA256 passwords, supporting both raw and PBKDF2-hardened formats.
+
+        Formats:
+          - Raw (Weak): sha256$salt$digest
+          - Hardened (Wrapped): sha256$pbkdf2$iterations$salt$hardened_digest
+
+        Hardened format uses 'Outer PBKDF2': hardened_digest = PBKDF2(sha256(salt:password), salt, iterations)
+        """
         try:
-            salt, digest = stored_hash.removeprefix(LEGACY_SHA256_PREFIX).split("$", 1)
-        except ValueError:
+            raw_content = stored_hash.removeprefix(LEGACY_SHA256_PREFIX)
+            parts = raw_content.split("$")
+            if len(parts) >= 4 and parts[0] == "pbkdf2":
+                # Hardened format: sha256$pbkdf2$iterations$salt$digest
+                # salt may contain '$'
+                iterations = int(parts[1])
+                digest = parts[-1]
+                salt = "$".join(parts[2:-1])
+                is_hardened = True
+            elif len(parts) >= 2:
+                # Legacy weak format: sha256$salt$digest
+                # salt may contain '$'
+                digest = parts[-1]
+                salt = "$".join(parts[:-1])
+                iterations = 1
+                is_hardened = False
+            else:
+                return False, None
+        except (ValueError, IndexError):
             return False, None
-        candidate = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
+
+        # Step 1: Compute the inner SHA256 (common to both legacy formats)
+        inner_candidate = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
+
+        if is_hardened:
+            # Step 2: Apply the outer PBKDF2 wrapper
+            candidate = hashlib.pbkdf2_hmac(
+                "sha256",
+                inner_candidate.encode(),
+                salt.encode(),
+                iterations,
+            ).hex()
+        else:
+            candidate = inner_candidate
+
         if not secrets.compare_digest(candidate, digest):
             return False, None
-        upgraded = self.hash(password)
-        return True, upgraded
+
+        # Always upgrade to the modern default scheme (Argon2id/BCrypt) on successful legacy login
+        return True, self.hash(password)
 
 
 def password_hasher_from_settings(settings) -> PasswordHasher:
@@ -113,6 +180,7 @@ def password_hasher_from_settings(settings) -> PasswordHasher:
         argon2_memory_cost=getattr(settings, "password_hash_argon2_memory_cost", 65536),
         argon2_parallelism=getattr(settings, "password_hash_argon2_parallelism", 2),
         bcrypt_cost=getattr(settings, "password_hash_bcrypt_cost", 12),
+        legacy_sha256_iterations=getattr(settings, "password_hash_legacy_sha256_iterations", 600000),
     )
 
 
