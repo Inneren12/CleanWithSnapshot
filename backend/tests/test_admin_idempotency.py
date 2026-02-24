@@ -68,6 +68,8 @@ def test_payment_idempotency_prevents_duplicate(client, async_session_maker):
         json={"amount_cents": 500, "method": "cash"},
     )
     assert second.status_code == 201
+    assert second.headers.get("idempotency-key") == "pay-once"
+    assert second.json() == first.json()
 
     async def _count_payments() -> int:
         async with async_session_maker() as session:
@@ -543,6 +545,7 @@ def test_record_payment_replay_does_not_reexecute_handler(client, async_session_
         json={"amount_cents": 500, "method": "cash"},
     )
     assert second.status_code == 201
+    assert second.headers.get("idempotency-key") == "pay-replay-no-reexec"
     assert second.json() == first.json()
     assert call_count == 1
 
@@ -597,6 +600,7 @@ def test_record_payment_failed_key_replays_failure_not_pending(client, async_ses
         json={"amount_cents": 500, "method": "cash"},
     )
     assert response.status_code == 500
+    assert response.headers.get("idempotency-key") == "pay-failed-replay"
     assert response.headers.get("retry-after") is None
     assert response.json() == {
         "detail": "Request processing failed",
