@@ -29,12 +29,11 @@ depends_on = None
 
 
 def get_auth_secret() -> str:
-    # 1. Try env var
     secret = os.getenv("AUTH_SECRET_KEY")
     if secret:
         return secret
 
-    raise ValueError("AUTH_SECRET_KEY must be set (env var)")
+    raise ValueError("AUTH_SECRET_KEY must be set to rekey blind indexes (required for all environments).")
 
 
 def get_encryption_key() -> str:
@@ -57,7 +56,14 @@ def get_fernet_key(secret: str) -> bytes:
     return base64.urlsafe_b64encode(kdf.derive(secret.encode()))
 
 
-def decrypt_value(value: Optional[str], cipher: Fernet) -> Optional[str]:
+def decrypt_value(
+    value: Optional[str],
+    cipher: Fernet,
+    *,
+    table: str,
+    pk_name: str,
+    pk_value: str,
+) -> Optional[str]:
     if not value:
         return None
 
@@ -68,9 +74,40 @@ def decrypt_value(value: Optional[str], cipher: Fernet) -> Optional[str]:
     try:
         return cipher.decrypt(value.encode("utf-8")).decode("utf-8")
     except Exception as exc:
-        # In migration, we might want to fail fast if decryption fails
-        print(f"Decryption failed for value starting with gAAAA: {exc}")
+        cipher_prefix = value[:16]
+        print(
+            "Decryption failed during blind-index rekey "
+            f"(table={table}, {pk_name}={pk_value}, ciphertext_prefix={cipher_prefix}): {exc}"
+        )
         raise exc
+
+
+def best_effort_drop_index(table_name: str, index_name: str) -> None:
+    names_to_try = [index_name]
+    convention_name = op.f(index_name)
+    if convention_name != index_name:
+        names_to_try.append(convention_name)
+
+    for name in names_to_try:
+        try:
+            op.drop_index(name, table_name=table_name)
+            return
+        except Exception:
+            pass
+
+
+def best_effort_drop_constraint(table_name: str, constraint_name: str, constraint_type: str = "unique") -> None:
+    names_to_try = [constraint_name]
+    convention_name = op.f(constraint_name)
+    if convention_name != constraint_name:
+        names_to_try.append(convention_name)
+
+    for name in names_to_try:
+        try:
+            op.drop_constraint(name, table_name, type_=constraint_type)
+            return
+        except Exception:
+            pass
 
 
 def compute_blind_hash(value: Optional[str], org_id: Optional[uuid.UUID], secret_key: str) -> Optional[str]:
@@ -111,20 +148,11 @@ def upgrade():
     ]
 
     for table, idx in tables_indexes:
-        try:
-            op.drop_index(idx, table_name=table)
-        except Exception:
-            pass
+        best_effort_drop_index(table, idx)
 
     # Drop potential constraints from failed runs
-    try:
-        op.drop_constraint('uq_client_users_org_email', 'client_users', type_='unique')
-    except Exception:
-        pass
-    try:
-        op.drop_constraint('uq_workers_org_phone', 'workers', type_='unique')
-    except Exception:
-        pass
+    best_effort_drop_constraint('client_users', 'uq_client_users_org_email')
+    best_effort_drop_constraint('workers', 'uq_workers_org_phone')
 
 
     # 2. Rekey Client Users
@@ -146,7 +174,13 @@ def upgrade():
                 continue
 
             try:
-                email = decrypt_value(email_enc, cipher)
+                email = decrypt_value(
+                    email_enc,
+                    cipher,
+                    table="client_users",
+                    pk_name="client_id",
+                    pk_value=str(cid),
+                )
                 new_hash = compute_blind_hash(email, org_id, blind_index_key)
 
                 session.execute(
@@ -175,10 +209,22 @@ def upgrade():
             wid, email_enc, phone_enc, org_id = row
 
             try:
-                email = decrypt_value(email_enc, cipher)
+                email = decrypt_value(
+                    email_enc,
+                    cipher,
+                    table="workers",
+                    pk_name="worker_id",
+                    pk_value=str(wid),
+                )
                 email_hash = compute_blind_hash(email, org_id, blind_index_key)
 
-                phone = decrypt_value(phone_enc, cipher)
+                phone = decrypt_value(
+                    phone_enc,
+                    cipher,
+                    table="workers",
+                    pk_name="worker_id",
+                    pk_value=str(wid),
+                )
                 phone_hash = compute_blind_hash(phone, org_id, blind_index_key)
 
                 session.execute(
@@ -233,29 +279,10 @@ def upgrade():
 
 
 def downgrade():
-    # Drop constraints
-    try:
-        op.drop_constraint('uq_client_users_org_email', 'client_users', type_='unique')
-    except Exception:
-        pass
-
-    try:
-        op.drop_constraint('uq_workers_org_phone', 'workers', type_='unique')
-    except Exception:
-        pass
-
-    # Drop indexes
-    try:
-        op.drop_index('ix_client_users_email_blind_index', table_name='client_users')
-    except Exception:
-        pass
-
-    try:
-        op.drop_index('ix_workers_email_blind_index', table_name='workers')
-    except Exception:
-        pass
-
-    try:
-        op.drop_index('ix_workers_phone_blind_index', table_name='workers')
-    except Exception:
-        pass
+    # Downgrade only drops indexes/constraints. It does not restore prior blind index
+    # values because that would require reverse rekey logic; underlying table data remains intact.
+    best_effort_drop_constraint('client_users', 'uq_client_users_org_email')
+    best_effort_drop_constraint('workers', 'uq_workers_org_phone')
+    best_effort_drop_index('client_users', 'ix_client_users_email_blind_index')
+    best_effort_drop_index('workers', 'ix_workers_email_blind_index')
+    best_effort_drop_index('workers', 'ix_workers_phone_blind_index')
