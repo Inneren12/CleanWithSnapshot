@@ -18,7 +18,7 @@ from app.settings import settings
 def _derive_key() -> bytes:
     # Use a static salt to ensure key consistency across restarts.
     # In a real production scenario, this salt should probably be secret too or managed carefully.
-    # Using the auth_secret_key as the source material.
+    # Using the pii_encryption_key as the source material.
     salt = b"cleaning-bot-static-salt"
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -26,7 +26,7 @@ def _derive_key() -> bytes:
         salt=salt,
         iterations=100000,
     )
-    secret = settings.auth_secret_key.get_secret_value()
+    secret = settings.pii_encryption_key.get_secret_value()
     return base64.urlsafe_b64encode(kdf.derive(secret.encode()))
 
 
@@ -80,7 +80,7 @@ def blind_hash(value: str | None, org_id: str | uuid.UUID | None = None) -> str 
     if not value:
         return None
     normalized = value.strip().lower()
-    secret = settings.auth_secret_key.get_secret_value().encode("utf-8")
+    secret = settings.pii_blind_index_key.get_secret_value().encode("utf-8")
 
     # Mix in org_id if provided to enforce isolation
     payload = normalized.encode("utf-8")

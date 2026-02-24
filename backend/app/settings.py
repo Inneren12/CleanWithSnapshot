@@ -116,6 +116,12 @@ class Settings(BaseSettings):
     auth_secret_key: SecretStr = Field(
         validation_alias=AliasChoices("AUTH_SECRET_KEY", "auth_secret_key")
     )
+    pii_encryption_key: SecretStr | None = Field(
+        None, validation_alias=AliasChoices("PII_ENCRYPTION_KEY", "pii_encryption_key")
+    )
+    pii_blind_index_key: SecretStr | None = Field(
+        None, validation_alias=AliasChoices("PII_BLIND_INDEX_KEY", "pii_blind_index_key")
+    )
     auth_token_ttl_minutes: int = Field(60 * 24)
     auth_access_token_ttl_minutes: int = Field(
         15, validation_alias=AliasChoices("auth_access_token_ttl_minutes", "auth_token_ttl_minutes")
@@ -480,6 +486,14 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @model_validator(mode="after")
+    def set_pii_keys_defaults(self) -> "Settings":
+        if self.pii_encryption_key is None:
+            self.pii_encryption_key = self.auth_secret_key
+        if self.pii_blind_index_key is None:
+            self.pii_blind_index_key = self.auth_secret_key
+        return self
 
     @model_validator(mode="after")
     def validate_prod_settings(self) -> "Settings":
