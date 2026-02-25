@@ -1,8 +1,6 @@
 """add admin audit hash columns
 
-This migration supersedes a prior local draft before merge.
-
-Revision ID: e2d3c4b5a6f7
+Revision ID: d1e2f3a4b5c6
 Revises: c0e1f2a3b4c5
 Create Date: 2026-02-24 00:00:00.000000
 """
@@ -11,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "e2d3c4b5a6f7"
+revision = "d1e2f3a4b5c6"
 down_revision = "c0e1f2a3b4c5"
 branch_labels = None
 depends_on = None
