@@ -118,13 +118,19 @@ async def test_backup_codes_constant_time_comparison(db_session):
     _, _, codes = await saas_service.enroll_totp(db_session, user)
     valid_code = codes[0]
 
+    await db_session.refresh(user)
+    stored_hash_count_before = len(user.backup_codes)
+
     # Patch hmac.compare_digest in app.domain.saas.service
     # Since we imported hmac in service.py, we patch where it is used
     with patch("app.domain.saas.service.hmac.compare_digest", side_effect=lambda a, b: a == b) as mock_compare:
         await saas_service.verify_totp(db_session, user, valid_code)
 
-        # It should be called for each backup code (10) to ensure constant time
-        assert mock_compare.call_count == len(codes)
+        # It should be called for each stored hash to ensure constant-time iteration.
+        assert mock_compare.call_count == stored_hash_count_before
+
+    await db_session.refresh(user)
+    assert len(user.backup_codes) == stored_hash_count_before - 1
 
 @pytest.mark.asyncio
 async def test_regenerate_backup_codes(db_session):

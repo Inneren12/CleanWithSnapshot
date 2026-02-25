@@ -204,6 +204,164 @@ async def test_admin_routes_reject_sessions_without_mfa(async_session_maker, cli
     assert success_resp.status_code == 200
 
 
+@pytest.mark.anyio
+async def test_regenerate_backup_codes_requires_totp_enabled(async_session_maker, client):
+    settings.admin_mfa_required = True
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "No TOTP Org")
+        user = await saas_service.create_user(session, "no-totp@example.com", "SecretPass123!")
+        await saas_service.create_membership(session, org, user, MembershipRole.OWNER)
+        await session.commit()
+
+    token = client.post(
+        "/v1/auth/login",
+        json={"email": "no-totp@example.com", "password": "SecretPass123!", "org_id": str(org.org_id)},
+    ).json()["access_token"]
+
+    response = client.post(
+        "/v1/auth/2fa/backup-codes/regenerate",
+        json={"code": "123456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "MFA not enrolled"
+
+
+@pytest.mark.anyio
+async def test_regenerate_backup_codes_rejects_invalid_code(async_session_maker, client):
+    settings.admin_mfa_required = True
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Invalid Code Org")
+        user = await saas_service.create_user(session, "invalid-code@example.com", "SecretPass123!")
+        await saas_service.create_membership(session, org, user, MembershipRole.ADMIN)
+        await session.commit()
+
+    token = client.post(
+        "/v1/auth/login",
+        json={"email": "invalid-code@example.com", "password": "SecretPass123!", "org_id": str(org.org_id)},
+    ).json()["access_token"]
+
+    enroll = client.post("/v1/auth/2fa/enroll", headers={"Authorization": f"Bearer {token}"})
+    assert enroll.status_code == 200
+    secret = enroll.json()["secret"]
+
+    verify = client.post(
+        "/v1/auth/2fa/verify",
+        json={"code": saas_service.generate_totp_code(secret)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert verify.status_code == 200
+
+    refreshed_token = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "invalid-code@example.com",
+            "password": "SecretPass123!",
+            "org_id": str(org.org_id),
+            "mfa_code": saas_service.generate_totp_code(secret),
+        },
+    ).json()["access_token"]
+
+    response = client.post(
+        "/v1/auth/2fa/backup-codes/regenerate",
+        json={"code": "123456"},
+        headers={"Authorization": f"Bearer {refreshed_token}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid MFA code"
+
+
+@pytest.mark.anyio
+async def test_regenerate_backup_codes_forbidden_for_non_admin(async_session_maker, client):
+    settings.admin_mfa_required = True
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Viewer Regen Org")
+        user = await saas_service.create_user(session, "viewer-regen@example.com", "SecretPass123!")
+        await saas_service.create_membership(session, org, user, MembershipRole.VIEWER)
+        await session.commit()
+
+    token = client.post(
+        "/v1/auth/login",
+        json={"email": "viewer-regen@example.com", "password": "SecretPass123!", "org_id": str(org.org_id)},
+    ).json()["access_token"]
+
+    response = client.post(
+        "/v1/auth/2fa/backup-codes/regenerate",
+        json={"code": "123456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_regenerate_backup_codes_rotates_codes(async_session_maker, client):
+    settings.admin_mfa_required = True
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Regen Success Org")
+        user = await saas_service.create_user(session, "regen-success@example.com", "SecretPass123!")
+        await saas_service.create_membership(session, org, user, MembershipRole.OWNER)
+        await session.commit()
+
+    token = client.post(
+        "/v1/auth/login",
+        json={"email": "regen-success@example.com", "password": "SecretPass123!", "org_id": str(org.org_id)},
+    ).json()["access_token"]
+
+    enroll = client.post("/v1/auth/2fa/enroll", headers={"Authorization": f"Bearer {token}"})
+    assert enroll.status_code == 200
+    payload = enroll.json()
+    original_backup_codes = payload["backup_codes"]
+    secret = payload["secret"]
+
+    verify = client.post(
+        "/v1/auth/2fa/verify",
+        json={"code": saas_service.generate_totp_code(secret)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert verify.status_code == 200
+
+    refreshed_token = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "regen-success@example.com",
+            "password": "SecretPass123!",
+            "org_id": str(org.org_id),
+            "mfa_code": saas_service.generate_totp_code(secret),
+        },
+    ).json()["access_token"]
+
+    regenerate = client.post(
+        "/v1/auth/2fa/backup-codes/regenerate",
+        json={"code": original_backup_codes[0]},
+        headers={"Authorization": f"Bearer {refreshed_token}"},
+    )
+    assert regenerate.status_code == 200
+    new_codes = regenerate.json()["backup_codes"]
+    assert new_codes
+
+    post_regen_token = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "regen-success@example.com",
+            "password": "SecretPass123!",
+            "org_id": str(org.org_id),
+            "mfa_code": saas_service.generate_totp_code(secret),
+        },
+    ).json()["access_token"]
+
+    old_code_after_regen = client.post(
+        "/v1/auth/2fa/verify",
+        json={"code": original_backup_codes[1]},
+        headers={"Authorization": f"Bearer {post_regen_token}"},
+    )
+    assert old_code_after_regen.status_code == 401
+    assert old_code_after_regen.json()["detail"] == "Invalid MFA code"
+
+
+
 def test_basic_auth_mfa_header_required_outside_testing(unauthenticated_client, monkeypatch):
     monkeypatch.setattr(settings, "testing", False)
     monkeypatch.setattr(settings, "app_env", "dev")
