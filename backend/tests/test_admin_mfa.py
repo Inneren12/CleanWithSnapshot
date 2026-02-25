@@ -204,6 +204,111 @@ async def test_admin_routes_reject_sessions_without_mfa(async_session_maker, cli
     assert success_resp.status_code == 200
 
 
+@pytest.mark.anyio
+async def test_regenerate_backup_codes_access_control_and_errors(async_session_maker, client):
+    settings.admin_mfa_required = True
+    async with async_session_maker() as session:
+        org = await saas_service.create_organization(session, "Backup Code Regen Org")
+        owner = await saas_service.create_user(session, "owner-regen@example.com", "SecretPass123!")
+        viewer = await saas_service.create_user(session, "viewer-regen@example.com", "SecretPass123!")
+        await saas_service.create_membership(session, org, owner, MembershipRole.OWNER)
+        await saas_service.create_membership(session, org, viewer, MembershipRole.VIEWER)
+        await session.commit()
+
+    owner_token = client.post(
+        "/v1/auth/login",
+        json={"email": "owner-regen@example.com", "password": "SecretPass123!", "org_id": str(org.org_id)},
+    ).json()["access_token"]
+
+    viewer_token = client.post(
+        "/v1/auth/login",
+        json={"email": "viewer-regen@example.com", "password": "SecretPass123!", "org_id": str(org.org_id)},
+    ).json()["access_token"]
+
+    # Case 1: TOTP not enabled yet.
+    not_enrolled = client.post(
+        "/v1/auth/2fa/backup-codes/regenerate",
+        json={"code": "123456"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert not_enrolled.status_code == 400
+    assert not_enrolled.json()["detail"] == "MFA not enrolled"
+
+    enroll = client.post("/v1/auth/2fa/enroll", headers={"Authorization": f"Bearer {owner_token}"})
+    assert enroll.status_code == 200
+    enroll_payload = enroll.json()
+    secret = enroll_payload["secret"]
+    backup_codes = enroll_payload["backup_codes"]
+
+    verify = client.post(
+        "/v1/auth/2fa/verify",
+        json={"code": saas_service.generate_totp_code(secret)},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert verify.status_code == 200
+
+    owner_token = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "owner-regen@example.com",
+            "password": "SecretPass123!",
+            "org_id": str(org.org_id),
+            "mfa_code": saas_service.generate_totp_code(secret),
+        },
+    ).json()["access_token"]
+
+    # Case 2: Invalid TOTP code.
+    invalid_code = client.post(
+        "/v1/auth/2fa/backup-codes/regenerate",
+        json={"code": "000000"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert invalid_code.status_code == 401
+    assert invalid_code.json()["detail"] == "Invalid MFA code"
+
+    # Case 3: Insufficient role.
+    forbidden = client.post(
+        "/v1/auth/2fa/backup-codes/regenerate",
+        json={"code": "000000"},
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert forbidden.status_code == 403
+
+    # Case 4: Success and old backup codes are revoked.
+    regenerate = client.post(
+        "/v1/auth/2fa/backup-codes/regenerate",
+        json={"code": saas_service.generate_totp_code(secret)},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert regenerate.status_code == 200
+    regenerated_codes = regenerate.json()["backup_codes"]
+    assert regenerated_codes
+
+    owner_token = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "owner-regen@example.com",
+            "password": "SecretPass123!",
+            "org_id": str(org.org_id),
+            "mfa_code": saas_service.generate_totp_code(secret),
+        },
+    ).json()["access_token"]
+
+    old_code_reuse = client.post(
+        "/v1/auth/2fa/verify",
+        json={"code": backup_codes[0]},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert old_code_reuse.status_code == 401
+
+    new_code_works = client.post(
+        "/v1/auth/2fa/verify",
+        json={"code": regenerated_codes[0]},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert new_code_works.status_code == 200
+
+
 def test_basic_auth_mfa_header_required_outside_testing(unauthenticated_client, monkeypatch):
     monkeypatch.setattr(settings, "testing", False)
     monkeypatch.setattr(settings, "app_env", "dev")
