@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from datetime import timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -52,7 +53,15 @@ async def test_concurrent_audit_inserts_chain_integrity(async_session_maker):
                     f"Chain broken at index {i}. Log prev_hash {log.prev_hash} != {previous_hash}"
                 )
 
-            calculated = _calculate_entry_hash(log, log.prev_hash)
+            created_at_norm = log.created_at
+            if created_at_norm and created_at_norm.tzinfo is None:
+                created_at_norm = created_at_norm.replace(tzinfo=timezone.utc)
+
+            calculated = _calculate_entry_hash(
+                log,
+                log.prev_hash,
+                created_at_override=created_at_norm,
+            )
             assert log.hash == calculated, f"Hash mismatch at index {i}"
             previous_hash = log.hash
 
