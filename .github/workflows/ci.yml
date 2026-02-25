@@ -22,24 +22,25 @@ jobs:
         run: |
           pwd
           ls -la
-          # Explicitly check for root .python-version
-          if [ ! -f ../.python-version ]; then
+          ROOT="${GITHUB_WORKSPACE}"
+          if [ ! -f "$ROOT/.python-version" ]; then
             echo "❌ Error: .python-version is missing in repo root."
             exit 1
           fi
-          ls -la ../.python-version
+          ls -la "$ROOT/.python-version"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version-file: .python-version
+          python-version-file: ${{ github.workspace }}/.python-version
 
       - name: Display Python version
         run: python --version
 
       - name: Verify Python runtime matches .python-version
         run: |
-          expected=$(cat ../.python-version)
+          ROOT="${GITHUB_WORKSPACE}"
+          expected=$(cat "$ROOT/.python-version")
           actual=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
           if [ "$actual" != "$expected" ]; then
             echo "Python version mismatch: expected ${expected}, got ${actual}"
@@ -237,21 +238,22 @@ jobs:
         run: |
           pwd
           ls -la
-          # Explicitly check for root .python-version
-          if [ ! -f ../.python-version ]; then
+          ROOT="${GITHUB_WORKSPACE}"
+          if [ ! -f "$ROOT/.python-version" ]; then
             echo "❌ Error: .python-version is missing in repo root."
             exit 1
           fi
-          ls -la ../.python-version
+          ls -la "$ROOT/.python-version"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version-file: .python-version
+          python-version-file: ${{ github.workspace }}/.python-version
 
       - name: Verify Python runtime matches .python-version
         run: |
-          expected=$(cat ../.python-version)
+          ROOT="${GITHUB_WORKSPACE}"
+          expected=$(cat "$ROOT/.python-version")
           actual=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
           if [ "$actual" != "$expected" ]; then
             echo "Python version mismatch: expected ${expected}, got ${actual}"
@@ -306,21 +308,22 @@ jobs:
         run: |
           pwd
           ls -la
-          # Explicitly check for root .python-version
-          if [ ! -f .python-version ]; then
+          ROOT="${GITHUB_WORKSPACE}"
+          if [ ! -f "$ROOT/.python-version" ]; then
             echo "❌ Error: .python-version is missing in repo root."
             exit 1
           fi
-          ls -la .python-version
+          ls -la "$ROOT/.python-version"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version-file: .python-version
+          python-version-file: ${{ github.workspace }}/.python-version
 
       - name: Verify Python runtime matches .python-version
         run: |
-          expected=$(cat .python-version)
+          ROOT="${GITHUB_WORKSPACE}"
+          expected=$(cat "$ROOT/.python-version")
           actual=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
           if [ "$actual" != "$expected" ]; then
             echo "Python version mismatch: expected ${expected}, got ${actual}"
@@ -382,21 +385,22 @@ jobs:
         run: |
           pwd
           ls -la
-          # Explicitly check for root .python-version
-          if [ ! -f ../.python-version ]; then
+          ROOT="${GITHUB_WORKSPACE}"
+          if [ ! -f "$ROOT/.python-version" ]; then
             echo "❌ Error: .python-version is missing in repo root."
             exit 1
           fi
-          ls -la ../.python-version
+          ls -la "$ROOT/.python-version"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version-file: .python-version
+          python-version-file: ${{ github.workspace }}/.python-version
 
       - name: Verify Python runtime matches .python-version
         run: |
-          expected=$(cat ../.python-version)
+          ROOT="${GITHUB_WORKSPACE}"
+          expected=$(cat "$ROOT/.python-version")
           actual=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
           if [ "$actual" != "$expected" ]; then
             echo "Python version mismatch: expected ${expected}, got ${actual}"
@@ -1027,17 +1031,17 @@ jobs:
         run: |
           pwd
           ls -la
-          # Explicitly check for root .python-version
-          if [ ! -f .python-version ]; then
+          ROOT="${GITHUB_WORKSPACE}"
+          if [ ! -f "$ROOT/.python-version" ]; then
             echo "❌ Error: .python-version is missing in repo root."
             exit 1
           fi
-          ls -la .python-version
+          ls -la "$ROOT/.python-version"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version-file: .python-version
+          python-version-file: ${{ github.workspace }}/.python-version
 
       - name: Install k6
         uses: grafana/setup-k6-action@98db1bcacc2d06234a3cade8629ebc97e0130ec2 # v1
