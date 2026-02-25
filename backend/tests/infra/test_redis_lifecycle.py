@@ -38,29 +38,36 @@ async def test_close_redis_client():
 
     # Mock settings to ensure redis_url is set
     with patch.object(settings, "redis_url", "redis://localhost:6379/0"):
-        # Mock redis.from_url
+        # Mock redis.from_url with distinct clients across calls
         with patch("redis.asyncio.from_url") as mock_from_url:
-            mock_client = AsyncMock()
-            mock_from_url.return_value = mock_client
+            client1 = AsyncMock()
+            client2 = AsyncMock()
+            mock_from_url.side_effect = [client1, client2]
 
-            # Initialize client
+            # First call creates first client
             client = redis.get_redis_client()
-            assert client is not None
+            assert client is client1
 
-            # Call close_redis_client
+            # Closing should close first client and clear singleton
             await redis.close_redis_client()
-
-            # Verify aclose was called
-            mock_client.aclose.assert_awaited_once()
-
-            # Verify global variable is reset
+            client1.aclose.assert_awaited_once()
             assert redis._redis_client is None
 
-            # Verify get_redis_client returns a new client (which would be a new mock call)
-            # We need to reset the mock call count or expect a second call
+            # Second call creates and returns a new client
             client_new = redis.get_redis_client()
-            assert client_new is mock_client
+            assert client_new is client2
+            assert client_new is not client1
             assert mock_from_url.call_count == 2
+
+
+@pytest.mark.anyio
+async def test_close_redis_client_noop_when_none():
+    # Ensure no client exists before closing
+    redis._redis_client = None
+
+    # Should be a no-op and not raise
+    await redis.close_redis_client()
+    assert redis._redis_client is None
 
 @pytest.mark.anyio
 async def test_get_redis_client_no_url():
