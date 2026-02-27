@@ -243,7 +243,7 @@ def _configured_users() -> list[_ConfiguredUser]:
 def _build_auth_exception(
     *, detail: str = "Invalid authentication", reason: str = "invalid_authentication"
 ) -> AdminAuthException:
-    return AdminAuthException(detail=detail, reason=_normalize_failure_reason(reason))
+    return AdminAuthException(detail=detail, reason=reason)
 
 
 def build_admin_forbidden_exception(

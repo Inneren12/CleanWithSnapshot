@@ -14,8 +14,6 @@ from app.domain.saas.db_models import Organization
 from app.main import app
 from app.settings import settings
 
-client = TestClient(app)
-
 ADMIN_HEADERS = {"Authorization": "Basic YWRtaW46YWRtaW4xMjM="}  # admin:admin123
 
 
@@ -45,7 +43,9 @@ async def orgs(db_session: AsyncSession) -> tuple[Organization, Organization]:
 
 
 @pytest.mark.anyio
-async def test_competitor_crud_org_scoping(orgs: tuple[Organization, Organization]):
+async def test_competitor_crud_org_scoping(
+    client: TestClient, orgs: tuple[Organization, Organization]
+):
     org_a, org_b = orgs
 
     create_resp = client.post(
@@ -89,7 +89,9 @@ async def test_competitor_crud_org_scoping(orgs: tuple[Organization, Organizatio
 
 
 @pytest.mark.anyio
-async def test_metrics_crud_and_benchmark(orgs: tuple[Organization, Organization]):
+async def test_metrics_crud_and_benchmark(
+    client: TestClient, orgs: tuple[Organization, Organization]
+):
     org_a, _org_b = orgs
 
     create_resp = client.post(
@@ -162,7 +164,9 @@ async def test_metrics_crud_and_benchmark(orgs: tuple[Organization, Organization
 
 
 @pytest.mark.anyio
-async def test_competitors_feature_flag_blocks_access(db_session: AsyncSession):
+async def test_competitors_feature_flag_blocks_access(
+    client: TestClient, db_session: AsyncSession
+):
     org_id = settings.default_org_id
     org = await db_session.get(Organization, org_id)
     if org is None:
