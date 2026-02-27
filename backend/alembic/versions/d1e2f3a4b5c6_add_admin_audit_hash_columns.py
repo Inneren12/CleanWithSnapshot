@@ -16,9 +16,19 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("admin_audit_logs", sa.Column("prev_hash", sa.String(length=64), nullable=True))
-    op.add_column("admin_audit_logs", sa.Column("hash", sa.String(length=64), nullable=True))
-    op.create_index("ix_admin_audit_logs_hash", "admin_audit_logs", ["hash"], unique=True)
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_columns = [c["name"] for c in inspector.get_columns("admin_audit_logs")]
+
+    if "prev_hash" not in existing_columns:
+        op.add_column("admin_audit_logs", sa.Column("prev_hash", sa.String(length=64), nullable=True))
+
+    if "hash" not in existing_columns:
+        op.add_column("admin_audit_logs", sa.Column("hash", sa.String(length=64), nullable=True))
+
+    existing_indexes = [ix["name"] for ix in inspector.get_indexes("admin_audit_logs")]
+    if "ix_admin_audit_logs_hash" not in existing_indexes:
+        op.create_index("ix_admin_audit_logs_hash", "admin_audit_logs", ["hash"], unique=True)
 
 
 def downgrade() -> None:
