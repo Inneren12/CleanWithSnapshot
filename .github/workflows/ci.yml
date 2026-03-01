@@ -453,6 +453,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Docker Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
       - name: Build api and web images
         run: docker compose build api web
 
@@ -983,6 +989,12 @@ jobs:
           DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/cleaning
           NEXT_PUBLIC_API_BASE_URL=http://api:8000
           EOF
+
+      - name: Docker Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Start Docker Compose stack (smoke)
         run: |
