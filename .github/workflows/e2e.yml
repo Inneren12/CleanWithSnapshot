@@ -318,6 +318,7 @@ jobs:
           echo "=== YAML guardrail check complete ==="
 
       - name: Docker Login
+        if: ${{ secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '' }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
