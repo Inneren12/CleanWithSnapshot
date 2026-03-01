@@ -60,6 +60,7 @@ jobs:
               "ADMIN_BASIC_PASSWORD",
               "LEGACY_BASIC_AUTH_ENABLED",
               "APP_ENV",
+              "CORS_ORIGINS",
               "ADMIN_PROXY_AUTH_ENABLED",
               "ADMIN_PROXY_AUTH_REQUIRED",
               "ADMIN_PROXY_AUTH_SECRET",
@@ -80,6 +81,7 @@ jobs:
           admin_password = f"ci-{secrets.token_hex(32)}"
           overrides = {
             "APP_ENV": "ci",
+            "CORS_ORIGINS": '["http://localhost:3000", "http://127.0.0.1:3000"]',
             "ADMIN_BASIC_USERNAME": admin_username,
             "ADMIN_BASIC_PASSWORD": admin_password,
             "LEGACY_BASIC_AUTH_ENABLED": "false",
@@ -153,6 +155,7 @@ jobs:
               "ADMIN_BASIC_PASSWORD",
               "LEGACY_BASIC_AUTH_ENABLED",
               "APP_ENV",
+              "CORS_ORIGINS",
               "ADMIN_PROXY_AUTH_ENABLED",
               "ADMIN_PROXY_AUTH_REQUIRED",
               "ADMIN_PROXY_AUTH_SECRET",
