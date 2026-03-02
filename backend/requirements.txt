@@ -33,3 +33,4 @@ opentelemetry-instrumentation-httpx==0.50b0
 cryptography==42.0.5
 opentelemetry-instrumentation-requests
 opentelemetry-instrumentation-botocore
+pytest-asyncio
