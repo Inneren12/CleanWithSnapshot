@@ -10,19 +10,13 @@ import uuid
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from typing import TYPE_CHECKING
+
 from app.api.admin_auth import AdminIdentity
-# db_models imported later or partially to avoid cycle if necessary
-# Note: we need to break the cycle. service -> db_models -> service is bad.
-# But here service imports db_models.
-# And db_models imports infra.db -> infra.models -> break_glass -> service -> admin_audit.service
-# Cycle: admin_audit.service -> admin_audit.db_models -> infra.db -> infra.models -> break_glass -> admin_audit.service
-# To fix: admin_audit.service should NOT be imported by break_glass at top level if possible, or use TYPE_CHECKING.
-# Let's inspect break_glass/service.py
-from app.domain.admin_audit.db_models import (
-    AdminAuditLog,
-    AdminAuditSensitivity,
-    AdminAuditActionType,
-)
+from app.domain.admin_audit.enums import AdminAuditActionType, AdminAuditSensitivity
+
+if TYPE_CHECKING:
+    from app.domain.admin_audit.db_models import AdminAuditLog
 from app.infra.logging import redact_pii
 from app.settings import settings
 
@@ -103,7 +97,7 @@ def _system_actor_payload() -> dict[str, str]:
 
 
 def _calculate_entry_hash(
-    entry: AdminAuditLog,
+    entry: "AdminAuditLog",
     prev_hash: str | None,
     *,
     created_at_override: datetime | None = None,
@@ -144,6 +138,7 @@ async def _acquire_org_lock(session: AsyncSession, org_id: uuid.UUID) -> None:
 
 
 async def _get_last_hash(session: AsyncSession, org_id: uuid.UUID) -> str | None:
+    from app.domain.admin_audit.db_models import AdminAuditLog
     stmt = select(AdminAuditLog.hash).where(
         AdminAuditLog.org_id == org_id
     ).order_by(
@@ -160,6 +155,7 @@ async def verify_chain(session: AsyncSession, org_id: uuid.UUID, limit: int = 10
     1. Each entry's prev_hash matches the hash of the preceding entry.
     2. Each entry's hash matches the recomputed hash of its content.
     """
+    from app.domain.admin_audit.db_models import AdminAuditLog
     stmt = select(AdminAuditLog).where(
         AdminAuditLog.org_id == org_id
     ).order_by(
@@ -211,7 +207,7 @@ async def audit_admin_action(
     context: dict | None = None,
     admin_id: str | None = None,
     auth_method: str | None = None,
-) -> AdminAuditLog | None:
+) -> "AdminAuditLog | None":
     resolved_action_type = action_type or _infer_action_type(action)
     resolved_sensitivity = sensitivity_level or AdminAuditSensitivity.NORMAL
     if resolved_action_type == AdminAuditActionType.READ and resolved_sensitivity == AdminAuditSensitivity.NORMAL:
@@ -228,6 +224,7 @@ async def audit_admin_action(
         sanitized_before = _sanitize_payload(before)
         sanitized_after = _sanitize_payload(after)
 
+    from app.domain.admin_audit.db_models import AdminAuditLog
     log = AdminAuditLog(
         audit_id=str(uuid.uuid4()),
         org_id=resolved_org_id,
@@ -273,7 +270,7 @@ async def record_action(
     context: dict | None = None,
     admin_id: str | None = None,
     auth_method: str | None = None,
-) -> AdminAuditLog | None:
+) -> "AdminAuditLog | None":
     return await audit_admin_action(
         session,
         identity=identity,
@@ -303,10 +300,11 @@ async def record_system_action(
     context: dict | None = None,
     action_type: AdminAuditActionType | None = None,
     sensitivity_level: AdminAuditSensitivity | None = None,
-) -> AdminAuditLog:
+) -> "AdminAuditLog":
     payload = _system_actor_payload()
     resolved_action_type = action_type or AdminAuditActionType.WRITE
     resolved_sensitivity = sensitivity_level or AdminAuditSensitivity.NORMAL
+    from app.domain.admin_audit.db_models import AdminAuditLog
     log = AdminAuditLog(
         audit_id=str(uuid.uuid4()),
         org_id=org_id,
@@ -342,7 +340,8 @@ async def list_admin_audit_logs(
     *,
     org_id: uuid.UUID | None,
     filters: AuditListFilters,
-) -> list[AdminAuditLog]:
+) -> "list[AdminAuditLog]":
+    from app.domain.admin_audit.db_models import AdminAuditLog
     stmt = select(AdminAuditLog).order_by(
         AdminAuditLog.created_at.desc(),
         AdminAuditLog.audit_id.desc(),

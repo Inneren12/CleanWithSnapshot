@@ -1,7 +1,5 @@
 import uuid
 from datetime import datetime
-from enum import Enum
-
 from sqlalchemy import DateTime, ForeignKey, Index, String, event, func
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
@@ -9,17 +7,7 @@ from sqlalchemy.types import JSON
 from app.infra.db import UUID_TYPE
 from app.infra.db import Base
 from app.settings import settings
-
-
-class AdminAuditActionType(str, Enum):
-    READ = "READ"
-    WRITE = "WRITE"
-
-
-class AdminAuditSensitivity(str, Enum):
-    NORMAL = "normal"
-    SENSITIVE = "sensitive"
-    CRITICAL = "critical"
+from app.domain.admin_audit.enums import AdminAuditActionType, AdminAuditSensitivity
 
 
 class AdminAuditLog(Base):

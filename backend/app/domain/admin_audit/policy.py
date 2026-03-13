@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from app.domain.admin_audit.db_models import AdminAuditSensitivity
+from app.domain.admin_audit.enums import AdminAuditSensitivity
 
 
 @dataclass(frozen=True)
