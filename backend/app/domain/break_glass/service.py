@@ -11,13 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.domain.admin_audit import service as audit_service
-else:
-    # Lazy import to avoid circular dependency loop:
+    # To break the circular dependency:
     # admin_audit.service -> admin_audit.db_models -> infra.db -> infra.models -> break_glass.db_models -> break_glass.service -> admin_audit.service
-    import sys
-    # We will import it inside functions or lazily
-    pass
+    # we avoid top-level runtime imports of admin_audit.service and use local imports within functions.
+    from app.domain.admin_audit import service as audit_service
 
 from app.domain.break_glass.db_models import BreakGlassScope, BreakGlassSession, BreakGlassStatus
 from app.infra.metrics import metrics

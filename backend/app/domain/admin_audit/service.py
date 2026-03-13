@@ -11,18 +11,18 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import AdminIdentity
-# db_models imported later or partially to avoid cycle if necessary
-# Note: we need to break the cycle. service -> db_models -> service is bad.
-# But here service imports db_models.
-# And db_models imports infra.db -> infra.models -> break_glass -> service -> admin_audit.service
-# Cycle: admin_audit.service -> admin_audit.db_models -> infra.db -> infra.models -> break_glass -> admin_audit.service
-# To fix: admin_audit.service should NOT be imported by break_glass at top level if possible, or use TYPE_CHECKING.
-# Let's inspect break_glass/service.py
-from app.domain.admin_audit.db_models import (
-    AdminAuditLog,
-    AdminAuditSensitivity,
-    AdminAuditActionType,
-)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # To break the circular dependency:
+    # admin_audit.service -> admin_audit.db_models -> infra.db -> infra.models -> break_glass -> admin_audit.service
+    # we avoid top-level imports of db_models and use local imports inside functions.
+    from app.domain.admin_audit.db_models import (
+        AdminAuditLog,
+        AdminAuditSensitivity,
+        AdminAuditActionType,
+    )
+
 from app.infra.logging import redact_pii
 from app.settings import settings
 
@@ -39,6 +39,8 @@ class AuditListFilters:
 
 
 def _infer_action_type(action: str) -> AdminAuditActionType:
+    from app.domain.admin_audit.db_models import AdminAuditActionType
+
     normalized = action.strip().upper()
     if normalized.startswith("GET ") or normalized.startswith("VIEW_"):
         return AdminAuditActionType.READ
@@ -144,6 +146,8 @@ async def _acquire_org_lock(session: AsyncSession, org_id: uuid.UUID) -> None:
 
 
 async def _get_last_hash(session: AsyncSession, org_id: uuid.UUID) -> str | None:
+    from app.domain.admin_audit.db_models import AdminAuditLog
+
     stmt = select(AdminAuditLog.hash).where(
         AdminAuditLog.org_id == org_id
     ).order_by(
@@ -160,6 +164,8 @@ async def verify_chain(session: AsyncSession, org_id: uuid.UUID, limit: int = 10
     1. Each entry's prev_hash matches the hash of the preceding entry.
     2. Each entry's hash matches the recomputed hash of its content.
     """
+    from app.domain.admin_audit.db_models import AdminAuditLog
+
     stmt = select(AdminAuditLog).where(
         AdminAuditLog.org_id == org_id
     ).order_by(
@@ -212,6 +218,12 @@ async def audit_admin_action(
     admin_id: str | None = None,
     auth_method: str | None = None,
 ) -> AdminAuditLog | None:
+    from app.domain.admin_audit.db_models import (
+        AdminAuditActionType,
+        AdminAuditLog,
+        AdminAuditSensitivity,
+    )
+
     resolved_action_type = action_type or _infer_action_type(action)
     resolved_sensitivity = sensitivity_level or AdminAuditSensitivity.NORMAL
     if resolved_action_type == AdminAuditActionType.READ and resolved_sensitivity == AdminAuditSensitivity.NORMAL:
@@ -304,6 +316,12 @@ async def record_system_action(
     action_type: AdminAuditActionType | None = None,
     sensitivity_level: AdminAuditSensitivity | None = None,
 ) -> AdminAuditLog:
+    from app.domain.admin_audit.db_models import (
+        AdminAuditActionType,
+        AdminAuditLog,
+        AdminAuditSensitivity,
+    )
+
     payload = _system_actor_payload()
     resolved_action_type = action_type or AdminAuditActionType.WRITE
     resolved_sensitivity = sensitivity_level or AdminAuditSensitivity.NORMAL
@@ -343,6 +361,8 @@ async def list_admin_audit_logs(
     org_id: uuid.UUID | None,
     filters: AuditListFilters,
 ) -> list[AdminAuditLog]:
+    from app.domain.admin_audit.db_models import AdminAuditLog
+
     stmt = select(AdminAuditLog).order_by(
         AdminAuditLog.created_at.desc(),
         AdminAuditLog.audit_id.desc(),
