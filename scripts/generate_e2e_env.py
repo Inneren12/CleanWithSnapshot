@@ -57,6 +57,9 @@ env_map = {
     "ADMIN_PROXY_AUTH_E2E_EMAIL": f"{admin_username}@example.com",
     "ADMIN_PROXY_AUTH_E2E_ROLES": "admin",
     "ADMIN_PROXY_AUTH_MFA": "true",
+    "AUTH_SECRET_KEY": get_val("AUTH_SECRET_KEY", f"ci-auth-{secrets.token_hex(32)}"),
+    "CLIENT_PORTAL_SECRET": get_val("CLIENT_PORTAL_SECRET", f"ci-client-{secrets.token_hex(32)}"),
+    "WORKER_PORTAL_SECRET": get_val("WORKER_PORTAL_SECRET", f"ci-worker-{secrets.token_hex(32)}"),
 }
 
 # Write e2e_env_vars.sh

@@ -27,6 +27,7 @@ services:
       ADMIN_PROXY_AUTH_SECRET: ${ADMIN_PROXY_AUTH_SECRET:-e2e-proxy-auth-secret-change-me-1234567890}
       TRUST_PROXY_HEADERS: "true"
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+      CORS_ORIGINS: http://127.0.0.1:3000
     command:
       [
         "sh",
