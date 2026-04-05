@@ -62,6 +62,7 @@ from app.api.saas_auth import PasswordChangeGateMiddleware, TenantSessionMiddlew
 from app.domain.errors import DomainError
 import asyncio
 from app.infra.db import dispose_engine, get_session_factory, get_db_pool_stats
+from app.domain.jobs.repository import JobRepository
 from app.infra.email import EmailAdapter
 from app.infra.logging import clear_log_context, configure_logging, update_log_context
 from app.infra.metrics import configure_metrics, metrics
@@ -440,6 +441,18 @@ def create_app(app_settings, *, tracer_provider=None) -> FastAPI:
                 await asyncio.sleep(15)
 
         monitor_task = asyncio.create_task(_monitor_db_pool())
+
+        # Zombie reaper (R8) — runs once on startup
+        try:
+            async with app.state.db_session_factory() as session:
+                job_repo = JobRepository(session)
+                requeued = await job_repo.requeue_stale_running(stale_threshold_minutes=10)
+                await session.commit()
+                if requeued > 0:
+                    logger.warning("zombie_reaper_requeued", extra={"extra": {"count": requeued, "threshold_minutes": 10}})
+        except Exception as e:
+            logger.error("zombie_reaper_failed", exc_info=True)
+
         yield
         monitor_task.cancel()
         try:

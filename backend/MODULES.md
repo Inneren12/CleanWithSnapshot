@@ -27,6 +27,11 @@
 ## Shared utilities (`app/shared`)
 - Lightweight helpers that are environment-agnostic (e.g., `circuit_breaker.py`, `naming.py`). Keep this free of domain-specific logic.
 
+## Jobs Orchestration (`app/domain/jobs`)
+- **Persistent Job Model**: `db_models.py` (`Job`, `JobStatus`)
+- **Typed Payload Schemas**: `schemas.py` (`parse_payload`, `CubeFetchPayload`, etc.)
+- **Repository**: `repository.py` (`JobRepository` with `SKIP LOCKED` dialect-aware claiming and zombie reaper)
+
 ## Jobs (`app/jobs`)
 - Cron-invoked tasks for email/reminders, storage cleanup, and heartbeat publishing (`run.py`, `email_jobs.py`, `storage_janitor.py`, `heartbeat.py`).
 

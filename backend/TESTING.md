@@ -39,3 +39,9 @@ Defined in `pytest.ini`:
 - For Stripe/email tests, stub settings are used; ensure secrets are set only when running against real services.
 - Storage keys for local photo uploads are canonicalized to `orders/{org_id}/{booking_id}/{photo_id}[.ext]`; smoke/regression suites assert files land under that prefix.
 - The `X-Test-Org` header is only honored when `settings.testing` is true or `APP_ENV=dev`; prod-mode tests should expect it to be ignored.
+
+## Coverage Requirements
+
+| app/domain/jobs/db_models.py | >90% | ⬜ |
+| app/domain/jobs/repository.py | >90% | ⬜ |
+| app/domain/jobs/schemas.py | >90% | ⬜ |
