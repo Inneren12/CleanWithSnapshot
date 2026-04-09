@@ -158,7 +158,6 @@ async function getSaasAuthHeaders(
     Boolean(process.env.SAAS_E2E_ACCESS_TOKEN)
   );
   if (SAAS_E2E_ACCESS_TOKEN) {
-    console.log('[E2E] Using SAAS token bypass');
     cachedSaasAuthHeaders = {
       Authorization: `Bearer ${SAAS_E2E_ACCESS_TOKEN}`,
     };
@@ -312,8 +311,6 @@ async function getSaasAuthHeaders(
     if (typeof accessToken !== 'string' || accessToken.split('.').length !== 3) {
       throw new Error('Invalid JWT format. Expected 3 parts (header.payload.signature).');
     }
-
-    console.log('[getSaasAuthHeaders] Successfully obtained SaaS JWT.');
 
     cachedSaasAuthHeaders = {
       Authorization: `Bearer ${accessToken}`,
