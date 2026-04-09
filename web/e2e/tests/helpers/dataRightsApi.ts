@@ -352,7 +352,6 @@ export async function requestDataExportSync(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    console.error(`Data export failed (${status}): ${text}`);
     throw new Error(`Data export failed: ${status} - ${text}`);
   }
 
@@ -383,7 +382,6 @@ export async function requestDataExportAsync(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    console.error(`Async export request failed (${status}): ${text}`);
     throw new Error(`Async export request failed: ${status} - ${text}`);
   }
 
@@ -411,7 +409,6 @@ export async function listDataExports(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    console.error(`List exports failed (${status}): ${text}`);
     throw new Error(`List exports failed: ${status} - ${text}`);
   }
 
@@ -446,7 +443,6 @@ export async function downloadDataExport(
 
   if (!response.ok() && status !== 307) {
     const text = await response.text();
-    console.error(`Download export failed (${status}): ${text}`);
     throw new Error(`Download export failed: ${status} - ${text}`);
   }
 
@@ -480,7 +476,6 @@ export async function requestDataDeletion(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    console.error(`Deletion request failed (${status}): ${text}`);
     throw new Error(`Deletion request failed: ${status} - ${text}`);
   }
 
@@ -504,7 +499,6 @@ export async function runRetentionCleanup(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    console.error(`Retention cleanup failed (${status}): ${text}`);
     throw new Error(`Retention cleanup failed: ${status} - ${text}`);
   }
 
@@ -529,7 +523,6 @@ export async function processDataExports(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    console.error(`Process exports failed (${status}): ${text}`);
     throw new Error(`Process exports failed: ${status} - ${text}`);
   }
 
@@ -612,7 +605,6 @@ export async function seedTestLead(
 
   if (!response.ok()) {
     const text = await response.text();
-    console.error(`Seed lead failed (${response.status()}): ${text}`);
     throw new Error(`Seed lead failed: ${response.status()} - ${text}`);
   }
 
@@ -637,7 +629,6 @@ export async function processDeletions(
   const status = response.status();
   if (!response.ok()) {
     const text = await response.text();
-    console.error(`Process deletions failed (${status}): ${text}`);
     throw new Error(`Process deletions failed: ${status} - ${text}`);
   }
 
@@ -665,7 +656,6 @@ export async function getLead(
   }
   if (!response.ok()) {
     const text = await response.text();
-    console.error(`Get lead failed (${status}): ${text}`);
     throw new Error(`Get lead failed: ${status} - ${text}`);
   }
 
