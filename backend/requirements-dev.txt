@@ -1,1 +1,5 @@
 -r requirements.txt
+pytest-cov==5.0.0
+ruff==0.6.5
+bandit==1.7.9
+pytest-asyncio==0.23.5

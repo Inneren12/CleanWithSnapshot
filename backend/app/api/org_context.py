@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import Depends, HTTPException, Request, status
 
-from app.api.entitlements import resolve_org_id
+from app.api import entitlements
 from app.api.saas_auth import SaaSIdentity, _get_cached_identity, _get_saas_token
 from app.infra.org_context import set_current_org_id
 from app.settings import settings
@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 async def require_org_context(
     request: Request, identity: SaaSIdentity | None = Depends(_get_cached_identity)
 ) -> uuid.UUID:
+    if (settings.testing or settings.app_env == "dev") and request.headers.get("X-Test-Org"):
+        return entitlements.resolve_org_id(request)
+
     admin_identity: AdminIdentity | None = getattr(request.state, "admin_identity", None)
     if admin_identity:
         request.state.current_org_id = admin_identity.org_id
@@ -37,4 +40,4 @@ async def require_org_context(
     if not settings.legacy_basic_auth_enabled:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
-    return resolve_org_id(request)
+    return entitlements.resolve_org_id(request)

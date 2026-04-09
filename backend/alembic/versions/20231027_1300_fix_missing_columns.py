@@ -17,15 +17,25 @@ depends_on = None
 
 
 def upgrade():
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
     # Add backup_codes to users
-    op.add_column('users', sa.Column('backup_codes', sa.JSON(), server_default=sa.text("'[]'"), nullable=False))
+    user_columns = [c["name"] for c in inspector.get_columns("users")]
+    if "backup_codes" not in user_columns:
+        op.add_column('users', sa.Column('backup_codes', sa.JSON(), server_default=sa.text("'[]'"), nullable=False))
 
     # Add hash columns to admin_audit_logs
-    op.add_column('admin_audit_logs', sa.Column('prev_hash', sa.String(length=64), nullable=True))
-    op.add_column('admin_audit_logs', sa.Column('hash', sa.String(length=64), nullable=True))
+    audit_columns = [c["name"] for c in inspector.get_columns("admin_audit_logs")]
+    if "prev_hash" not in audit_columns:
+        op.add_column('admin_audit_logs', sa.Column('prev_hash', sa.String(length=64), nullable=True))
+    if "hash" not in audit_columns:
+        op.add_column('admin_audit_logs', sa.Column('hash', sa.String(length=64), nullable=True))
 
     # Add unique index on hash
-    op.create_index('ix_admin_audit_logs_hash', 'admin_audit_logs', ['hash'], unique=True)
+    audit_indexes = [ix["name"] for ix in inspector.get_indexes("admin_audit_logs")]
+    if "ix_admin_audit_logs_hash" not in audit_indexes:
+        op.create_index('ix_admin_audit_logs_hash', 'admin_audit_logs', ['hash'], unique=True)
 
 
 def downgrade():
